@@ -1,0 +1,55 @@
+name: verify-wasm-state
+on:
+  push:
+    branches: [verify/wasm-state-20261021]
+permissions:
+  contents: read
+jobs:
+  verify:
+    name: state (${{ matrix.part }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [rust-state, web-cancel]
+    env:
+      EVIDENCE: /tmp/wasm-state-evidence
+      VERIFY_PART: ${{ matrix.part }}
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_TERM_COLOR: never
+      PODHUB_MOCK_GATE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.3'
+      - name: Install pinned Rust toolchains
+        if: matrix.part == 'rust-state'
+        run: |
+          rustup toolchain install 1.99.0 --profile minimal --component rustfmt --target wasm32-unknown-unknown
+          rustup toolchain install nightly-2026-09-14 --profile minimal --component rust-src
+      - name: Discover hidden state tests, reproduce and fix transitions
+        if: matrix.part == 'rust-state'
+        run: bash .verification/wasm-state-verify.sh rust-tests
+      - name: Reproduce and fix owner cancellation with independent host tests
+        if: matrix.part == 'web-cancel'
+        run: bash .verification/wasm-state-verify.sh web-tests
+      - name: Rebuild source-matched WASM and verify render goldens
+        if: matrix.part == 'rust-state'
+        run: bash .verification/wasm-state-verify.sh rebuild
+      - name: Exercise actual threaded browser runtime
+        run: bash .verification/wasm-state-verify.sh browser
+      - name: Publish only tested changes to independent topic branches
+        run: bash .verification/wasm-state-verify.sh publish
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: wasm-state-${{ matrix.part }}
+          path: /tmp/wasm-state-evidence
+          retention-days: 14
