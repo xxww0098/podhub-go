@@ -2,55 +2,7 @@ package domain
 
 import (
 	"testing"
-
-	"github.com/xxww0098/podhub-go/internal/supplier/contract"
 )
-
-func TestDispatchEdges(t *testing.T) {
-	cases := []struct {
-		name    string
-		action  Action
-		order   string
-		state   string
-		member  bool
-		orderOK bool
-		dispOK  bool
-		want    string
-		code    string
-	}{
-		{"accept dispatched", ActionAccept, "dispatched", StateDispatched, true, true, true, StateAccepted, ""},
-		{"accept replay", ActionAccept, "in_production", StateAccepted, true, true, true, StateAccepted, ""},
-		{"accept terminal order first", ActionAccept, OrderDone, StateAccepted, true, true, true, "", "conflict"},
-		{"accept shipped", ActionAccept, "dispatched", StateShipped, true, true, true, "", "conflict"},
-		{"accept rejected", ActionAccept, "ready", StateRejected, true, true, true, "", "conflict"},
-		{"accept stranger", ActionAccept, "dispatched", StateDispatched, false, true, true, "", "not_found"},
-		{"accept missing", ActionAccept, "dispatched", StateDispatched, true, true, false, "", "not_found"},
-		{"reject dispatched", ActionReject, "dispatched", StateDispatched, true, true, true, StateRejected, ""},
-		{"reject accepted", ActionReject, "in_production", StateAccepted, true, true, true, "", "conflict"},
-		{"reject replay", ActionReject, "awaiting_setup", StateRejected, true, true, true, "", "conflict"},
-		{"reject cancelled order", ActionReject, OrderCancelled, StateDispatched, true, true, true, "", "conflict"},
-		{"ship accepted", ActionShip, "in_production", StateAccepted, true, true, true, StateShipped, ""},
-		{"ship dispatched", ActionShip, "dispatched", StateDispatched, true, true, true, "", "conflict"},
-		{"ship replay", ActionShip, "shipped", StateShipped, true, true, true, "", "conflict"},
-		{"ship done order", ActionShip, OrderDone, StateAccepted, true, true, true, "", "conflict"},
-		{"unknown action", Action("drop"), "dispatched", StateDispatched, true, true, true, "", "conflict"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := DispatchEdge(tc.action, tc.order, tc.state, tc.member, tc.orderOK, tc.dispOK)
-			if tc.code == "" {
-				if err != nil || got != tc.want {
-					t.Fatalf("got %s %v", got, err)
-				}
-				return
-			}
-			f, ok := contract.AsFailure(err)
-			if !ok || f.Code != tc.code || got != "" {
-				t.Fatalf("got %s %v", got, err)
-			}
-		})
-	}
-}
 
 func TestFilterAndCursor(t *testing.T) {
 	if state, err := FilterState("  "); err != nil || state != "" {

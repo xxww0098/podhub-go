@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"testing"
-
-	"github.com/xxww0098/podhub-go/internal/delegate/contract"
 )
 
 type readyJSON struct {
@@ -64,17 +62,6 @@ func TestOrderRecomputeVectors(t *testing.T) {
 		stored := StoredOrderState(row.Current, lines)
 		if stored != row.WantStored {
 			t.Fatalf("%s stored %s", row.Name, stored)
-		}
-	}
-}
-
-func TestOrderTransitionsAreUnproven(t *testing.T) {
-	states := []string{"awaiting_setup", "ready", "dispatched", "in_production", "shipped", "done", "cancelled", "bogus"}
-	for _, from := range states {
-		for _, to := range states {
-			if err := TransitionOrder(from, to); err != contract.ErrUnproven {
-				t.Fatalf("%s -> %s: %v", from, to, err)
-			}
 		}
 	}
 }

@@ -1,7 +1,5 @@
 package domain
 
-import "github.com/xxww0098/podhub-go/internal/delegate/contract"
-
 // Line is one delegate_order_lines row as
 // delegate_supplier_recompute_order_state reads it
 // (db/migrations/00205_supplier_portal_actions.sql).
@@ -64,10 +62,4 @@ func StoredOrderState(current string, lines []Line) string {
 		return current
 	}
 	return ComputeOrderState(lines)
-}
-
-// TransitionOrder refuses seller cancel, close and nudge. Those statements
-// are not in the copied SQL functions.
-func TransitionOrder(from, to string) error {
-	return contract.ErrUnproven
 }

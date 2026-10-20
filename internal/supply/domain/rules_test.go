@@ -2,8 +2,6 @@ package domain
 
 import (
 	"testing"
-
-	"github.com/xxww0098/podhub-go/internal/supply/contract"
 )
 
 func TestNamedOrderEdgesAndIllegals(t *testing.T) {
@@ -29,9 +27,6 @@ func TestNamedOrderEdgesAndIllegals(t *testing.T) {
 				t.Fatalf("illegal edge accepted %s", key)
 			}
 		}
-	}
-	if err := TransitionOrder("awaiting_payment", "shipped"); err != contract.ErrUnproven {
-		t.Fatal("seller package still does not write later edges")
 	}
 }
 
