@@ -1,0 +1,42 @@
+name: verification-environment
+on:
+  push:
+    branches: [verify/parallel-stability-20261020]
+permissions:
+  contents: read
+jobs:
+  environment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Build reproducible offline test environment
+        run: |
+          set -euo pipefail
+          go version
+          go mod download
+          cd web
+          bun install --frozen-lockfile
+          cd ..
+          mkdir -p "$RUNNER_TEMP/test-env"
+          tar -czf "$RUNNER_TEMP/test-env/go-sdk.tar.gz" -C "$(go env GOROOT)" .
+          tar --exclude='golang.org/toolchain@*' --exclude='cache/download/golang.org/toolchain' -czf "$RUNNER_TEMP/test-env/go-modules.tar.gz" -C "$(go env GOMODCACHE)" .
+          tar -czf "$RUNNER_TEMP/test-env/web-modules.tar.gz" -C web node_modules
+          cp "$(command -v bun)" "$RUNNER_TEMP/test-env/bun"
+          git rev-parse HEAD > "$RUNNER_TEMP/test-env/source-commit.txt"
+          go version > "$RUNNER_TEMP/test-env/toolchains.txt"
+          bun --version >> "$RUNNER_TEMP/test-env/toolchains.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: podhub-offline-test-environment
+          path: ${{ runner.temp }}/test-env/
+          retention-days: 1
+          compression-level: 0
