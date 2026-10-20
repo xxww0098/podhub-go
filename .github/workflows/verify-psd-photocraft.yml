@@ -1,0 +1,116 @@
+name: verify-psd-photocraft
+on:
+  push:
+    branches: [verify/photocraft-psd-rows-20261020]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install pinned Rust
+        run: |
+          mkdir -p "$RUNNER_TEMP/psd-evidence"
+          rustup toolchain install 1.99.0 --profile minimal --component rustfmt --target wasm32-unknown-unknown
+          rustup toolchain install nightly-2026-09-14 --profile minimal --component rust-src
+          rustc +1.99.0 --version | tee "$RUNNER_TEMP/psd-evidence/toolchain.txt"
+      - name: Baseline native render tests
+        working-directory: rust
+        run: |
+          set -o pipefail
+          cargo test --locked -p render -p psdx -p render-wasm 2>&1 | tee "$RUNNER_TEMP/psd-evidence/native-before.log"
+      - name: Demonstrate row-copy regression and benchmark baseline
+        run: |
+          set -o pipefail
+          test "$(git hash-object rust/crates/render/src/media/slab/mod.rs)" = 3033e72bd30961124f1055f3cfad09b062c00116
+          cp .verification/psd-borrowed-rows-tests.rs rust/crates/render/src/media/slab/borrowed_rows_tests.rs
+          printf '\n#[cfg(test)]\nmod borrowed_rows_tests;\n' >> rust/crates/render/src/media/slab/mod.rs
+          cd rust
+          set +e
+          cargo test --locked -p render window_source_rows_borrow_resident_pixels -- --nocapture 2>&1 | tee "$RUNNER_TEMP/psd-evidence/borrow-red.log"
+          result=${PIPESTATUS[0]}
+          set -e
+          test "$result" -eq 101
+          grep -q 'row must alias the resident window' "$RUNNER_TEMP/psd-evidence/borrow-red.log"
+          cargo test --locked --release -p render window_row_benchmark -- --ignored --nocapture 2>&1 | tee "$RUNNER_TEMP/psd-evidence/rows-before.log"
+      - name: Apply small production patch and verify
+        run: |
+          set -o pipefail
+          git restore rust/crates/render/src/media/slab/mod.rs
+          git apply --check .verification/psd-window-copy.patch
+          git apply .verification/psd-window-copy.patch
+          rustfmt +1.99.0 --edition 2024 --config skip_children=true rust/crates/render/src/media/slab/mod.rs rust/crates/render/src/media/slab/borrowed_rows_tests.rs
+          cd rust
+          cargo test --locked -p render -p psdx -p render-wasm 2>&1 | tee "$RUNNER_TEMP/psd-evidence/native-after.log"
+          cargo test --locked --release -p render window_row_benchmark -- --ignored --nocapture 2>&1 | tee "$RUNNER_TEMP/psd-evidence/rows-after.log"
+      - name: Rebuild all committed WASM honestly
+        run: |
+          set -o pipefail
+          cargo +1.99.0 install wasm-bindgen-cli --version 0.2.127 --locked
+          make wasm 2>&1 | tee "$RUNNER_TEMP/psd-evidence/rebuild.log"
+          bash scripts/check-wasm-dist.sh
+      - name: Fresh WASM browser goldens and build
+        working-directory: web
+        run: |
+          set -o pipefail
+          bun install --frozen-lockfile
+          bun test --preload ./tests/network-guard.preload.ts ./tests/render-wasm.test.ts ./tests/render-worker.test.ts ./src/render 2>&1 | tee "$RUNNER_TEMP/psd-evidence/web-render.log"
+          bun run build 2>&1 | tee "$RUNNER_TEMP/psd-evidence/web-build.log"
+      - name: Real threaded browser renderer
+        working-directory: web
+        env:
+          PODHUB_MOCK_GATE: '1'
+        run: |
+          set -o pipefail
+          cat > .psd-threaded-verify.mjs <<'JS'
+          import { chromium } from 'playwright-core';
+          import { createServer } from 'vite';
+          const server = await createServer({ server: { port: 14922, strictPort: true } });
+          let browser;
+          try {
+            await server.listen();
+            browser = await chromium.launch({ channel: 'chrome', headless: true });
+            const context = await browser.newContext({ serviceWorkers: 'block' });
+            await context.route('**/*', route => {
+              const u = new URL(route.request().url());
+              return u.origin === 'http://127.0.0.1:14922' ? route.continue() : route.abort();
+            });
+            const page = await context.newPage();
+            page.on('pageerror', e => console.error(e));
+            await page.goto('http://127.0.0.1:14922/tests/threaded-render.html');
+            await page.waitForFunction(() => typeof window.verifyThreadedRenderer === 'function', { timeout: 30000 });
+            const result = await page.evaluate(() => window.verifyThreadedRenderer());
+            if (!result.passed) throw new Error(JSON.stringify(result));
+            console.log(JSON.stringify(result));
+          } finally {
+            await browser?.close();
+            await server.close();
+          }
+          JS
+          node .psd-threaded-verify.mjs 2>&1 | tee "$RUNNER_TEMP/psd-evidence/threaded-browser.log"
+          rm .psd-threaded-verify.mjs
+      - name: Package verified changes without publishing
+        run: |
+          git add rust/crates/render/src/media/slab/mod.rs rust/crates/render/src/media/slab/borrowed_rows_tests.rs wasm/dist
+          git diff --cached --check
+          git diff --cached --binary > "$RUNNER_TEMP/psd-evidence/verified.patch"
+          git diff --cached --stat > "$RUNNER_TEMP/psd-evidence/changes.txt"
+          git ls-files -s rust/crates/render/src/media/slab wasm/dist > "$RUNNER_TEMP/psd-evidence/staged-blobs.txt"
+          tar -czf "$RUNNER_TEMP/psd-evidence/verified-files.tar.gz" rust/crates/render/src/media/slab/mod.rs rust/crates/render/src/media/slab/borrowed_rows_tests.rs wasm/dist
+          git rev-parse HEAD > "$RUNNER_TEMP/psd-evidence/verification-commit.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: psd-photocraft-verification
+          path: ${{ runner.temp }}/psd-evidence
+          retention-days: 3
