@@ -18,12 +18,6 @@ const (
 	StateCancelled  = "cancelled"
 )
 
-// Order states that block a supplier action before the idempotent replay.
-const (
-	OrderCancelled = "cancelled"
-	OrderDone      = "done"
-)
-
 // FilterState accepts a missing or blank query as "all". Any other value must
 // be one of the three live states, compared exactly.
 func FilterState(raw string) (string, error) {
@@ -92,52 +86,6 @@ func ParseUUID(raw string) (string, error) {
 		return "", err
 	}
 	return id.String(), nil
-}
-
-// Action is one named supplier transition. Illegal pairs return false.
-type Action string
-
-const (
-	ActionAccept Action = "accept"
-	ActionReject Action = "reject"
-	ActionShip   Action = "ship"
-)
-
-// DispatchEdge is the pure predicate inside delegate_supplier_accept/reject/ship
-// after the row locks. member is the active-member check. found is the dispatch row.
-func DispatchEdge(action Action, orderState, dispatchState string, member, orderFound, dispatchFound bool) (string, error) {
-	if !dispatchFound || !orderFound {
-		return "", contract.Fail(404, "not_found", "派发包不存在")
-	}
-	if !member {
-		return "", contract.Fail(404, "not_found", "派发包不存在")
-	}
-	terminalOrder := orderState == OrderCancelled || orderState == OrderDone
-	switch action {
-	case ActionAccept:
-		if terminalOrder {
-			return "", contract.Fail(409, "conflict", "当前状态不能执行该动作")
-		}
-		if dispatchState == StateAccepted {
-			return StateAccepted, nil
-		}
-		if dispatchState != StateDispatched {
-			return "", contract.Fail(409, "conflict", "当前状态不能执行该动作")
-		}
-		return StateAccepted, nil
-	case ActionReject:
-		if terminalOrder || dispatchState != StateDispatched {
-			return "", contract.Fail(409, "conflict", "当前状态不能执行该动作")
-		}
-		return StateRejected, nil
-	case ActionShip:
-		if terminalOrder || dispatchState != StateAccepted {
-			return "", contract.Fail(409, "conflict", "当前状态不能执行该动作")
-		}
-		return StateShipped, nil
-	default:
-		return "", contract.Fail(409, "conflict", "当前状态不能执行该动作")
-	}
 }
 
 // RejectReason trims and bounds the reason. Empty and over-long are validation.

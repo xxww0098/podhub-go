@@ -47,19 +47,12 @@ func TestWithdrawalRequestVectors(t *testing.T) {
 	}
 }
 
-func TestWithdrawalTransitionsFail(t *testing.T) {
+func TestWithdrawalStatuses(t *testing.T) {
 	states := []string{"requested", "paid", "rejected", "", "held"}
 	for _, state := range states {
 		want := state == "requested" || state == "paid" || state == "rejected"
 		if ValidWithdrawalStatus(state) != want {
 			t.Fatalf("status %s", state)
-		}
-	}
-	for _, from := range states {
-		for _, to := range states {
-			if err := TransitionWithdrawal(from, to); err != contract.ErrUnproven {
-				t.Fatalf("%s -> %s", from, to)
-			}
 		}
 	}
 }

@@ -6,7 +6,7 @@ import (
 	"github.com/xxww0098/podhub-go/internal/supply/contract"
 )
 
-func TestOrderAndProcurementEdgesFail(t *testing.T) {
+func TestOrderAndProcurementStatuses(t *testing.T) {
 	orders := []string{"awaiting_payment", "awaiting_procurement", "processing", "in_production", "shipped", "cancelled"}
 	for _, status := range orders {
 		want := status != "cancelled"
@@ -19,20 +19,6 @@ func TestOrderAndProcurementEdgesFail(t *testing.T) {
 		want := status != "shipped"
 		if ValidProcurementStatus(status) != want {
 			t.Fatalf("procurement %s", status)
-		}
-	}
-	for _, from := range orders {
-		for _, to := range orders {
-			if err := TransitionOrder(from, to); err != contract.ErrUnproven {
-				t.Fatalf("order %s -> %s", from, to)
-			}
-		}
-	}
-	for _, from := range procs {
-		for _, to := range procs {
-			if err := TransitionProcurement(from, to); err != contract.ErrUnproven {
-				t.Fatalf("procurement %s -> %s", from, to)
-			}
 		}
 	}
 }

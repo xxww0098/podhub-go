@@ -41,10 +41,3 @@ func Request(cents int64, channel string, openExists bool) (contract.Withdrawal,
 		Status:         "requested",
 	}, nil
 }
-
-// TransitionWithdrawal refuses requested→paid, requested→rejected and every
-// other edge. Pay and reject are admin routes and have no SQL function in
-// db/migrations.
-func TransitionWithdrawal(from, to string) error {
-	return contract.ErrUnproven
-}
