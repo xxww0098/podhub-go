@@ -1,0 +1,63 @@
+name: web-context-diagnostic
+on:
+  push:
+    branches: [verify/parallel-stability-20261020]
+    paths: [.github/workflows/web-context-diagnostic.yml]
+permissions:
+  contents: read
+jobs:
+  diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 29c23835d3c6c4bcdf5253b1069c5f7370e3c4ec
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install
+        working-directory: web
+        run: bun install --frozen-lockfile
+      - name: Trace singleton context ownership without changing behavior
+        run: |
+          git grep -n -E 'setErrorFeedbackContext|setErrorTelemetryContext' -- web > "$RUNNER_TEMP/context-callers.txt"
+          cat "$RUNNER_TEMP/context-callers.txt"
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('web/src/lib/error-feedback-reporting.ts')
+          s=p.read_text()
+          old='export const setErrorFeedbackContext = reporting.setContext'
+          assert s.count(old)==1
+          s=s.replace(old, '''export const setErrorFeedbackContext = (context: { sessionKey: string | null }) => {
+            console.error("CONTEXT-TRACE", context.sessionKey, new Error("context owner").stack)
+            reporting.setContext(context)
+          }''')
+          p.write_text(s)
+          PY
+          cd web
+          set +e
+          bun run test > "$RUNNER_TEMP/web-context.log" 2>&1
+          code=$?
+          set -e
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          lines=(Path(os.environ['RUNNER_TEMP'])/'web-context.log').read_text().splitlines()
+          selected=set()
+          for i,line in enumerate(lines):
+              if 'CONTEXT-TRACE' in line or '(fail)' in line or 'error: expect' in line or 'unregistered' in line:
+                  selected.update(range(max(0,i-2),min(len(lines),i+12)))
+          for i in sorted(selected): print(f'{i+1}: {lines[i]}')
+          print('\n'.join(lines[-12:]))
+          PY
+          exit "$code"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: web-context-diagnostic
+          path: |
+            ${{ runner.temp }}/context-callers.txt
+            ${{ runner.temp }}/web-context.log
+          retention-days: 3
