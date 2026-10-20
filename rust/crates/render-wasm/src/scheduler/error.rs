@@ -24,6 +24,7 @@ pub(super) enum RuntimeError {
     Compute(String),
 }
 
+#[cfg(feature = "threads")]
 pub(super) fn js_error(error: impl std::fmt::Display) -> wasm_bindgen::JsValue {
     wasm_bindgen::JsValue::from_str(&error.to_string())
 }

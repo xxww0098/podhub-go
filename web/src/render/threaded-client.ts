@@ -104,11 +104,34 @@ export function createRuntimeHost(options: RuntimeHostOptions) {
     createBatch(): Pick<RenderBatch, "withLane" | "prepareAiImage" | "dispose"> {
       const owner = nextOwner++
       owners.add(owner)
+      const stopped = new AbortController()
       const alive = () => {
-        if (!owners.has(owner)) throw failure("The render batch was disposed", "RENDER_CANCELLED")
+        if (stopped.signal.aborted) throw stopped.signal.reason
       }
+      // Cancelling a caller is not cancelling compute. Observe every owner
+      // wait (including shared init and caller IO), without releasing Rust's
+      // busy lease or disabling the underlying request's watchdog.
+      const waitForOwner = <T>(work: Promise<T>): Promise<T> => new Promise((resolve, reject) => {
+        const signal = stopped.signal
+        const abort = () => reject(signal.reason)
+        signal.addEventListener("abort", abort, { once: true })
+        // Observe late failures too, even when the owner has already stopped.
+        work.then(value => {
+          signal.removeEventListener("abort", abort)
+          if (signal.aborted) reject(signal.reason)
+          else resolve(value)
+        }, error => {
+          signal.removeEventListener("abort", abort)
+          reject(error)
+        })
+        if (signal.aborted) {
+          signal.removeEventListener("abort", abort)
+          abort()
+        }
+      })
       const dispose = () => {
         if (!owners.delete(owner)) return
+        stopped.abort(failure("The render batch was disposed", "RENDER_CANCELLED"))
         const state = current
         if (!state) return
         if (!owners.size) { destroy(state, failure("The render batch ended", "RENDER_CANCELLED")); return }
@@ -127,7 +150,7 @@ export function createRuntimeHost(options: RuntimeHostOptions) {
         async withLane<T>(key: string, run: (lane: RenderLane) => Promise<T>): Promise<T> {
           alive()
           const state = runtime()
-          await state.ready
+          await waitForOwner(state.ready)
           alive()
           const grant = await call(state, "acquire", { owner, key }, [], owner) as {
             leaseId: number; template?: { sha256: string; id: number } | null
@@ -140,25 +163,36 @@ export function createRuntimeHost(options: RuntimeHostOptions) {
             return call(state, op, { leaseId, ...(listing ? { listing } : {}), ...args }, transfer, owner)
           }
           const retain: RenderLane["retainTemplate"] = async (sha256, bytes) => {
+            alive()
             if (sha256 !== key) throw failure("Template differs from the admitted input", "RENDER_TEMPLATE_FINGERPRINT")
             if (held && !state.dead) return held.id
             const id = await invoke("retain", { bytes }, [bytes.buffer]) as number
             held = { sha256, id }
             return id
           }
+          let value: T
           try {
             alive()
-            return await run({
-              heldTemplate: () => state.dead ? undefined : held,
+            value = await waitForOwner(run({
+              heldTemplate: () => state.dead || stopped.signal.aborted ? undefined : held,
               forgetHeldTemplate: () => { held = undefined },
               bindListing: (hint) => { listing = hint },
               retainTemplate: retain,
               renderProduct: (templateId, bytes, name, intent) => invoke("render", { templateId, bytes, name, intent }, [bytes.buffer]) as Promise<RenderResult>,
               prepareAiImage: bytes => invoke("prepare", { bytes }, [bytes.buffer]) as Promise<RenderBytes>,
-            })
+            }))
           } finally {
-            if (!state.dead) await call(state, "release", { leaseId }).catch(() => {})
+            if (!state.dead) {
+              const released = call(state, "release", { leaseId }).catch(() => {})
+              // Cancellation settles the caller now; the release request is
+              // still observed and supervised, and Rust drains busy compute.
+              if (!stopped.signal.aborted) await waitForOwner(released)
+            }
           }
+          // A wait can settle just before disposal, with this continuation
+          // still queued. The final delivery boundary must check again.
+          alive()
+          return value
         },
         prepareAiImage(bytes, cancelled) {
           return this.withLane("prepare-ai-image", lane => {

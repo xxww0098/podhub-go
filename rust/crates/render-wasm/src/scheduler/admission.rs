@@ -12,11 +12,17 @@ use std::{
 const MAX_WAITERS: usize = 256;
 
 type Admission = Result<u32, RuntimeError>;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LeasePhase {
+    Reserved,
+    Running,
+    // The owner has left; compute still owns the lane until completion.
+    Draining,
+}
 struct Lease {
     owner: u32,
     key: String,
-    busy: bool,
-    released: bool,
+    phase: LeasePhase,
 }
 struct Waiter {
     owner: u32,
@@ -173,8 +179,7 @@ impl State {
                 Lease {
                     owner: waiter.owner,
                     key: waiter.key,
-                    busy: false,
-                    released: false,
+                    phase: LeasePhase::Reserved,
                 },
             );
             if waiter.reply.send(Ok(id)).is_err() {
@@ -201,26 +206,36 @@ impl State {
     }
     pub(super) fn acquired(&self, id: u32, owner: u32) -> bool {
         self.leases.get(&id).is_some_and(|lease| {
-            lease.owner == owner && !lease.released && !self.closed.contains(&owner)
+            lease.owner == owner
+                && lease.phase != LeasePhase::Draining
+                && !self.closed.contains(&owner)
         })
     }
     pub(super) fn start(&mut self, id: u32) -> Result<String, RuntimeError> {
         let lease = self.leases.get_mut(&id).ok_or(RuntimeError::LeaseExpired)?;
-        if lease.released || self.closed.contains(&lease.owner) {
+        if lease.phase == LeasePhase::Draining || self.closed.contains(&lease.owner) {
             return Err(RuntimeError::Cancelled);
         }
-        if lease.busy {
+        if lease.phase != LeasePhase::Reserved {
             return Err(RuntimeError::LeaseBusy);
         }
-        lease.busy = true;
+        lease.phase = LeasePhase::Running;
         Ok(lease.key.clone())
     }
     pub(super) fn finish(&mut self, id: u32) -> bool {
         let Some(lease) = self.leases.get_mut(&id) else {
             return false;
         };
-        lease.busy = false;
-        let valid = !lease.released && !self.closed.contains(&lease.owner);
+        // Completion belongs to a running computation, never a reservation.
+        // A duplicate completion must not make an idle lease look successful.
+        let valid = match lease.phase {
+            LeasePhase::Reserved => return false,
+            LeasePhase::Running => {
+                lease.phase = LeasePhase::Reserved;
+                true
+            }
+            LeasePhase::Draining => false,
+        };
         if !valid {
             self.leases.remove(&id);
         }
@@ -229,9 +244,10 @@ impl State {
     }
     pub(super) fn release(&mut self, id: u32) {
         if let Some(lease) = self.leases.get_mut(&id) {
-            lease.released = true;
-            if !lease.busy {
+            if lease.phase == LeasePhase::Reserved {
                 self.leases.remove(&id);
+            } else {
+                lease.phase = LeasePhase::Draining;
             }
         }
         self.dispatch();
@@ -251,8 +267,12 @@ impl State {
             if lease.owner != owner {
                 return true;
             }
-            lease.released = true;
-            lease.busy
+            if lease.phase == LeasePhase::Reserved {
+                false
+            } else {
+                lease.phase = LeasePhase::Draining;
+                true
+            }
         });
         self.dispatch();
     }
