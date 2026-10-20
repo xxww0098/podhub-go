@@ -1,0 +1,65 @@
+name: wasm-state-ci-diagnosis
+on:
+  push:
+    branches: [verify/wasm-state-ci-diagnosis-20261020]
+permissions:
+  contents: read
+  actions: read
+  checks: read
+jobs:
+  logs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Retrieve original failed CI evidence without rerunning tests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/wasm-state-ci-diagnosis
+          python3 - <<'PY'
+          import io, json, os, re, subprocess, zipfile
+          from pathlib import Path
+          root = Path('/tmp/wasm-state-ci-diagnosis')
+          repo = 'repos/xxww0098/podhub-go'
+          endpoints = {
+              'annotations.json': repo + '/check-runs/118745279761/annotations',
+              'failed-job.log': repo + '/actions/jobs/118745279761/logs',
+              'original-run.zip': repo + '/actions/runs/39456680394/logs',
+          }
+          status = {}
+          for name, endpoint in endpoints.items():
+              result = subprocess.run(['gh', 'api', endpoint], capture_output=True, timeout=80)
+              status[name] = {'exit_code': result.returncode}
+              if result.returncode == 0:
+                  (root / name).write_bytes(result.stdout)
+              else:
+                  (root / (name + '.error.txt')).write_bytes(result.stderr)
+          (root / 'retrieval-status.json').write_text(json.dumps(status, indent=2))
+          print(json.dumps(status))
+          blocks = []
+          log = root / 'failed-job.log'
+          if log.exists():
+              blocks.append(('failed-job.log', log.read_text(errors='replace')))
+          archive = root / 'original-run.zip'
+          if archive.exists():
+              with zipfile.ZipFile(archive) as z:
+                  for name in z.namelist():
+                      if name.endswith('.txt') and ('test/' in name or name.endswith('_test.txt')):
+                          blocks.append((name, z.read(name).decode('utf-8', errors='replace')))
+          excerpts = []
+          for name, text in blocks:
+              lines = text.splitlines()
+              indices = set()
+              for i, line in enumerate(lines):
+                  if re.search(r'--- FAIL:|^FAIL\s|panic:|fatal error:|##\[error\]|Error:|error:|timed out|DATA RACE', line):
+                      indices.update(range(max(0, i-8), min(len(lines), i+18)))
+              excerpts.append('\n### ' + name + '\n' + '\n'.join(lines[i] for i in sorted(indices)))
+          (root / 'failure-excerpts.txt').write_text('\n'.join(excerpts))
+          print('\n'.join(excerpts)[-30000:])
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: wasm-state-original-ci-diagnosis
+          path: /tmp/wasm-state-ci-diagnosis
+          retention-days: 14
