@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { describe, test } from "node:test"
+import { afterEach, beforeEach, describe, test } from "node:test"
 import {
   PSD_PART_BYTES,
   clearSession,
@@ -14,17 +14,6 @@ import {
 
 const sha = "ab".repeat(32)
 const memory = new Map<string, string>()
-Object.defineProperty(globalThis, "localStorage", {
-  configurable: true,
-  value: {
-    getItem: (key: string) => memory.get(key) ?? null,
-    setItem: (key: string, value: string) => { memory.set(key, value) },
-    removeItem: (key: string) => { memory.delete(key) },
-    clear: () => memory.clear(),
-    key: () => null,
-    get length() { return memory.size },
-  },
-})
 
 function plan(bytes: number): MultipartPlan {
   const count = Math.ceil(bytes / PSD_PART_BYTES)
@@ -42,6 +31,30 @@ function plan(bytes: number): MultipartPlan {
 }
 
 describe("psd multipart client", () => {
+  let previousStorage: PropertyDescriptor | undefined
+
+  beforeEach(() => {
+    previousStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage")
+    memory.clear()
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      value: {
+        getItem: (key: string) => memory.get(key) ?? null,
+        setItem: (key: string, value: string) => { memory.set(key, value) },
+        removeItem: (key: string) => { memory.delete(key) },
+        clear: () => memory.clear(),
+        key: () => null,
+        get length() { return memory.size },
+      },
+    })
+  })
+
+  afterEach(() => {
+    if (previousStorage) Object.defineProperty(globalThis, "localStorage", previousStorage)
+    else Reflect.deleteProperty(globalThis, "localStorage")
+    memory.clear()
+  })
+
   test("140 MiB is nine parts and a shared pipe is not faster than one PUT", () => {
     const bytes = 140 * 1024 * 1024
     assert.equal(plan(bytes).parts.length, 9)
