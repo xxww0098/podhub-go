@@ -40,7 +40,8 @@ jobs:
             26b0fcfc21f2199ef654e566e528da7f0891eddf \
             7d7604997c5caea2eeece98d6334f4f66e267146 \
             39fd3d578f8bdfc78e16c55297a81e9505c9ba73 \
-            225b906f451d6f690888441febc457af43f0c81e
+            225b906f451d6f690888441febc457af43f0c81e \
+            62152cec9e00e17e706e9201e9c4c6a3b1625e51
           do
             git fetch --no-tags origin "$sha"
             git cherry-pick "$sha"
@@ -49,7 +50,7 @@ jobs:
           git write-tree | tee "$EVIDENCE/combined-tree.txt"
           git diff --binary 29c23835d3c6c4bcdf5253b1069c5f7370e3c4ec HEAD > "$EVIDENCE/combined.patch"
           git diff --check 29c23835d3c6c4bcdf5253b1069c5f7370e3c4ec HEAD
-          git log --format='%H %s' -7 > "$EVIDENCE/local-commits.txt"
+          git log --format='%H %s' -8 > "$EVIDENCE/local-commits.txt"
           test -z "$(git status --porcelain)"
       - uses: actions/setup-go@v5
         if: matrix.part != 'web-full'
@@ -96,10 +97,10 @@ jobs:
               go test -race -count=1 -timeout=10m ./internal/ratings/...
               cd web
               bun install --frozen-lockfile
-              bun test --preload ./tests/network-guard.preload.ts ./src/features/account/account-overview-cache.test.ts ./src/features/account/account-overview-session-fence.test.ts ./src/lib/error-feedback-reporting.test.ts ./src/lib/error-telemetry.test.ts ./src/lib/notify.test.ts ./src/features/workflow/card/template-backup.test.ts ./src/features/workflow/card/template-assets.test.ts
+              bun test --preload ./tests/network-guard.preload.ts ./src/features/account/account-overview-cache.test.ts ./src/features/account/account-overview-session-fence.test.ts ./src/lib/error-feedback-reporting.test.ts ./src/lib/error-telemetry.test.ts ./src/lib/notify.test.ts ./src/features/workflow/card/template-backup.test.ts ./src/features/workflow/card/template-assets.test.ts ./src/bindings/multipart-upload.test.ts ./src/components/changelog-dialog.test.tsx
               for attempt in $(seq 1 20); do
-                printf '\nSession fence repetition %s/20\n' "$attempt"
-                bun test --preload ./tests/network-guard.preload.ts ./src/features/account/account-overview-session-fence.test.ts
+                printf '\nSession and storage isolation repetition %s/20\n' "$attempt"
+                bun test --preload ./tests/network-guard.preload.ts ./src/features/account/account-overview-session-fence.test.ts ./src/bindings/multipart-upload.test.ts ./src/components/changelog-dialog.test.tsx
               done
               ;;
           esac
