@@ -63,10 +63,10 @@ impl RenderRuntime {
         let key = self.state.borrow_mut().start(lease).map_err(js_error)?;
         let retained = self.state.borrow().template_id(&key);
         if let Some(id) = retained {
-            self.state.borrow_mut().finish(lease);
+            self.state.borrow_mut().finish(lease, None);
             return Ok(id);
         }
-        let parsed = compute::run(&self.state, lease, &key, move || {
+        let parsed = compute::run(&self.state, lease, move || {
             ParsedTemplate::parse(&bytes, &ProductResourcePolicy::default())
                 .map(|template| Computed {
                     value: Arc::new(template),
@@ -90,12 +90,12 @@ impl RenderRuntime {
         intent: String,
     ) -> Result<Vec<u8>, JsValue> {
         let intent: RenderIntent = serde_json::from_str(&intent).map_err(js_error)?;
-        let (key, template, unknown) = self
+        let (_, template, unknown) = self
             .state
             .borrow_mut()
             .begin_render(lease, template_id)
             .map_err(js_error)?;
-        compute::run(&self.state, lease, &key, move || {
+        compute::run(&self.state, lease, move || {
             let outcome = render::render_product(
                 &template,
                 &design,
@@ -123,8 +123,8 @@ impl RenderRuntime {
         .map_err(js_error)
     }
     pub async fn prepare_image(&self, lease: u32, bytes: Vec<u8>) -> Result<Vec<u8>, JsValue> {
-        let key = self.state.borrow_mut().start(lease).map_err(js_error)?;
-        compute::run(&self.state, lease, &key, move || {
+        self.state.borrow_mut().start(lease).map_err(js_error)?;
+        compute::run(&self.state, lease, move || {
             render::prepare_ai_image(&bytes)
                 .map(|value| Computed {
                     value,

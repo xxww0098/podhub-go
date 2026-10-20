@@ -18,7 +18,6 @@ pub(super) struct Computed<T> {
 pub(super) async fn run<T: Send + 'static>(
     state: &RefCell<State>,
     lease: u32,
-    key: &str,
     task: impl FnOnce() -> Result<Computed<T>, String> + Send + 'static,
 ) -> Result<T, RuntimeError> {
     let (send, receive) = oneshot::channel();
@@ -30,22 +29,16 @@ pub(super) async fn run<T: Send + 'static>(
         .await
         .map_err(|_| RuntimeError::Closed)
         .and_then(|result| result.map_err(RuntimeError::Compute));
-    complete(&mut state.borrow_mut(), lease, key, result)
+    complete(&mut state.borrow_mut(), lease, result)
 }
 
 fn complete<T>(
     state: &mut State,
     lease: u32,
-    key: &str,
     result: Result<Computed<T>, RuntimeError>,
 ) -> Result<T, RuntimeError> {
-    if let Ok(Computed {
-        peak: Some(peak), ..
-    }) = &result
-    {
-        state.record_peak(key, *peak);
-    }
-    if !state.finish(lease) {
+    let peak = result.as_ref().ok().and_then(|reply| reply.peak);
+    if !state.finish(lease, peak) {
         return Err(RuntimeError::Cancelled);
     }
     result.map(|reply| reply.value)
@@ -70,7 +63,7 @@ mod tests {
         let mut state = State::new(1, 1000);
         let id = active(&mut state);
         assert_eq!(
-            complete::<()>(&mut state, id, "A", Err(RuntimeError::Closed)),
+            complete::<()>(&mut state, id, Err(RuntimeError::Closed)),
             Err(RuntimeError::Closed)
         );
         assert!(state.start(id).is_ok());
@@ -78,7 +71,6 @@ mod tests {
             complete::<()>(
                 &mut state,
                 id,
-                "A",
                 Err(RuntimeError::Compute("bad image".into()))
             ),
             Err(RuntimeError::Compute("bad image".into()))
@@ -101,9 +93,28 @@ mod tests {
             }),
         });
         assert_eq!(
-            complete(&mut state, id, "A", reply),
+            complete(&mut state, id, reply),
             Err(RuntimeError::Cancelled)
         );
         assert!(waiting.try_recv().unwrap().is_some());
+    }
+
+    #[test]
+    fn duplicate_completion_neither_delivers_nor_reprices_the_lease() {
+        let mut state = State::new(1, 1000);
+        let id = active(&mut state);
+        let reply = |value, total| {
+            Ok(Computed {
+                value,
+                peak: Some(Peak::new(total, 0)),
+            })
+        };
+        assert_eq!(complete(&mut state, id, reply(7, 100)), Ok(7));
+        assert_eq!(
+            complete(&mut state, id, reply(8, 900)),
+            Err(RuntimeError::Cancelled)
+        );
+        let measured: serde_json::Value = serde_json::from_str(&state.measure()).unwrap();
+        assert_eq!(measured["peaks"]["A"], 100);
     }
 }
