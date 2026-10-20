@@ -1,0 +1,150 @@
+name: verify-wasm-state-final
+on:
+  push:
+    branches: [verify/wasm-runtime-state-final-20261020]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      EVIDENCE: /tmp/wasm-state-final
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 39454755996
+          name: wasm-state-verified
+          path: /tmp/wasm-state-original
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.3'
+      - name: Restore exactly the rebuilt and tested native artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE"
+          test "$(cat /tmp/wasm-state-original/result.txt)" = PASS
+          test "$(cat /tmp/wasm-state-original/verification-head.txt)" = 46098600a5e2c964fcca161f089dbfb54c9742ff
+          git apply --index /tmp/wasm-state-original/verified.patch
+          git ls-files -s rust/crates/render-wasm wasm/dist > "$EVIDENCE/native-blobs.txt"
+          grep -E $'\t(rust/crates/render-wasm/|wasm/dist/)' /tmp/wasm-state-original/staged-blobs.txt > "$EVIDENCE/native-reference-blobs.txt"
+          cmp "$EVIDENCE/native-blobs.txt" "$EVIDENCE/native-reference-blobs.txt"
+          bash scripts/check-wasm-dist.sh
+          cp /tmp/wasm-state-original/native-*.log "$EVIDENCE/"
+          cp /tmp/wasm-state-original/rebuild.log "$EVIDENCE/"
+          cd web && bun install --frozen-lockfile
+      - name: Reproduce the two remaining continuation races
+        run: |
+          set -o pipefail
+          cat .verification/continuation-tests.ts >> web/src/render/client.test.ts
+          set +e
+          (cd web && bun test --preload ./tests/network-guard.preload.ts ./src/render/client.test.ts) 2>&1 | tee "$EVIDENCE/continuation-red.log"
+          result=${PIPESTATUS[0]}
+          set -e
+          test "$result" -ne 0
+          grep -q '2 fail' "$EVIDENCE/continuation-red.log"
+      - name: Guard final delivery after cleanup
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('web/src/render/threaded-client.ts')
+          s = p.read_text()
+          changes = [
+              ('          try {\n            alive()\n            return await waitForOwner(Promise.resolve(run({', '          let value: T\n          try {\n            alive()\n            value = await waitForOwner(run({'),
+              ('            })))\n          } finally {', '            }))\n          } finally {'),
+              ('          }\n        },\n        prepareAiImage(bytes, cancelled) {', '          }\n          // A wait can settle just before disposal, with this continuation\n          // still queued. The final delivery boundary must check again.\n          alive()\n          return value\n        },\n        prepareAiImage(bytes, cancelled) {'),
+          ]
+          for old, new in changes:
+              assert s.count(old) == 1, old
+              s = s.replace(old, new)
+          p.write_text(s)
+          PY
+      - name: Full frontend and repeated state regression
+        working-directory: web
+        run: |
+          set -o pipefail
+          bun test --preload ./tests/network-guard.preload.ts ./src/render/client.test.ts 2>&1 | tee "$EVIDENCE/cancellation-green.log"
+          for attempt in $(seq 1 20); do
+            bun test --preload ./tests/network-guard.preload.ts ./src/render/client.test.ts >> "$EVIDENCE/cancellation-repeat.log" 2>&1
+          done
+          bun run build 2>&1 | tee "$EVIDENCE/web-build.log"
+          bun run api:check 2>&1 | tee "$EVIDENCE/web-api.log"
+          bun run test 2>&1 | tee "$EVIDENCE/web-full.log"
+      - name: Actual browser with unchanged verified WASM
+        working-directory: web
+        env:
+          PODHUB_MOCK_GATE: '1'
+        run: |
+          set -o pipefail
+          cp ../.verification/check-state-browser.mjs .wasm-state-final.mjs
+          node .wasm-state-final.mjs 2>&1 | tee "$EVIDENCE/browser.log"
+          rm .wasm-state-final.mjs
+      - name: Verify native identity and capture final patch
+        run: |
+          set -euo pipefail
+          git add web/src/render/threaded-client.ts web/src/render/client.test.ts
+          git diff --exit-code
+          git diff --cached --check
+          git ls-files -s rust/crates/render-wasm wasm/dist > "$EVIDENCE/native-blobs-final.txt"
+          cmp "$EVIDENCE/native-blobs-final.txt" "$EVIDENCE/native-reference-blobs.txt"
+          bash scripts/check-wasm-dist.sh
+          git diff --cached --binary > "$EVIDENCE/verified.patch"
+          git diff --cached --stat > "$EVIDENCE/changes.txt"
+          git ls-files -s rust/crates/render-wasm web/src/render/threaded-client.ts web/src/render/client.test.ts scripts/test-wasm-state.sh .github/workflows/wasm-state.yml wasm/dist > "$EVIDENCE/staged-blobs.txt"
+          git rev-parse HEAD > "$EVIDENCE/verification-head.txt"
+          cp .github/workflows/wasm-state.yml "$EVIDENCE/wasm-state.yml"
+          printf 'PASS\n' > "$EVIDENCE/result.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: wasm-state-final-verified
+          path: /tmp/wasm-state-final
+          retention-days: 14
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: be364cb76e87dc9ea178cd322b888ab3b641d998
+      - uses: actions/download-artifact@v4
+        with:
+          name: wasm-state-final-verified
+          path: /tmp/wasm-state-final
+      - name: Publish verified code without requesting workflow-write permission
+        env:
+          BRANCH: fix/wasm-runtime-state-20261020
+        run: |
+          set -euo pipefail
+          test "$(cat /tmp/wasm-state-final/result.txt)" = PASS
+          test "$(cat /tmp/wasm-state-final/verification-head.txt)" = '${{ github.sha }}'
+          if git ls-remote --exit-code --heads origin "$BRANCH"; then echo 'Branch exists; refuse overwrite'; exit 1; fi
+          git switch -c "$BRANCH"
+          git apply --index /tmp/wasm-state-final/verified.patch
+          git ls-files -s rust/crates/render-wasm web/src/render/threaded-client.ts web/src/render/client.test.ts scripts/test-wasm-state.sh .github/workflows/wasm-state.yml wasm/dist > /tmp/published-blobs.txt
+          cmp /tmp/published-blobs.txt /tmp/wasm-state-final/staged-blobs.txt
+          # The connected app will add this exact tested CI file separately.
+          # Do not expand GITHUB_TOKEN permissions or rewrite any existing CI.
+          git reset HEAD -- .github/workflows/wasm-state.yml
+          rm .github/workflows/wasm-state.yml
+          git diff --cached --check
+          bash scripts/check-wasm-dist.sh
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(wasm): make lease states testable and fence cancelled result delivery'
+          git push origin "HEAD:refs/heads/$BRANCH"
+          git rev-parse HEAD | tee /tmp/wasm-state-final/published-head.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-state-final-published
+          path: /tmp/wasm-state-final/published-head.txt
+          retention-days: 14
