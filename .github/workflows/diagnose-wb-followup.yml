@@ -1,0 +1,46 @@
+name: diagnose-wb-followup
+on:
+  push:
+    branches: [verify/wasm-wb-failure-diagnosis-20261021]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: wasm-state-followup-evidence
+          run-id: 39464530121
+          github-token: ${{ github.token }}
+          path: original-evidence
+      - name: Print original failure context and locate test
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          text = Path('original-evidence/web-full.log').read_text(errors='replace')
+          text = re.sub(r'\x1b\[[0-9;]*m', '', text)
+          lines = text.splitlines()
+          needles = ['(fail)', 'AssertionError', 'error: expect', 'Error: expect']
+          indexes = [i for i,line in enumerate(lines) if any(x in line for x in needles)]
+          seen = set()
+          for i in indexes:
+              for j in range(max(0,i-35), min(len(lines),i+15)):
+                  if j not in seen:
+                      print(f'{j+1}: {lines[j]}'); seen.add(j)
+          needle = 'WB native material defaults, whole-group and named-variant issues have distinct scopes'
+          for p in Path('web').rglob('*.ts'):
+              if 'node_modules' in p.parts: continue
+              source = p.read_text(errors='replace')
+              if needle in source:
+                  print('SOURCE',p)
+                  sl = source.splitlines()
+                  i = next(i for i,line in enumerate(sl) if needle in line)
+                  print('\n'.join(f'{j+1}: {sl[j]}' for j in range(max(0,i-15),min(len(sl),i+105))))
+          PY
