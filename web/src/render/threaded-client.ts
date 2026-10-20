@@ -104,11 +104,24 @@ export function createRuntimeHost(options: RuntimeHostOptions) {
     createBatch(): Pick<RenderBatch, "withLane" | "prepareAiImage" | "dispose"> {
       const owner = nextOwner++
       owners.add(owner)
+      const cancellation = new AbortController()
+      // Stop this caller's wait, not the underlying work. Its finally block,
+      // Rust lease and watchdog keep running until actual completion/teardown.
+      const whileAlive = <T>(work: Promise<T>): Promise<T> => new Promise((resolve, reject) => {
+        const signal = cancellation.signal
+        const cancelled = () => reject(signal.reason)
+        const cleanup = () => signal.removeEventListener("abort", cancelled)
+        // Always observe late success/failure, even if already cancelled.
+        void work.then(value => { cleanup(); resolve(value) }, error => { cleanup(); reject(error) })
+        if (signal.aborted) cancelled()
+        else signal.addEventListener("abort", cancelled, { once: true })
+      })
       const alive = () => {
         if (!owners.has(owner)) throw failure("The render batch was disposed", "RENDER_CANCELLED")
       }
       const dispose = () => {
         if (!owners.delete(owner)) return
+        cancellation.abort(failure("The render batch was disposed", "RENDER_CANCELLED"))
         const state = current
         if (!state) return
         if (!owners.size) { destroy(state, failure("The render batch ended", "RENDER_CANCELLED")); return }
@@ -124,41 +137,43 @@ export function createRuntimeHost(options: RuntimeHostOptions) {
         void state.ready.then(() => call(state, "disposeOwner", { owner })).catch(() => {})
       }
       return {
-        async withLane<T>(key: string, run: (lane: RenderLane) => Promise<T>): Promise<T> {
-          alive()
-          const state = runtime()
-          await state.ready
-          alive()
-          const grant = await call(state, "acquire", { owner, key }, [], owner) as {
-            leaseId: number; template?: { sha256: string; id: number } | null
-          }
-          let held = grant.template ?? undefined
-          const leaseId = grant.leaseId
-          let listing: Record<string, string | undefined> | undefined
-          const invoke = (op: string, args: Record<string, unknown>, transfer: Transferable[] = []) => {
+        withLane<T>(key: string, run: (lane: RenderLane) => Promise<T>): Promise<T> {
+          return whileAlive((async () => {
             alive()
-            return call(state, op, { leaseId, ...(listing ? { listing } : {}), ...args }, transfer, owner)
-          }
-          const retain: RenderLane["retainTemplate"] = async (sha256, bytes) => {
-            if (sha256 !== key) throw failure("Template differs from the admitted input", "RENDER_TEMPLATE_FINGERPRINT")
-            if (held && !state.dead) return held.id
-            const id = await invoke("retain", { bytes }, [bytes.buffer]) as number
-            held = { sha256, id }
-            return id
-          }
-          try {
+            const state = runtime()
+            await state.ready
             alive()
-            return await run({
-              heldTemplate: () => state.dead ? undefined : held,
-              forgetHeldTemplate: () => { held = undefined },
-              bindListing: (hint) => { listing = hint },
-              retainTemplate: retain,
-              renderProduct: (templateId, bytes, name, intent) => invoke("render", { templateId, bytes, name, intent }, [bytes.buffer]) as Promise<RenderResult>,
-              prepareAiImage: bytes => invoke("prepare", { bytes }, [bytes.buffer]) as Promise<RenderBytes>,
-            })
-          } finally {
-            if (!state.dead) await call(state, "release", { leaseId }).catch(() => {})
-          }
+            const grant = await call(state, "acquire", { owner, key }, [], owner) as {
+              leaseId: number; template?: { sha256: string; id: number } | null
+            }
+            let held = grant.template ?? undefined
+            const leaseId = grant.leaseId
+            let listing: Record<string, string | undefined> | undefined
+            const invoke = (op: string, args: Record<string, unknown>, transfer: Transferable[] = []) => {
+              alive()
+              return call(state, op, { leaseId, ...(listing ? { listing } : {}), ...args }, transfer, owner)
+            }
+            const retain: RenderLane["retainTemplate"] = async (sha256, bytes) => {
+              if (sha256 !== key) throw failure("Template differs from the admitted input", "RENDER_TEMPLATE_FINGERPRINT")
+              if (held && !state.dead) return held.id
+              const id = await invoke("retain", { bytes }, [bytes.buffer]) as number
+              held = { sha256, id }
+              return id
+            }
+            try {
+              alive()
+              return await run({
+                heldTemplate: () => state.dead ? undefined : held,
+                forgetHeldTemplate: () => { held = undefined },
+                bindListing: (hint) => { listing = hint },
+                retainTemplate: retain,
+                renderProduct: (templateId, bytes, name, intent) => invoke("render", { templateId, bytes, name, intent }, [bytes.buffer]) as Promise<RenderResult>,
+                prepareAiImage: bytes => invoke("prepare", { bytes }, [bytes.buffer]) as Promise<RenderBytes>,
+              })
+            } finally {
+              if (!state.dead) await call(state, "release", { leaseId }).catch(() => {})
+            }
+          })())
         },
         prepareAiImage(bytes, cancelled) {
           return this.withLane("prepare-ai-image", lane => {
