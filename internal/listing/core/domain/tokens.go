@@ -3,6 +3,7 @@ package domain
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/xxww0098/podhub-go/internal/listing/core/contract"
@@ -17,8 +18,8 @@ func init() {
 
 // SearchTagTokens is reject_banned_search_tags without the database.
 // schemaFields is the category field array. draft is a WorkflowCategoryDraft.
-// An empty key list allows the draft. A schema that is not an array is an error
-// so the caller can fail the save closed.
+// A valid schema without search-tag fields allows the draft. Invalid schemas
+// return an error so the caller can fail the save closed.
 func SearchTagTokens(schemaFields, draft []byte) ([]string, error) {
 	keys, err := searchTagKeys(schemaFields)
 	if err != nil || len(keys) == 0 {
@@ -58,41 +59,53 @@ func SearchTagTokens(schemaFields, draft []byte) ([]string, error) {
 }
 
 func searchTagKeys(schemaFields []byte) ([]string, error) {
-	if len(bytes.TrimSpace(schemaFields)) == 0 {
-		return nil, nil
+	// Catalog fields use string IDs; numeric IDs are also part of the schema
+	// contract. json.Number preserves both without float conversion and rejects
+	// non-numeric strings. Unmarshal rejects trailing JSON as well.
+	var fields []struct {
+		Key              string      `json:"key"`
+		AttributeID      json.Number `json:"attribute_id"`
+		AttributeIDCamel json.Number `json:"attributeId"`
 	}
-	dec := json.NewDecoder(bytes.NewReader(schemaFields))
-	dec.UseNumber()
-	var fields []map[string]any
-	if err := dec.Decode(&fields); err != nil {
+	if err := json.Unmarshal(schemaFields, &fields); err != nil {
 		return nil, err
 	}
+	if fields == nil {
+		return nil, fmt.Errorf("category fields must be an array")
+	}
 	var keys []string
-	for _, field := range fields {
-		key, _ := field["key"].(string)
-		if key == "" {
-			continue
+	for i, field := range fields {
+		if strings.TrimSpace(field.Key) == "" {
+			return nil, fmt.Errorf("category field %d has no key", i)
 		}
-		if attributeID(field) == SearchTagsAttributeID {
-			keys = append(keys, key)
+		id, err := attributeID(field.AttributeID, field.AttributeIDCamel)
+		if err != nil {
+			return nil, fmt.Errorf("category field %d: %w", i, err)
+		}
+		if id == SearchTagsAttributeID {
+			keys = append(keys, field.Key)
 		}
 	}
 	return keys, nil
 }
 
-func attributeID(field map[string]any) int64 {
-	for _, name := range []string{"attribute_id", "attributeId"} {
-		switch n := field[name].(type) {
-		case json.Number:
-			v, err := n.Int64()
-			if err == nil {
-				return v
-			}
-		case float64:
-			return int64(n)
+func attributeID(snake, camel json.Number) (int64, error) {
+	var id int64
+	for _, n := range []json.Number{snake, camel} {
+		if n == "" {
+			// Base fields have no attribute ID (omitted or null).
+			continue
 		}
+		v, err := n.Int64()
+		if err != nil || v <= 0 {
+			return 0, fmt.Errorf("attribute ID must be a positive int64")
+		}
+		if id != 0 && id != v {
+			return 0, fmt.Errorf("conflicting attribute_id and attributeId")
+		}
+		id = v
 	}
-	return 0
+	return id, nil
 }
 
 func valueTokens(raw json.RawMessage) []string {
