@@ -49,8 +49,9 @@ codegen-versions:
 	@echo SQLC_VERSION=$(SQLC_VERSION)
 	@echo OAPI_CODEGEN_VERSION=$(OAPI_CODEGEN_VERSION)
 
-# CI consumes committed WASM and never installs a Rust toolchain.
+# Go/Web checks consume committed WASM; scheduler tests use the pinned Rust toolchain.
 ci:
+	cd rust && cargo test --locked -p render -p psdx -p render-wasm
 	test -z "$$(gofmt -l .)"
 	$(MAKE) vet
 	go test ./tests/archtest

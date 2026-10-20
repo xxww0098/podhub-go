@@ -104,6 +104,26 @@ fn template_key_accepts_opfs_digest_and_rejects_different_bytes() {
     );
 }
 #[test]
+fn parsed_template_can_render_on_the_same_lease() {
+    let mut state = State::new(1, 1000);
+    let template = parsed();
+    let key = template.fingerprint().to_string();
+    let lease = granted(&mut state, 1, &key);
+    assert_eq!(state.start(lease).unwrap(), key);
+    assert!(state.finish(lease));
+    let id = state.retain_template(key.clone(), template).unwrap();
+    assert!(matches!(
+        state.begin_render(lease, id + 1),
+        Err(RuntimeError::TemplateMissing)
+    ));
+    let (render_key, _, unknown) = state.begin_render(lease, id).unwrap();
+    assert_eq!(render_key, key);
+    assert!(unknown);
+    assert!(state.finish(lease));
+    state.release(lease);
+    assert!(state.leases.is_empty());
+}
+#[test]
 fn cancelled_receiver_does_not_block_fifo_or_evict_templates() {
     let mut state = State::new(3, 1000);
     known(&mut state, "A", 100);
