@@ -60,7 +60,7 @@ pub use abi::{
     prepare_ai_image, render_product, result_len, result_ptr, take_stage_timings,
 };
 
-#[cfg(feature = "threads")]
+#[cfg(any(test, feature = "threads"))]
 mod scheduler;
 #[cfg(feature = "threads")]
 pub use wasm_bindgen_rayon::init_thread_pool;
