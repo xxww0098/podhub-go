@@ -13,6 +13,7 @@ export class RenderRuntime {
     measure(): string;
     constructor(threads: number, budget: number);
     prepare_image(lease: number, bytes: Uint8Array): Promise<Uint8Array>;
+    register_owner(owner: number): void;
     release(id: number): void;
     render(lease: number, template_id: number, design: Uint8Array, name: string, intent: string): Promise<Uint8Array>;
     retain_template(lease: number, bytes: Uint8Array): Promise<number>;
@@ -50,6 +51,7 @@ export interface InitOutput {
     readonly renderruntime_measure: (a: number, b: number) => void;
     readonly renderruntime_new: (a: number, b: number, c: number) => void;
     readonly renderruntime_prepare_image: (a: number, b: number, c: number, d: number) => number;
+    readonly renderruntime_register_owner: (a: number, b: number, c: number) => void;
     readonly renderruntime_release: (a: number, b: number) => void;
     readonly renderruntime_render: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => number;
     readonly renderruntime_retain_template: (a: number, b: number, c: number, d: number) => number;

@@ -15,6 +15,7 @@ export const renderruntime_dispose_owner: (a: number, b: number) => void;
 export const renderruntime_measure: (a: number, b: number) => void;
 export const renderruntime_new: (a: number, b: number, c: number) => void;
 export const renderruntime_prepare_image: (a: number, b: number, c: number, d: number) => number;
+export const renderruntime_register_owner: (a: number, b: number, c: number) => void;
 export const renderruntime_release: (a: number, b: number) => void;
 export const renderruntime_render: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => number;
 export const renderruntime_retain_template: (a: number, b: number, c: number, d: number) => number;

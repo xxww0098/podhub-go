@@ -62,9 +62,11 @@ pub(super) struct State {
     next: u32,
     leases: HashMap<u32, Lease>,
     waiters: VecDeque<Waiter>,
-    closed: HashSet<u32>,
+    owners: HashSet<u32>,
+    last_owner: u32,
     templates: HashMap<String, (u32, Arc<ParsedTemplate>)>,
     peaks: HashMap<String, Peak>,
+    peaks_changed: bool,
 }
 
 #[cfg(target_family = "wasm")]
@@ -85,7 +87,8 @@ struct Measurement {
     occupied_bytes: u64,
     templates: usize,
     /// One flat byte count per template; JS reads a `Record<string, number>`.
-    peaks: HashMap<String, u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    peaks: Option<HashMap<String, u64>>,
     threads: usize,
 }
 
@@ -98,10 +101,22 @@ impl State {
             next: 0,
             leases: HashMap::new(),
             waiters: VecDeque::new(),
-            closed: HashSet::new(),
+            owners: HashSet::new(),
+            last_owner: 0,
             templates: HashMap::new(),
             peaks: HashMap::new(),
+            peaks_changed: false,
         }
+    }
+    pub(super) fn register_owner(&mut self, owner: u32) -> Result<(), RuntimeError> {
+        // Host registrations are ordered; the high-water mark rejects late
+        // registrations without retaining every disposed owner forever.
+        if owner <= self.last_owner {
+            return Err(RuntimeError::Cancelled);
+        }
+        self.last_owner = owner;
+        self.owners.insert(owner);
+        Ok(())
     }
     fn next_id(&mut self) -> Result<u32, RuntimeError> {
         self.next = self.next.checked_add(1).ok_or(RuntimeError::IdsExhausted)?;
@@ -185,13 +200,18 @@ impl State {
                 self.leases.remove(&id);
             }
         }
+        let previous = self.peaks.len();
+        self.peaks.retain(|key, _| {
+            self.templates.contains_key(key) || self.leases.values().any(|lease| &lease.key == key)
+        });
+        self.peaks_changed |= self.peaks.len() != previous;
     }
     pub(super) fn acquire(
         &mut self,
         owner: u32,
         key: String,
     ) -> Result<oneshot::Receiver<Admission>, RuntimeError> {
-        if self.closed.contains(&owner) {
+        if !self.owners.contains(&owner) {
             return Err(RuntimeError::Cancelled);
         }
         self.dispatch();
@@ -249,7 +269,8 @@ impl State {
         self.dispatch();
     }
     pub(super) fn dispose_owner(&mut self, owner: u32) {
-        self.closed.insert(owner);
+        self.owners.remove(&owner);
+        self.last_owner = self.last_owner.max(owner);
         let mut retained = VecDeque::new();
         for waiter in self.waiters.drain(..) {
             if waiter.owner == owner {
@@ -315,6 +336,10 @@ impl State {
         Ok((key, template, unknown))
     }
     pub(super) fn record_peak(&mut self, key: &str, peak: Peak) {
+        self.peaks_changed |= self
+            .peaks
+            .get(key)
+            .is_none_or(|known| peak.total > known.total);
         self.peaks
             .entry(key.into())
             .and_modify(|known| {
@@ -323,7 +348,7 @@ impl State {
             })
             .or_insert(peak);
     }
-    pub(super) fn measure(&self) -> String {
+    pub(super) fn measure(&mut self) -> String {
         let memory = memory_bytes();
         serde_json::to_string(&Measurement {
             memory_bytes: memory,
@@ -331,11 +356,12 @@ impl State {
             queued: self.waiters.len(),
             occupied_bytes: memory.max(self.reserved_bytes().unwrap_or(u64::MAX)),
             templates: self.templates.len(),
-            peaks: self
-                .peaks
-                .iter()
-                .map(|(key, peak)| (key.clone(), peak.total))
-                .collect(),
+            peaks: std::mem::take(&mut self.peaks_changed).then(|| {
+                self.peaks
+                    .iter()
+                    .map(|(key, peak)| (key.clone(), peak.total))
+                    .collect()
+            }),
             threads: self.threads,
         })
         .expect("runtime measurement contains only finite integers and string keys")

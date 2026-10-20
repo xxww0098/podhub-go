@@ -71,6 +71,11 @@ export async function verifyThreadedRenderer() {
     )
     const first = render()
     await initialized
+    const duringInit = client.createBatch()
+    const registered = duringInit.withLane(key, async lane => {
+      const id = lane.heldTemplate()?.id ?? await lane.retainTemplate(key, template.slice())
+      return lane.renderProduct(id, design.slice(), "registered.png")
+    })
     cancelled.dispose()
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
@@ -80,10 +85,18 @@ export async function verifyThreadedRenderer() {
       assert(!entered, "Cancelled initialization must not read PSD bytes")
     } finally { clearTimeout(timer); releaseInit() }
     await check(await first)
+    try { await check(await registered) } finally { duringInit.dispose() }
     const parallel = await Promise.all(Array.from({ length: 6 }, () => render()))
     await Promise.all(parallel.map(check))
     assert(parses === 1, "Concurrent jobs must share one parsed template")
     assert(workers.length === 1, "Parallel jobs must share one runtime")
+    for (let i = 0; i < 32; i++) {
+      const transient = client.createBatch()
+      try {
+        await transient.withLane(key, async lane => assert(!!lane.heldTemplate(), "New owners must reuse the live template"))
+      } finally { transient.dispose() }
+    }
+    assert(Object.keys(client.measure().peaks).length === 1, "Unchanged peak replies must preserve the current snapshot")
     let rejected = false
     try { await render(new Uint8Array([1, 2, 3])) } catch { rejected = true }
     assert(rejected, "Bad image input must fail cleanly")
@@ -111,12 +124,13 @@ export async function verifyThreadedRenderer() {
     try { await batch.withLane(deepKey, lane => lane.retainTemplate(deepKey, deep.slice())) } catch (error) { refusal = error as typeof refusal }
     assert(refusal?.code === "PSD_RENDER_UNSUPPORTED_DEPTH", `16-bit template must be refused, got ${refusal?.code}`)
     assert(refusal?.message?.includes("8 位/通道"), "The refusal must carry the Chinese remediation")
+    assert(Object.keys(client.measure().peaks).length === 0, "Evicted templates must clear their observed peaks")
     await check(await render())
     assert(workers.length === 2, "A structural refusal must not destroy the runtime")
     batch.disposeRender()
     const prepared = await batch.prepareAiImage(design.slice())
     assert(prepared.length > 0 && workers.length === 3, "AI has an independent runtime after render disposal")
-    return { passed: true, initializationCancellation: true, parses, runtimes: workers.length, failureCode, structuralRefusal: refusal?.code, memory: client.measure() }
+    return { passed: true, initializationCancellation: true, ownerRegistrations: 33, parses, runtimes: workers.length, failureCode, structuralRefusal: refusal?.code, memory: client.measure() }
   } finally {
     batch.dispose()
     assert(client.measure().residentBytes === 0, "Disposal must release the runtime")

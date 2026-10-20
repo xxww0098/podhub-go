@@ -86,6 +86,22 @@ export class RenderRuntime {
         return takeObject(ret);
     }
     /**
+     * @param {number} owner
+     */
+    register_owner(owner) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.renderruntime_register_owner(retptr, this.__wbg_ptr, owner);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            if (r1) {
+                throw takeObject(r0);
+            }
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
      * @param {number} id
      */
     release(id) {
