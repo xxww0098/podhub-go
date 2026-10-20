@@ -1,0 +1,21 @@
+name: wasm-state
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: wasm-state-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native-state:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install workspace-pinned Rust
+        working-directory: rust
+        run: rustup show active-toolchain
+      - name: Native state coverage and invariants
+        run: bash scripts/test-wasm-state.sh
