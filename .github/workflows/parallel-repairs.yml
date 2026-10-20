@@ -1,0 +1,74 @@
+name: parallel-tested-repairs
+
+on:
+  push:
+    branches: [verify/parallel-stability-20261020]
+    paths:
+      - scripts/verification/parallel_fixes.py
+      - .github/workflows/parallel-repairs.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tested-repairs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        area: [billing, queue, ratings, supplier]
+    env:
+      LISTING_TAGS_WASM: wasm/dist/server/listing-tags.wasm
+      WASM_HOST_PROBE: wasm/dist/test/host-probe.wasm
+      LISTING_CORE_WASM: wasm/dist/server/listing-core.wasm
+      LISTING_STATE_WASM: wasm/dist/browser/listing-state.wasm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Preserve reviewed verification harness
+        run: cp scripts/verification/parallel_fixes.py "$RUNNER_TEMP/parallel_fixes.py"
+      - uses: actions/checkout@v4
+        with:
+          ref: 29c23835d3c6c4bcdf5253b1069c5f7370e3c4ec
+          fetch-depth: 1
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Verify source and dependencies
+        run: |
+          test "$(git rev-parse HEAD)" = 29c23835d3c6c4bcdf5253b1069c5f7370e3c4ec
+          go version
+          docker info > /dev/null
+          scripts/check-wasm-dist.sh
+      - name: Baseline, regression, repair and verification
+        run: python3 "$RUNNER_TEMP/parallel_fixes.py" "${{ matrix.area }}"
+      - name: Publish only the tested code on a new isolated branch
+        run: |
+          set -euo pipefail
+          branch="fix/parallel-${{ matrix.area }}-20261020"
+          if git ls-remote --exit-code --heads origin "$branch" > /dev/null 2>&1; then
+            echo "Branch already exists; refusing to overwrite it."
+            exit 1
+          fi
+          git switch -c "$branch"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix(${{ matrix.area }}): simplify verified boundaries and remove redundant logic"
+          git push origin "HEAD:refs/heads/$branch"
+          git rev-parse HEAD | tee "$RUNNER_TEMP/parallel-evidence/tested-commit.txt"
+          printf '%s\n' "$branch" | tee "$RUNNER_TEMP/parallel-evidence/tested-branch.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tested-repair-${{ matrix.area }}
+          path: ${{ runner.temp }}/parallel-evidence/
+          retention-days: 7
