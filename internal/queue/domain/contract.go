@@ -10,6 +10,7 @@ package domain
 import (
 	"errors"
 	"math"
+	"strconv"
 	"time"
 
 	"github.com/xxww0098/podhub-go/internal/platform/jobsched"
@@ -88,7 +89,8 @@ func LaneAdmitsLimit(queuedCost int64, kind string, limit int64) bool {
 	if limit <= 0 {
 		limit = AccountLaneQueuedCostLimit
 	}
-	return queuedCost+int64(CostUnits(kind)) <= limit
+	cost := int64(CostUnits(kind))
+	return queuedCost >= 0 && cost <= limit && queuedCost <= limit-cost
 }
 
 // CountsTowardHead matches refresh_account_queue_head at declaration 269:
@@ -283,7 +285,7 @@ func JitterSeed(jobID string, leaseEpoch int64, attempt int32) uint64 {
 		hash ^= uint64(jobID[i])
 		hash *= 0x00000100000001b3
 	}
-	for _, part := range []string{itoa(leaseEpoch), itoa(int64(attempt))} {
+	for _, part := range []string{strconv.FormatInt(leaseEpoch, 10), strconv.FormatInt(int64(attempt), 10)} {
 		for i := 0; i < len(part); i++ {
 			hash ^= uint64(part[i])
 			hash *= 0x00000100000001b3
@@ -306,7 +308,7 @@ func profile(kind string) (base, cap time.Duration) {
 }
 
 func escalated(base, cap time.Duration, attempt int32) time.Duration {
-	rung := attempt - 1
+	rung := int64(attempt) - 1
 	if rung < 0 {
 		rung = 0
 	}
@@ -356,28 +358,6 @@ func saturatingAdd(a, b time.Duration) time.Duration {
 		return time.Duration(math.MaxInt64)
 	}
 	return a + b
-}
-
-func itoa(n int64) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		i--
-		buf[i] = '-'
-	}
-	return string(buf[i:])
 }
 
 // DeclarationStep is one SeaORM migrator entry. Version is the filename
