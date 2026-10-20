@@ -11,7 +11,6 @@ import type {
 import { accountHttp } from "@/bindings/http-account"
 import { onSessionSweep, queryClient } from "@/lib/query-client"
 import { setErrorTelemetryContext } from "@/lib/error-telemetry"
-import { setErrorReportIdentity } from "@/lib/error-report-environment"
 import { setListingLogCollect } from "@/lib/listing-log"
 
 /**
@@ -98,14 +97,14 @@ export function subscribeAccountOverview(onStoreChange: () => void): () => void 
 export function invalidateAccountOverview(): void {
   liveGeneration += 1
   queryClient.removeQueries({ queryKey: OVERVIEW_KEY })
-  setErrorReportIdentity(null)
+  syncErrorTelemetryContext(undefined)
 }
 
 // `invalidateAllSessionCaches` sweeps every query too — this module's
 // generation must advance so a reply in flight at sign-out stays fenced.
 onSessionSweep(() => {
   liveGeneration += 1
-  setErrorReportIdentity(null)
+  syncErrorTelemetryContext(undefined)
 })
 
 function writeOverview(overview: AccountOverview): void {
