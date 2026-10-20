@@ -10,7 +10,8 @@
  *   `<video>` + canvas，而 canvas 对跨源视频帧默认污染（桶未发 CORS 读头
  *   时 `toBlob` 直接拒），上传链路又要再走一遍 presign——两张失败面换一
  *   个装饰性封面不值。手传复用图集同一条图片管线，稳定可测。
- * - **拖拽 = 原生 HTML5 draggable**：仓库无既有 dnd 依赖，数组序 = 显示序。
+ * - **拖拽 = @dnd-kit/sortable**：数组序 = 显示序，落点仍走 `moveItem`。
+ *   Alt+方向键是键盘等价，不交给 dnd-kit 的键盘传感器。
  * - **缩略图降级**：`gallery[].url` 加载失败显示占位图标（onError 换底）。
  *
  * 错误纪律：本地校验/读取失败 → `notifyError`；presign/PUT/写行失败 →
@@ -18,7 +19,21 @@
  * 入口置灰 + title 提示 + notifyLive「去配置」跳「平台管理 → 对象存储」。
  * 页面上没有任何内联错误块。
  */
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type CSSProperties } from "react"
+import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core"
+import {
+  SortableContext,
+  rectSortingStrategy,
+  useSortable,
+} from "@dnd-kit/sortable"
+import { CSS } from "@dnd-kit/utilities"
 import {
   CircleAlert,
   Download,
@@ -72,6 +87,11 @@ const STORAGE_NOTICE_ID = "supplier-db-storage-missing"
 const STORAGE_HINT = "先在平台集成配置平台货源存储桶"
 
 // ---------- 纯函数（可测） ----------
+
+/** 图集拖拽身份：url 在一行内唯一（上传确认后才进数组）。 */
+function galleryItemId(item: SupplierDbGalleryItem): string {
+  return item.url
+}
 
 /** 拖动重排：把 `from` 摘出来插到 `to` 前；越界输入原样返回。 */
 export function moveItem<T>(items: readonly T[], from: number, to: number): T[] {
@@ -266,6 +286,111 @@ function MediaGroup({
   )
 }
 
+function GalleryThumb({
+  item,
+  index,
+  count,
+  disabled,
+  onPromote,
+  onMove,
+  onRemove,
+}: {
+  item: SupplierDbGalleryItem
+  index: number
+  count: number
+  disabled: boolean
+  onPromote: () => void
+  onMove: (delta: -1 | 1) => void
+  onRemove: () => void
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+    isOver,
+  } = useSortable({ id: galleryItemId(item), disabled })
+  const style: CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  }
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      role="button"
+      tabIndex={0}
+      title={index === 0 ? "封面（可拖动排序，Alt+←→ 移动）" : "点击设为封面 · 可拖动排序 · Alt+←→ 移动"}
+      aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight Enter"
+      className={cn(
+        "group/thumb relative size-16 shrink-0 cursor-pointer overflow-hidden rounded-lg border focus-visible:outline-2 focus-visible:outline-ring",
+        index === 0 ? "border-brand" : "border-border",
+        isOver && !isDragging ? "ring-2 ring-ring" : "",
+        isDragging ? "z-10 opacity-50" : "",
+        disabled ? "cursor-default" : "",
+      )}
+      onClick={onPromote}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" && index !== 0) {
+          event.preventDefault()
+          onPromote()
+          return
+        }
+        // Keyboard reorder equivalent of drag: Alt+←/→ (or ↑/↓) moves
+        // the focused item one slot. Plain arrows stay free.
+        if (
+          event.altKey
+          && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)
+        ) {
+          event.preventDefault()
+          const delta = event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 1
+          if (index + delta >= 0 && index + delta < count) onMove(delta)
+        }
+      }}
+      data-supplier-gallery-item=""
+      data-cover={index === 0 ? "" : undefined}
+    >
+      <img
+        src={item.url}
+        alt={index === 0 ? "封面" : `图集第 ${index + 1} 张`}
+        loading="lazy"
+        decoding="async"
+        className="size-full object-cover"
+        onError={(event) => {
+          // 缩略图降级：图挂了留占位底，不炸整个网格。
+          event.currentTarget.style.display = "none"
+        }}
+      />
+      {index === 0 ? (
+        <span className="absolute bottom-0.5 left-0.5 rounded bg-brand/90 px-1 py-px text-meta font-medium text-brand-foreground">
+          封面
+        </span>
+      ) : null}
+      <button
+        type="button"
+        aria-label={`删除第 ${index + 1} 张图片`}
+        disabled={disabled}
+        className="absolute top-0.5 right-0.5 grid size-4 cursor-pointer place-items-center rounded bg-black/55 text-white opacity-70 transition-opacity hover:opacity-100 group-hover/thumb:opacity-100"
+        onClick={(event) => {
+          event.stopPropagation()
+          onRemove()
+        }}
+        onPointerDown={(event) => event.stopPropagation()}
+      >
+        <Trash2 aria-hidden className="size-2.5" />
+      </button>
+      <GripVertical
+        aria-hidden
+        className="pointer-events-none absolute top-0.5 left-0.5 size-3 text-white opacity-0 drop-shadow group-hover/thumb:opacity-90"
+      />
+    </div>
+  )
+}
+
 export function SupplierRowMedia({
   row,
   store = supplierDbs,
@@ -280,9 +405,6 @@ export function SupplierRowMedia({
   })
   /** 服务端 503 之后置灰全部上传入口（本会话内记住，重试无意义）。 */
   const [storageBlocked, setStorageBlocked] = useState(false)
-  /** 拖放排序的源下标 / 目标下标（仅渲染期 hover 反馈用）。 */
-  const [dragIndex, setDragIndex] = useState<number | null>(null)
-  const [dropIndex, setDropIndex] = useState<number | null>(null)
   /** 保存期防抖：结构变更按泳道在途（上传并发已在 uploader.busyFor 拦）。 */
   const [savingLane, setSavingLane] = useState<SupplierDbUploadKind | null>(null)
   const noticeSeq = useRef(0)
@@ -446,6 +568,20 @@ export function SupplierRowMedia({
     setSavingLane(null)
   }
 
+  const gallerySensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+  )
+
+  const onGalleryDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const current = latestRow().gallery
+    const from = current.findIndex((item) => galleryItemId(item) === active.id)
+    const to = current.findIndex((item) => galleryItemId(item) === over.id)
+    if (from < 0 || to < 0) return
+    void applyGallery(moveItem(current, from, to))
+  }
+
   // ---------- PSD ----------
 
   const pickPsd = async (replaceIndex: number | null = null) => {
@@ -565,113 +701,44 @@ export function SupplierRowMedia({
         }
       >
         {gallery.length ? (
-          <div className="flex flex-wrap gap-1.5" data-supplier-gallery-grid="">
-            {gallery.map((item, index) => (
-              <div
-                key={`${item.url}-${index}`}
-                draggable={!laneBusy("gallery")}
-                onDragStart={(event) => {
-                  setDragIndex(index)
-                  event.dataTransfer.effectAllowed = "move"
-                }}
-                onDragOver={(event) => {
-                  event.preventDefault()
-                  event.dataTransfer.dropEffect = "move"
-                  setDropIndex(index)
-                }}
-                onDragLeave={() =>
-                  setDropIndex((current) => (current === index ? null : current))
-                }
-                onDrop={(event) => {
-                  event.preventDefault()
-                  const from = dragIndex
-                  setDragIndex(null)
-                  setDropIndex(null)
-                  if (from !== null && from !== index) {
-                    void applyGallery(moveItem(latestRow().gallery, from, index))
-                  }
-                }}
-                onDragEnd={() => {
-                  setDragIndex(null)
-                  setDropIndex(null)
-                }}
-                role="button"
-                tabIndex={0}
-                title={index === 0 ? "封面（可拖动排序，Alt+←→ 移动）" : "点击设为封面 · 可拖动排序 · Alt+←→ 移动"}
-                aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight Enter"
-                className={cn(
-                  "group/thumb relative size-16 shrink-0 cursor-pointer overflow-hidden rounded-lg border focus-visible:outline-2 focus-visible:outline-ring",
-                  index === 0 ? "border-brand" : "border-border",
-                  dropIndex === index && dragIndex !== index
-                    ? "ring-2 ring-ring"
-                    : "",
-                  dragIndex === index ? "opacity-50" : "",
-                )}
-                onClick={() => {
-                  if (index !== 0) {
-                    void applyGallery(promoteToCover(latestRow().gallery, index))
-                  }
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && index !== 0) {
-                    event.preventDefault()
-                    void applyGallery(promoteToCover(latestRow().gallery, index))
-                    return
-                  }
-                  // Keyboard reorder equivalent of drag: Alt+←/→ (or ↑/↓) moves
-                  // the focused item one slot. Plain arrows stay free.
-                  if (
-                    event.altKey
-                    && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)
-                  ) {
-                    event.preventDefault()
-                    const delta = event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 1
-                    const target = index + delta
-                    if (target >= 0 && target < gallery.length) {
-                      void applyGallery(moveItem(latestRow().gallery, index, target))
-                    }
-                  }
-                }}
-                data-supplier-gallery-item=""
-                data-cover={index === 0 ? "" : undefined}
-              >
-                <img
-                  src={item.url}
-                  alt={index === 0 ? "封面" : `图集第 ${index + 1} 张`}
-                  loading="lazy"
-                  decoding="async"
-                  className="size-full object-cover"
-                  onError={(event) => {
-                    // 缩略图降级：图挂了留占位底，不炸整个网格。
-                    event.currentTarget.style.display = "none"
-                  }}
-                />
-                {index === 0 ? (
-                  <span className="absolute bottom-0.5 left-0.5 rounded bg-brand/90 px-1 py-px text-meta font-medium text-brand-foreground">
-                    封面
-                  </span>
-                ) : null}
-                <button
-                  type="button"
-                  aria-label={`删除第 ${index + 1} 张图片`}
-                  disabled={laneBusy("gallery")}
-                  className="absolute top-0.5 right-0.5 grid size-4 cursor-pointer place-items-center rounded bg-black/55 text-white opacity-70 transition-opacity hover:opacity-100 group-hover/thumb:opacity-100"
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    void applyGallery(
-                      latestRow().gallery.filter((_, i) => i !== index),
-                    )
-                  }}
-                >
-                  <Trash2 aria-hidden className="size-2.5" />
-                </button>
-                <GripVertical
-                  aria-hidden
-                  className="pointer-events-none absolute top-0.5 left-0.5 size-3 text-white opacity-0 drop-shadow group-hover/thumb:opacity-90"
-                />
+          <DndContext
+            sensors={gallerySensors}
+            collisionDetection={closestCenter}
+            onDragEnd={onGalleryDragEnd}
+          >
+            <SortableContext
+              items={gallery.map(galleryItemId)}
+              strategy={rectSortingStrategy}
+            >
+              <div className="flex flex-wrap gap-1.5" data-supplier-gallery-grid="">
+                {gallery.map((item, index) => (
+                  <GalleryThumb
+                    key={galleryItemId(item)}
+                    item={item}
+                    index={index}
+                    count={gallery.length}
+                    disabled={laneBusy("gallery")}
+                    onPromote={() => {
+                      if (index !== 0) {
+                        void applyGallery(promoteToCover(latestRow().gallery, index))
+                      }
+                    }}
+                    onMove={(delta) => {
+                      const target = index + delta
+                      if (target >= 0 && target < gallery.length) {
+                        void applyGallery(moveItem(latestRow().gallery, index, target))
+                      }
+                    }}
+                    onRemove={() => {
+                      void applyGallery(
+                        latestRow().gallery.filter((_, i) => i !== index),
+                      )
+                    }}
+                  />
+                ))}
               </div>
-            ))}
-          </div>
+            </SortableContext>
+          </DndContext>
         ) : (
           <p className="flex items-center gap-1.5 text-meta text-faint-foreground">
             <span>未上传</span>

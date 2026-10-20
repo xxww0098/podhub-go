@@ -446,8 +446,8 @@
   }
 
   /* 图片是内容而不是可搬运的对象：原生图片拖拽只留下半透明拖影，既不落
-     数据也不触发任何交互。真正的拖拽（图集排序等）由容器上的 draggable
-     + onDragStart 承载，不依赖 <img> 的原生拖拽。 */
+     数据也不触发任何交互。真正的拖拽（图集排序等）由容器上的 sortable
+     承载，不依赖 <img> 的原生拖拽。 */
   img {
     -webkit-user-drag: none;
   }
@@ -743,85 +743,6 @@
   }
 }
 
-@keyframes login-aside-enter {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes login-panel-enter {
-  from {
-    opacity: 0;
-    transform: translateX(14px);
-    filter: blur(2px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-    filter: blur(0);
-  }
-}
-
-/* Category cascade: a locked level becoming choosable after its parent settles.
-   One-shot on the unlock event — fields themselves stay on first paint. */
-@keyframes category-level-ready {
-  from {
-    opacity: 0.55;
-    transform: translateY(3px);
-    filter: blur(1px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-    filter: blur(0);
-  }
-}
-
-/* Autosave: the Draft landing in durable storage is the event, so the state
-   dot settles into its good tone with one tight pulse — the rail's arrival
-   ring at chip scale. Error knocks once; the chip stays mounted and says why.
-   The in-flight write uses the shared Spinner, which reduced-motion exempts
-   by name (a frozen spinner reads as a hung app). */
-@keyframes save-state-enter {
-  from {
-    opacity: 0;
-    transform: translateY(2px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes save-dot-confirm {
-  0% {
-    transform: scale(1);
-  }
-  45% {
-    transform: scale(1.45);
-  }
-  100% {
-    transform: scale(1);
-  }
-}
-
-@keyframes save-dot-error {
-  0% {
-    transform: scale(1);
-  }
-  40% {
-    transform: scale(1.12);
-  }
-  100% {
-    transform: scale(1);
-  }
-}
-
 @keyframes update-download-travel {
   0% {
     transform: translateX(-120%);
@@ -843,26 +764,12 @@
   }
 }
 
-/* AI 渠道编辑器切换模型时的换牌入场；reduced motion 由全局复位覆盖。 */
 @keyframes gallery-paint-hit {
   from {
     transform: scale(0.96);
   }
   to {
     transform: scale(1);
-  }
-}
-
-@keyframes ai-model-swap {
-  from {
-    opacity: 0;
-    transform: translateY(3px);
-    filter: blur(1.5px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-    filter: blur(0);
   }
 }
 
@@ -877,36 +784,6 @@
   .update-download-travel {
     animation: update-download-travel 1.4s cubic-bezier(0.45, 0, 0.55, 1) infinite;
     will-change: transform;
-  }
-
-  .login-aside-enter {
-    animation: login-aside-enter 420ms var(--ease-settle) both;
-  }
-
-  .login-aside-enter:nth-child(2),
-  h1.login-aside-enter {
-    animation-delay: 70ms;
-  }
-
-  .login-panel-enter {
-    animation: login-panel-enter 560ms var(--ease-settle) both;
-    animation-delay: 120ms;
-  }
-
-  .category-level-ready {
-    animation: category-level-ready 240ms var(--ease-settle) both;
-  }
-
-  .save-state-enter {
-    animation: save-state-enter 150ms var(--ease-settle);
-  }
-
-  .save-dot-confirm {
-    animation: save-dot-confirm 420ms var(--ease-settle);
-  }
-
-  .save-dot-error {
-    animation: save-dot-error 300ms var(--ease-settle);
   }
 }
 
@@ -963,25 +840,16 @@
   isolation: isolate;
 }
 
-@keyframes module-canvas-fade {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
 ::view-transition-old(module-canvas) {
   z-index: 1;
   mix-blend-mode: normal;
-  animation: 140ms ease-in both module-canvas-fade reverse;
+  animation: none;
 }
 
 ::view-transition-new(module-canvas) {
   z-index: 2;
   mix-blend-mode: normal;
-  animation: 200ms var(--ease-settle) both module-canvas-fade;
+  animation: none;
 }
 
 /*

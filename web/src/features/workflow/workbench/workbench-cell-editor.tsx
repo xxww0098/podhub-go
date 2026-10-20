@@ -1,4 +1,5 @@
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react"
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react"
+import { motion, useReducedMotion } from "motion/react"
 import type { WorkflowDraftValue } from "@/bindings/commands"
 import { Button } from "@/components/ui/button"
 import {
@@ -50,6 +51,23 @@ export type WorkbenchProseScope = {
   rows: ProseScopeRow[]
 }
 
+/** One fade when a cell receives text. Reduced motion shows the value as-is. */
+function CellFade({ value, children }: { value: string; children: ReactNode }) {
+  const reduced = useReducedMotion()
+  const className = "line-clamp-3 min-w-0 whitespace-pre-wrap break-words"
+  if (!value || reduced) return <span className={className}>{children}</span>
+  return (
+    <motion.span
+      className={className}
+      initial={{ opacity: 0.5, y: 2 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.22, ease: "easeOut" }}
+    >
+      {children}
+    </motion.span>
+  )
+}
+
 const PREVIEW =
   "flex min-h-8 w-full min-w-0 cursor-pointer items-start rounded-md border border-transparent px-2 py-1 text-left text-compact leading-5 transition-colors hover:border-input hover:bg-card focus-visible:border-ring focus-visible:bg-card focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
 
@@ -95,9 +113,9 @@ export function WorkbenchCellPreview({
     >
       {marker}
       <ClampedTextTooltip text={value}>
-        <span className={`line-clamp-3 min-w-0 whitespace-pre-wrap break-words ${value ? "wf-fade-in" : ""}`}>
+        <CellFade value={value}>
           {value || <span className="text-muted-foreground/60">{placeholder}</span>}
-        </span>
+        </CellFade>
       </ClampedTextTooltip>
     </button>
   )

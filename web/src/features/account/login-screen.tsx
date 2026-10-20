@@ -1,4 +1,5 @@
-import { useState } from "react"
+import { forwardRef, useState, type ComponentProps, type ReactNode } from "react"
+import { motion, useReducedMotion } from "motion/react"
 import { ArrowLeft, Eye, EyeOff, LogIn, UserPlus } from "lucide-react"
 import type { AccountLoginRequest, AccountOverview, AccountRegisterRequest } from "@/bindings/commands"
 import { accountHttp } from "@/bindings/http-account"
@@ -27,6 +28,71 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { commandErrorCode } from "@/lib/error-message"
 import { notifyCommandError, notifyError, notifySuccess } from "@/lib/notify"
 import { productVersionLabel } from "@/lib/product-version"
+
+const EASE_SETTLE = [0.16, 1, 0.3, 1] as const
+
+type LoginEnterProps = {
+  delay?: number
+  children?: ReactNode
+  className?: string
+} & (
+  | { as?: "div" }
+  | { as: "p" }
+  | ({ as: "img" } & Pick<ComponentProps<"img">, "src" | "alt" | "width" | "height">)
+)
+
+/**
+ * Staggered entrance for the sign-in story. Reduced motion paints in place.
+ * `as` renders the motion element itself so a direct-child selector still matches.
+ */
+function LoginEnter({
+  as = "div",
+  delay = 0,
+  children,
+  className,
+  ...rest
+}: LoginEnterProps) {
+  const reduced = useReducedMotion()
+  const motionProps = reduced
+    ? {}
+    : {
+        initial: { opacity: 0, y: 10 },
+        animate: { opacity: 1, y: 0 },
+        transition: { duration: 0.42, delay, ease: EASE_SETTLE },
+      }
+  if (as === "p") {
+    const Tag = reduced ? "p" : motion.p
+    return (
+      <Tag className={className} {...motionProps}>
+        {children}
+      </Tag>
+    )
+  }
+  if (as === "img") {
+    const Tag = reduced ? "img" : motion.img
+    const { src, alt, width, height } = rest as Extract<LoginEnterProps, { as: "img" }>
+    return <Tag className={className} src={src} alt={alt} width={width} height={height} {...motionProps} />
+  }
+  const Tag = reduced ? "div" : motion.div
+  return (
+    <Tag className={className} {...motionProps}>
+      {children}
+    </Tag>
+  )
+}
+
+/**
+ * Forwards the motion ref onto `Card`, so the card stays a direct child of
+ * `main` and `.login-screen main > [data-slot="card"]` still matches.
+ */
+const LoginCard = motion.create(
+  forwardRef<HTMLDivElement, ComponentProps<typeof Card>>(function LoginCard(
+    { className, ...props },
+    ref,
+  ) {
+    return <Card {...props} ref={ref} className={className} />
+  }),
+)
 
 type LoginScreenProps = {
   onSignedIn: (overview: AccountOverview) => void
@@ -192,12 +258,14 @@ export function LoginScreen({ onSignedIn, onCancel }: LoginScreenProps) {
   }
 
   const versionLabel = productVersionLabel()
+  const reducedMotion = useReducedMotion()
 
   return (
     <div className="login-screen relative grid min-h-svh bg-background lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
       <aside className="c-login-aside flex flex-col border-b border-border bg-card lg:border-b-0 lg:border-r">
         <div className="flex flex-1 flex-col px-6 py-6 sm:px-10 lg:px-12 lg:py-10">
-          <header className="login-masthead login-aside-enter">
+          <LoginEnter>
+          <header className="login-masthead">
             <div className="login-mark">
               <img
                 className="login-mark-icon"
@@ -216,19 +284,30 @@ export function LoginScreen({ onSignedIn, onCancel }: LoginScreenProps) {
               </span>
             ) : null}
           </header>
+          </LoginEnter>
 
           <div className="login-thesis c-login-story">
-            <h1 className="login-statement login-aside-enter">一张图要走的路</h1>
-            <p className="login-statement-end login-aside-enter">
+            <LoginEnter delay={0.07}>
+              <h1 className="login-statement">一张图要走的路</h1>
+            </LoginEnter>
+            <LoginEnter
+              as="p"
+              delay={0.14}
+              className="login-statement-end"
+            >
               按需印刷，上架到送达
-            </p>
-            <ol className="c-login-steps login-aside-enter">
-              <li>选品</li>
-              <li>导图</li>
-              <li>上架</li>
-            </ol>
-            <img
-              className="c-login-photo login-aside-enter"
+            </LoginEnter>
+            <LoginEnter delay={0.21}>
+              <ol className="c-login-steps">
+                <li>选品</li>
+                <li>导图</li>
+                <li>上架</li>
+              </ol>
+            </LoginEnter>
+            <LoginEnter
+              as="img"
+              delay={0.28}
+              className="c-login-photo"
               src="/site/hero-tote.jpg"
               alt="植物图案从设计稿应用到帆布包的商品效果"
             />
@@ -249,7 +328,16 @@ export function LoginScreen({ onSignedIn, onCancel }: LoginScreenProps) {
             返回
           </Button>
         ) : null}
-        <Card className="login-panel-enter w-full max-w-sm">
+        <LoginCard
+          className="w-full max-w-sm"
+          {...(reducedMotion
+            ? {}
+            : {
+                initial: { opacity: 0, x: 14, filter: "blur(2px)" },
+                animate: { opacity: 1, x: 0, filter: "blur(0px)" },
+                transition: { duration: 0.56, delay: 0.12, ease: EASE_SETTLE },
+              })}
+        >
           <CardHeader className="items-center text-center">
             <CardTitle className="text-xl tracking-[-0.02em]">
               {cardTitle}
@@ -432,7 +520,7 @@ export function LoginScreen({ onSignedIn, onCancel }: LoginScreenProps) {
               </Button>
             </div>
           </CardContent>
-        </Card>
+        </LoginCard>
       </main>
     </div>
   )
