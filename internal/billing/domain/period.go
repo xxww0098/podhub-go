@@ -66,7 +66,9 @@ func Prorate(unit int64, from, to time.Time) int64 {
 		if days <= 0 {
 			continue
 		}
-		acc.Add(acc, big.NewRat(days*unit, int64(daysInMonth(seg))))
+		fraction := big.NewRat(days, int64(daysInMonth(seg)))
+		fraction.Mul(fraction, new(big.Rat).SetInt64(unit))
+		acc.Add(acc, fraction)
 	}
 	return roundHalfUp(acc)
 }
