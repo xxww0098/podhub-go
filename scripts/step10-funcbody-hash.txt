@@ -1,0 +1,10 @@
+# step 10 funcbodyhash, before=79c0887
+# moved bodies
+SAME CostUnits	decl 6b17c684cdf88678	body ed7fd09da0dbcbf6
+SAME Claimed.Lease	decl a52a8b7f411ed4e5	body 3a597029461df8e4
+SAME LoadEnabledBannedTags	decl 4e963b08d2f10e8f	body 00ec374e56b8fc8e
+SAME init	decl a815b427a5af4b76	body db4a27e47e9c68d5
+# deleted one-line forward, implementation unchanged elsewhere: MISSING EnabledBannedTags
+# deleted one-line forward, implementation unchanged elsewhere: MISSING InvalidateBannedTags
+# deleted one-line forward, implementation unchanged elsewhere: MISSING MountBannedWrites
+SAME SetBannedAudit	decl 84023e36b096d780	body 4c8137f2291fa364

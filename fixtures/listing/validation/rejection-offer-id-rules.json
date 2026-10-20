@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "kind": "listing-validation-rejection",
+  "provenance": [
+    "fixtures/listing/validation/success-normalized.json"
+  ],
+  "category_key": "decorative-wall-art-40x50",
+  "description_category_id": 17027906,
+  "type_id": 91976,
+  "field_values": {
+    "offer_id": "装饰画/非法货号",
+    "name": "Настенная картина",
+    "price": "90",
+    "barcode": "",
+    "description": "",
+    "brand": "NoBrand",
+    "merge": "group-a",
+    "width": "400",
+    "height": "25",
+    "depth": "300",
+    "weight": "310"
+  },
+  "expected_issues": [
+    { "field_key": "offer_id", "code": "offer_id_charset" }
+  ]
+}

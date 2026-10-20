@@ -1,0 +1,5 @@
+{"items":[
+    {"order_state":"ORDER_STATE_IN_TRANSIT","count":4},
+    {"order_state":"ORDER_STATE_READY_TO_SUPPLY","count":2},
+    {"order_state":"ORDER_STATE_COMPLETED","count":0}
+]}

@@ -1,0 +1,81 @@
+{
+  "ai": {
+    "candidates": [],
+    "modelVersion": "",
+    "promptSha256": "",
+    "requestId": ""
+  },
+  "categoryKey": "golden-core-ops",
+  "descriptionCategoryId": 900001,
+  "draft": {
+    "complex_values": [
+      {
+        "complex_id": 10,
+        "items": [
+          {
+            "item_id": "item-b",
+            "values": {
+              "size": {
+                "kind": "text",
+                "value": "大"
+              }
+            }
+          },
+          {
+            "item_id": "item-a",
+            "values": {
+              "size": {
+                "kind": "text",
+                "value": "小"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "values": {}
+  },
+  "failureLog": [],
+  "fieldOrigins": [
+    {
+      "address": {
+        "field_key": "size",
+        "group_key": "10",
+        "item_id": "item-b",
+        "kind": "complex",
+        "value_index": null
+      },
+      "kind": "manual",
+      "source_ref": null,
+      "updated_at_ms": 1700000000000
+    },
+    {
+      "address": {
+        "field_key": "size",
+        "group_key": "10",
+        "item_id": "item-a",
+        "kind": "complex",
+        "value_index": null
+      },
+      "kind": "manual",
+      "source_ref": null,
+      "updated_at_ms": 1700000000000
+    }
+  ],
+  "handEditedKeys": [],
+  "language": "ru",
+  "media": {
+    "images": [],
+    "videos": []
+  },
+  "normalizedSnapshot": null,
+  "renderEvidence": null,
+  "schemaRevision": "golden-v1",
+  "source": {
+    "assetId": "",
+    "fileName": "variant.psd",
+    "sha256": "sha256:source-complex"
+  },
+  "typeId": 5001,
+  "validationIssues": []
+}

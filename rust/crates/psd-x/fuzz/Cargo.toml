@@ -1,0 +1,57 @@
+[package]
+name = "psdx-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+psdx = { path = ".." }
+
+[[bin]]
+name = "read_psd"
+path = "fuzz_targets/read_psd.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "read_abr"
+path = "fuzz_targets/read_abr.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "read_csh"
+path = "fuzz_targets/read_csh.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "read_ase"
+path = "fuzz_targets/read_ase.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_engine_data"
+path = "fuzz_targets/parse_engine_data.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_engine_data2"
+path = "fuzz_targets/decode_engine_data2.rs"
+test = false
+doc = false
+bench = false
+
+# Standalone — not a workspace member (see root Cargo.toml exclude).
+[workspace]

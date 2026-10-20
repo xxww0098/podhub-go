@@ -1,0 +1,412 @@
+[
+  {
+    "name": "accept dispatched while awaiting_setup",
+    "action": "accept",
+    "dispatch": "dispatched",
+    "order": "awaiting_setup",
+    "member": true,
+    "found": true,
+    "want": "accepted",
+    "err": ""
+  },
+  {
+    "name": "accept idempotent while awaiting_setup",
+    "action": "accept",
+    "dispatch": "accepted",
+    "order": "awaiting_setup",
+    "member": true,
+    "found": true,
+    "want": "accepted",
+    "err": ""
+  },
+  {
+    "name": "reject dispatched while awaiting_setup",
+    "action": "reject",
+    "dispatch": "dispatched",
+    "order": "awaiting_setup",
+    "member": true,
+    "found": true,
+    "want": "rejected",
+    "err": ""
+  },
+  {
+    "name": "ship accepted while awaiting_setup",
+    "action": "ship",
+    "dispatch": "accepted",
+    "order": "awaiting_setup",
+    "member": true,
+    "found": true,
+    "want": "shipped",
+    "err": ""
+  },
+  {
+    "name": "accept dispatched while ready",
+    "action": "accept",
+    "dispatch": "dispatched",
+    "order": "ready",
+    "member": true,
+    "found": true,
+    "want": "accepted",
+    "err": ""
+  },
+  {
+    "name": "accept idempotent while ready",
+    "action": "accept",
+    "dispatch": "accepted",
+    "order": "ready",
+    "member": true,
+    "found": true,
+    "want": "accepted",
+    "err": ""
+  },
+  {
+    "name": "reject dispatched while ready",
+    "action": "reject",
+    "dispatch": "dispatched",
+    "order": "ready",
+    "member": true,
+    "found": true,
+    "want": "rejected",
+    "err": ""
+  },
+  {
+    "name": "ship accepted while ready",
+    "action": "ship",
+    "dispatch": "accepted",
+    "order": "ready",
+    "member": true,
+    "found": true,
+    "want": "shipped",
+    "err": ""
+  },
+  {
+    "name": "accept dispatched while dispatched",
+    "action": "accept",
+    "dispatch": "dispatched",
+    "order": "dispatched",
+    "member": true,
+    "found": true,
+    "want": "accepted",
+    "err": ""
+  },
+  {
+    "name": "accept idempotent while dispatched",
+    "action": "accept",
+    "dispatch": "accepted",
+    "order": "dispatched",
+    "member": true,
+    "found": true,
+    "want": "accepted",
+    "err": ""
+  },
+  {
+    "name": "reject dispatched while dispatched",
+    "action": "reject",
+    "dispatch": "dispatched",
+    "order": "dispatched",
+    "member": true,
+    "found": true,
+    "want": "rejected",
+    "err": ""
+  },
+  {
+    "name": "ship accepted while dispatched",
+    "action": "ship",
+    "dispatch": "accepted",
+    "order": "dispatched",
+    "member": true,
+    "found": true,
+    "want": "shipped",
+    "err": ""
+  },
+  {
+    "name": "accept dispatched while in_production",
+    "action": "accept",
+    "dispatch": "dispatched",
+    "order": "in_production",
+    "member": true,
+    "found": true,
+    "want": "accepted",
+    "err": ""
+  },
+  {
+    "name": "accept idempotent while in_production",
+    "action": "accept",
+    "dispatch": "accepted",
+    "order": "in_production",
+    "member": true,
+    "found": true,
+    "want": "accepted",
+    "err": ""
+  },
+  {
+    "name": "reject dispatched while in_production",
+    "action": "reject",
+    "dispatch": "dispatched",
+    "order": "in_production",
+    "member": true,
+    "found": true,
+    "want": "rejected",
+    "err": ""
+  },
+  {
+    "name": "ship accepted while in_production",
+    "action": "ship",
+    "dispatch": "accepted",
+    "order": "in_production",
+    "member": true,
+    "found": true,
+    "want": "shipped",
+    "err": ""
+  },
+  {
+    "name": "accept dispatched while shipped",
+    "action": "accept",
+    "dispatch": "dispatched",
+    "order": "shipped",
+    "member": true,
+    "found": true,
+    "want": "accepted",
+    "err": ""
+  },
+  {
+    "name": "accept idempotent while shipped",
+    "action": "accept",
+    "dispatch": "accepted",
+    "order": "shipped",
+    "member": true,
+    "found": true,
+    "want": "accepted",
+    "err": ""
+  },
+  {
+    "name": "reject dispatched while shipped",
+    "action": "reject",
+    "dispatch": "dispatched",
+    "order": "shipped",
+    "member": true,
+    "found": true,
+    "want": "rejected",
+    "err": ""
+  },
+  {
+    "name": "ship accepted while shipped",
+    "action": "ship",
+    "dispatch": "accepted",
+    "order": "shipped",
+    "member": true,
+    "found": true,
+    "want": "shipped",
+    "err": ""
+  },
+  {
+    "name": "missing dispatch",
+    "action": "accept",
+    "dispatch": "dispatched",
+    "order": "ready",
+    "member": true,
+    "found": false,
+    "want": "",
+    "err": "not_found"
+  },
+  {
+    "name": "missing dispatch beats membership",
+    "action": "accept",
+    "dispatch": "dispatched",
+    "order": "ready",
+    "member": false,
+    "found": false,
+    "want": "",
+    "err": "not_found"
+  },
+  {
+    "name": "not a member",
+    "action": "accept",
+    "dispatch": "dispatched",
+    "order": "ready",
+    "member": false,
+    "found": true,
+    "want": "",
+    "err": "forbidden"
+  },
+  {
+    "name": "not a member even if order is terminal",
+    "action": "reject",
+    "dispatch": "dispatched",
+    "order": "cancelled",
+    "member": false,
+    "found": true,
+    "want": "",
+    "err": "forbidden"
+  },
+  {
+    "name": "order row missing",
+    "action": "accept",
+    "dispatch": "dispatched",
+    "order": "",
+    "member": true,
+    "found": true,
+    "want": "",
+    "err": "not_found"
+  },
+  {
+    "name": "accept cancelled order",
+    "action": "accept",
+    "dispatch": "dispatched",
+    "order": "cancelled",
+    "member": true,
+    "found": true,
+    "want": "",
+    "err": "terminal"
+  },
+  {
+    "name": "accept done order",
+    "action": "accept",
+    "dispatch": "accepted",
+    "order": "done",
+    "member": true,
+    "found": true,
+    "want": "",
+    "err": "terminal"
+  },
+  {
+    "name": "accept rejected packet",
+    "action": "accept",
+    "dispatch": "rejected",
+    "order": "ready",
+    "member": true,
+    "found": true,
+    "want": "",
+    "err": "terminal"
+  },
+  {
+    "name": "accept shipped packet",
+    "action": "accept",
+    "dispatch": "shipped",
+    "order": "shipped",
+    "member": true,
+    "found": true,
+    "want": "",
+    "err": "terminal"
+  },
+  {
+    "name": "accept cancelled packet",
+    "action": "accept",
+    "dispatch": "cancelled",
+    "order": "ready",
+    "member": true,
+    "found": true,
+    "want": "",
+    "err": "terminal"
+  },
+  {
+    "name": "reject is not idempotent",
+    "action": "reject",
+    "dispatch": "rejected",
+    "order": "ready",
+    "member": true,
+    "found": true,
+    "want": "",
+    "err": "terminal"
+  },
+  {
+    "name": "reject accepted packet",
+    "action": "reject",
+    "dispatch": "accepted",
+    "order": "in_production",
+    "member": true,
+    "found": true,
+    "want": "",
+    "err": "terminal"
+  },
+  {
+    "name": "reject shipped packet",
+    "action": "reject",
+    "dispatch": "shipped",
+    "order": "shipped",
+    "member": true,
+    "found": true,
+    "want": "",
+    "err": "terminal"
+  },
+  {
+    "name": "reject cancelled order",
+    "action": "reject",
+    "dispatch": "dispatched",
+    "order": "cancelled",
+    "member": true,
+    "found": true,
+    "want": "",
+    "err": "terminal"
+  },
+  {
+    "name": "reject done order",
+    "action": "reject",
+    "dispatch": "dispatched",
+    "order": "done",
+    "member": true,
+    "found": true,
+    "want": "",
+    "err": "terminal"
+  },
+  {
+    "name": "ship dispatched packet",
+    "action": "ship",
+    "dispatch": "dispatched",
+    "order": "dispatched",
+    "member": true,
+    "found": true,
+    "want": "",
+    "err": "terminal"
+  },
+  {
+    "name": "ship is not idempotent",
+    "action": "ship",
+    "dispatch": "shipped",
+    "order": "shipped",
+    "member": true,
+    "found": true,
+    "want": "",
+    "err": "terminal"
+  },
+  {
+    "name": "ship rejected packet",
+    "action": "ship",
+    "dispatch": "rejected",
+    "order": "ready",
+    "member": true,
+    "found": true,
+    "want": "",
+    "err": "terminal"
+  },
+  {
+    "name": "ship cancelled order",
+    "action": "ship",
+    "dispatch": "accepted",
+    "order": "cancelled",
+    "member": true,
+    "found": true,
+    "want": "",
+    "err": "terminal"
+  },
+  {
+    "name": "ship done order",
+    "action": "ship",
+    "dispatch": "accepted",
+    "order": "done",
+    "member": true,
+    "found": true,
+    "want": "",
+    "err": "terminal"
+  },
+  {
+    "name": "nudge is not a supplier function",
+    "action": "nudge",
+    "dispatch": "dispatched",
+    "order": "dispatched",
+    "member": true,
+    "found": true,
+    "want": "",
+    "err": "unknown_action"
+  }
+]

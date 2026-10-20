@@ -1,0 +1,99 @@
+{
+  "schemaVersion": 1,
+  "corpusId": "tiny-smart-mask-warp-groups-psd",
+  "capturedAt": "2026-08-02",
+  "source": {
+    "path": "synthetic/tiny-smart-mask-warp-groups.psd",
+    "bytes": 20520,
+    "sha256": "sha256:cf9170568835190367fa91751306d9ff970c6515a795bbe2bd314af6bb8f667a"
+  },
+  "structure": {
+    "canvas": {
+      "width": 64,
+      "height": 96,
+      "bitsPerChannel": 8
+    },
+    "features": {
+      "layers": 10,
+      "groups": 2,
+      "smartObjects": 2,
+      "masks": 2,
+      "warpedSmartObjects": 2,
+      "blendModes": {
+        "pass through": 2,
+        "normal": 4,
+        "multiply": 2,
+        "screen": 2
+      }
+    },
+    "topGroups": [
+      {
+        "name": "front",
+        "bounds": {
+          "left": 4,
+          "top": 4,
+          "right": 60,
+          "bottom": 46
+        }
+      },
+      {
+        "name": "back",
+        "bounds": {
+          "left": 4,
+          "top": 50,
+          "right": 60,
+          "bottom": 92
+        }
+      }
+    ],
+    "skippedTopGroups": [],
+    "slots": [
+      {
+        "id": "20953ddb-9391-11ec-b4f1-c15674f50bc4",
+        "name": "synthetic-art.psb",
+        "srcW": 24,
+        "srcH": 24,
+        "instances": 2,
+        "documentInstances": 2,
+        "exportedInstances": 2,
+        "depth": 0,
+        "container": null,
+        "parentId": null,
+        "nested": true
+      }
+    ]
+  },
+  "render": {
+    "input": {
+      "path": "synthetic/replacement-transparent-edges.png",
+      "sha256": "sha256:25e454712cf2b0423a53a69db8ff4c982da77e375e685c88b39f92f25b2cfeb8",
+      "fit": "cover",
+      "slotSelection": "auto",
+      "exportBounds": "trim",
+      "exportScale": 1,
+      "presentationQuality": 90
+    },
+    "templateFingerprint": "sha256:cf9170568835190367fa91751306d9ff970c6515a795bbe2bd314af6bb8f667a",
+    "outputDirectoryName": "replacement-transparent-edges",
+    "slices": [
+      {
+        "groupName": "front",
+        "index": 0,
+        "path": "goldens/tiny-smart-mask-warp-groups-psd/replacement-transparent-edges/replacement-transparent-edges-1.jpg",
+        "format": "jpg",
+        "width": 56,
+        "height": 42,
+        "sha256": "sha256:bd83a8ffd112ba7786ec3e83c6ff926bd08d255a174e4aae28215d20baa110ec"
+      },
+      {
+        "groupName": "back",
+        "index": 1,
+        "path": "goldens/tiny-smart-mask-warp-groups-psd/replacement-transparent-edges/replacement-transparent-edges-2.jpg",
+        "format": "jpg",
+        "width": 56,
+        "height": 42,
+        "sha256": "sha256:1042d7828f6f281d0b9eca0136812286e6b9f1f871f19c72b3e25c8e450f3a82"
+      }
+    ]
+  }
+}

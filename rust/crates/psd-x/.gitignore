@@ -1,0 +1,14 @@
+# Rust build artifacts — the workspace-root `target/` rule already covers this
+# crate; this unanchored rule also covers standalone builds such as the
+# non-member fuzz/ package.
+target/
+
+# Cargo.lock is tracked at the workspace root — not ignored for this crate —
+# and fuzz/Cargo.lock is committed on purpose.
+
+# Editor / OS junk
+*.swp
+*.rs.bk
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,9 @@
+package: identitygen
+output: internal/identity/http/gen/openapi.gen.go
+generate:
+  models: true
+  chi-server: true
+output-options:
+  include-tags:
+    - auth
+    - workspaces

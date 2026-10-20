@@ -1,0 +1,55 @@
+{
+  "card": {
+    "aiFieldPolicy": {
+      "allowed_field_keys": [
+        "name",
+        "price",
+        "tags"
+      ],
+      "protected_field_keys": []
+    },
+    "aiPromptId": "prompt-golden",
+    "aiPromptSha256": "sha256:prompt",
+    "categoryKey": "golden-core-ops",
+    "defaults": {
+      "complex_values": [],
+      "values": {
+        "offer_id": {
+          "kind": "text",
+          "value": "ART-DEFAULT"
+        }
+      }
+    },
+    "descriptionCategoryId": 900001,
+    "language": "ru",
+    "psdTemplateAssetId": "asset-golden",
+    "psdTemplateFileName": "template.psd",
+    "psdTemplateSha256": "sha256:tpl",
+    "queue": {
+      "frozenRowIds": [],
+      "nextPosition": 0,
+      "paused": false,
+      "stopAfterCurrent": false
+    },
+    "typeId": 5001,
+    "videos": []
+  },
+  "source": {
+    "assetId": "",
+    "fileName": "装饰画.psd",
+    "sha256": "sha256:source-cn"
+  },
+  "suppliedDraft": {
+    "complex_values": [],
+    "values": {
+      "name": {
+        "kind": "text",
+        "value": "装饰画 中文名称"
+      },
+      "price": {
+        "kind": "text",
+        "value": "199.90"
+      }
+    }
+  }
+}

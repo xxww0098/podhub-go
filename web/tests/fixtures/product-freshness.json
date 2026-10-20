@@ -1,0 +1,71 @@
+{
+  "reconcilePeriodMs": 14400000,
+  "expiredAfterMs": 259200000,
+  "failureExpiresAt": 3,
+  "cases": [
+    {
+      "name": "never",
+      "referenceMs": null,
+      "periodMs": 14400000,
+      "failures": 0,
+      "nowMs": 1800000000000,
+      "expected": "never"
+    },
+    {
+      "name": "fresh just synced",
+      "referenceMs": 1799999999000,
+      "periodMs": 14400000,
+      "failures": 0,
+      "nowMs": 1800000000000,
+      "expected": "fresh"
+    },
+    {
+      "name": "fresh under two periods",
+      "referenceMs": 1799971200001,
+      "periodMs": 14400000,
+      "failures": 0,
+      "nowMs": 1800000000000,
+      "expected": "fresh"
+    },
+    {
+      "name": "stale past two periods",
+      "referenceMs": 1799971199999,
+      "periodMs": 14400000,
+      "failures": 0,
+      "nowMs": 1800000000000,
+      "expected": "stale"
+    },
+    {
+      "name": "stale near three days",
+      "referenceMs": 1799740800001,
+      "periodMs": 14400000,
+      "failures": 0,
+      "nowMs": 1800000000000,
+      "expected": "stale"
+    },
+    {
+      "name": "expired at three days",
+      "referenceMs": 1799740800000,
+      "periodMs": 14400000,
+      "failures": 0,
+      "nowMs": 1800000000000,
+      "expected": "expired"
+    },
+    {
+      "name": "expired long past",
+      "referenceMs": 1797408000000,
+      "periodMs": 14400000,
+      "failures": 0,
+      "nowMs": 1800000000000,
+      "expected": "expired"
+    },
+    {
+      "name": "failure streak expires early",
+      "referenceMs": 1799999999000,
+      "periodMs": 14400000,
+      "failures": 3,
+      "nowMs": 1800000000000,
+      "expected": "expired"
+    }
+  ]
+}

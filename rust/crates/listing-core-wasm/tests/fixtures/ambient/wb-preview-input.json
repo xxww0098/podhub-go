@@ -1,0 +1,147 @@
+[
+  {
+    "id": "unicode-escaping-ordered-variants",
+    "material": {
+      "subjectId": 100, "language": "ru",
+      "catalog": {
+        "contentDigest": "wb-native-golden-100", "usable": true,
+        "fields": [
+          { "id": 7, "name": "Текст", "required": true, "valueKind": 1, "maxCount": 3, "popular": true, "hasFilter": true, "isVariable": true },
+          { "id": 20, "name": "Число", "required": false, "valueKind": 4, "maxCount": 1, "unitName": "кг", "popular": false, "hasFilter": false, "isVariable": false },
+          { "id": 40, "name": "Default", "required": false, "valueKind": 1, "maxCount": 1, "popular": false, "hasFilter": false, "isVariable": false }
+        ]
+      },
+      "defaults": { "values": { "7": ["основа"], "40": ["保留默认"] }, "revision": 2, "validatedCatalogDigest": "wb-native-golden-100" }
+    },
+    "config": {
+      "subjectId": 100, "language": "ru",
+      "variants": [
+        {
+          "vendorCode": "АРТ-\"雪\"\\путь", "title": "Плакат 雪 😀", "brand": "Марка \"雪\"\\",
+          "description": "Строка \"один\"\\путь\n第二行 😀",
+          "kizMarked": true, "wholesale": { "enabled": true, "quantum": 5 },
+          "dimensions": { "length": 32, "width": 24, "height": 2, "weightBrutto": 0.125 },
+          "sizes": [
+            { "techSize": "L", "wbSize": "48", "price": 1500, "skus": ["0000123", "条码\\\"1"] },
+            { "techSize": "M", "wbSize": "46", "price": 1200, "skus": ["0000456"] }
+          ],
+          "documents": {
+            "excludeDocuments": false,
+            "items": [{ "type": 2, "number": "ДОК-\"雪\"\\", "productNumber": "P-7", "tradeName": "印刷品", "applicant": "Fixture", "startDate": "2026-01-01", "endDate": "2027-01-01", "isEndless": false }]
+          },
+          "characteristics": { "7": ["синий \"夜\"", "path\\leaf\nnext 😀"], "20": 1.25 },
+          "cleared": [40]
+        },
+        {
+          "vendorCode": "SECOND-零", "title": "Zero \"0\"", "description": "第二变体\nzero\\",
+          "kizMarked": false, "wholesale": { "enabled": false, "quantum": 0 },
+          "dimensions": { "length": 0, "width": 1, "height": 2, "weightBrutto": 0 },
+          "sizes": [{ "techSize": "0", "price": 0, "skus": ["0000000"] }],
+          "characteristics": { "7": ["二", "three\\lines\n"], "20": 0 }
+        }
+      ]
+    }
+  },
+  {
+    "id": "defaults-manual-cleared-zero",
+    "material": {
+      "subjectId": 101, "language": "en",
+      "catalog": {
+        "contentDigest": "wb-native-golden-101", "usable": true,
+        "fields": [
+          { "id": 7, "name": "Required", "required": true, "valueKind": 1, "maxCount": 1, "popular": false, "hasFilter": false, "isVariable": false },
+          { "id": 20, "name": "Number", "required": false, "valueKind": 4, "maxCount": 1, "popular": false, "hasFilter": false, "isVariable": false },
+          { "id": 40, "name": "Cleared", "required": false, "valueKind": 1, "maxCount": 1, "popular": false, "hasFilter": false, "isVariable": false }
+        ]
+      },
+      "defaults": { "values": { "7": ["inherited 雪"], "20": 9.5, "40": ["remove"] }, "revision": 1, "validatedCatalogDigest": "wb-native-golden-101" }
+    },
+    "config": {
+      "subjectId": 101, "language": "en",
+      "variants": [{ "vendorCode": "ZERO", "documents": { "excludeDocuments": true }, "characteristics": { "20": 0 }, "cleared": [40] }]
+    }
+  },
+  {
+    "id": "blank-text-variant-coordinate",
+    "material": {
+      "subjectId": 200, "language": "ru",
+      "catalog": {
+        "contentDigest": "wb-native-golden-200", "usable": true,
+        "fields": [{ "id": 7, "name": "Required", "required": true, "valueKind": 1, "maxCount": 3, "popular": false, "hasFilter": false, "isVariable": false }]
+      },
+      "defaults": null
+    },
+    "config": {
+      "subjectId": 200, "language": "ru",
+      "variants": [
+        { "vendorCode": "GOOD", "characteristics": { "7": ["blue"] } },
+        { "vendorCode": "BLANK", "characteristics": { "7": [" \n\t"] } }
+      ]
+    }
+  },
+  {
+    "id": "cleared-required",
+    "material": {
+      "subjectId": 200, "language": "ru",
+      "catalog": {
+        "contentDigest": "wb-native-golden-200", "usable": true,
+        "fields": [{ "id": 7, "name": "Required", "required": true, "valueKind": 1, "maxCount": 3, "popular": false, "hasFilter": false, "isVariable": false }]
+      },
+      "defaults": { "values": { "7": ["default"] }, "revision": 1, "validatedCatalogDigest": "wb-native-golden-200" }
+    },
+    "config": {
+      "subjectId": 200, "language": "ru",
+      "variants": [{ "vendorCode": "CLEAR", "characteristics": { "7": ["manual"] }, "cleared": [7] }]
+    }
+  },
+  {
+    "id": "unknown-characteristic",
+    "material": {
+      "subjectId": 201, "language": "zh",
+      "catalog": {
+        "contentDigest": "wb-native-golden-201", "usable": true,
+        "fields": [{ "id": 7, "name": "文本", "required": true, "valueKind": 1, "maxCount": 3, "popular": false, "hasFilter": false, "isVariable": false }]
+      },
+      "defaults": null
+    },
+    "config": {
+      "subjectId": 201, "language": "zh",
+      "variants": [{ "vendorCode": "UNKNOWN", "characteristics": { "7": ["blue"], "999": ["unknown"] } }]
+    }
+  },
+  {
+    "id": "coordinate-mismatch",
+    "material": {
+      "subjectId": 200, "language": "ru",
+      "catalog": {
+        "contentDigest": "wb-native-golden-200", "usable": true,
+        "fields": [{ "id": 7, "name": "Required", "required": true, "valueKind": 1, "maxCount": 3, "popular": false, "hasFilter": false, "isVariable": false }]
+      },
+      "defaults": null
+    },
+    "config": {
+      "subjectId": 202, "language": "en",
+      "variants": [{ "vendorCode": "MISMATCH", "characteristics": { "7": ["blue"] } }]
+    }
+  },
+  {
+    "id": "catalog-stale-and-defaults-stale",
+    "material": {
+      "subjectId": 200, "language": "ru",
+      "catalog": {
+        "contentDigest": "wb-native-golden-200", "usable": false,
+        "fields": [{ "id": 7, "name": "Required", "required": true, "valueKind": 1, "maxCount": 3, "popular": false, "hasFilter": false, "isVariable": false }]
+      },
+      "defaults": { "values": { "7": ["old"] }, "revision": 1, "validatedCatalogDigest": "wb-native-golden-old" }
+    },
+    "config": {
+      "subjectId": 200, "language": "ru",
+      "variants": [{ "vendorCode": "STALE", "characteristics": { "7": ["manual"] } }]
+    }
+  },
+  {
+    "id": "catalog-unavailable",
+    "material": { "subjectId": 200, "language": "ru", "catalog": null, "defaults": null },
+    "config": { "subjectId": 200, "language": "ru", "variants": [] }
+  }
+]

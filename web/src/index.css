@@ -1,0 +1,1018 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+  LEDGER — the visual world of the PodHub desktop client.
+
+  Ground/figure: warm paper (`#FFFFFF` content over a `#F7F7F5` sidebar).
+  Elevation is a hairline; only true overlays cast a shadow. Keep one token
+  framework for the application.
+
+  Color is rationed. Near-black ink (`#191919`) carries every primary action. One
+  accent (`#2383E2`, Notion blue) carries selection, focus and "in flight".
+  Everything else saturated is a claim about an external effect, and there
+  are exactly six of those.
+
+  The sixth is the reason this palette is not a stock dashboard palette.
+  Result Unknown is not a warning; it is the absence of a fact. It gets its own
+  hue and a survey hatch, so it can never be misread as a mild failure.
+*/
+
+:root {
+  color-scheme: light;
+
+  /* density 8 (Dense / Dashboard) — catalog spacing scale */
+  --space-xs: 2px;
+  --space-sm: 4px;
+  --space-md: 8px;
+  --space-lg: 12px;
+  --space-xl: 16px;
+  --space-2xl: 24px;
+  --space-3xl: 32px;
+  --header-height: 3.5rem;
+  --page-pad: 16px;
+  --page-gap: 16px;
+  --page-max: 1520px;
+
+  /* ---- ground: warm paper, Notion-style ---- */
+  --background: #ffffff;
+  --foreground: #191919;
+  --card: #ffffff;
+  --card-foreground: var(--foreground);
+  --popover: #ffffff;
+  --popover-foreground: var(--foreground);
+  /* The sidebar is the desk: a warm gray ground the white sheet floats on. */
+  --sidebar: #ededed;
+  --sidebar-foreground: var(--foreground);
+
+  /* recessed fill used inside panels — never as a page ground */
+  --muted: #f1f1ef;
+  --muted-foreground: #2f2f2d;
+  --faint-foreground: #4a4946;
+
+  --secondary: #f1f1ef;
+  --secondary-foreground: #2b2a27;
+  --accent: #f1f1ef;
+  --accent-foreground: var(--foreground);
+
+  /* ---- ink: every primary action ---- */
+  --primary: #191919;
+  --primary-foreground: #ffffff;
+
+  /* ---- brand: selection, focus, in-flight (Notion blue family) ---- */
+  --brand: #2383e2;
+  --brand-foreground: #ffffff;
+  --brand-soft: color-mix(in srgb, #2383e2 12%, #ffffff);
+  --brand-ink: #337ea9;
+
+  /* ---- store assignment: categorical, never receipt status ---- */
+  --store-blue: oklch(0.56 0.17 245);
+  --store-blue-ink: oklch(0.43 0.16 245);
+  --store-amber: oklch(0.66 0.15 72);
+  --store-amber-ink: oklch(0.45 0.11 72);
+  --store-teal: oklch(0.58 0.12 184);
+  --store-teal-ink: oklch(0.42 0.095 184);
+  --store-magenta: oklch(0.61 0.15 330);
+  --store-magenta-ink: oklch(0.44 0.12 330);
+  --store-coral: oklch(0.62 0.17 28);
+  --store-coral-ink: oklch(0.44 0.14 28);
+  --store-indigo: oklch(0.56 0.16 286);
+  --store-indigo-ink: oklch(0.42 0.14 286);
+  --store-olive: oklch(0.61 0.12 128);
+  --store-olive-ink: oklch(0.42 0.095 128);
+  --store-cyan: oklch(0.59 0.13 215);
+  --store-cyan-ink: oklch(0.42 0.105 215);
+
+  /* ---- plan grades: categorical entitlement, never receipt status ---- */
+  --plan-lite: oklch(0.55 0.01 265);
+  --plan-lite-soft: oklch(0.955 0.004 95);
+  --plan-lite-ink: oklch(0.42 0.012 265);
+  --plan-pro: oklch(0.52 0.13 252);
+  --plan-pro-soft: oklch(0.948 0.038 252);
+  --plan-pro-ink: oklch(0.38 0.12 252);
+  --plan-max: oklch(0.5 0.13 275);
+  --plan-max-soft: oklch(0.948 0.042 275);
+  --plan-max-ink: oklch(0.38 0.12 275);
+  --plan-ultra: oklch(0.58 0.12 52);
+  --plan-ultra-soft: oklch(0.95 0.055 52);
+  --plan-ultra-ink: oklch(0.4 0.1 52);
+
+  /* ---- team identity: categorical, never receipt status or plan grade ----
+     Six hue-wheel slots, assigned by team id. Each slot carries the solid tile
+     fill (tone), the initials on that fill (mark), and the soft/ink pair for
+     tinted surfaces. Hues avoid the plan grades and Cabinet Blue; the warm and
+     blue slots sit near attest/plan hues but only ever ship as solid identity
+     tiles, never as dots, chips or fills, so shape carries the difference. */
+  --team-rose: oklch(0.54 0.19 352);
+  --team-rose-mark: oklch(0.99 0 0);
+  --team-rose-soft: oklch(0.945 0.048 352);
+  --team-rose-ink: oklch(0.44 0.15 352);
+  --team-marigold: oklch(0.55 0.125 62);
+  --team-marigold-mark: oklch(0.99 0 0);
+  --team-marigold-soft: oklch(0.95 0.055 62);
+  --team-marigold-ink: oklch(0.43 0.1 62);
+  --team-lime: oklch(0.55 0.12 110);
+  --team-lime-mark: oklch(0.99 0 0);
+  --team-lime-soft: oklch(0.945 0.05 110);
+  --team-lime-ink: oklch(0.42 0.1 110);
+  --team-teal: oklch(0.54 0.1 178);
+  --team-teal-mark: oklch(0.99 0 0);
+  --team-teal-soft: oklch(0.945 0.04 178);
+  --team-teal-ink: oklch(0.42 0.085 178);
+  --team-azure: oklch(0.55 0.12 240);
+  --team-azure-mark: oklch(0.99 0 0);
+  --team-azure-soft: oklch(0.945 0.042 238);
+  --team-azure-ink: oklch(0.4 0.13 238);
+  --team-orchid: oklch(0.52 0.17 316);
+  --team-orchid-mark: oklch(0.99 0 0);
+  --team-orchid-soft: oklch(0.94 0.048 316);
+  --team-orchid-ink: oklch(0.42 0.14 316);
+
+  --border: #e9e9e6;
+  --border-strong: #d6d6d3;
+  --input: #e9e9e6;
+  --ring: #2383e2;
+
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+
+  /* ---- receipt truth: the six states an external effect can be in ----
+     idle      queued        nothing has been claimed yet
+     flight    dispatching   in motion, outcome not yet observable
+     good      succeeded / reconciled
+     bad       failed / conflict
+     unknown   result_unknown — not a fact, not a failure
+     attest    operator_attested — a human asserted it, not the ledger  */
+  --st-idle: oklch(0.6 0.012 75);
+  --st-idle-soft: oklch(0.958 0.004 75);
+  --st-idle-ink: oklch(0.44 0.013 75);
+
+  --st-flight: #2383e2;
+  --st-flight-soft: color-mix(in srgb, #2383e2 12%, #ffffff);
+  --st-flight-ink: #337ea9;
+
+  --st-good: oklch(0.575 0.142 156);
+  --st-good-soft: oklch(0.955 0.04 156);
+  --st-good-ink: oklch(0.45 0.12 156);
+
+  --st-bad: oklch(0.565 0.203 26);
+  --st-bad-soft: oklch(0.958 0.032 26);
+  --st-bad-ink: oklch(0.472 0.185 26);
+
+  --st-unknown: oklch(0.53 0.19 302);
+  --st-unknown-soft: oklch(0.955 0.035 302);
+  --st-unknown-ink: oklch(0.448 0.17 302);
+
+  --st-attest: oklch(0.63 0.14 72);
+  --st-attest-soft: oklch(0.958 0.048 72);
+  --st-attest-ink: oklch(0.472 0.116 72);
+
+  --radius: 0.625rem;
+
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: #e4e4e2;
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: #dcdcd9;
+  --sidebar-ring: var(--ring);
+
+  --chart-1: var(--st-flight);
+  --chart-2: var(--st-good);
+  --chart-3: var(--st-unknown);
+  --chart-4: var(--st-attest);
+  --chart-5: var(--st-bad);
+
+  /* raised surfaces: hairline + a soft one-way drop — the "selected = lifted"
+     rule. Wells are the recess counterpart. */
+  --shadow-raise: inset 0 0 0 1px var(--border-strong),
+    0 1px 2px rgb(0 0 0 / 0.04), 0 8px 16px -4px #dedede;
+  --well: rgb(0 0 0 / 0.045);
+  --well-edge: rgb(0 0 0 / 0.03);
+
+  /* overlays are the only thing allowed to cast */
+  --shadow-overlay: 0 1px 2px rgb(55 53 47 / 0.06),
+    0 12px 28px -8px rgb(55 53 47 / 0.16);
+}
+
+.dark {
+  color-scheme: dark;
+
+  /* Long batch sessions run at night beside a dark Photoshop. Dark is a real
+     warm-ink room, not an inverted gray sheet; panels sit above the canvas
+     exactly as the white chrome sits above the paper in light. */
+  --background: #191918;
+  --foreground: #d4d4d1;
+  --card: #212120;
+  --card-foreground: var(--foreground);
+  --popover: #262624;
+  --popover-foreground: var(--foreground);
+  /* The desk sinks below the card in dark too: sheet = card, rail = room floor. */
+  --sidebar: #141413;
+  --sidebar-foreground: var(--foreground);
+
+  --muted: #2b2a28;
+  --muted-foreground: #a6a5a0;
+  --faint-foreground: #97958f;
+
+  --secondary: #2a2927;
+  --secondary-foreground: #d4d4d1;
+  --accent: #2f2e2c;
+  --accent-foreground: #e9e9e6;
+
+  --primary: #e9e9e6;
+  --primary-foreground: #1b1a18;
+
+  --brand: #529cca;
+  --brand-foreground: #141413;
+  --brand-soft: color-mix(in srgb, #529cca 18%, #20201f);
+  --brand-ink: #a9d3ec;
+
+  --store-blue: oklch(0.72 0.13 245);
+  --store-blue-ink: oklch(0.84 0.09 245);
+  --store-amber: oklch(0.78 0.12 72);
+  --store-amber-ink: oklch(0.87 0.085 72);
+  --store-teal: oklch(0.72 0.105 184);
+  --store-teal-ink: oklch(0.84 0.075 184);
+  --store-magenta: oklch(0.74 0.12 330);
+  --store-magenta-ink: oklch(0.85 0.08 330);
+  --store-coral: oklch(0.75 0.13 28);
+  --store-coral-ink: oklch(0.86 0.085 28);
+  --store-indigo: oklch(0.72 0.12 286);
+  --store-indigo-ink: oklch(0.84 0.08 286);
+  --store-olive: oklch(0.75 0.1 128);
+  --store-olive-ink: oklch(0.85 0.07 128);
+  --store-cyan: oklch(0.73 0.105 215);
+  --store-cyan-ink: oklch(0.84 0.075 215);
+
+  --plan-lite: oklch(0.72 0.01 265);
+  --plan-lite-soft: oklch(0.3 0.008 265);
+  --plan-lite-ink: oklch(0.82 0.01 265);
+  --plan-pro: oklch(0.72 0.1 252);
+  --plan-pro-soft: oklch(0.3 0.055 252);
+  --plan-pro-ink: oklch(0.84 0.08 252);
+  --plan-max: oklch(0.72 0.1 275);
+  --plan-max-soft: oklch(0.3 0.058 275);
+  --plan-max-ink: oklch(0.85 0.08 275);
+  --plan-ultra: oklch(0.78 0.11 58);
+  --plan-ultra-soft: oklch(0.32 0.055 58);
+  --plan-ultra-ink: oklch(0.88 0.07 58);
+
+  /* Dark identity tiles lift the fill and hand the initials to near-black;
+     soft/ink follow the same deep-well pattern as the plan grades. */
+  --team-rose: oklch(0.72 0.14 352);
+  --team-rose-mark: oklch(0.16 0.03 352);
+  --team-rose-soft: oklch(0.3 0.055 352);
+  --team-rose-ink: oklch(0.84 0.08 352);
+  --team-marigold: oklch(0.78 0.12 62);
+  --team-marigold-mark: oklch(0.19 0.03 62);
+  --team-marigold-soft: oklch(0.31 0.055 62);
+  --team-marigold-ink: oklch(0.86 0.08 62);
+  --team-lime: oklch(0.76 0.11 110);
+  --team-lime-mark: oklch(0.19 0.03 110);
+  --team-lime-soft: oklch(0.3 0.05 110);
+  --team-lime-ink: oklch(0.85 0.08 110);
+  --team-teal: oklch(0.74 0.09 178);
+  --team-teal-mark: oklch(0.18 0.03 178);
+  --team-teal-soft: oklch(0.3 0.045 178);
+  --team-teal-ink: oklch(0.84 0.07 178);
+  --team-azure: oklch(0.71 0.12 238);
+  --team-azure-mark: oklch(0.15 0.03 238);
+  --team-azure-soft: oklch(0.3 0.055 238);
+  --team-azure-ink: oklch(0.83 0.08 238);
+  --team-orchid: oklch(0.71 0.13 316);
+  --team-orchid-mark: oklch(0.15 0.03 316);
+  --team-orchid-soft: oklch(0.3 0.058 316);
+  --team-orchid-ink: oklch(0.83 0.08 316);
+
+  --border: oklch(1 0 0 / 14%);
+  --border-strong: oklch(1 0 0 / 22%);
+  --input: oklch(1 0 0 / 17%);
+  --ring: #529cca;
+
+  --destructive: oklch(0.65 0.19 25.5);
+  --destructive-foreground: oklch(0.16 0.01 25);
+
+  --st-idle: oklch(0.66 0.014 75);
+  --st-idle-soft: oklch(0.302 0.012 75);
+  --st-idle-ink: oklch(0.79 0.014 75);
+
+  --st-flight: #529cca;
+  --st-flight-soft: color-mix(in srgb, #529cca 18%, #20201f);
+  --st-flight-ink: #a9d3ec;
+
+  --st-good: oklch(0.7 0.145 156);
+  --st-good-soft: oklch(0.298 0.058 156);
+  --st-good-ink: oklch(0.828 0.115 156);
+
+  --st-bad: oklch(0.672 0.185 26);
+  --st-bad-soft: oklch(0.312 0.078 26);
+  --st-bad-ink: oklch(0.822 0.115 26);
+
+  --st-unknown: oklch(0.688 0.165 302);
+  --st-unknown-soft: oklch(0.312 0.072 302);
+  --st-unknown-ink: oklch(0.828 0.108 302);
+
+  --st-attest: oklch(0.76 0.135 72);
+  --st-attest-soft: oklch(0.318 0.062 72);
+  --st-attest-ink: oklch(0.858 0.106 72);
+
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: #2f2e2c;
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: oklch(1 0 0 / 14%);
+  --sidebar-ring: var(--ring);
+
+  --shadow-raise: inset 0 0 0 1px oklch(1 0 0 / 10%),
+    0 1px 2px oklch(0 0 0 / 0.35), 0 8px 18px -4px oklch(0 0 0 / 0.5);
+  --well: rgb(0 0 0 / 0.35);
+  --well-edge: oklch(1 0 0 / 8%);
+
+  --shadow-overlay: 0 1px 2px oklch(0 0 0 / 0.4), 0 14px 32px -10px oklch(0 0 0 / 0.6);
+}
+
+@theme inline {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-sans);
+  --font-mono: "SFMono-Regular", Menlo, Consolas, "PT Mono",
+    "Liberation Mono", Courier, monospace;
+
+  /* Role scale. The steps between sm and base carry the dense dashboard:
+     text-md is control/title emphasis, text-compact is panel body and form
+     labels, text-meta is labels, captions and table heads. */
+  --text-md: 0.9375rem;
+  --text-compact: 0.8125rem;
+  --text-meta: 0.6875rem;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-faint-foreground: var(--faint-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-soft: var(--brand-soft);
+  --color-brand-ink: var(--brand-ink);
+
+  --color-st-idle: var(--st-idle);
+  --color-st-idle-soft: var(--st-idle-soft);
+  --color-st-idle-ink: var(--st-idle-ink);
+  --color-st-flight: var(--st-flight);
+  --color-st-flight-soft: var(--st-flight-soft);
+  --color-st-flight-ink: var(--st-flight-ink);
+  --color-st-good: var(--st-good);
+  --color-st-good-soft: var(--st-good-soft);
+  --color-st-good-ink: var(--st-good-ink);
+  --color-st-bad: var(--st-bad);
+  --color-st-bad-soft: var(--st-bad-soft);
+  --color-st-bad-ink: var(--st-bad-ink);
+  --color-st-unknown: var(--st-unknown);
+  --color-st-unknown-soft: var(--st-unknown-soft);
+  --color-st-unknown-ink: var(--st-unknown-ink);
+  --color-st-attest: var(--st-attest);
+  --color-st-attest-soft: var(--st-attest-soft);
+  --color-st-attest-ink: var(--st-attest-ink);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+
+  --shadow-overlay: var(--shadow-overlay);
+  --shadow-raise: var(--shadow-raise);
+
+  --ease-settle: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+    box-sizing: border-box;
+  }
+
+  html {
+    @apply font-sans;
+    text-rendering: optimizeLegibility;
+    scroll-padding-top: var(--header-height);
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    margin: 0;
+    min-width: 320px;
+    min-height: 100vh;
+    scroll-padding-top: var(--header-height);
+  }
+
+  button {
+    font: inherit;
+  }
+
+  /* 图片是内容而不是可搬运的对象：原生图片拖拽只留下半透明拖影，既不落
+     数据也不触发任何交互。真正的拖拽（图集排序等）由容器上的 draggable
+     + onDragStart 承载，不依赖 <img> 的原生拖拽。 */
+  img {
+    -webkit-user-drag: none;
+  }
+
+  /* Catalog anti-pattern: missing cursor-pointer on clickable controls. */
+  :where(
+    a[href],
+    button,
+    summary,
+    label[for],
+    [role="button"],
+    [role="menuitem"],
+    [role="option"],
+    [role="tab"],
+    [role="checkbox"],
+    [role="switch"],
+    [role="radio"]
+  ):not(:disabled):not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+
+  /* Identifiers, hashes and quantities are measurements: they get the mono face
+     and locked figure widths so a column of them scans as a column. */
+  code,
+  kbd,
+  samp,
+  pre,
+  .font-mono {
+    font-variant-numeric: tabular-nums;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: var(--brand-soft);
+    color: var(--brand-ink);
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in oklch, var(--foreground) 18%, transparent);
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklch, var(--foreground) 30%, transparent);
+    background-clip: content-box;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@utility tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+@utility no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/*
+  The survey hatch. Result Unknown is the one state that is neither an outcome
+  nor an error, so it is the one state drawn rather than merely tinted: the
+  diagonal ruling a surveyor lays over ground that has not been walked.
+  It exists only at chip and rail scale — never as a page texture.
+*/
+/*
+  Recessed control well: segmented switches sit *in* the
+  desk, not on it — a darker fill plus a one-pixel inner fall instead of a
+  drawn border. Raise and recess are the two physical moves the shell makes.
+*/
+@utility inset-well {
+  background: var(--well);
+  box-shadow:
+    inset 0 1px 3px rgb(0 0 0 / 0.07),
+    inset 0 0 0 1px var(--well-edge);
+}
+
+@utility hatch-unknown {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    color-mix(in oklch, var(--st-unknown) 22%, transparent) 0 1px,
+    transparent 1px 5px
+  );
+}
+
+/*
+  Expanded-row drawer. A <tr> can't grow smoothly — row height snaps — so the
+  ledger's expander doesn't animate the row at all. `TableExpandedRow` renders
+  a full-width cell whose inner wrapper rolls open on `grid-template-rows`:
+  the track goes 0fr→1fr while the content crossfades and drops 4px into
+  place. The paired data row keeps `has-aria-expanded`'s raised ground, this
+  row carries the recessed sheet; open and close share one track, exit just
+  runs faster (150ms in, 100ms out — settle quicker than arrival).
+  Reduced-motion kills the roll entirely and lands the detail instantly.
+*/
+@keyframes table-expanded-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@utility table-expanded-row {
+  & > [data-slot="table-cell"] {
+    padding-block: 0;
+  }
+  & [data-slot="table-expanded-track"] {
+    display: grid;
+    grid-template-rows: 1fr;
+    transition: grid-template-rows 180ms var(--ease-settle);
+  }
+  & [data-slot="table-expanded-clip"] {
+    overflow: hidden;
+    min-height: 0;
+  }
+  & [data-slot="table-expanded-inner"] {
+    animation: table-expanded-reveal 220ms var(--ease-settle) both;
+  }
+  &[data-closing] [data-slot="table-expanded-track"] {
+    grid-template-rows: 0fr;
+    transition-duration: 110ms;
+  }
+  &[data-closing] [data-slot="table-expanded-clip"] > * {
+    animation: none;
+    opacity: 0;
+    transition: opacity 110ms var(--ease-settle);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .table-expanded-row,
+  .table-expanded-row * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/*
+  Store colours are inherited through --store-tone so the quota legend, row,
+  sticky cells and store badge cannot drift into four separate palettes.
+  These rules are intentionally unlayered: table utilities provide the neutral
+  fallback, while a bound multi-store row must keep its categorical ground.
+*/
+.store-assignment-row {
+  background-color: color-mix(in srgb, var(--store-tone) 12%, var(--card));
+}
+
+.store-assignment-row:hover {
+  background-color: color-mix(in srgb, var(--store-tone) 16%, var(--card));
+}
+
+.store-assignment-row[data-state="selected"] {
+  background-color: color-mix(in srgb, var(--store-tone) 20%, var(--card));
+}
+
+.store-assignment-cell {
+  background-color: color-mix(in srgb, var(--store-tone) 13%, var(--card));
+}
+
+.store-assignment-row:hover .store-assignment-cell {
+  background-color: color-mix(in srgb, var(--store-tone) 17%, var(--card));
+}
+
+.store-assignment-row[data-state="selected"] .store-assignment-cell {
+  background-color: color-mix(in srgb, var(--store-tone) 21%, var(--card));
+}
+
+.store-assignment-badge {
+  border-color: color-mix(in srgb, var(--store-tone) 38%, var(--border));
+  background-color: color-mix(in srgb, var(--store-tone) 16%, var(--card));
+  color: var(--store-tone-ink);
+}
+
+.store-assignment-panel {
+  border-color: color-mix(in srgb, var(--store-tone) 38%, var(--border));
+  background-color: color-mix(in srgb, var(--store-tone) 16%, var(--popover));
+}
+
+/*
+  Plan grade sits as a corner mark on a Team name. Tone is bound through
+  --plan-tone so Free→Ultra stay one object with five categorical hues,
+  none of which is a receipt state.
+*/
+.plan-mark {
+  display: inline-flex;
+  height: 16px;
+  flex-shrink: 0;
+  align-items: center;
+  margin-top: -1px;
+  border: 1px solid color-mix(in oklch, var(--plan-tone) 38%, var(--border));
+  border-radius: 6px;
+  background-color: var(--plan-tone-soft);
+  padding: 0 4px;
+  color: var(--plan-tone-ink);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* Sign-in masthead. */
+.login-masthead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.login-mark {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.login-mark-icon {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: 6px;
+}
+
+.login-mark-name {
+  font-size: 0.9375rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.login-mark-version {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+
+.login-thesis {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding-block: 28px;
+}
+
+.login-statement {
+  margin: 0;
+  text-align: center;
+  font-size: 1.375rem;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.login-statement-end {
+  margin: 0;
+  text-align: center;
+  font-size: 0.8125rem;
+  line-height: 1.7;
+  color: var(--muted-foreground);
+}
+
+/* Phones: fields under 16px make mobile Safari zoom the page on focus. */
+@media (max-width: 64rem) {
+  .login-screen :is(input, textarea) {
+    font-size: 1rem;
+  }
+}
+
+@keyframes login-aside-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes login-panel-enter {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+    filter: blur(0);
+  }
+}
+
+/* Category cascade: a locked level becoming choosable after its parent settles.
+   One-shot on the unlock event — fields themselves stay on first paint. */
+@keyframes category-level-ready {
+  from {
+    opacity: 0.55;
+    transform: translateY(3px);
+    filter: blur(1px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+/* Autosave: the Draft landing in durable storage is the event, so the state
+   dot settles into its good tone with one tight pulse — the rail's arrival
+   ring at chip scale. Error knocks once; the chip stays mounted and says why.
+   The in-flight write uses the shared Spinner, which reduced-motion exempts
+   by name (a frozen spinner reads as a hung app). */
+@keyframes save-state-enter {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes save-dot-confirm {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.45);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes save-dot-error {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.12);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes update-download-travel {
+  0% {
+    transform: translateX(-120%);
+  }
+  72%,
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+@keyframes ledger-cell-ripple {
+  0% {
+    background-color: var(--brand-soft);
+    box-shadow: inset 0 0 0 1.5px var(--brand);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: inset 0 0 0 0 transparent;
+  }
+}
+
+/* AI 渠道编辑器切换模型时的换牌入场；reduced motion 由全局复位覆盖。 */
+@keyframes gallery-paint-hit {
+  from {
+    transform: scale(0.96);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
+@keyframes ai-model-swap {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+    filter: blur(1.5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  [data-gallery-image-id][data-painted] > figure {
+    animation: gallery-paint-hit 160ms var(--ease-settle) both;
+  }
+
+  .ledger-cell-ripple {
+    animation: ledger-cell-ripple 520ms var(--ease-settle) both;
+  }
+  .update-download-travel {
+    animation: update-download-travel 1.4s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+    will-change: transform;
+  }
+
+  .login-aside-enter {
+    animation: login-aside-enter 420ms var(--ease-settle) both;
+  }
+
+  .login-aside-enter:nth-child(2),
+  h1.login-aside-enter {
+    animation-delay: 70ms;
+  }
+
+  .login-panel-enter {
+    animation: login-panel-enter 560ms var(--ease-settle) both;
+    animation-delay: 120ms;
+  }
+
+  .category-level-ready {
+    animation: category-level-ready 240ms var(--ease-settle) both;
+  }
+
+  .save-state-enter {
+    animation: save-state-enter 150ms var(--ease-settle);
+  }
+
+  .save-dot-confirm {
+    animation: save-dot-confirm 420ms var(--ease-settle);
+  }
+
+  .save-dot-error {
+    animation: save-dot-error 300ms var(--ease-settle);
+  }
+}
+
+/*
+  Module switch: the canvas dissolves, chrome stays live.
+  The UA image-pair uses plus-lighter — two fading snapshots add, and the
+  midpoint spikes brighter than either page. That is the flash. Normal
+  blend on opacity-only snapshots is the dissolve; no blur, no slide.
+*/
+::view-transition {
+  pointer-events: none;
+}
+
+::view-transition-old(root) {
+  display: none;
+}
+
+::view-transition-new(root) {
+  animation: none;
+}
+
+.module-canvas {
+  view-transition-name: module-canvas;
+  scroll-padding-top: var(--header-height);
+}
+
+.page-canvas {
+  width: 100%;
+  max-width: var(--page-max);
+  min-height: 0;
+  padding: var(--page-pad);
+}
+
+.page-canvas:has([data-supplier-dbs="detail"]) {
+  max-width: none;
+  padding-inline: 8px;
+}
+
+/* Density 9 inbox: sticky stats / composer must not cover :focus. */
+.mc-inbox {
+  scroll-padding-top: 3.5rem;
+  scroll-padding-bottom: 8rem;
+}
+
+.mc-inbox [data-slot="badge"] {
+  border-radius: 0;
+}
+
+::view-transition-group(module-canvas) {
+  animation: none;
+}
+
+::view-transition-image-pair(module-canvas) {
+  isolation: isolate;
+}
+
+@keyframes module-canvas-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+::view-transition-old(module-canvas) {
+  z-index: 1;
+  mix-blend-mode: normal;
+  animation: 140ms ease-in both module-canvas-fade reverse;
+}
+
+::view-transition-new(module-canvas) {
+  z-index: 2;
+  mix-blend-mode: normal;
+  animation: 200ms var(--ease-settle) both module-canvas-fade;
+}
+
+/*
+  Reduced motion suppresses vestibular triggers — travel, parallax, entrances.
+  It must not suppress the only signal that work is in flight: a frozen spinner
+  reads as a hung app, which is a worse outcome than the rotation it removed.
+  Busy affordances are exempted by name and keep running.
+*/
+@media (prefers-reduced-motion: reduce) {
+  *:not([data-slot="spinner"]):not([data-slot="skeleton"]):not(.animate-spin),
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  /* .animate-spin is included so a raw busy icon never freezes mid-rotation. */
+  [data-slot="spinner"],
+  .animate-spin {
+    animation-duration: 1.4s !important;
+  }
+
+  [data-slot="skeleton"] {
+    animation-duration: 2.4s !important;
+  }
+
+  ::view-transition-old(module-canvas),
+  ::view-transition-new(module-canvas),
+  ::view-transition-group(module-canvas) {
+    animation-duration: 0s !important;
+    animation-delay: 0s !important;
+  }
+}

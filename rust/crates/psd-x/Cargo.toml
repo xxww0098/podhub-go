@@ -1,0 +1,114 @@
+[package]
+name = "psdx"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+authors = [
+    "psd-x maintainers",
+    "Vasyanator",
+    "Claude (Anthropic)",
+]
+description = "Read and write Adobe Photoshop (.psd/.psb) files — a fork and continuation of the ag-psd Rust port toward semantic parity with ag-psd TypeScript."
+readme = "README.md"
+keywords = [
+    "psd",
+    "photoshop",
+    "image",
+    "parser",
+    "adobe",
+]
+categories = [
+    "graphics",
+    "multimedia::images",
+    "parser-implementations",
+]
+license = "MIT"
+exclude = [
+    "tests/",
+    "MODULE_README.md",
+    "docs/",
+]
+# Four harness binaries under tests/{default,test_support,composite,render}/;
+# disable auto-discovery so leftover paths cannot become extra link units.
+autotests = false
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lints]
+workspace = true
+
+[lib]
+name = "psdx"
+path = "src/lib.rs"
+doctest = false
+
+[features]
+default = ["serde"]
+serde = ["dep:serde", "dep:base64", "dep:serde_repr"]
+# JPEG thumbnail decode/encode (resource 1036). Raw `thumbnailRaw` passthrough
+# is always available when this feature is off.
+thumbnail = ["dep:zune-jpeg", "dep:jpeg-encoder"]
+# Zero-dependency document/layer compositing (wasm-clean; no image codecs).
+composite = []
+# Placed-layer geometry + warp rasterization. No codecs, no compositor.
+# Workspace `render` enables this and not the `render` feature.
+placed = []
+# Export As adapter: compositing + PNG/JPEG/GIF encoding.
+# Kept optional so read/write-only consumers do not pull image codecs.
+# Independent of `placed` — enabling `render` does not compile warp rasterization.
+render = ["composite", "dep:image", "image/png", "image/jpeg", "image/gif"]
+# Experimental CSH/ASE writers (no upstream ground truth).
+# `write_csh` / `write_ase` are available only with this feature.
+experimental-write = []
+# Test-only surface: `additional_info::test_support` (section-level round-trip
+# harness) and `test_corpus` (fixture/golden resolver for the corpus-gated
+# suites). Not in default — production builds stay free of test code, and
+# every consumer of either module must enable this feature explicitly.
+test-support = []
+
+[dependencies]
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
+serde = { workspace = true, features = ["std", "derive"], optional = true }
+base64 = { workspace = true, optional = true }
+serde_repr = { version = "0.1", optional = true }
+image = { workspace = true, optional = true }
+zune-jpeg = { version = "0.4", optional = true }
+jpeg-encoder = { workspace = true, optional = true, features = ["std"] }
+encoding_rs = "0.8"
+uuid = { workspace = true, features = ["v5"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+# Integration tests are merged into four feature-gated harness binaries. Corpus
+# suites live behind `test-support` so default builds
+# do not compile fixture helpers into the library consumers.
+
+[[test]]
+name = "default"
+path = "tests/default/main.rs"
+
+[[test]]
+name = "test_support"
+path = "tests/test_support/main.rs"
+required-features = ["test-support"]
+
+[[test]]
+name = "composite"
+path = "tests/composite/main.rs"
+required-features = ["composite", "test-support"]
+
+[[test]]
+name = "render"
+path = "tests/render/main.rs"
+required-features = ["render", "test-support"]
+
+[[example]]
+name = "export_as"
+required-features = ["render"]

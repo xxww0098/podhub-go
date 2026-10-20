@@ -1,0 +1,9 @@
+package: gen
+output: internal/agent/gen/openapi.gen.go
+generate:
+  models: false
+  chi-server: true
+output-options:
+  include-tags:
+    - agent
+  skip-prune: true

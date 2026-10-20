@@ -1,0 +1,103 @@
+{
+  "schemaVersion": 1,
+  "category_key": "decorative-wall-art-40x50",
+  "description_category_id": 17027906,
+  "type_id": 91976,
+  "steps": [
+    {
+      "id": "load-image",
+      "kind": "media.load-image",
+      "effect": "local-read",
+      "dependsOn": [],
+      "produces": [
+        "bounded image asset with source fingerprint"
+      ]
+    },
+    {
+      "id": "render",
+      "kind": "media.render",
+      "effect": "local-render-and-content-addressed-upload",
+      "dependsOn": [
+        "load-image"
+      ],
+      "produces": [
+        "ordered complete slice set",
+        "public media URLs"
+      ]
+    },
+    {
+      "id": "recognize",
+      "kind": "ai.image-recognition",
+      "effect": "external-ai-read",
+      "dependsOn": [
+        "load-image"
+      ],
+      "produces": [
+        "title",
+        "titleCn",
+        "description",
+        "tags"
+      ]
+    },
+    {
+      "id": "card",
+      "kind": "ozon.card",
+      "version": 7,
+      "effect": "none",
+      "execution": "batch-barrier",
+      "dependsOn": [
+        "render",
+        "recognize"
+      ],
+      "config": {
+        "descriptionCategoryId": 17027906,
+        "typeId": 91976,
+        "categoryPath": "住宅和花园 / 装饰和房间内饰 / 装饰画",
+        "nameExpression": "{{ai.title}}",
+        "descriptionExpression": "{{ai.description}}",
+        "priceExpression": "1990",
+        "physicalDefaults": {
+          "depth": 20,
+          "width": 300,
+          "height": 400,
+          "weight": 500
+        }
+      },
+      "invariants": [
+        "Media and AI results pair by source fingerprint.",
+        "Every declared slice must arrive exactly once.",
+        "Offer ID is the unmodified source stem and must satisfy Ozon's safe character and length rules.",
+        "Missing, duplicate, or unmatched branch output fails closed."
+      ],
+      "produces": [
+        "validated Ozon draft"
+      ]
+    },
+    {
+      "id": "publish",
+      "kind": "ozon.publish",
+      "version": 5,
+      "effect": "ozon.product-import",
+      "dependsOn": [
+        "card"
+      ],
+      "controls": {
+        "authorized": true,
+        "waitImported": true,
+        "pollTimeoutSec": 30
+      },
+      "durability": {
+        "intentBeforeDispatch": true,
+        "idempotencyKey": "fixture:ozon.product-import:store-fixture-1:decor-001:revision-fixture-1",
+        "effectScopeKey": "ozon.product@1:[\"store-fixture-1\",101]",
+        "acceptedTaskIsTerminalSuccess": false,
+        "resultUnknownRequiresReconciliation": true
+      },
+      "produces": [
+        "effect intent",
+        "immutable dispatch receipt when task_id is accepted",
+        "publish receipt projection"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "ai": {
+    "candidates": [],
+    "modelVersion": "",
+    "promptSha256": "",
+    "requestId": ""
+  },
+  "categoryKey": "golden-core-ops",
+  "descriptionCategoryId": 900001,
+  "draft": {
+    "cleared": [
+      "name"
+    ],
+    "complex_values": [],
+    "values": {}
+  },
+  "failureLog": [],
+  "fieldOrigins": [],
+  "handEditedKeys": [],
+  "language": "ru",
+  "media": {
+    "images": [],
+    "videos": []
+  },
+  "normalizedSnapshot": null,
+  "renderEvidence": null,
+  "schemaRevision": "golden-v1",
+  "source": {
+    "assetId": "",
+    "fileName": "empty.psd",
+    "sha256": "sha256:source-empty"
+  },
+  "typeId": 5001,
+  "validationIssues": []
+}

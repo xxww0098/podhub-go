@@ -1,0 +1,1 @@
+{"items":[{"id":41,"offer_id":"ART-41","sku":90041,"name":"Live product","description_category_id":170,"images":["https://img/detail.jpg"],"primary_image":["https://img/primary.jpg"],"currency_code":"CNY","price":"100","marketing_price":"90","statuses":{"status":"price_sent","status_name":"Продается"},"stocks":{"has_stock":true,"stocks":[{"present":3,"reserved":1}]}}]}

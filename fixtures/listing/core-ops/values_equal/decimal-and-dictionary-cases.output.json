@@ -1,0 +1,36 @@
+[
+  {
+    "editor": "decimal",
+    "equal": true,
+    "left": {
+      "kind": "text",
+      "value": "99.90"
+    },
+    "right": {
+      "kind": "text",
+      "value": "99.9"
+    }
+  },
+  {
+    "editor": "multi_select",
+    "equal": false,
+    "left": {
+      "kind": "multi_select",
+      "value": [
+        {
+          "dictionary_value_id": 2,
+          "value": "限量"
+        }
+      ]
+    },
+    "right": {
+      "kind": "multi_select",
+      "value": [
+        {
+          "dictionary_value_id": 3,
+          "value": "限量"
+        }
+      ]
+    }
+  }
+]

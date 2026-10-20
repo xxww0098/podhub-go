@@ -1,0 +1,8 @@
+package: adminhttp
+output: internal/admin/http/gen/openapi.gen.go
+generate:
+  models: true
+  chi-server: false
+output-options:
+  include-tags:
+    - admin

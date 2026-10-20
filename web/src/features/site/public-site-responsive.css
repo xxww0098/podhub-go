@@ -1,0 +1,79 @@
+@media (max-width: 900px) {
+  .public-site .header-in {
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "brand access"
+      "nav nav";
+    gap: 6px 16px;
+  }
+
+  .public-site .brand {
+    grid-area: brand;
+  }
+
+  .public-site .header nav {
+    grid-area: nav;
+    justify-self: stretch;
+    justify-content: flex-start;
+    padding-bottom: 8px;
+  }
+
+  .public-site .header-in > div:last-child {
+    grid-area: access;
+    justify-self: end;
+  }
+
+  .public-site .plans {
+    grid-template-columns: 1fr;
+    max-width: 520px;
+  }
+}
+
+@media (max-width: 700px) {
+  .public-site .wrap {
+    width: min(calc(100% - 32px), 1180px);
+  }
+
+  .public-site .cta {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .public-site .cta a {
+    width: 100%;
+  }
+
+  .public-site .local-grid,
+  .public-site .help,
+  .public-site .legal,
+  .public-site .footer-main,
+  .public-site .local-grid > div,
+  .public-site .routes,
+  .public-site .footer-links {
+    grid-template-columns: 1fr;
+  }
+
+  .public-site .legal > nav {
+    position: static;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 20px;
+  }
+
+  .public-site .footer-base {
+    flex-direction: column;
+    gap: 10px;
+  }
+}
+
+@media (max-width: 860px) {
+  .public-site .catalog-hero {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .public-site {
+    scroll-behavior: auto;
+  }
+}

@@ -1,0 +1,11 @@
+[
+  {"name": "commission", "entry_type": "commission", "before_balance": 0, "before_held": 0, "amount": 100, "held_delta": 0, "ok": true},
+  {"name": "transfer-out-check-allows-negative-amount", "entry_type": "transfer_out", "before_balance": 100, "before_held": 0, "amount": -40, "held_delta": 0, "ok": true},
+  {"name": "hold", "entry_type": "withdrawal_hold", "before_balance": 100, "before_held": 0, "amount": 0, "held_delta": 30, "ok": true},
+  {"name": "paid-reduces-both", "entry_type": "withdrawal_paid", "before_balance": 100, "before_held": 30, "amount": -30, "held_delta": -30, "ok": true},
+  {"name": "release", "entry_type": "withdrawal_release", "before_balance": 100, "before_held": 30, "amount": 0, "held_delta": -30, "ok": true},
+  {"name": "unknown-type", "entry_type": "refund", "before_balance": 0, "before_held": 0, "amount": 1, "held_delta": 0, "ok": false},
+  {"name": "negative-balance", "entry_type": "transfer_out", "before_balance": 10, "before_held": 0, "amount": -11, "held_delta": 0, "ok": false},
+  {"name": "held-above-balance", "entry_type": "withdrawal_hold", "before_balance": 10, "before_held": 0, "amount": 0, "held_delta": 11, "ok": false},
+  {"name": "negative-held", "entry_type": "withdrawal_release", "before_balance": 10, "before_held": 0, "amount": 0, "held_delta": -1, "ok": false}
+]

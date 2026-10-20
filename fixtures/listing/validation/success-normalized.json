@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "kind": "listing-validation-success",
+  "provenance": [
+    "fixtures/listing/ozon/product-import-request.json"
+  ],
+  "category_key": "decorative-wall-art-40x50",
+  "description_category_id": 17027906,
+  "type_id": 91976,
+  "field_values": {
+    "offer_id": "  ART-001  ",
+    "name": " Настенная картина ",
+    "price": "90",
+    "currency_code": "RUB",
+    "barcode": "4006381333931",
+    "description": "40 × 50 cm",
+    "brand": "NoBrand",
+    "merge": "group-a",
+    "width": "400",
+    "height": "25",
+    "depth": "300",
+    "weight": "310",
+    "vat": "0",
+    "dimension_unit": "mm",
+    "weight_unit": "g"
+  },
+  "expected_normalized": {
+    "offer_id": "ART-001",
+    "barcode": "4006381333931",
+    "name": "Настенная картина",
+    "description": "40 × 50 cm",
+    "price": "90",
+    "currency_code": "RUB",
+    "vat": "0",
+    "width": 400,
+    "height": 25,
+    "depth": 300,
+    "weight": 310,
+    "dimension_unit": "mm",
+    "weight_unit": "g"
+  }
+}

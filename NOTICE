@@ -1,0 +1,37 @@
+# NOTICE
+
+## 本仓库
+
+SPDX-License-Identifier: AGPL-3.0-only
+
+Copyright (C) 2026 xxww
+
+podhub-go is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, version 3 of the License only.
+
+podhub-go is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
+A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+details.
+
+版权持有人：xxww
+
+本仓库协议：GNU AGPL-3.0，仅第 3 版（SPDX 标识 `AGPL-3.0-only`）。全文在根目录 `LICENSE`，取自 https://www.gnu.org/licenses/agpl-3.0.txt，未改写。
+
+第 13 条：通过计算机网络向用户提供修改版的服务时，须向这些远程用户提供对应源码。源码获取方式见 `README.md` 的「许可证」一节；具体地址尚未确定。
+
+## RelayKit 与 new-api
+
+用户不购买 RelayKit（QuantumNous/new-api）的商业授权。因此下面两份 QuantumNous/new-api 代码都按其开源协议 GNU AGPL-3.0 使用，与本仓库协议相同：
+
+- `github.com/QuantumNous/new-api/relaykit` v0.3.4，由 `internal/platform/llm` 引用。
+- `third_party/new-api/`，QuantumNous/new-api 提交 `3e2ce2c8856e32ca7054d673f8cd059ae466e80c` 的计费公式副本。许可证全文在 `third_party/new-api/LICENSE`，上游 `NOTICE` 在 `third_party/new-api/NOTICE`，本仓库没有改它。来源见 `third_party/new-api/PROVENANCE.md`。
+
+API 进程同时链接这两份代码。它们的版权仍归 QuantumNous 及其贡献者，本仓库的版权声明不覆盖它们。
+
+上游 `NOTICE` 依 AGPL-3.0 第 7(b) 条附加了署名条款：一旦出现用户界面，须在醒目的关于、法律、页脚或署名位置保留 “Frontend design and development by New API contributors.”，并保留指向 https://github.com/QuantumNous/new-api 的链接。本仓库目前没有用户界面，署名在界面上线时加上。
+
+## 第三方清单
+
+Go 模块清单在 `THIRD-PARTY-LICENSES.md`，由 `scripts/check-third-party-licenses.py` 按 `go list -m all` 生成。该脚本同时检查每个模块的许可证与 AGPL-3.0 兼容；各模块的许可证只描述该模块。

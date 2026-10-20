@@ -1,0 +1,18 @@
+[package]
+name = "op-workflow"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+description = "PodHub workflow domain: operation decisions, listing evidence, draft values"
+
+[lints]
+workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+serde = { workspace = true, features = ["std", "derive"] }
+thiserror.workspace = true
+uuid.workspace = true

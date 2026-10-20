@@ -1,0 +1,78 @@
+{
+  "row": {
+    "ai": {
+      "candidates": [
+        {
+          "address": {
+            "field_key": "name",
+            "kind": "plain"
+          },
+          "current_value": null,
+          "issue": null,
+          "source": "ai",
+          "state": "proposed",
+          "value": {
+            "kind": "text",
+            "value": "Decorative Wall Art"
+          }
+        },
+        {
+          "address": {
+            "field_key": "price",
+            "kind": "plain"
+          },
+          "current_value": null,
+          "issue": null,
+          "source": "ai",
+          "state": "proposed",
+          "value": {
+            "kind": "text",
+            "value": "99.90"
+          }
+        }
+      ],
+      "modelVersion": "",
+      "promptSha256": "",
+      "requestId": ""
+    },
+    "categoryKey": "golden-core-ops",
+    "descriptionCategoryId": 900001,
+    "draft": {
+      "complex_values": [],
+      "values": {
+        "offer_id": {
+          "kind": "text",
+          "value": "ART-001"
+        }
+      }
+    },
+    "failureLog": [],
+    "fieldOrigins": [
+      {
+        "address": {
+          "field_key": "offer_id",
+          "kind": "plain"
+        },
+        "kind": "card_default",
+        "source_ref": null,
+        "updated_at_ms": 1700000000000
+      }
+    ],
+    "handEditedKeys": [],
+    "language": "ru",
+    "media": {
+      "images": [],
+      "videos": []
+    },
+    "normalizedSnapshot": null,
+    "renderEvidence": null,
+    "schemaRevision": "golden-v1",
+    "source": {
+      "assetId": "asset-seed",
+      "fileName": "seed.psd",
+      "sha256": "sha256:seed-source"
+    },
+    "typeId": 5001,
+    "validationIssues": []
+  }
+}

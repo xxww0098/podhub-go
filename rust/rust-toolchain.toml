@@ -1,0 +1,11 @@
+# One pinned toolchain for the whole Rust root. `make wasm` is the only
+# target that compiles Rust; CI, Docker, Go and Web builds consume the
+# committed artifacts under `wasm/dist` and never install this.
+#
+# The threaded browser renderer needs a nightly (std rebuilt with atomics);
+# `web/scripts/build-render.sh` selects `nightly-2026-09-14` explicitly for
+# that one artifact. Everything else builds with this stable pin.
+[toolchain]
+channel = "1.99.0"
+components = ["rustfmt", "clippy"]
+targets = ["wasm32-unknown-unknown"]

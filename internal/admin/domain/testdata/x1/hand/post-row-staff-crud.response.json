@@ -1,0 +1,60 @@
+{
+  "note": "手算。tests/cloud/supplier_dbs/staff_crud_… 只断言 201。字段按 SupplierDbRowData 声明序与 skip 规则。source 已 listed、无目录、无价、空说明。revision 停在 1（无坐标，write_row_config 不 bump）。creatorName 来自 staff() 注册名「平台货源管理员」：account_users.name 由 sync_account_side_tables 镜像到 account_profiles.name。没有 profile 行时该键省略。",
+  "status": 201,
+  "response": {
+    "data": {
+      "row": {
+        "productId": "<scp_uuid>",
+        "skuId": "<scs_uuid>",
+        "sourceId": "<source_id>",
+        "title": "纯棉短袖",
+        "platformCode": "DB-001",
+        "variantGroup": "",
+        "descriptionCategoryId": null,
+        "typeId": null,
+        "published": false,
+        "archived": false,
+        "readiness": {
+          "category": false,
+          "prompt": false,
+          "fixedTags": false,
+          "platformPrice": false,
+          "ozonConfig": false
+        },
+        "denial": "sku_not_published",
+        "ozonConfigDenial": "catalog_missing",
+        "costCents": 1500,
+        "shippingCostCents": 200,
+        "platformPriceCents": null,
+        "suggestedRetailCents": 9900,
+        "suggestedOldPriceCents": 12900,
+        "leadTime": "3-5 天",
+        "size": "40×50cm",
+        "material": "纯棉",
+        "craft": "数码直喷",
+        "grossWeightG": 350,
+        "brand": "无品牌",
+        "packWidthMm": 400,
+        "packHeightMm": 300,
+        "packDepthMm": 100,
+        "packWeightG": 350,
+        "contents": "短袖 T恤 ×1",
+        "gallery": [],
+        "psd": [],
+        "productVideos": [],
+        "promptName": "T恤印花",
+        "promptFileName": "tee.txt",
+        "promptContent": "",
+        "fixedTags": [],
+        "description": "卖家可见描述",
+        "internalNote": "打样贵",
+        "props": {},
+        "revision": 1,
+        "createdAtMs": "<unix_ms>",
+        "updatedAtMs": "<unix_ms>",
+        "createdBy": "<actor_public_id>",
+        "creatorName": "平台货源管理员"
+      }
+    }
+  }
+}

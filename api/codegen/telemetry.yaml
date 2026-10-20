@@ -1,0 +1,8 @@
+package: telemetryhttp
+output: internal/telemetry/http/gen/openapi.gen.go
+generate:
+  models: true
+  chi-server: false
+output-options:
+  include-operation-ids:
+    - event_inbox

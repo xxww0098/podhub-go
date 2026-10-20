@@ -1,0 +1,54 @@
+{
+  "note": "手算。测试只断言 publishedRevision=1、fixedTagsChanged=true、存在 label=Товар: 且 changed=true。六行值由 line_values 去掉标签前缀得到。",
+  "status": 200,
+  "response": {
+    "data": {
+      "revision": 2,
+      "publishedRevision": 1,
+      "lines": [
+        {
+          "label": "Товар:",
+          "published": "керамическая кружка 330 мл с принтом; это НЕ термокружка и НЕ стакан.",
+          "draft": "ЧЕРНОВИК керамическая кружка 330 мл с принтом; это НЕ термокружка и НЕ стакан.",
+          "changed": true
+        },
+        {
+          "label": "Тема:",
+          "published": "только принт. Неясно → «Абстрактный принт».",
+          "draft": "только принт. Неясно → «Абстрактный принт».",
+          "changed": false
+        },
+        {
+          "label": "Заголовок:",
+          "published": "`Кружка керамическая 330 мл с принтом \"<тема>\"`",
+          "draft": "`Кружка керамическая 330 мл с принтом \"<тема>\"`",
+          "changed": false
+        },
+        {
+          "label": "Не пиши:",
+          "published": "чашка, стакан, термокружка.",
+          "draft": "чашка, стакан, термокружка.",
+          "changed": false
+        },
+        {
+          "label": "Описание:",
+          "published": "Керамическая кружка 330 мл с принтом: <видимый принт>. Основные цвета: <цвет1> и <цвет2>.",
+          "draft": "Керамическая кружка 330 мл с принтом: <видимый принт>. Основные цвета: <цвет1> и <цвет2>.",
+          "changed": false
+        },
+        {
+          "label": "Не выдумывай:",
+          "published": "вес, высоту, упаковку.",
+          "draft": "вес, высоту, упаковку.",
+          "changed": false
+        }
+      ],
+      "publishedFixedTags": ["#кружка"],
+      "draftFixedTags": ["#новый"],
+      "fixedTagsChanged": true,
+      "publishedAiOutput": { "title": true, "description": true, "tags": true },
+      "draftAiOutput": { "title": true, "description": true, "tags": true },
+      "aiOutputChanged": false
+    }
+  }
+}

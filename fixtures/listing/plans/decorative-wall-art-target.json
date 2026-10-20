@@ -1,0 +1,70 @@
+{
+  "draft_id": "draft-plan-golden",
+  "draft_revision": 1,
+  "category_key": "decorative-wall-art-40x50",
+  "description_category_id": 17027906,
+  "type_id": 91976,
+  "schema_revision": "local-v1",
+  "recipe_id": 0,
+  "recipe_revision": 1,
+  "catalog_schema_version": 7,
+  "offer_id": "ART-001",
+  "media_operations": [
+    {
+      "id": "load-image",
+      "kind": "media.load-image",
+      "summary": "加载货号 ART-001 的本地图片资源（仅读取，不上传）",
+      "effect": "local-read",
+      "depends_on": [],
+      "produces": [
+        "bounded image asset with source fingerprint"
+      ]
+    },
+    {
+      "id": "render",
+      "kind": "media.render",
+      "summary": "渲染货号 ART-001 的装饰画切片集（本地渲染；公开 URL 待 Intent）",
+      "effect": "local-render",
+      "depends_on": [
+        "load-image"
+      ],
+      "produces": [
+        "ordered complete slice set",
+        "content-addressed media ready for attach"
+      ]
+    }
+  ],
+  "ozon_operations": [
+    {
+      "id": "card",
+      "kind": "ozon.card",
+      "summary": "组装 Ozon 商品卡片（类目 17027906 / 类型 91976，offer_id ART-001）",
+      "effect": "none",
+      "depends_on": [
+        "render"
+      ],
+      "produces": [
+        "validated Ozon draft projection"
+      ]
+    },
+    {
+      "id": "publish",
+      "kind": "ozon.product-import",
+      "summary": "准备 /v3/product/import（offer_id ART-001）— 预览不创建 Intent，不发起网络请求",
+      "effect": "ozon.product-import",
+      "depends_on": [
+        "card"
+      ],
+      "produces": [
+        "effect identity inputs for later Intent",
+        "product-import payload shape"
+      ]
+    }
+  ],
+  "topological_order": [
+    "load-image",
+    "render",
+    "card",
+    "publish"
+  ]
+}

@@ -1,0 +1,103 @@
+{
+  "card": {
+    "aiFieldPolicy": {
+      "allowed_field_keys": [],
+      "protected_field_keys": []
+    },
+    "aiPromptId": "",
+    "aiPromptSha256": "",
+    "categoryKey": "decorative-wall-art-40x50",
+    "defaults": {
+      "complex_values": [],
+      "values": {
+        "barcode": {
+          "kind": "text",
+          "value": "4006381333931"
+        },
+        "brand": {
+          "kind": "text",
+          "value": "NoBrand"
+        },
+        "currency_code": {
+          "kind": "text",
+          "value": "RUB"
+        },
+        "depth": {
+          "kind": "text",
+          "value": "300"
+        },
+        "dimension_unit": {
+          "kind": "text",
+          "value": "mm"
+        },
+        "height": {
+          "kind": "text",
+          "value": "25"
+        },
+        "merge": {
+          "kind": "text",
+          "value": "group-a"
+        },
+        "price": {
+          "kind": "text",
+          "value": "90"
+        },
+        "vat": {
+          "kind": "text",
+          "value": "0"
+        },
+        "weight": {
+          "kind": "text",
+          "value": "310"
+        },
+        "weight_unit": {
+          "kind": "text",
+          "value": "g"
+        },
+        "width": {
+          "kind": "text",
+          "value": "400"
+        }
+      }
+    },
+    "descriptionCategoryId": 17027906,
+    "language": "default",
+    "psdTemplateAssetId": "",
+    "psdTemplateFileName": "",
+    "psdTemplateSha256": "",
+    "queue": {
+      "frozenRowIds": [],
+      "nextPosition": 0,
+      "paused": false,
+      "stopAfterCurrent": false
+    },
+    "typeId": 91976,
+    "videos": []
+  },
+  "source": {
+    "assetId": "",
+    "fileName": "synthetic-040.psd",
+    "sha256": "sha256:synthetic-040"
+  },
+  "suppliedDraft": {
+    "complex_values": [],
+    "values": {
+      "description": {
+        "kind": "text",
+        "value": "Синтетический образец #40 для сопоставления native↔WASM."
+      },
+      "name": {
+        "kind": "text",
+        "value": "Настенная роспись №40"
+      },
+      "offer_id": {
+        "kind": "text",
+        "value": "SYN-040"
+      },
+      "price": {
+        "kind": "text",
+        "value": "140.80"
+      }
+    }
+  }
+}

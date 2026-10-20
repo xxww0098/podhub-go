@@ -1,0 +1,7 @@
+package: billinggen
+output: internal/billing/http/gen/billing.gen.go
+generate:
+  models: true
+output-options:
+  include-tags:
+    - billing

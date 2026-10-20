@@ -1,0 +1,65 @@
+{
+  "card": {
+    "aiFieldPolicy": {
+      "allowed_field_keys": [
+        "name",
+        "price",
+        "tags"
+      ],
+      "protected_field_keys": []
+    },
+    "aiPromptId": "prompt-golden",
+    "aiPromptSha256": "sha256:prompt",
+    "categoryKey": "golden-core-ops",
+    "defaults": {
+      "complex_values": [],
+      "values": {}
+    },
+    "descriptionCategoryId": 900001,
+    "language": "ru",
+    "psdTemplateAssetId": "asset-golden",
+    "psdTemplateFileName": "template.psd",
+    "psdTemplateSha256": "sha256:tpl",
+    "queue": {
+      "frozenRowIds": [],
+      "nextPosition": 0,
+      "paused": false,
+      "stopAfterCurrent": false
+    },
+    "typeId": 5001,
+    "videos": []
+  },
+  "source": {
+    "assetId": "",
+    "fileName": "variant.psd",
+    "sha256": "sha256:source-complex"
+  },
+  "suppliedDraft": {
+    "complex_values": [
+      {
+        "complex_id": 10,
+        "items": [
+          {
+            "item_id": "item-b",
+            "values": {
+              "size": {
+                "kind": "text",
+                "value": "大"
+              }
+            }
+          },
+          {
+            "item_id": "item-a",
+            "values": {
+              "size": {
+                "kind": "text",
+                "value": "小"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "values": {}
+  }
+}

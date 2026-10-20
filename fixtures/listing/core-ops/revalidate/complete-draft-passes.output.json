@@ -1,0 +1,166 @@
+{
+  "contentReady": true,
+  "evidenceDigest": "sha256:daa0270efcd18107eb0125428301c0283286b13254f91b64e292f09f374b08e2",
+  "fact": "Passed",
+  "row": {
+    "ai": {
+      "candidates": [],
+      "modelVersion": "",
+      "promptSha256": "",
+      "requestId": ""
+    },
+    "categoryKey": "decorative-wall-art-40x50",
+    "descriptionCategoryId": 17027906,
+    "draft": {
+      "complex_values": [],
+      "values": {
+        "barcode": {
+          "kind": "text",
+          "value": "4006381333931"
+        },
+        "brand": {
+          "kind": "text",
+          "value": "NoBrand"
+        },
+        "currency_code": {
+          "kind": "text",
+          "value": "RUB"
+        },
+        "depth": {
+          "kind": "text",
+          "value": "300"
+        },
+        "description": {
+          "kind": "text",
+          "value": "40 × 50 cm"
+        },
+        "dimension_unit": {
+          "kind": "text",
+          "value": "mm"
+        },
+        "height": {
+          "kind": "text",
+          "value": "25"
+        },
+        "merge": {
+          "kind": "text",
+          "value": "group-a"
+        },
+        "name": {
+          "kind": "text",
+          "value": " Настенная картина "
+        },
+        "offer_id": {
+          "kind": "text",
+          "value": "  ART-001  "
+        },
+        "price": {
+          "kind": "text",
+          "value": "90"
+        },
+        "vat": {
+          "kind": "text",
+          "value": "0"
+        },
+        "weight": {
+          "kind": "text",
+          "value": "310"
+        },
+        "weight_unit": {
+          "kind": "text",
+          "value": "g"
+        },
+        "width": {
+          "kind": "text",
+          "value": "400"
+        }
+      }
+    },
+    "failureLog": [],
+    "fieldOrigins": [],
+    "handEditedKeys": [
+      "barcode",
+      "brand",
+      "currency_code",
+      "depth",
+      "description",
+      "dimension_unit",
+      "height",
+      "merge",
+      "name",
+      "offer_id",
+      "price",
+      "vat",
+      "weight",
+      "weight_unit",
+      "width"
+    ],
+    "language": "ru",
+    "media": {
+      "images": [],
+      "videos": []
+    },
+    "normalizedSnapshot": {
+      "attributes": [
+        {
+          "complex_id": 0,
+          "id": 31,
+          "values": [
+            {
+              "dictionary_value_id": null,
+              "value": "NoBrand"
+            }
+          ]
+        },
+        {
+          "complex_id": 0,
+          "id": 4191,
+          "values": [
+            {
+              "dictionary_value_id": null,
+              "value": "40 × 50 cm"
+            }
+          ]
+        },
+        {
+          "complex_id": 0,
+          "id": 8292,
+          "values": [
+            {
+              "dictionary_value_id": null,
+              "value": "group-a"
+            }
+          ]
+        }
+      ],
+      "barcode": "4006381333931",
+      "complex_attributes": [],
+      "currency_code": "RUB",
+      "depth": 300,
+      "description": "40 × 50 cm",
+      "description_category_id": 17027906,
+      "dimension_unit": "mm",
+      "draft_revision": 1,
+      "height": 25,
+      "name": "Настенная картина",
+      "offer_id": "ART-001",
+      "old_price": "",
+      "price": "90",
+      "schema_revision": "local-v1",
+      "type_id": 91976,
+      "vat": "0",
+      "weight": 310,
+      "weight_unit": "g",
+      "width": 400
+    },
+    "renderEvidence": null,
+    "schemaRevision": "local-v1",
+    "source": {
+      "assetId": "",
+      "fileName": "golden.psd",
+      "sha256": "sha256:golden-revalidate"
+    },
+    "typeId": 91976,
+    "validationIssues": []
+  }
+}

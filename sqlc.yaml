@@ -1,0 +1,61 @@
+version: "2"
+sql:
+  - engine: postgresql
+    queries: db/queries
+    schema: db/schema
+    gen:
+      go:
+        package: sqlc
+        out: internal/platform/db/sqlc
+        sql_package: pgx/v5
+  - engine: postgresql
+    queries: db/queries/delegate
+    schema: db/schema/pr8a/delegate.sql
+    gen:
+      go:
+        package: sqlcgen
+        out: internal/delegate/gen
+        sql_package: pgx/v5
+  - engine: postgresql
+    queries: db/queries/supplier
+    schema: db/schema/pr8a/supplier.sql
+    gen:
+      go:
+        package: sqlcgen
+        out: internal/supplier/gen
+        sql_package: pgx/v5
+  - engine: postgresql
+    queries: db/queries/supply
+    schema: db/schema/pr8a/supply.sql
+    gen:
+      go:
+        package: sqlcgen
+        out: internal/supply/gen
+        sql_package: pgx/v5
+  - engine: postgresql
+    queries: db/queries/warehouse
+    schema: db/schema/warehouse
+    gen:
+      go:
+        package: sqlcgen
+        out: internal/warehouse/gen
+        sql_package: pgx/v5
+  - engine: postgresql
+    queries: db/queries/agent
+    schema: db/agent-schema
+    gen:
+      go:
+        package: sqlcgen
+        out: internal/agent/gen/sqlcgen
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+        omit_unused_structs: true
+        overrides:
+          - db_type: "pg_catalog.timestamptz"
+            go_type: "time.Time"
+          - db_type: "pg_catalog.timestamptz"
+            nullable: true
+            go_type:
+              import: "time"
+              type: "Time"
+              pointer: true

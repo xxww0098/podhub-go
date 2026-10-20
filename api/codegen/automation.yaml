@@ -1,0 +1,8 @@
+package: automationhttp
+output: internal/automation/http/gen/openapi.gen.go
+generate:
+  models: true
+  chi-server: false
+output-options:
+  include-tags:
+    - automation

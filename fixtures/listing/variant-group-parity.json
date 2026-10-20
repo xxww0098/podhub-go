@@ -1,0 +1,203 @@
+{
+  "note": "Cloud/browser parity for variant grouping (listing-core::variants). Real coordinate 17028964 / 94897: size 4382 and colour 10096 are the aspect dimensions, length 8779/8780 are not. Both halves must produce 'problems' exactly: the WASM op 18 ABI test and Cloud's Rust test read this same file, so the browser and Cloud can never refuse differently.",
+  "fields": [
+    {
+      "key": "attribute_85",
+      "label": "品牌",
+      "group": "属性",
+      "editor": "single_select",
+      "required": false,
+      "attribute_id": "85",
+      "aspect": false
+    },
+    {
+      "key": "attribute_9048",
+      "label": "商品名称",
+      "group": "基础",
+      "editor": "text",
+      "required": true,
+      "attribute_id": "9048",
+      "aspect": false
+    },
+    {
+      "key": "attribute_4382",
+      "label": "尺寸",
+      "group": "属性",
+      "editor": "single_select",
+      "required": false,
+      "attribute_id": "4382",
+      "aspect": true
+    },
+    {
+      "key": "attribute_10096",
+      "label": "颜色",
+      "group": "属性",
+      "editor": "single_select",
+      "required": false,
+      "attribute_id": "10096",
+      "aspect": true
+    },
+    {
+      "key": "attribute_8779",
+      "label": "长度",
+      "group": "属性",
+      "editor": "text",
+      "required": false,
+      "attribute_id": "8779",
+      "aspect": false
+    },
+    {
+      "key": "attribute_8780",
+      "label": "长度（第二）",
+      "group": "属性",
+      "editor": "text",
+      "required": false,
+      "attribute_id": "8780",
+      "aspect": false
+    }
+  ],
+  "group": {
+    "members": [
+      {
+        "member_id": "offer-a",
+        "identity": {
+          "description_category_id": 17028964,
+          "type_id": 94897,
+          "brand": {
+            "kind": "dictionary",
+            "value": [
+              "126745801"
+            ]
+          }
+        },
+        "values": {
+          "attribute_4382": {
+            "kind": "dictionary",
+            "value": [
+              "10"
+            ]
+          },
+          "attribute_10096": {
+            "kind": "dictionary",
+            "value": [
+              "20"
+            ]
+          }
+        }
+      },
+      {
+        "member_id": "offer-b",
+        "identity": {
+          "description_category_id": 17028964,
+          "type_id": 94897,
+          "brand": {
+            "kind": "dictionary",
+            "value": [
+              "126745801"
+            ]
+          }
+        },
+        "values": {
+          "attribute_4382": {
+            "kind": "dictionary",
+            "value": [
+              "10"
+            ]
+          },
+          "attribute_10096": {
+            "kind": "dictionary",
+            "value": [
+              "20"
+            ]
+          }
+        }
+      },
+      {
+        "member_id": "offer-c",
+        "identity": {
+          "description_category_id": 17028964,
+          "type_id": 94897,
+          "brand": {
+            "kind": "dictionary",
+            "value": [
+              "999"
+            ]
+          }
+        },
+        "values": {
+          "attribute_4382": {
+            "kind": "dictionary",
+            "value": [
+              "11"
+            ]
+          },
+          "attribute_10096": {
+            "kind": "dictionary",
+            "value": [
+              "21"
+            ]
+          }
+        }
+      },
+      {
+        "member_id": "offer-d",
+        "identity": {
+          "description_category_id": 17028964,
+          "type_id": 94898,
+          "brand": {
+            "kind": "dictionary",
+            "value": [
+              "126745801"
+            ]
+          }
+        },
+        "values": {
+          "attribute_4382": {
+            "kind": "dictionary",
+            "value": [
+              "12"
+            ]
+          },
+          "attribute_10096": {
+            "kind": "dictionary",
+            "value": [
+              "22"
+            ]
+          }
+        }
+      }
+    ],
+    "write_member_ids": [
+      "offer-b"
+    ]
+  },
+  "problems": [
+    {
+      "code": {
+        "platform": "ozon",
+        "stage": "preview",
+        "code": "variant_brand_mismatch"
+      },
+      "member_id": "offer-c",
+      "field_key": "attribute_85"
+    },
+    {
+      "code": {
+        "platform": "ozon",
+        "stage": "preview",
+        "code": "variant_category_mismatch"
+      },
+      "member_id": "offer-d",
+      "field_key": null
+    },
+    {
+      "code": {
+        "platform": "ozon",
+        "stage": "preview",
+        "code": "variant_combination_duplicate"
+      },
+      "member_id": "offer-b",
+      "field_key": null
+    }
+  ]
+}

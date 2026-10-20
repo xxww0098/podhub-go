@@ -1,0 +1,6 @@
+/dist/
+/node_modules/
+# WASM and its browser glue are committed; CI consumes them without Rust.
+
+# TypeScript incremental build state
+*.tsbuildinfo

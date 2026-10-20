@@ -1,0 +1,8 @@
+package: cataloggen
+output: internal/catalog/http/gen/openapi.gen.go
+generate:
+  models: true
+  chi-server: true
+output-options:
+  include-tags:
+    - catalog

@@ -1,0 +1,83 @@
+[
+  {
+    "name": "alipay request",
+    "cents": 1,
+    "channel": "alipay",
+    "open": false,
+    "want_status": "requested",
+    "want_microfen": 1000000,
+    "err": ""
+  },
+  {
+    "name": "wechat request",
+    "cents": 25,
+    "channel": "wechat",
+    "open": false,
+    "want_status": "requested",
+    "want_microfen": 25000000,
+    "err": ""
+  },
+  {
+    "name": "bank request",
+    "cents": 100,
+    "channel": "bank",
+    "open": false,
+    "want_status": "requested",
+    "want_microfen": 100000000,
+    "err": ""
+  },
+  {
+    "name": "zero cents",
+    "cents": 0,
+    "channel": "alipay",
+    "open": false,
+    "want_status": "",
+    "want_microfen": 0,
+    "err": "invalid"
+  },
+  {
+    "name": "negative cents",
+    "cents": -1,
+    "channel": "alipay",
+    "open": false,
+    "want_status": "",
+    "want_microfen": 0,
+    "err": "invalid"
+  },
+  {
+    "name": "channel case is exact",
+    "cents": 1,
+    "channel": "Alipay",
+    "open": false,
+    "want_status": "",
+    "want_microfen": 0,
+    "err": "invalid"
+  },
+  {
+    "name": "unknown channel",
+    "cents": 1,
+    "channel": "cash",
+    "open": false,
+    "want_status": "",
+    "want_microfen": 0,
+    "err": "invalid"
+  },
+  {
+    "name": "second open request",
+    "cents": 10,
+    "channel": "bank",
+    "open": true,
+    "want_status": "",
+    "want_microfen": 0,
+    "err": "invalid"
+  },
+  {
+    "name": "bigint product overflow",
+    "cents": 9223372036855,
+    "channel": "alipay",
+    "open": false,
+    "want_status": "",
+    "want_microfen": 0,
+    "err": "invalid"
+  }
+]

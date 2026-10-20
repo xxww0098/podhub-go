@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <!-- data: favicon: the browser must not issue an extra /favicon.ico request the guard would count as unknown. -->
+    <link rel="icon" href="data:,">
+    <title>mock-network bootstrap acceptance — network boundary only, not a publish pipeline</title>
+  </head>
+  <body>
+    <main style="max-width:960px;margin:0 auto;padding:24px;font-family:system-ui,sans-serif">
+      <h1>mock-network bootstrap acceptance</h1>
+      <p>Run by tests/run-mock-browser.ts. Verifies only that this browser context reads static assets and answers business calls from local mocks. No field rules, no platform pipeline, no real service.</p>
+      <pre id="result">running…</pre>
+    </main>
+    <script type="module" src="./mock-network.browser.ts"></script>
+  </body>
+</html>

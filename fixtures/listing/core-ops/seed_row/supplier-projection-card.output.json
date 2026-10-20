@@ -1,0 +1,56 @@
+{
+  "ai": {
+    "candidates": [],
+    "modelVersion": "",
+    "promptSha256": "",
+    "requestId": ""
+  },
+  "categoryKey": "golden-core-ops",
+  "descriptionCategoryId": 900001,
+  "draft": {
+    "complex_values": [],
+    "values": {}
+  },
+  "failureLog": [],
+  "fieldOrigins": [],
+  "handEditedKeys": [],
+  "language": "ru",
+  "media": {
+    "images": [],
+    "videoCover": {
+      "content_hash": "sha256:clip",
+      "content_type": "video/mp4",
+      "duration_ms": 5000,
+      "file_name": "clip.mp4",
+      "object_key": null,
+      "origin": "public_url",
+      "public_url": "https://media.example.invalid/clip.mp4",
+      "role": "cover",
+      "size_bytes": 1024
+    },
+    "videos": [
+      {
+        "content_hash": "sha256:clip",
+        "content_type": "video/mp4",
+        "duration_ms": 5000,
+        "file_name": "clip.mp4",
+        "object_key": null,
+        "origin": "public_url",
+        "public_url": "https://media.example.invalid/clip.mp4",
+        "role": "product",
+        "size_bytes": 1024
+      }
+    ]
+  },
+  "normalizedSnapshot": null,
+  "renderEvidence": null,
+  "schemaRevision": "golden-v1",
+  "source": {
+    "assetId": "",
+    "fileName": "supplier.psd",
+    "sha256": "sha256:source-supplier"
+  },
+  "supplierProductId": "sp-golden-100",
+  "typeId": 5001,
+  "validationIssues": []
+}

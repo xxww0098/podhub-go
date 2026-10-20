@@ -1,0 +1,13 @@
+{
+  "note": "手算。测试只断言 data.publishedRevision=2。productRevision=5、configRevision=3 来自同一测试序列的 SQL 次数，见 spec-X1-03 §8.5。",
+  "status": 200,
+  "response": {
+    "data": {
+      "productId": "<scp>",
+      "revision": 2,
+      "publishedRevision": 2,
+      "productRevision": 5,
+      "configRevision": 3
+    }
+  }
+}

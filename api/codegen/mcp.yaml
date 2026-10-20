@@ -1,0 +1,10 @@
+# /mcp is not an OpenAPI operation in the inventory (376 operations).
+# There is no tag to include. The handler is chi-mounted in internal/mcp/http.
+package: mcphttp
+output: internal/mcp/http/gen/openapi.gen.go
+generate:
+  models: true
+  chi-server: false
+output-options:
+  include-tags:
+    - mcp

@@ -1,0 +1,145 @@
+{
+  "category_key": "golden-core-ops",
+  "label": "测试类目",
+  "description_category_id": 900001,
+  "type_id": 5001,
+  "schema_revision": "golden-v1",
+  "recipe_id": 0,
+  "recipe_revision": 1,
+  "catalog_schema_version": 1,
+  "fields": [
+    {
+      "key": "offer_id",
+      "label": "Offer ID",
+      "group": "基础",
+      "editor": "text",
+      "required": true,
+      "constraints": {
+        "collection": false,
+        "max_value_count": null,
+        "dictionary_id": null
+      },
+      "attribute_id": null,
+      "complex_id": null,
+      "description": "",
+      "raw_type": null,
+      "read_only": false,
+      "complex_group_collection": false,
+      "options": [],
+      "options_truncated": false,
+      "aspect": null
+    },
+    {
+      "key": "name",
+      "label": "商品名称",
+      "group": "基础",
+      "editor": "text",
+      "required": true,
+      "constraints": {
+        "collection": false,
+        "max_value_count": null,
+        "dictionary_id": null
+      },
+      "attribute_id": null,
+      "complex_id": null,
+      "description": "",
+      "raw_type": null,
+      "read_only": false,
+      "complex_group_collection": false,
+      "options": [],
+      "options_truncated": false,
+      "aspect": null
+    },
+    {
+      "key": "price",
+      "label": "价格 (RUB)",
+      "group": "基础",
+      "editor": "decimal",
+      "required": true,
+      "constraints": {
+        "collection": false,
+        "max_value_count": null,
+        "dictionary_id": null
+      },
+      "attribute_id": null,
+      "complex_id": null,
+      "description": "",
+      "raw_type": null,
+      "read_only": false,
+      "complex_group_collection": false,
+      "options": [],
+      "options_truncated": false,
+      "aspect": null
+    },
+    {
+      "key": "tags",
+      "label": "标签",
+      "group": "属性",
+      "editor": "multi_select",
+      "required": false,
+      "constraints": {
+        "collection": true,
+        "max_value_count": null,
+        "dictionary_id": "900"
+      },
+      "attribute_id": "900",
+      "complex_id": null,
+      "description": "",
+      "raw_type": null,
+      "read_only": false,
+      "complex_group_collection": false,
+      "options": [
+        {
+          "id": "1",
+          "value": "精选",
+          "info": "",
+          "picture": ""
+        }
+      ],
+      "options_truncated": true,
+      "aspect": null
+    },
+    {
+      "key": "size",
+      "label": "尺寸",
+      "group": "规格",
+      "editor": "text",
+      "required": false,
+      "constraints": {
+        "collection": false,
+        "max_value_count": null,
+        "dictionary_id": null
+      },
+      "attribute_id": null,
+      "complex_id": "10",
+      "description": "",
+      "raw_type": null,
+      "read_only": false,
+      "complex_group_collection": true,
+      "options": [],
+      "options_truncated": false,
+      "aspect": null
+    },
+    {
+      "key": "color",
+      "label": "颜色",
+      "group": "规格",
+      "editor": "text",
+      "required": false,
+      "constraints": {
+        "collection": false,
+        "max_value_count": null,
+        "dictionary_id": null
+      },
+      "attribute_id": null,
+      "complex_id": "10",
+      "description": "",
+      "raw_type": null,
+      "read_only": false,
+      "complex_group_collection": true,
+      "options": [],
+      "options_truncated": false,
+      "aspect": null
+    }
+  ]
+}

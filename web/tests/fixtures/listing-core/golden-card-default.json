@@ -1,0 +1,30 @@
+{
+  "categoryKey": "golden-core-ops",
+  "descriptionCategoryId": 900001,
+  "typeId": 5001,
+  "language": "ru",
+  "defaults": {
+    "values": {},
+    "complex_values": []
+  },
+  "aiPromptId": "prompt-golden",
+  "aiPromptSha256": "sha256:prompt",
+  "psdTemplateAssetId": "asset-golden",
+  "psdTemplateSha256": "sha256:tpl",
+  "psdTemplateFileName": "template.psd",
+  "aiFieldPolicy": {
+    "allowed_field_keys": [
+      "name",
+      "price",
+      "tags"
+    ],
+    "protected_field_keys": []
+  },
+  "videos": [],
+  "queue": {
+    "paused": false,
+    "stopAfterCurrent": false,
+    "nextPosition": 0,
+    "frozenRowIds": []
+  }
+}

@@ -1,0 +1,39 @@
+[package]
+name = "listing-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Listing field rules: Category Schema, Draft validation, planning and Seller serialization — the single owner shared by Cloud (native) and, from browser-owned-listing slice 03, the browser (wasm32-unknown-unknown)."
+
+[lints]
+workspace = true
+
+[lib]
+doctest = false
+
+[features]
+# `utoipa::ToSchema` on the Cloud category-schema-cache wire types
+# (`catalog_schema`) is an OpenAPI-generation concern, not something a
+# WASM-targeting field-rules crate needs by default. Cloud enables this.
+openapi = ["dep:utoipa"]
+# Test fixtures other crates/modules need across the crate boundary (e.g.
+# `compose::compose_tests::golden_card`, used by Cloud's own test suite) — a
+# plain `#[cfg(test)]` only compiles under `cargo test -p listing-core`, not
+# when this crate is a normal (or dev-)dependency of Cloud. Precedent:
+# `rust/crates/psd-x/Cargo.toml`, `migration/Cargo.toml`.
+test-support = []
+
+[dependencies]
+serde = { workspace = true, features = ["std", "derive"] }
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+op-workflow.workspace = true
+# Bare (no `v4`): only `Uuid::from_bytes(..).simple()` is used, to format
+# host-injected randomness (see `content_policy::mint_item_id`). `Uuid::new_v4`
+# needs `getrandom`, which cannot build for wasm32-unknown-unknown without
+# extra host glue — forbidden by this crate's dependency contract.
+uuid.workspace = true
+utoipa = { version = "5", optional = true }
+unicode-normalization = "0.1"

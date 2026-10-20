@@ -1,0 +1,80 @@
+{
+  "ai": {
+    "candidates": [
+      {
+        "address": {
+          "field_key": "price",
+          "kind": "plain"
+        },
+        "current_value": null,
+        "issue": null,
+        "source": "ai",
+        "state": "proposed",
+        "value": {
+          "kind": "text",
+          "value": "120"
+        }
+      }
+    ],
+    "modelVersion": "",
+    "promptSha256": "",
+    "requestId": ""
+  },
+  "categoryKey": "golden-core-ops",
+  "descriptionCategoryId": 900001,
+  "draft": {
+    "complex_values": [],
+    "values": {
+      "offer_id": {
+        "kind": "text",
+        "value": "ART-001"
+      },
+      "price": {
+        "kind": "text",
+        "value": "120"
+      }
+    }
+  },
+  "failureLog": [],
+  "fieldOrigins": [
+    {
+      "address": {
+        "field_key": "offer_id",
+        "kind": "plain"
+      },
+      "kind": "card_default",
+      "source_ref": null,
+      "updated_at_ms": 1700000000000
+    }
+  ],
+  "handEditedKeys": [],
+  "language": "ru",
+  "media": {
+    "images": [
+      {
+        "byte_size": 1024,
+        "content_hash": "sha256:img0",
+        "error_code": null,
+        "file_name": "slice-0.jpg",
+        "group_name": "hero",
+        "height": 1200,
+        "index": 0,
+        "object_key": null,
+        "phase": "public_ready",
+        "public_url": "https://media.example.invalid/img0.jpg",
+        "width": 900
+      }
+    ],
+    "videos": []
+  },
+  "normalizedSnapshot": null,
+  "renderEvidence": null,
+  "schemaRevision": "golden-v1",
+  "source": {
+    "assetId": "asset-seed",
+    "fileName": "seed.psd",
+    "sha256": "sha256:seed-source"
+  },
+  "typeId": 5001,
+  "validationIssues": []
+}

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>site preview</title>
+</head>
+<body>
+<div id="root"></div>
+<script type="module">
+  // Preview harness: stub the public catalog endpoint, then mount PublicSite.
+  const img = (label, bg, fg) =>
+    "data:image/svg+xml," + encodeURIComponent(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300"><rect width="400" height="300" fill="${bg}"/><text x="200" y="160" font-size="40" font-family="sans-serif" font-weight="700" fill="${fg}" text-anchor="middle">${label}</text></svg>`)
+  const products = [
+    {
+      productId: "p1", title: "经典圆领卫衣 300g", description: "落肩版型，双面可印。适合全幅图案与小标。",
+      media: [img("HOODIE", "#dce3ea", "#1a1914"), img("BACK", "#1a1914", "#f2efe6")],
+      specs: { "材质": "棉", "版型": "落肩", "工艺": "直喷" },
+      skus: [
+        { skuId: "s1", title: "米白 / M", platformCode: "HD-M-WHT", media: [img("M", "#c9ced4", "#1a1914")], specs: { "颜色": "米白", "尺码": "M" }, leadTime: "3-5 天" },
+        { skuId: "s2", title: "墨黑 / L", platformCode: "HD-L-BLK", media: [], specs: { "颜色": "墨黑", "尺码": "L" }, leadTime: "3-5 天" },
+      ],
+    },
+    {
+      productId: "p2", title: "陶瓷马克杯 350ml", description: "白瓷亮光，全幅环绕印刷。",
+      media: [img("MUG", "#efe4d4", "#1a1914")],
+      specs: { "材质": "陶瓷", "容量": "350ml" },
+      skus: [
+        { skuId: "s3", title: "白 / 标准", platformCode: "MG-STD", media: [], specs: { "颜色": "白" }, leadTime: "2-4 天" },
+      ],
+    },
+    {
+      productId: "p3", title: "帆布托特包", description: null, media: [], specs: { "材质": "帆布", "尺寸": "38×42" },
+      skus: [ { skuId: "s4", title: "原色", platformCode: "TT-NAT", media: [], specs: {}, leadTime: "" } ],
+    },
+  ]
+  const realFetch = window.fetch.bind(window)
+  window.fetch = (input, init) => {
+    const url = typeof input === "string" ? input : input.url
+    if (url.includes("/api/public/platform-catalog")) {
+      return Promise.resolve(new Response(
+        JSON.stringify({ data: { products } }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ))
+    }
+    return realFetch(input, init)
+  }
+  const [{ createRoot }, React, { PublicSite }, _css, _base] = await Promise.all([
+    import("react-dom/client"),
+    import("react"),
+    import("/src/features/site/public-site.tsx"),
+    import("/src/features/site/public-site.css"),
+    import("/src/index.css"),
+  ])
+  const q = new URLSearchParams(location.search)
+  createRoot(document.getElementById("root")).render(
+    React.createElement(PublicSite, {
+      page: q.get("page") || "product",
+      signedIn: q.has("signed"),
+    }),
+  )
+</script>
+</body>
+</html>

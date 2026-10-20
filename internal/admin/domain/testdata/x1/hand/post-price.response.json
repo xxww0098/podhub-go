@@ -1,0 +1,19 @@
+{
+  "note": "手算，相对 post-row-staff-crud.response.json。测试只断言 status=200 且 data.row.platformPriceCents=2900。",
+  "status": 200,
+  "request": { "priceCents": 2900, "note": "首次定价" },
+  "changedFields": {
+    "platformPriceCents": 2900,
+    "revision": 2,
+    "readiness": {
+      "category": false,
+      "prompt": false,
+      "fixedTags": false,
+      "platformPrice": true,
+      "ozonConfig": false
+    },
+    "denial": "sku_not_published",
+    "ozonConfigDenial": "catalog_missing",
+    "updatedAtMs": "<unix_ms>"
+  }
+}

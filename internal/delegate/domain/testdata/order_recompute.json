@@ -1,0 +1,224 @@
+[
+  {
+    "name": "no lines",
+    "current": "ready",
+    "lines": [],
+    "want_computed": "awaiting_setup",
+    "want_stored": "awaiting_setup"
+  },
+  {
+    "name": "done order is not rewritten",
+    "current": "done",
+    "lines": [],
+    "want_computed": "awaiting_setup",
+    "want_stored": "done"
+  },
+  {
+    "name": "cancelled order is not rewritten",
+    "current": "cancelled",
+    "lines": [
+      {
+        "ready": true,
+        "packet": "shipped"
+      }
+    ],
+    "want_computed": "shipped",
+    "want_stored": "cancelled"
+  },
+  {
+    "name": "missing binding waits for setup",
+    "current": "awaiting_setup",
+    "lines": [
+      {
+        "ready": null,
+        "packet": ""
+      }
+    ],
+    "want_computed": "awaiting_setup",
+    "want_stored": "awaiting_setup"
+  },
+  {
+    "name": "inactive binding waits for setup",
+    "current": "ready",
+    "lines": [
+      {
+        "ready": false,
+        "packet": ""
+      }
+    ],
+    "want_computed": "awaiting_setup",
+    "want_stored": "awaiting_setup"
+  },
+  {
+    "name": "verified binding is ready",
+    "current": "awaiting_setup",
+    "lines": [
+      {
+        "ready": true,
+        "packet": ""
+      }
+    ],
+    "want_computed": "ready",
+    "want_stored": "ready"
+  },
+  {
+    "name": "dispatched packet",
+    "current": "ready",
+    "lines": [
+      {
+        "ready": true,
+        "packet": "dispatched"
+      }
+    ],
+    "want_computed": "dispatched",
+    "want_stored": "dispatched"
+  },
+  {
+    "name": "dispatched packet beats an unready binding",
+    "current": "ready",
+    "lines": [
+      {
+        "ready": false,
+        "packet": "dispatched"
+      }
+    ],
+    "want_computed": "dispatched",
+    "want_stored": "dispatched"
+  },
+  {
+    "name": "accepted packet",
+    "current": "dispatched",
+    "lines": [
+      {
+        "ready": true,
+        "packet": "accepted"
+      }
+    ],
+    "want_computed": "in_production",
+    "want_stored": "in_production"
+  },
+  {
+    "name": "shipped packet",
+    "current": "in_production",
+    "lines": [
+      {
+        "ready": true,
+        "packet": "shipped"
+      }
+    ],
+    "want_computed": "shipped",
+    "want_stored": "shipped"
+  },
+  {
+    "name": "rejected packet with a ready binding returns to ready",
+    "current": "dispatched",
+    "lines": [
+      {
+        "ready": true,
+        "packet": "rejected"
+      }
+    ],
+    "want_computed": "ready",
+    "want_stored": "ready"
+  },
+  {
+    "name": "rejected packet without a binding waits for setup",
+    "current": "dispatched",
+    "lines": [
+      {
+        "ready": null,
+        "packet": "rejected"
+      }
+    ],
+    "want_computed": "awaiting_setup",
+    "want_stored": "awaiting_setup"
+  },
+  {
+    "name": "rejected packet with an unready binding waits",
+    "current": "dispatched",
+    "lines": [
+      {
+        "ready": false,
+        "packet": "rejected"
+      }
+    ],
+    "want_computed": "awaiting_setup",
+    "want_stored": "awaiting_setup"
+  },
+  {
+    "name": "unknown packet is the else branch",
+    "current": "ready",
+    "lines": [
+      {
+        "ready": true,
+        "packet": "bogus"
+      }
+    ],
+    "want_computed": "ready",
+    "want_stored": "ready"
+  },
+  {
+    "name": "shipped plus dispatched is in production",
+    "current": "dispatched",
+    "lines": [
+      {
+        "ready": true,
+        "packet": "shipped"
+      },
+      {
+        "ready": true,
+        "packet": "dispatched"
+      }
+    ],
+    "want_computed": "in_production",
+    "want_stored": "in_production"
+  },
+  {
+    "name": "two shipped lines",
+    "current": "in_production",
+    "lines": [
+      {
+        "ready": true,
+        "packet": "shipped"
+      },
+      {
+        "ready": false,
+        "packet": "shipped"
+      }
+    ],
+    "want_computed": "shipped",
+    "want_stored": "shipped"
+  },
+  {
+    "name": "accepted plus empty packet",
+    "current": "dispatched",
+    "lines": [
+      {
+        "ready": false,
+        "packet": "accepted"
+      },
+      {
+        "ready": false,
+        "packet": ""
+      }
+    ],
+    "want_computed": "in_production",
+    "want_stored": "in_production"
+  },
+  {
+    "name": "two dispatched lines",
+    "current": "ready",
+    "lines": [
+      {
+        "ready": true,
+        "packet": "dispatched"
+      },
+      {
+        "ready": true,
+        "packet": "dispatched"
+      }
+    ],
+    "want_computed": "dispatched",
+    "want_stored": "dispatched"
+  }
+]

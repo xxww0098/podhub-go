@@ -1,0 +1,26 @@
+[package]
+name = "wasm-host-probe"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Tiny wasm32 module that imports env.fill_random, the host import listing-core-wasm documents."
+
+# Same exception as `rust/crates/listing-core-wasm`: a raw-pointer C ABI module
+# cannot honor the workspace's `unsafe_code = deny`.
+[lints.rust]
+unsafe_code = "allow"
+unused_must_use = "deny"
+unreachable_pub = "warn"
+raw_borrows_via_references = "deny"
+
+[lints.clippy]
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+undocumented_unsafe_blocks = "deny"
+missing_safety_doc = "deny"
+
+[lib]
+crate-type = ["cdylib"]
+doctest = false

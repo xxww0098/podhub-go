@@ -1,0 +1,11 @@
+# Committed WASM and browser glue. Rebuild locally with make wasm; CI only checks.
+toolchain 1.99.0
+source_sha256 0adaad2b0e3f4394e6020830abaa1688a2bd8f53aff3f7932d4878c5983fd0fc
+web_toolchain 1.99.0/nightly-2026-09-14/wasm-bindgen-0.2.127
+web_source_sha256 3db6915b0f998088c70993755217db14ab8f86b568325dc51f75f9ca9048c958
+web_glue_sha256 91722a657c23f218f095a758d061af46ed768f712a10a09a46ea396d70b4a8f1
+server/listing-tags.wasm 506925d6e8671528e207fa4c7ccf47eddf50b9221bec20a1aabed1fa74a1e258
+server/listing-core.wasm 57b71b8deedadc9884c5fee74b237d85a06167551da67f3c60da911f25e47712
+test/host-probe.wasm c6a1c3efaf3835e04d9b9b86f0e724a2968b6bba3162a809e4cb168c50341a68
+browser/listing-state.wasm 1939dae64ae2c8c871cbdf7288df0bca471386656d64e63c8ef097f6c6d495b7
+browser/render/render_wasm.wasm 38805c5b26ec0e88988e1b3df5311afdc6d2cb14cfb88f1a86b109f1dd56a1d9

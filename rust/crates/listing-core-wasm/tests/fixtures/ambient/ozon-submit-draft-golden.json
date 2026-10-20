@@ -1,0 +1,342 @@
+{
+  "expected": {
+    "draft": {
+      "complex_values": [],
+      "values": {
+        "description": {
+          "kind": "text",
+          "value": "40 × 50 cm"
+        },
+        "name": {
+          "kind": "text",
+          "value": " Настенная картина "
+        },
+        "offer_id": {
+          "kind": "text",
+          "value": "  ART-001  "
+        }
+      }
+    },
+    "fieldOrigins": [],
+    "handEditedKeys": [],
+    "language": "default",
+    "media": {
+      "images": [
+        {
+          "byte_size": 2048,
+          "content_hash": "sha256:slice-0",
+          "error_code": null,
+          "file_name": "ART-001-1.jpg",
+          "group_name": "",
+          "height": 1200,
+          "index": 0,
+          "object_key": null,
+          "phase": "public_ready",
+          "public_url": "https://media.example.invalid/hero.jpg",
+          "width": 900
+        }
+      ],
+      "videos": []
+    },
+    "rowId": "draft-ozon-golden",
+    "schemaRevision": "local-v1",
+    "sourceFileName": "ART-001.psd"
+  },
+  "manifest": [
+    {
+      "code": "required",
+      "platform": "ozon",
+      "stage": "validate"
+    },
+    {
+      "code": "max_value_count",
+      "platform": "ozon",
+      "stage": "validate"
+    },
+    {
+      "code": "complex_single_item",
+      "platform": "ozon",
+      "stage": "validate"
+    },
+    {
+      "code": "name_contains_han",
+      "platform": "ozon",
+      "stage": "validate"
+    },
+    {
+      "code": "name_too_long",
+      "platform": "ozon",
+      "stage": "validate"
+    },
+    {
+      "code": "offer_id_too_long",
+      "platform": "ozon",
+      "stage": "validate"
+    },
+    {
+      "code": "offer_id_charset",
+      "platform": "ozon",
+      "stage": "validate"
+    },
+    {
+      "code": "invalid_barcode",
+      "platform": "ozon",
+      "stage": "validate"
+    },
+    {
+      "code": "invalid_price",
+      "platform": "ozon",
+      "stage": "validate"
+    },
+    {
+      "code": "invalid_positive_integer",
+      "platform": "ozon",
+      "stage": "validate"
+    },
+    {
+      "code": "invalid_integer",
+      "platform": "ozon",
+      "stage": "validate"
+    },
+    {
+      "code": "invalid_decimal",
+      "platform": "ozon",
+      "stage": "validate"
+    },
+    {
+      "code": "invalid_boolean",
+      "platform": "ozon",
+      "stage": "validate"
+    },
+    {
+      "code": "invalid_url",
+      "platform": "ozon",
+      "stage": "validate"
+    },
+    {
+      "code": "invalid_choice",
+      "platform": "ozon",
+      "stage": "validate"
+    },
+    {
+      "code": "invalid_choice_cardinality",
+      "platform": "ozon",
+      "stage": "validate"
+    },
+    {
+      "code": "invalid_dictionary_id",
+      "platform": "ozon",
+      "stage": "validate"
+    },
+    {
+      "code": "unknown_dictionary_id",
+      "platform": "ozon",
+      "stage": "validate"
+    },
+    {
+      "code": "dictionary_material_required",
+      "platform": "ozon",
+      "stage": "validate"
+    },
+    {
+      "code": "row_id_invalid",
+      "platform": "ozon",
+      "stage": "freeze"
+    },
+    {
+      "code": "schema_stale",
+      "platform": "ozon",
+      "stage": "freeze"
+    },
+    {
+      "code": "coordinate_mismatch",
+      "platform": "ozon",
+      "stage": "freeze"
+    },
+    {
+      "code": "language_mismatch",
+      "platform": "ozon",
+      "stage": "freeze"
+    },
+    {
+      "code": "ai_candidate_unresolved",
+      "platform": "ozon",
+      "stage": "freeze"
+    },
+    {
+      "code": "freeze_failed",
+      "platform": "ozon",
+      "stage": "freeze"
+    },
+    {
+      "code": "OZON_STORE_PAUSED",
+      "platform": "ozon",
+      "stage": "pre_dispatch"
+    },
+    {
+      "code": "OZON_RATE_LIMITED",
+      "platform": "ozon",
+      "stage": "pre_dispatch"
+    },
+    {
+      "code": "OZON_EGRESS_UNAVAILABLE",
+      "platform": "ozon",
+      "stage": "pre_dispatch"
+    },
+    {
+      "code": "OZON_EGRESS_UNREACHABLE",
+      "platform": "ozon",
+      "stage": "pre_dispatch"
+    },
+    {
+      "code": "OZON_WRITES_DISABLED",
+      "platform": "ozon",
+      "stage": "pre_dispatch"
+    },
+    {
+      "code": "OZON_ACCESS_UNCLASSIFIED",
+      "platform": "ozon",
+      "stage": "pre_dispatch"
+    },
+    {
+      "code": "SHIPPING_NOT_READY",
+      "platform": "ozon",
+      "stage": "pre_dispatch"
+    },
+    {
+      "code": "OZON_ROW_REJECTED",
+      "platform": "ozon",
+      "stage": "submit"
+    },
+    {
+      "code": "OZON_CREDENTIAL_INVALID",
+      "platform": "ozon",
+      "stage": "submit"
+    },
+    {
+      "code": "OZON_PERMISSION_DENIED",
+      "platform": "ozon",
+      "stage": "submit"
+    },
+    {
+      "code": "OZON_ACCESS_UNCLASSIFIED",
+      "platform": "ozon",
+      "stage": "submit"
+    },
+    {
+      "code": "OZON_RATE_LIMITED",
+      "platform": "ozon",
+      "stage": "submit"
+    },
+    {
+      "code": "OZON_DISPATCH_INTERRUPTED",
+      "platform": "ozon",
+      "stage": "submit"
+    },
+    {
+      "code": "variant_metadata_unknown",
+      "platform": "ozon",
+      "stage": "preview"
+    },
+    {
+      "code": "variant_model_field_absent",
+      "platform": "ozon",
+      "stage": "preview"
+    },
+    {
+      "code": "variant_model_field_complex",
+      "platform": "ozon",
+      "stage": "preview"
+    },
+    {
+      "code": "variant_dimension_complex",
+      "platform": "ozon",
+      "stage": "preview"
+    },
+    {
+      "code": "variant_category_mismatch",
+      "platform": "ozon",
+      "stage": "preview"
+    },
+    {
+      "code": "variant_brand_mismatch",
+      "platform": "ozon",
+      "stage": "preview"
+    },
+    {
+      "code": "variant_no_distinguishing_dimension",
+      "platform": "ozon",
+      "stage": "preview"
+    },
+    {
+      "code": "variant_combination_duplicate",
+      "platform": "ozon",
+      "stage": "preview"
+    },
+    {
+      "code": "variant_write_member_unknown",
+      "platform": "ozon",
+      "stage": "preview"
+    }
+  ],
+  "row": {
+    "ai": {
+      "candidates": [],
+      "modelVersion": "",
+      "promptSha256": "",
+      "requestId": ""
+    },
+    "categoryKey": "decorative-wall-art-40x50",
+    "descriptionCategoryId": 17027906,
+    "draft": {
+      "complex_values": [],
+      "values": {
+        "description": {
+          "kind": "text",
+          "value": "40 × 50 cm"
+        },
+        "name": {
+          "kind": "text",
+          "value": " Настенная картина "
+        },
+        "offer_id": {
+          "kind": "text",
+          "value": "  ART-001  "
+        }
+      }
+    },
+    "failureLog": [],
+    "fieldOrigins": [],
+    "handEditedKeys": [],
+    "language": "default",
+    "media": {
+      "images": [
+        {
+          "byte_size": 2048,
+          "content_hash": "sha256:slice-0",
+          "error_code": null,
+          "file_name": "ART-001-1.jpg",
+          "group_name": "",
+          "height": 1200,
+          "index": 0,
+          "object_key": null,
+          "phase": "public_ready",
+          "public_url": "https://media.example.invalid/hero.jpg",
+          "width": 900
+        }
+      ],
+      "videos": []
+    },
+    "normalizedSnapshot": null,
+    "renderEvidence": null,
+    "schemaRevision": "local-v1",
+    "source": {
+      "assetId": "asset_golden",
+      "fileName": "ART-001.psd",
+      "sha256": "sha256:source"
+    },
+    "typeId": 91976,
+    "validationIssues": []
+  },
+  "rowId": "draft-ozon-golden"
+}

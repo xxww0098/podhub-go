@@ -1,0 +1,459 @@
+/* Product-led public site. Existing route and data behavior lives in public-site.tsx. */
+.public-site {
+  --mark-blue: #033fa7;
+  --mark-white: #f3f5f7;
+  --mark-orange: #f2611e;
+  --accent: #1459e8;
+  --accent-ink: #114bbf;
+  --muted: #f6f8fb;
+  --line: #e6eaf0;
+  --line-strong: #d6deea;
+}
+
+.public-site .wrap {
+  width: min(calc(100% - 48px), 1280px);
+}
+
+.public-site .header {
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: none;
+}
+
+.public-site .header-in {
+  min-height: 68px;
+}
+
+.public-site .brand strong {
+  font-size: 18px;
+  letter-spacing: -0.04em;
+}
+
+.public-site .header nav {
+  gap: 12px;
+}
+
+.public-site .header nav a {
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.public-site .header nav a[aria-current="page"] {
+  color: var(--accent-ink);
+}
+
+.public-site header .nav-login,
+.public-site .c-primary-link,
+.public-site .help aside a.nav-login,
+.public-site .catalog-facts a.nav-login {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+  box-shadow: none;
+}
+
+.public-site header .nav-login:hover,
+.public-site .c-primary-link:hover,
+.public-site .help aside a.nav-login:hover,
+.public-site .catalog-facts a.nav-login:hover {
+  background: var(--accent-ink);
+  border-color: var(--accent-ink);
+}
+
+.public-site .nav-supplier {
+  min-height: 36px;
+  border-color: var(--accent-line);
+  color: var(--accent-ink);
+}
+
+.public-site .nav-supplier:hover {
+  background: var(--accent-soft);
+}
+
+.public-site .c-hero {
+  position: relative;
+  isolation: isolate;
+  min-height: 570px;
+  overflow: hidden;
+  background: #f6f7f8;
+}
+
+.public-site .c-hero-photo {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+}
+
+.public-site .c-hero-inner {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  min-height: 570px;
+}
+
+.public-site .c-hero-copy {
+  max-width: 640px;
+  padding-block: 54px 64px;
+}
+
+.public-site .c-eyebrow {
+  display: block;
+  color: var(--accent-ink);
+  font-size: 12px;
+  font-weight: 750;
+  letter-spacing: 0.12em;
+}
+
+.public-site .c-hero h1 {
+  max-width: 11ch;
+  margin: 18px 0 0;
+  font-size: clamp(2.8rem, 5vw, 4.8rem);
+  font-weight: 800;
+  letter-spacing: -0.06em;
+  line-height: 1.13;
+  text-wrap: balance;
+}
+
+.public-site .c-hero-copy > p {
+  max-width: 31ch;
+  margin: 22px 0 0;
+  color: #4e5d70;
+  font-size: clamp(1rem, 1.4vw, 1.22rem);
+  line-height: 1.6;
+}
+
+.public-site .c-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 30px;
+}
+
+.public-site .c-hero-actions a {
+  min-width: 166px;
+  min-height: 48px;
+  padding-inline: 20px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.public-site .c-secondary-link {
+  border-color: var(--accent-line);
+  color: var(--accent-ink);
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.public-site .c-secondary-link:hover {
+  background: #fff;
+}
+
+.public-site .c-hero-notes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 22px;
+  margin: 35px 0 0;
+  padding: 0;
+  color: #34445a;
+  font-size: 12px;
+  list-style: none;
+}
+
+.public-site .c-hero-notes li::before {
+  margin-right: 8px;
+  color: var(--accent);
+  content: "✓";
+}
+
+.public-site .c-hero-visual {
+  position: relative;
+  min-height: 520px;
+}
+
+.public-site .c-design-chip,
+.public-site .c-listing-chip {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: var(--shadow-card);
+}
+
+.public-site .c-design-chip {
+  top: 86px;
+  left: 5%;
+}
+
+.public-site .c-listing-chip {
+  right: 0;
+  bottom: 60px;
+}
+
+.public-site .c-design-chip span,
+.public-site .c-listing-chip span {
+  color: var(--accent-ink);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.public-site .c-design-chip strong,
+.public-site .c-listing-chip strong {
+  font-size: 13px;
+}
+
+.public-site .c-listing-chip small {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.public-site .c-process {
+  display: grid;
+  grid-template-columns: 0.9fr 2.1fr;
+  gap: 44px;
+  padding-block: 64px 72px;
+}
+
+.public-site .c-process-head h2,
+.public-site .c-section-heading h2 {
+  margin: 10px 0 0;
+  font-size: clamp(1.65rem, 2.5vw, 2.4rem);
+  font-weight: 780;
+  letter-spacing: -0.04em;
+}
+
+.public-site .c-process-head p {
+  max-width: 31ch;
+  margin: 16px 0 0;
+  color: var(--muted-foreground);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.public-site .c-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.public-site .c-steps li {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  padding-top: 5px;
+  border-top: 1px solid var(--line-strong);
+}
+
+.public-site .c-steps em {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 750;
+}
+
+.public-site .c-steps strong {
+  font-size: 17px;
+}
+
+.public-site .c-steps span {
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.public-site .c-catalog-preview {
+  padding-block: 60px 72px;
+  border-block: 1px solid var(--line);
+  background: #fbfcfe;
+}
+
+.public-site .c-section-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 28px;
+}
+
+.public-site .c-section-heading > a {
+  color: var(--accent-ink);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.public-site .c-product-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.public-site .c-product-grid a {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.public-site .c-product-grid img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1.35;
+  object-fit: cover;
+}
+
+.public-site .c-product-grid strong,
+.public-site .c-product-grid span {
+  margin-inline: 16px;
+}
+
+.public-site .c-product-grid strong {
+  margin-top: 14px;
+  font-size: 16px;
+}
+
+.public-site .c-product-grid span {
+  margin-block: 6px 17px;
+  color: var(--accent-ink);
+  font-size: 12px;
+}
+
+.public-site .c-capabilities {
+  padding-block: 76px;
+}
+
+.public-site .c-capability-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.public-site .c-capability-grid article {
+  min-height: 170px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.public-site .c-capability-grid svg {
+  display: block;
+  width: 24px;
+  height: 24px;
+  margin-bottom: 22px;
+  color: var(--accent);
+}
+
+.public-site .c-capability-grid strong {
+  font-size: 14px;
+}
+
+.public-site .c-capability-grid p {
+  margin: 10px 0 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.public-site .intro {
+  padding-block: 72px 44px;
+}
+
+.public-site .intro h1 {
+  max-width: none;
+  font-size: clamp(2rem, 3.5vw, 3.5rem);
+  letter-spacing: -0.05em;
+}
+
+.public-site .plans article,
+.public-site .plans article.featured {
+  border-color: var(--line);
+  background: #fff;
+  color: var(--ink);
+  box-shadow: none;
+}
+
+.public-site .plans .featured p,
+.public-site .plans .featured > strong {
+  color: var(--muted-foreground);
+}
+
+.public-site .plans .featured ul {
+  border-top-color: var(--line);
+}
+
+.public-site .plans article:hover,
+.public-site .catalog-card:hover,
+.public-site .routes a:hover {
+  box-shadow: none;
+  border-color: var(--accent-line);
+}
+
+.public-site .catalog-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.public-site .catalog-card > img,
+.public-site .catalog-card-media {
+  aspect-ratio: 1.35;
+}
+
+.public-site .catalog-card-body {
+  padding: 18px;
+}
+
+.public-site .catalog-facets .facet button {
+  min-height: 36px;
+  border-radius: 9px;
+}
+
+.public-site .help {
+  gap: 44px;
+}
+
+.public-site .help details {
+  margin-bottom: 9px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+
+.public-site .help details:first-of-type {
+  border-top: 1px solid var(--line);
+}
+
+.public-site .help summary {
+  padding-inline: 18px 44px;
+}
+
+.public-site .help details p {
+  margin: 0 18px 22px;
+}
+
+.public-site .routes a:first-child {
+  border-color: var(--line);
+  background: #fff;
+  color: var(--ink);
+}
+
+.public-site .routes a:first-child span {
+  color: var(--muted-foreground);
+}
+
+.public-site .site-footer {
+  background: #fbfcfe;
+}

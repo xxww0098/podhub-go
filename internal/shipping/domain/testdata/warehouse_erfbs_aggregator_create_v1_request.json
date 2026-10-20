@@ -1,0 +1,45 @@
+{
+  "address_coordinates": {
+    "latitude": 55.69626,
+    "longitude": 37.42686
+  },
+  "is_auto_assembly": true,
+  "delivery_method": {
+    "courier_comment": "Comment",
+    "courier_phones": ["+7(999)999-99-99"],
+    "cut_in": 60,
+    "deliver_to_pvz": true,
+    "delivery_costs": {
+      "min_weight": 0,
+      "max_weight": 5000,
+      "min_order_price": 0,
+      "max_order_price": 10000,
+      "seller_payment": 200
+    },
+    "name": "Partners Ozon",
+    "return_settings": {
+      "contact_days": 3,
+      "post_office_zipcode": "125009",
+      "return_method": "COURIER"
+    }
+  },
+  "min_order_value": 500,
+  "name": "Express warehouse",
+  "phone": "+7(999)999-99-99",
+  "timetable_warehouse": {
+    "holidays": [
+      {
+        "day": "2026-01-01",
+        "from": "00:00",
+        "to": "23:59"
+      }
+    ],
+    "working_days": [
+      { "day": "MONDAY", "from": "09:00", "to": "18:00" },
+      { "day": "TUESDAY", "from": "09:00", "to": "18:00" },
+      { "day": "WEDNESDAY", "from": "09:00", "to": "18:00" },
+      { "day": "THURSDAY", "from": "09:00", "to": "18:00" },
+      { "day": "FRIDAY", "from": "09:00", "to": "18:00" }
+    ]
+  }
+}

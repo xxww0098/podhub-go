@@ -1,0 +1,21 @@
+{
+  "privateFiles": [
+    "/node_modules/.scratch/publish-goal/state.md",
+    "/node_modules/.scratch/data",
+    "/node_modules/.scratch/state",
+    "/node_modules/.git/config",
+    "/node_modules/pkg/.env.local",
+    "/node_modules/cpa/config.yaml",
+    "/node_modules/cpa/config",
+    "/node_modules/pkg/credentials.json",
+    "/node_modules/pkg/client-secret.txt",
+    "/node_modules/pkg/server.pem",
+    "/node_modules/server.pem",
+    "/node_modules/server.key"
+  ],
+  "repoFiles": [
+    "/src/main.tsx",
+    "/.scratch/state.md"
+  ],
+  "absentTraversalProbe": "/node_modules/..%2f..%2f.scratch/mock-network-probe-absent"
+}

@@ -1,0 +1,21 @@
+{
+  "log": { "level": "warn", "timestamp": true },
+  "inbounds": [{ "type": "socks", "listen": "0.0.0.0", "listen_port": 1080 }],
+  "outbounds": [{
+    "type": "vless",
+    "server": "203.0.113.7",
+    "server_port": 34567,
+    "uuid": "0f1e2d3c-4b5a-4978-8695-a4b3c2d1e0f9",
+    "flow": "xtls-rprx-vision",
+    "tls": {
+      "enabled": true,
+      "server_name": "www.example.com",
+      "utls": { "enabled": true, "fingerprint": "chrome" },
+      "reality": {
+        "enabled": true,
+        "public_key": "oPqDxkIL_PywLy8a-8OfaJWEQwY3dzBwXoaFgpd8S3g",
+        "short_id": ""
+      }
+    }
+  }]
+}

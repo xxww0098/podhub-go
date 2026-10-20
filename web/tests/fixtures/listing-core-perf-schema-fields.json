@@ -1,0 +1,436 @@
+[
+    {
+        "key": "offer_id",
+        "label": "Offer ID",
+        "group": "Fixed",
+        "editor": "text",
+        "required": true
+    },
+    {
+        "key": "name",
+        "label": "Name",
+        "group": "Fixed",
+        "editor": "text",
+        "required": true
+    },
+    {
+        "key": "price",
+        "label": "Price",
+        "group": "Fixed",
+        "editor": "decimal",
+        "required": true
+    },
+    {
+        "key": "description_category_id",
+        "label": "Description category",
+        "group": "Fixed",
+        "editor": "integer",
+        "required": true
+    },
+    {
+        "key": "type_id",
+        "label": "Product type",
+        "group": "Fixed",
+        "editor": "integer",
+        "required": true
+    },
+    {
+        "key": "barcode",
+        "label": "Barcode",
+        "group": "Fixed",
+        "editor": "text",
+        "required": false
+    },
+    {
+        "key": "width",
+        "label": "Width",
+        "group": "Fixed",
+        "editor": "integer",
+        "required": true
+    },
+    {
+        "key": "height",
+        "label": "Height",
+        "group": "Fixed",
+        "editor": "integer",
+        "required": true
+    },
+    {
+        "key": "depth",
+        "label": "Depth",
+        "group": "Fixed",
+        "editor": "integer",
+        "required": true
+    },
+    {
+        "key": "dimension_unit",
+        "label": "Dimension unit",
+        "group": "Fixed",
+        "editor": "text",
+        "required": true
+    },
+    {
+        "key": "weight",
+        "label": "Weight",
+        "group": "Fixed",
+        "editor": "integer",
+        "required": true
+    },
+    {
+        "key": "weight_unit",
+        "label": "Weight unit",
+        "group": "Fixed",
+        "editor": "text",
+        "required": true
+    },
+    {
+        "key": "images",
+        "label": "Images",
+        "group": "Fixed",
+        "editor": "url_list",
+        "required": true
+    },
+    {
+        "key": "images360",
+        "label": "360 images",
+        "group": "Fixed",
+        "editor": "url_list",
+        "required": false
+    },
+    {
+        "key": "primary_image",
+        "label": "Primary image",
+        "group": "Fixed",
+        "editor": "url",
+        "required": false
+    },
+    {
+        "key": "color_image",
+        "label": "Color image",
+        "group": "Fixed",
+        "editor": "url",
+        "required": false
+    },
+    {
+        "key": "currency_code",
+        "label": "Currency",
+        "group": "Fixed",
+        "editor": "text",
+        "required": false
+    },
+    {
+        "key": "old_price",
+        "label": "Old price",
+        "group": "Fixed",
+        "editor": "decimal",
+        "required": false
+    },
+    {
+        "key": "vat",
+        "label": "VAT",
+        "group": "Fixed",
+        "editor": "decimal",
+        "required": true
+    },
+    {
+        "key": "attribute_4295",
+        "label": "\u4fc4\u7f57\u65af\u5c3a\u7801",
+        "group": "\u5c5e\u6027",
+        "editor": "multi_select",
+        "required": true
+    },
+    {
+        "key": "attribute_10400",
+        "label": "\u4fdd\u8bc1",
+        "group": "\u5c5e\u6027",
+        "editor": "single_select",
+        "required": false
+    },
+    {
+        "key": "attribute_11254",
+        "label": "JSON\u5bcc\u5185\u5bb9",
+        "group": "\u5c5e\u6027",
+        "editor": "text",
+        "required": false
+    },
+    {
+        "key": "attribute_21531",
+        "label": "\u88c5\u9970\u5143\u7d20",
+        "group": "\u5c5e\u6027",
+        "editor": "multi_select",
+        "required": false
+    },
+    {
+        "key": "attribute_4613",
+        "label": "\u8868\u6263\u7c7b\u578b",
+        "group": "\u5c5e\u6027",
+        "editor": "multi_select",
+        "required": false
+    },
+    {
+        "key": "attribute_4497",
+        "label": "\u542b\u5305\u88c5\u91cd\u91cf\uff0c\u514b",
+        "group": "\u5c5e\u6027",
+        "editor": "decimal",
+        "required": false
+    },
+    {
+        "key": "attribute_11679",
+        "label": "\u74f6\u76d6\u7c7b\u578b",
+        "group": "\u5c5e\u6027",
+        "editor": "single_select",
+        "required": false
+    },
+    {
+        "key": "attribute_4496",
+        "label": "\u6750\u6599",
+        "group": "\u5c5e\u6027",
+        "editor": "dictionary_search",
+        "required": false
+    },
+    {
+        "key": "attribute_22232",
+        "label": "\u6b27\u4e9a\u7ecf\u6d4e\u8054\u76df\u7684HS\u7f16\u7801",
+        "group": "\u5c5e\u6027",
+        "editor": "single_select",
+        "required": false
+    },
+    {
+        "key": "attribute_4655",
+        "label": "\u7167\u987e\u597d\u4e8b\u60c5",
+        "group": "\u5c5e\u6027",
+        "editor": "text",
+        "required": false
+    },
+    {
+        "key": "attribute_4604",
+        "label": "\u6750\u6599\u7684\u7ec4\u6210",
+        "group": "\u5c5e\u6027",
+        "editor": "text",
+        "required": false
+    },
+    {
+        "key": "attribute_10097",
+        "label": "\u989c\u8272\u540d\u79f0",
+        "group": "\u5c5e\u6027",
+        "editor": "text",
+        "required": false
+    },
+    {
+        "key": "attribute_9024",
+        "label": "\u5356\u5bb6\u4ee3\u7801",
+        "group": "\u5c5e\u6027",
+        "editor": "text",
+        "required": false
+    },
+    {
+        "key": "attribute_11650",
+        "label": "\u539f\u5382\u5305\u88c5\u6570\u91cf",
+        "group": "\u5c5e\u6027",
+        "editor": "integer",
+        "required": false
+    },
+    {
+        "key": "attribute_4389",
+        "label": "\u539f\u4ea7\u56fd",
+        "group": "\u5c5e\u6027",
+        "editor": "dictionary_search",
+        "required": false
+    },
+    {
+        "key": "attribute_4191",
+        "label": "\u7b80\u4ecb",
+        "group": "\u5c5e\u6027",
+        "editor": "text",
+        "required": false
+    },
+    {
+        "key": "attribute_8790",
+        "label": "PDF \u6587\u4ef6",
+        "group": "\u5c5e\u6027",
+        "editor": "url",
+        "required": false
+    },
+    {
+        "key": "attribute_22390",
+        "label": "\u7ec4\u5408\u6210\u7c7b\u4f3c\u7684\u4ea7\u54c1",
+        "group": "\u5c5e\u6027",
+        "editor": "text",
+        "required": false
+    },
+    {
+        "key": "attribute_4180",
+        "label": "\u540d\u79f0",
+        "group": "\u5c5e\u6027",
+        "editor": "text",
+        "required": false
+    },
+    {
+        "key": "attribute_9437",
+        "label": "\u7ed8\u56fe",
+        "group": "\u5c5e\u6027",
+        "editor": "multi_select",
+        "required": false
+    },
+    {
+        "key": "attribute_4495",
+        "label": "\u5b63\u5361",
+        "group": "\u5c5e\u6027",
+        "editor": "single_select",
+        "required": false
+    },
+    {
+        "key": "attribute_23536",
+        "label": "\u9700\u8981\u6807\u8bb0\u4ee3\u7801",
+        "group": "\u5c5e\u6027",
+        "editor": "boolean",
+        "required": false
+    },
+    {
+        "key": "attribute_4309",
+        "label": "\u886c\u91cc\u6750\u6599",
+        "group": "\u5c5e\u6027",
+        "editor": "multi_select",
+        "required": false
+    },
+    {
+        "key": "attribute_21845",
+        "label": "\u81ed\u6c27\u3002\u89c6\u9891\u80cc\u666f\uff1a\u94fe\u63a5",
+        "group": "\u5c5e\u6027",
+        "editor": "text",
+        "required": false
+    },
+    {
+        "key": "attribute_31",
+        "label": "\u670d\u88c5\u548c\u978b\u7c7b\u54c1\u724c",
+        "group": "\u5c5e\u6027",
+        "editor": "dictionary_search",
+        "required": true
+    },
+    {
+        "key": "attribute_4503",
+        "label": "\u7cfb\u5217",
+        "group": "\u5c5e\u6027",
+        "editor": "single_select",
+        "required": false
+    },
+    {
+        "key": "attribute_22273",
+        "label": "\u81ed\u6c27\u3002\u89c6\u9891\uff1a\u89c6\u9891\u4ea7\u54c1",
+        "group": "\u5c5e\u6027",
+        "editor": "text",
+        "required": false
+    },
+    {
+        "key": "attribute_9070",
+        "label": "\u7b7e\u540d18+",
+        "group": "\u5c5e\u6027",
+        "editor": "boolean",
+        "required": false
+    },
+    {
+        "key": "attribute_10096",
+        "label": "\u5546\u54c1\u989c\u8272",
+        "group": "\u5c5e\u6027",
+        "editor": "dictionary_search",
+        "required": true
+    },
+    {
+        "key": "attribute_9163",
+        "label": "\u6027\u522b",
+        "group": "\u5c5e\u6027",
+        "editor": "multi_select",
+        "required": true
+    },
+    {
+        "key": "attribute_8292",
+        "label": "\u5408\u5e76\u81f3\u4e00\u5f20\u5361\u7247",
+        "group": "\u5c5e\u6027",
+        "editor": "text",
+        "required": true
+    },
+    {
+        "key": "attribute_8229",
+        "label": "\u7c7b\u578b",
+        "group": "\u5c5e\u6027",
+        "editor": "single_select",
+        "required": true
+    },
+    {
+        "key": "attribute_8789",
+        "label": "PDF\u6587\u4ef6\u540d\u79f0",
+        "group": "\u5c5e\u6027",
+        "editor": "text",
+        "required": false
+    },
+    {
+        "key": "attribute_21841",
+        "label": "\u81ed\u6c27\u3002\u89c6\u9891\uff1a\u94fe\u63a5",
+        "group": "\u5c5e\u6027",
+        "editor": "text",
+        "required": false
+    },
+    {
+        "key": "attribute_4300",
+        "label": "\u670d\u88c5\u5305\u88c5\u7c7b\u578b",
+        "group": "\u5c5e\u6027",
+        "editor": "single_select",
+        "required": false
+    },
+    {
+        "key": "attribute_7732",
+        "label": "\u8fd0\u52a8\u5e94\u7528",
+        "group": "\u5c5e\u6027",
+        "editor": "multi_select",
+        "required": false
+    },
+    {
+        "key": "attribute_23249",
+        "label": "\u7edf\u4e00\u8ba1\u91cf\u5355\u4f4d\u4e2d\u7684\u5546\u54c1\u6570\u91cf",
+        "group": "\u5c5e\u6027",
+        "editor": "decimal",
+        "required": false
+    },
+    {
+        "key": "attribute_23171",
+        "label": "#\u4e3b\u9898\u6807\u7b7e",
+        "group": "\u5c5e\u6027",
+        "editor": "text",
+        "required": false
+    },
+    {
+        "key": "attribute_4501",
+        "label": "\u98ce\u683c",
+        "group": "\u5c5e\u6027",
+        "editor": "multi_select",
+        "required": false
+    },
+    {
+        "key": "attribute_9533",
+        "label": "\u7531\u5236\u9020\u5546\u89c4\u5b9a\u5c3a\u7801",
+        "group": "\u5c5e\u6027",
+        "editor": "text",
+        "required": false
+    },
+    {
+        "key": "attribute_21837",
+        "label": "\u81ed\u6c27\u3002\u89c6\u9891\uff1a\u6807\u9898",
+        "group": "\u5c5e\u6027",
+        "editor": "text",
+        "required": false
+    },
+    {
+        "key": "attribute_13164",
+        "label": "JSON\u5927\u5c0f\u56fe\u8868",
+        "group": "\u5c5e\u6027",
+        "editor": "text",
+        "required": false
+    },
+    {
+        "key": "attribute_9661",
+        "label": "\u4e00\u4e2a\u5305\u88c5\u4e2d\u7684\u6570\u91cf",
+        "group": "\u5c5e\u6027",
+        "editor": "integer",
+        "required": false
+    }
+]

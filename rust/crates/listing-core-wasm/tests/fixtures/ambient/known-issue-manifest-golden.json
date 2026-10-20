@@ -1,0 +1,327 @@
+[
+  {
+    "platform": "ozon",
+    "stage": "validate",
+    "code": "required"
+  },
+  {
+    "platform": "ozon",
+    "stage": "validate",
+    "code": "max_value_count"
+  },
+  {
+    "platform": "ozon",
+    "stage": "validate",
+    "code": "complex_single_item"
+  },
+  {
+    "platform": "ozon",
+    "stage": "validate",
+    "code": "name_contains_han"
+  },
+  {
+    "platform": "ozon",
+    "stage": "validate",
+    "code": "name_too_long"
+  },
+  {
+    "platform": "ozon",
+    "stage": "validate",
+    "code": "offer_id_too_long"
+  },
+  {
+    "platform": "ozon",
+    "stage": "validate",
+    "code": "offer_id_charset"
+  },
+  {
+    "platform": "ozon",
+    "stage": "validate",
+    "code": "invalid_barcode"
+  },
+  {
+    "platform": "ozon",
+    "stage": "validate",
+    "code": "invalid_price"
+  },
+  {
+    "platform": "ozon",
+    "stage": "validate",
+    "code": "invalid_positive_integer"
+  },
+  {
+    "platform": "ozon",
+    "stage": "validate",
+    "code": "invalid_integer"
+  },
+  {
+    "platform": "ozon",
+    "stage": "validate",
+    "code": "invalid_decimal"
+  },
+  {
+    "platform": "ozon",
+    "stage": "validate",
+    "code": "invalid_boolean"
+  },
+  {
+    "platform": "ozon",
+    "stage": "validate",
+    "code": "invalid_url"
+  },
+  {
+    "platform": "ozon",
+    "stage": "validate",
+    "code": "invalid_choice"
+  },
+  {
+    "platform": "ozon",
+    "stage": "validate",
+    "code": "invalid_choice_cardinality"
+  },
+  {
+    "platform": "ozon",
+    "stage": "validate",
+    "code": "invalid_dictionary_id"
+  },
+  {
+    "platform": "ozon",
+    "stage": "validate",
+    "code": "unknown_dictionary_id"
+  },
+  {
+    "platform": "ozon",
+    "stage": "validate",
+    "code": "dictionary_material_required"
+  },
+  {
+    "platform": "ozon",
+    "stage": "freeze",
+    "code": "row_id_invalid"
+  },
+  {
+    "platform": "ozon",
+    "stage": "freeze",
+    "code": "schema_stale"
+  },
+  {
+    "platform": "ozon",
+    "stage": "freeze",
+    "code": "coordinate_mismatch"
+  },
+  {
+    "platform": "ozon",
+    "stage": "freeze",
+    "code": "language_mismatch"
+  },
+  {
+    "platform": "ozon",
+    "stage": "freeze",
+    "code": "ai_candidate_unresolved"
+  },
+  {
+    "platform": "ozon",
+    "stage": "freeze",
+    "code": "freeze_failed"
+  },
+  {
+    "platform": "ozon",
+    "stage": "pre_dispatch",
+    "code": "OZON_STORE_PAUSED"
+  },
+  {
+    "platform": "ozon",
+    "stage": "pre_dispatch",
+    "code": "OZON_RATE_LIMITED"
+  },
+  {
+    "platform": "ozon",
+    "stage": "pre_dispatch",
+    "code": "OZON_EGRESS_UNAVAILABLE"
+  },
+  {
+    "platform": "ozon",
+    "stage": "pre_dispatch",
+    "code": "OZON_EGRESS_UNREACHABLE"
+  },
+  {
+    "platform": "ozon",
+    "stage": "pre_dispatch",
+    "code": "OZON_WRITES_DISABLED"
+  },
+  {
+    "platform": "ozon",
+    "stage": "pre_dispatch",
+    "code": "OZON_ACCESS_UNCLASSIFIED"
+  },
+  {
+    "platform": "ozon",
+    "stage": "pre_dispatch",
+    "code": "SHIPPING_NOT_READY"
+  },
+  {
+    "platform": "ozon",
+    "stage": "submit",
+    "code": "OZON_ROW_REJECTED"
+  },
+  {
+    "platform": "ozon",
+    "stage": "submit",
+    "code": "OZON_CREDENTIAL_INVALID"
+  },
+  {
+    "platform": "ozon",
+    "stage": "submit",
+    "code": "OZON_PERMISSION_DENIED"
+  },
+  {
+    "platform": "ozon",
+    "stage": "submit",
+    "code": "OZON_ACCESS_UNCLASSIFIED"
+  },
+  {
+    "platform": "ozon",
+    "stage": "submit",
+    "code": "OZON_RATE_LIMITED"
+  },
+  {
+    "platform": "ozon",
+    "stage": "submit",
+    "code": "OZON_DISPATCH_INTERRUPTED"
+  },
+  {
+    "platform": "ozon",
+    "stage": "preview",
+    "code": "variant_metadata_unknown"
+  },
+  {
+    "platform": "ozon",
+    "stage": "preview",
+    "code": "variant_model_field_absent"
+  },
+  {
+    "platform": "ozon",
+    "stage": "preview",
+    "code": "variant_model_field_complex"
+  },
+  {
+    "platform": "ozon",
+    "stage": "preview",
+    "code": "variant_dimension_complex"
+  },
+  {
+    "platform": "ozon",
+    "stage": "preview",
+    "code": "variant_category_mismatch"
+  },
+  {
+    "platform": "ozon",
+    "stage": "preview",
+    "code": "variant_brand_mismatch"
+  },
+  {
+    "platform": "ozon",
+    "stage": "preview",
+    "code": "variant_no_distinguishing_dimension"
+  },
+  {
+    "platform": "ozon",
+    "stage": "preview",
+    "code": "variant_combination_duplicate"
+  },
+  {
+    "platform": "ozon",
+    "stage": "preview",
+    "code": "variant_write_member_unknown"
+  },
+  {
+    "platform": "wb",
+    "stage": "metadata",
+    "code": "catalog_unavailable"
+  },
+  {
+    "platform": "wb",
+    "stage": "metadata",
+    "code": "catalog_stale"
+  },
+  {
+    "platform": "wb",
+    "stage": "metadata",
+    "code": "defaults_stale"
+  },
+  {
+    "platform": "wb",
+    "stage": "metadata",
+    "code": "catalog_invalid"
+  },
+  {
+    "platform": "wb",
+    "stage": "validate",
+    "code": "unknown_characteristic"
+  },
+  {
+    "platform": "wb",
+    "stage": "validate",
+    "code": "blank_text"
+  },
+  {
+    "platform": "wb",
+    "stage": "validate",
+    "code": "max_count"
+  },
+  {
+    "platform": "wb",
+    "stage": "validate",
+    "code": "nonfinite_number"
+  },
+  {
+    "platform": "wb",
+    "stage": "validate",
+    "code": "value_type"
+  },
+  {
+    "platform": "wb",
+    "stage": "validate",
+    "code": "required"
+  },
+  {
+    "platform": "wb",
+    "stage": "validate",
+    "code": "coordinate_mismatch"
+  },
+  {
+    "platform": "wb",
+    "stage": "validate",
+    "code": "invalid_dimensions"
+  },
+  {
+    "platform": "wb",
+    "stage": "validate",
+    "code": "variant_count"
+  },
+  {
+    "platform": "wb",
+    "stage": "validate",
+    "code": "vendor_code_required"
+  },
+  {
+    "platform": "wb",
+    "stage": "validate",
+    "code": "vendor_code_too_long"
+  },
+  {
+    "platform": "wb",
+    "stage": "validate",
+    "code": "title_too_long"
+  },
+  {
+    "platform": "wb",
+    "stage": "preview",
+    "code": "upload_too_large"
+  },
+  {
+    "platform": "wb",
+    "stage": "preview",
+    "code": "encoding_failed"
+  }
+]

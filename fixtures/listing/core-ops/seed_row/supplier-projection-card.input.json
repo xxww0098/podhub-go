@@ -1,0 +1,61 @@
+{
+  "card": {
+    "aiFieldPolicy": {
+      "allowed_field_keys": [
+        "name",
+        "price",
+        "tags"
+      ],
+      "protected_field_keys": []
+    },
+    "aiPromptId": "prompt-golden",
+    "aiPromptSha256": "sha256:prompt",
+    "categoryKey": "golden-core-ops",
+    "defaults": {
+      "complex_values": [],
+      "values": {}
+    },
+    "descriptionCategoryId": 900001,
+    "language": "ru",
+    "psdTemplateAssetId": "asset-golden",
+    "psdTemplateFileName": "template.psd",
+    "psdTemplateSha256": "sha256:tpl",
+    "queue": {
+      "frozenRowIds": [],
+      "nextPosition": 0,
+      "paused": false,
+      "stopAfterCurrent": false
+    },
+    "supplierProductId": "sp-golden-100",
+    "typeId": 5001,
+    "videoCover": {
+      "content_hash": "sha256:clip",
+      "content_type": "video/mp4",
+      "duration_ms": 5000,
+      "file_name": "clip.mp4",
+      "object_key": null,
+      "origin": "public_url",
+      "public_url": "https://media.example.invalid/clip.mp4",
+      "role": "cover",
+      "size_bytes": 1024
+    },
+    "videos": [
+      {
+        "content_hash": "sha256:clip",
+        "content_type": "video/mp4",
+        "duration_ms": 5000,
+        "file_name": "clip.mp4",
+        "object_key": null,
+        "origin": "public_url",
+        "public_url": "https://media.example.invalid/clip.mp4",
+        "role": "product",
+        "size_bytes": 1024
+      }
+    ]
+  },
+  "source": {
+    "assetId": "",
+    "fileName": "supplier.psd",
+    "sha256": "sha256:source-supplier"
+  }
+}

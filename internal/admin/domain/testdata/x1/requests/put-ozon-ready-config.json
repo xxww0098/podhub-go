@@ -1,0 +1,20 @@
+{
+  "descriptionCategoryId": 17033561,
+  "typeId": 91497,
+  "language": "zh_hans",
+  "values": {
+    "fixed:width": [{ "kind": "integer", "value": 400 }],
+    "fixed:height": [{ "kind": "integer", "value": 300 }],
+    "fixed:depth": [{ "kind": "integer", "value": 100 }],
+    "fixed:dimension_unit": [{ "kind": "text", "value": "mm" }],
+    "fixed:weight": [{ "kind": "integer", "value": 350 }],
+    "fixed:weight_unit": [{ "kind": "text", "value": "g" }],
+    "fixed:vat": [{ "kind": "decimal", "value": "0.2" }],
+    "fixed:currency_code": [{ "kind": "text", "value": "RUB" }]
+  },
+  "fixedTags": ["#толстовка"],
+  "promptText": "见 brief-minimal.txt（测试把 TEST_BRIEF 原文字符串放进 promptText，含末尾换行；canonical_brief 会收成六行）",
+  "aiOutput": { "title": true, "description": true, "tags": true },
+  "expectedRevision": 0,
+  "_note": "tests/cloud/supplier_dbs.rs ready_config_body。PUT 前测试用 GET 的 language 与 revision 覆盖 language 与 expectedRevision。fixedTags 在 publish_gate 里是 sixteen_tags() 十六个标签，不是这一条占位。"
+}

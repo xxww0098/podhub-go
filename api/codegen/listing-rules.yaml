@@ -1,0 +1,8 @@
+package: rulesgen
+output: internal/listing/rules/http/gen/openapi.gen.go
+generate:
+  models: true
+  chi-server: true
+output-options:
+  include-tags:
+    - listing-rules

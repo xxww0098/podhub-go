@@ -1,0 +1,71 @@
+{
+  "images": [
+    {
+      "byte_size": 2048,
+      "content_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "error_code": null,
+      "file_name": "slice-0.jpg",
+      "group_name": "hero",
+      "height": 1200,
+      "index": 0,
+      "object_key": null,
+      "phase": "rendered",
+      "public_url": null,
+      "width": 900
+    },
+    {
+      "byte_size": 2048,
+      "content_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "error_code": null,
+      "file_name": "slice-1.jpg",
+      "group_name": "gallery",
+      "height": 1200,
+      "index": 1,
+      "object_key": null,
+      "phase": "rendered",
+      "public_url": null,
+      "width": 900
+    },
+    {
+      "byte_size": 2048,
+      "content_hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "error_code": null,
+      "file_name": "slice-2.jpg",
+      "group_name": "gallery",
+      "height": 1200,
+      "index": 2,
+      "object_key": null,
+      "phase": "rendered",
+      "public_url": null,
+      "width": 900
+    }
+  ],
+  "rendererManifest": {
+    "slices": [
+      {
+        "contentHash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "fileName": "slice-0.jpg",
+        "groupName": "hero",
+        "height": 1200,
+        "index": 0,
+        "width": 900
+      },
+      {
+        "contentHash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "fileName": "slice-1.jpg",
+        "groupName": "gallery",
+        "height": 1200,
+        "index": 1,
+        "width": 900
+      },
+      {
+        "contentHash": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "fileName": "slice-2.jpg",
+        "groupName": "gallery",
+        "height": 1200,
+        "index": 2,
+        "width": 900
+      }
+    ]
+  }
+}

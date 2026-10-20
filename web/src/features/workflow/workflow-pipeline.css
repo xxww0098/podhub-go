@@ -1,0 +1,50 @@
+/* Listing pipeline motion — production subset of prototype.css */
+
+.wf-pipe {
+  --ease: var(--ease-settle);
+}
+
+@keyframes wf-ready-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 color-mix(in oklch, var(--brand, oklch(0.535 0.222 264)) 35%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 4px color-mix(in oklch, var(--brand, oklch(0.535 0.222 264)) 15%, transparent);
+  }
+}
+
+@keyframes wf-fade-in {
+  from {
+    opacity: 0.5;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.wf-fade-in {
+  animation: wf-fade-in 220ms var(--ease, ease-out) both;
+}
+
+.wf-ready-pulse {
+  animation: wf-ready-pulse 2.2s var(--ease) infinite;
+}
+
+.wf-quota-transition {
+  transition: flex-grow 320ms var(--ease-settle), opacity 200ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wf-pipe *,
+  .wf-pipe *::before,
+  .wf-pipe *::after,
+  .wf-ready-pulse,
+  .wf-quota-transition {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+

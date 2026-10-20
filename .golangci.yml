@@ -1,0 +1,26 @@
+version: "2"
+linters:
+  enable:
+    - depguard
+  settings:
+    depguard:
+      rules:
+        domain-pure:
+          files:
+            - "**/internal/*/domain/**"
+            - "**/internal/*/*/domain/**"
+            - "**/internal/*/contract/**"
+            - "**/internal/*/*/contract/**"
+          deny:
+            - pkg: github.com/jackc/pgx
+              desc: domain/contract must not touch the database
+            - pkg: github.com/go-chi/chi
+              desc: domain/contract must not touch HTTP
+            - pkg: github.com/aws/aws-sdk-go-v2
+              desc: use platform/r2 through a contract interface
+        no-direct-relaykit:
+          files:
+            - "!**/internal/platform/llm/**"
+          deny:
+            - pkg: github.com/QuantumNous/new-api/relaykit
+              desc: only platform/llm may import RelayKit

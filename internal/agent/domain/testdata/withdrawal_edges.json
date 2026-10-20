@@ -1,0 +1,14 @@
+[
+  {"name": "request", "from": "", "edge": "request", "to": "pending", "legal": true},
+  {"name": "pay", "from": "pending", "edge": "pay", "to": "paid", "decided": true, "legal": true},
+  {"name": "reject", "from": "pending", "edge": "reject", "reason": "资料不符", "to": "rejected", "decided": true, "legal": true},
+  {"name": "reject-blank", "from": "pending", "edge": "reject", "reason": "  ", "legal": false, "err": "invalid_shape"},
+  {"name": "pay-from-paid", "from": "paid", "edge": "pay", "legal": false, "err": "illegal_edge"},
+  {"name": "pay-from-rejected", "from": "rejected", "edge": "pay", "legal": false, "err": "illegal_edge"},
+  {"name": "reject-from-paid", "from": "paid", "edge": "reject", "reason": "no", "legal": false, "err": "illegal_edge"},
+  {"name": "reject-from-rejected", "from": "rejected", "edge": "reject", "reason": "no", "legal": false, "err": "illegal_edge"},
+  {"name": "request-while-pending", "from": "pending", "edge": "request", "legal": false, "err": "illegal_edge"},
+  {"name": "request-after-paid", "from": "paid", "edge": "request", "legal": false, "err": "illegal_edge"},
+  {"name": "unknown-edge", "from": "pending", "edge": "cancel", "legal": false, "err": "illegal_edge"},
+  {"name": "unknown-status", "from": "credited", "edge": "pay", "legal": false, "err": "illegal_edge"}
+]

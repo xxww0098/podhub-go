@@ -1,0 +1,243 @@
+{
+  "category_key": "decorative-wall-art-40x50",
+  "label": "住宅和花园 / 装饰和房间内饰 / 装饰画",
+  "description_category_id": 17027906,
+  "type_id": 91976,
+  "schema_revision": "local-v1",
+  "recipe_id": 0,
+  "recipe_revision": 1,
+  "catalog_schema_version": 7,
+  "fields": [
+    {
+      "key": "offer_id",
+      "label": "Offer ID",
+      "group": "基础",
+      "editor": "text",
+      "required": true,
+      "constraints": {
+        "collection": false,
+        "max_value_count": null,
+        "dictionary_id": null
+      },
+      "attribute_id": null,
+      "complex_id": null,
+      "description": "",
+      "raw_type": null,
+      "read_only": false,
+      "complex_group_collection": false,
+      "options": [],
+      "options_truncated": false,
+      "aspect": null
+    },
+    {
+      "key": "name",
+      "label": "商品名称",
+      "group": "基础",
+      "editor": "text",
+      "required": true,
+      "constraints": {
+        "collection": false,
+        "max_value_count": null,
+        "dictionary_id": null
+      },
+      "attribute_id": null,
+      "complex_id": null,
+      "description": "",
+      "raw_type": null,
+      "read_only": false,
+      "complex_group_collection": false,
+      "options": [],
+      "options_truncated": false,
+      "aspect": null
+    },
+    {
+      "key": "price",
+      "label": "价格 (RUB)",
+      "group": "基础",
+      "editor": "decimal",
+      "required": true,
+      "constraints": {
+        "collection": false,
+        "max_value_count": null,
+        "dictionary_id": null
+      },
+      "attribute_id": null,
+      "complex_id": null,
+      "description": "",
+      "raw_type": null,
+      "read_only": false,
+      "complex_group_collection": false,
+      "options": [],
+      "options_truncated": false,
+      "aspect": null
+    },
+    {
+      "key": "barcode",
+      "label": "条形码",
+      "group": "基础",
+      "editor": "text",
+      "required": false,
+      "constraints": {
+        "collection": false,
+        "max_value_count": null,
+        "dictionary_id": null
+      },
+      "attribute_id": null,
+      "complex_id": null,
+      "description": "",
+      "raw_type": null,
+      "read_only": false,
+      "complex_group_collection": false,
+      "options": [],
+      "options_truncated": false,
+      "aspect": null
+    },
+    {
+      "key": "description",
+      "label": "简介",
+      "group": "属性",
+      "editor": "text",
+      "required": false,
+      "constraints": {
+        "collection": false,
+        "max_value_count": null,
+        "dictionary_id": null
+      },
+      "attribute_id": "4191",
+      "complex_id": null,
+      "description": "",
+      "raw_type": null,
+      "read_only": false,
+      "complex_group_collection": false,
+      "options": [],
+      "options_truncated": false,
+      "aspect": null
+    },
+    {
+      "key": "brand",
+      "label": "品牌",
+      "group": "属性",
+      "editor": "text",
+      "required": true,
+      "constraints": {
+        "collection": false,
+        "max_value_count": null,
+        "dictionary_id": null
+      },
+      "attribute_id": "31",
+      "complex_id": null,
+      "description": "",
+      "raw_type": null,
+      "read_only": false,
+      "complex_group_collection": false,
+      "options": [],
+      "options_truncated": false,
+      "aspect": null
+    },
+    {
+      "key": "merge",
+      "label": "合并",
+      "group": "属性",
+      "editor": "text",
+      "required": true,
+      "constraints": {
+        "collection": false,
+        "max_value_count": null,
+        "dictionary_id": null
+      },
+      "attribute_id": "8292",
+      "complex_id": null,
+      "description": "",
+      "raw_type": null,
+      "read_only": false,
+      "complex_group_collection": false,
+      "options": [],
+      "options_truncated": false,
+      "aspect": null
+    },
+    {
+      "key": "width",
+      "label": "宽度 (mm)",
+      "group": "尺寸",
+      "editor": "integer",
+      "required": true,
+      "constraints": {
+        "collection": false,
+        "max_value_count": null,
+        "dictionary_id": null
+      },
+      "attribute_id": null,
+      "complex_id": null,
+      "description": "",
+      "raw_type": null,
+      "read_only": false,
+      "complex_group_collection": false,
+      "options": [],
+      "options_truncated": false,
+      "aspect": null
+    },
+    {
+      "key": "height",
+      "label": "高度 (mm)",
+      "group": "尺寸",
+      "editor": "integer",
+      "required": true,
+      "constraints": {
+        "collection": false,
+        "max_value_count": null,
+        "dictionary_id": null
+      },
+      "attribute_id": null,
+      "complex_id": null,
+      "description": "",
+      "raw_type": null,
+      "read_only": false,
+      "complex_group_collection": false,
+      "options": [],
+      "options_truncated": false,
+      "aspect": null
+    },
+    {
+      "key": "depth",
+      "label": "深度 (mm)",
+      "group": "尺寸",
+      "editor": "integer",
+      "required": true,
+      "constraints": {
+        "collection": false,
+        "max_value_count": null,
+        "dictionary_id": null
+      },
+      "attribute_id": null,
+      "complex_id": null,
+      "description": "",
+      "raw_type": null,
+      "read_only": false,
+      "complex_group_collection": false,
+      "options": [],
+      "options_truncated": false,
+      "aspect": null
+    },
+    {
+      "key": "weight",
+      "label": "重量 (g)",
+      "group": "尺寸",
+      "editor": "integer",
+      "required": true,
+      "constraints": {
+        "collection": false,
+        "max_value_count": null,
+        "dictionary_id": null
+      },
+      "attribute_id": null,
+      "complex_id": null,
+      "description": "",
+      "raw_type": null,
+      "read_only": false,
+      "complex_group_collection": false,
+      "options": [],
+      "options_truncated": false,
+      "aspect": null
+    }
+  ]
+}

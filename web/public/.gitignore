@@ -1,0 +1,5 @@
+# The committed artifact is wasm/dist/browser/render/render_wasm.wasm
+# (built by `bun run wasm:build`, loaded via import.meta.url). This rule only
+# keeps a stale local copy under public/render/ from being committed — vite
+# would serve it verbatim and shadow the real artifact.
+/render/

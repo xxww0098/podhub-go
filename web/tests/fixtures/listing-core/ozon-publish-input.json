@@ -1,0 +1,136 @@
+{
+  "row": {
+    "ai": {
+      "candidates": [],
+      "modelVersion": "",
+      "promptSha256": "",
+      "requestId": ""
+    },
+    "categoryKey": "decorative-wall-art-40x50",
+    "descriptionCategoryId": 17027906,
+    "draft": {
+      "complex_values": [],
+      "values": {
+        "description": {
+          "kind": "text",
+          "value": "40 × 50 cm"
+        },
+        "name": {
+          "kind": "text",
+          "value": " Настенная картина "
+        },
+        "offer_id": {
+          "kind": "text",
+          "value": "  ART-001  "
+        }
+      }
+    },
+    "failureLog": [],
+    "fieldOrigins": [],
+    "handEditedKeys": [],
+    "language": "default",
+    "media": {
+      "images": [
+        {
+          "byte_size": 2048,
+          "content_hash": "sha256:slice-0",
+          "error_code": null,
+          "file_name": "ART-001-1.jpg",
+          "group_name": "",
+          "height": 1200,
+          "index": 0,
+          "object_key": null,
+          "phase": "public_ready",
+          "public_url": "https://media.example.invalid/hero.jpg",
+          "width": 900
+        }
+      ],
+      "videos": []
+    },
+    "normalizedSnapshot": null,
+    "renderEvidence": null,
+    "schemaRevision": "local-v1",
+    "source": {
+      "assetId": "asset_golden",
+      "fileName": "ART-001.psd",
+      "sha256": "sha256:source"
+    },
+    "typeId": 91976,
+    "validationIssues": []
+  },
+  "card": {
+    "aiFieldPolicy": {
+      "allowed_field_keys": [],
+      "protected_field_keys": []
+    },
+    "aiPromptId": "",
+    "aiPromptSha256": "",
+    "categoryKey": "decorative-wall-art-40x50",
+    "defaults": {
+      "complex_values": [],
+      "values": {
+        "barcode": {
+          "kind": "text",
+          "value": "4006381333931"
+        },
+        "brand": {
+          "kind": "text",
+          "value": "NoBrand"
+        },
+        "currency_code": {
+          "kind": "text",
+          "value": "RUB"
+        },
+        "depth": {
+          "kind": "text",
+          "value": "300"
+        },
+        "dimension_unit": {
+          "kind": "text",
+          "value": "mm"
+        },
+        "height": {
+          "kind": "text",
+          "value": "25"
+        },
+        "merge": {
+          "kind": "text",
+          "value": "group-a"
+        },
+        "price": {
+          "kind": "text",
+          "value": "90"
+        },
+        "vat": {
+          "kind": "text",
+          "value": "0"
+        },
+        "weight": {
+          "kind": "text",
+          "value": "310"
+        },
+        "weight_unit": {
+          "kind": "text",
+          "value": "g"
+        },
+        "width": {
+          "kind": "text",
+          "value": "400"
+        }
+      }
+    },
+    "descriptionCategoryId": 17027906,
+    "language": "default",
+    "psdTemplateAssetId": "",
+    "psdTemplateFileName": "",
+    "psdTemplateSha256": "",
+    "queue": {
+      "frozenRowIds": [],
+      "nextPosition": 0,
+      "paused": false,
+      "stopAfterCurrent": false
+    },
+    "typeId": 91976,
+    "videos": []
+  }
+}

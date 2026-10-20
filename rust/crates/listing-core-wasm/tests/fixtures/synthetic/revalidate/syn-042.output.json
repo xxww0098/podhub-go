@@ -1,0 +1,239 @@
+{
+  "contentReady": true,
+  "evidenceDigest": "sha256:ec9ec7ed61dbe00652b78a25a529615c5608d865d667a7a6bba967b40b664ce3",
+  "fact": "Passed",
+  "row": {
+    "ai": {
+      "candidates": [],
+      "modelVersion": "",
+      "promptSha256": "",
+      "requestId": ""
+    },
+    "categoryKey": "decorative-wall-art-40x50",
+    "descriptionCategoryId": 17027906,
+    "draft": {
+      "complex_values": [],
+      "values": {
+        "barcode": {
+          "kind": "text",
+          "value": "4006381333931"
+        },
+        "brand": {
+          "kind": "text",
+          "value": "NoBrand"
+        },
+        "depth": {
+          "kind": "text",
+          "value": "300"
+        },
+        "description": {
+          "kind": "text",
+          "value": "Синтетический образец #42 для сопоставления native↔WASM."
+        },
+        "height": {
+          "kind": "text",
+          "value": "25"
+        },
+        "merge": {
+          "kind": "text",
+          "value": "group-a"
+        },
+        "name": {
+          "kind": "text",
+          "value": "Настенная роспись №42"
+        },
+        "offer_id": {
+          "kind": "text",
+          "value": "SYN-042"
+        },
+        "price": {
+          "kind": "text",
+          "value": "142.94"
+        },
+        "weight": {
+          "kind": "text",
+          "value": "310"
+        },
+        "width": {
+          "kind": "text",
+          "value": "400"
+        }
+      }
+    },
+    "failureLog": [],
+    "fieldOrigins": [
+      {
+        "address": {
+          "field_key": "barcode",
+          "kind": "plain"
+        },
+        "kind": "card_default",
+        "source_ref": null,
+        "updated_at_ms": 1700000100042
+      },
+      {
+        "address": {
+          "field_key": "brand",
+          "kind": "plain"
+        },
+        "kind": "card_default",
+        "source_ref": null,
+        "updated_at_ms": 1700000100042
+      },
+      {
+        "address": {
+          "field_key": "depth",
+          "kind": "plain"
+        },
+        "kind": "card_default",
+        "source_ref": null,
+        "updated_at_ms": 1700000100042
+      },
+      {
+        "address": {
+          "field_key": "description",
+          "kind": "plain"
+        },
+        "kind": "manual",
+        "source_ref": null,
+        "updated_at_ms": 1700000100042
+      },
+      {
+        "address": {
+          "field_key": "height",
+          "kind": "plain"
+        },
+        "kind": "card_default",
+        "source_ref": null,
+        "updated_at_ms": 1700000100042
+      },
+      {
+        "address": {
+          "field_key": "merge",
+          "kind": "plain"
+        },
+        "kind": "card_default",
+        "source_ref": null,
+        "updated_at_ms": 1700000100042
+      },
+      {
+        "address": {
+          "field_key": "name",
+          "kind": "plain"
+        },
+        "kind": "manual",
+        "source_ref": null,
+        "updated_at_ms": 1700000100042
+      },
+      {
+        "address": {
+          "field_key": "offer_id",
+          "kind": "plain"
+        },
+        "kind": "manual",
+        "source_ref": null,
+        "updated_at_ms": 1700000100042
+      },
+      {
+        "address": {
+          "field_key": "price",
+          "kind": "plain"
+        },
+        "kind": "manual",
+        "source_ref": null,
+        "updated_at_ms": 1700000100042
+      },
+      {
+        "address": {
+          "field_key": "weight",
+          "kind": "plain"
+        },
+        "kind": "card_default",
+        "source_ref": null,
+        "updated_at_ms": 1700000100042
+      },
+      {
+        "address": {
+          "field_key": "width",
+          "kind": "plain"
+        },
+        "kind": "card_default",
+        "source_ref": null,
+        "updated_at_ms": 1700000100042
+      }
+    ],
+    "handEditedKeys": [
+      "description",
+      "name",
+      "offer_id",
+      "price"
+    ],
+    "language": "default",
+    "media": {
+      "images": [],
+      "videos": []
+    },
+    "normalizedSnapshot": {
+      "attributes": [
+        {
+          "complex_id": 0,
+          "id": 31,
+          "values": [
+            {
+              "dictionary_value_id": null,
+              "value": "NoBrand"
+            }
+          ]
+        },
+        {
+          "complex_id": 0,
+          "id": 4191,
+          "values": [
+            {
+              "dictionary_value_id": null,
+              "value": "Синтетический образец #42 для сопоставления native↔WASM."
+            }
+          ]
+        },
+        {
+          "complex_id": 0,
+          "id": 8292,
+          "values": [
+            {
+              "dictionary_value_id": null,
+              "value": "group-a"
+            }
+          ]
+        }
+      ],
+      "barcode": "4006381333931",
+      "complex_attributes": [],
+      "currency_code": "RUB",
+      "depth": 300,
+      "description": "Синтетический образец #42 для сопоставления native↔WASM.",
+      "description_category_id": 17027906,
+      "dimension_unit": "mm",
+      "draft_revision": 1,
+      "height": 25,
+      "name": "Настенная роспись №42",
+      "offer_id": "SYN-042",
+      "old_price": "",
+      "price": "142.94",
+      "schema_revision": "local-v1",
+      "type_id": 91976,
+      "vat": "0",
+      "weight": 310,
+      "weight_unit": "g",
+      "width": 400
+    },
+    "renderEvidence": null,
+    "schemaRevision": "local-v1",
+    "source": {
+      "assetId": "",
+      "fileName": "synthetic-042.psd",
+      "sha256": "sha256:synthetic-042"
+    },
+    "typeId": 91976,
+    "validationIssues": []
+  }
+}

@@ -1,0 +1,109 @@
+name: ci
+
+# Push runs only on main. A branch commit is tested by pull_request, so the
+# same SHA is not started twice. A newer run of the same ref cancels the old one.
+# Rust/WASM is built locally and committed with its source manifest.
+# CI verifies and consumes those artifacts; no Rust toolchain is needed.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: wasm manifest checker tests
+        run: bash scripts/test-wasm-dist.sh
+
+      - name: format
+        run: test -z "$(gofmt -l .)"
+      - name: vet
+        run: go vet ./...
+      - name: archtest
+        run: go test ./tests/archtest
+
+      # The scan reads the module cache; setup-go's cache makes it a no-op
+      # download on a warm runner. A module change without a manifest refresh
+      # fails here instead of landing stale.
+      - name: third-party licenses
+        run: python3 scripts/check-third-party-licenses.py
+
+      # The Makefile is the only place the generator versions are written.
+      - name: codegen versions
+        run: make -s codegen-versions >> "$GITHUB_ENV"
+
+      # Binaries are keyed by the tool versions. On a hit make generate finds
+      # the right versions in .codegen-bin and skips go install.
+      # setup-go still uses its default module and build cache.
+      - name: cache codegen binaries
+        uses: actions/cache@v4
+        with:
+          path: .codegen-bin
+          key: codegen-bin-${{ runner.os }}-${{ runner.arch }}-sqlc-${{ env.SQLC_VERSION }}-oapi-codegen-${{ env.OAPI_CODEGEN_VERSION }}
+
+      - name: generated sources match
+        run: |
+          make generate CODEGEN_BIN="$PWD/.codegen-bin"
+          git diff --exit-code
+
+  # The React SPA in web/. It consumes api/openapi.yaml through
+  # openapi-typescript, so api:check fails when schema.d.ts is stale.
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: install
+        working-directory: web
+        run: bun install --frozen-lockfile
+
+      - name: typecheck and build
+        working-directory: web
+        run: bun run build
+
+      - name: api contract
+        working-directory: web
+        run: bun run api:check
+
+      - name: test
+        working-directory: web
+        run: bun run test
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: wasm dist hash
+        run: scripts/check-wasm-dist.sh
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: test
+        # ubuntu-latest provides a Docker daemon. tests/integration skips
+        # only when /var/run/docker.sock is missing; here they run.
+        # tests/integration applies every goose file inside Postgres.
+        # tests/parity compares bytes and does not open a database.
+        # Every module is loaded from the committed dist.
+        run: go test -timeout 25m ./...
+        env:
+          LISTING_TAGS_WASM: wasm/dist/server/listing-tags.wasm
+          WASM_HOST_PROBE: wasm/dist/test/host-probe.wasm
+          LISTING_CORE_WASM: wasm/dist/server/listing-core.wasm
+          LISTING_STATE_WASM: wasm/dist/browser/listing-state.wasm

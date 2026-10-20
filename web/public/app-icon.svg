@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1254" height="1254" viewBox="0 0 1254 1254" role="img" aria-labelledby="title desc">
+  <title id="title">PodHub</title>
+  <desc id="desc">Two open rounded pod forms create an abstract O and P.</desc>
+  <rect width="1254" height="1254" rx="132" fill="#033fa7"/>
+  <path
+    fill="#f3f5f7"
+    d="M599 196H487C318 196 186 337 186 506v228c0 169 132 327 301 327h112V840h-51c-90 0-156-65-156-155V570c0-89 67-157 156-157h51V196Z"
+  />
+  <path
+    fill="#f2611e"
+    d="M653 196h107c175 0 304 137 304 306v126c0 171-102 297-263 339v61c0 18-15 33-33 33H653c-7 0-12-5-12-12V800c0-28 23-50 51-50h15c85 0 154-53 154-122v-58c0-87-69-157-154-157h-54c-7 0-12-5-12-12V208c0-7 5-12 12-12Z"
+  />
+  <circle cx="938" cy="429" r="42" fill="#f3f5f7"/>
+</svg>

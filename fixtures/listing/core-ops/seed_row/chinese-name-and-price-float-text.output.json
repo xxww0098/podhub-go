@@ -1,0 +1,76 @@
+{
+  "ai": {
+    "candidates": [],
+    "modelVersion": "",
+    "promptSha256": "",
+    "requestId": ""
+  },
+  "categoryKey": "golden-core-ops",
+  "descriptionCategoryId": 900001,
+  "draft": {
+    "complex_values": [],
+    "values": {
+      "name": {
+        "kind": "text",
+        "value": "装饰画 中文名称"
+      },
+      "offer_id": {
+        "kind": "text",
+        "value": "ART-DEFAULT"
+      },
+      "price": {
+        "kind": "text",
+        "value": "199.90"
+      }
+    }
+  },
+  "failureLog": [],
+  "fieldOrigins": [
+    {
+      "address": {
+        "field_key": "name",
+        "kind": "plain"
+      },
+      "kind": "manual",
+      "source_ref": null,
+      "updated_at_ms": 1700000000000
+    },
+    {
+      "address": {
+        "field_key": "offer_id",
+        "kind": "plain"
+      },
+      "kind": "card_default",
+      "source_ref": null,
+      "updated_at_ms": 1700000000000
+    },
+    {
+      "address": {
+        "field_key": "price",
+        "kind": "plain"
+      },
+      "kind": "manual",
+      "source_ref": null,
+      "updated_at_ms": 1700000000000
+    }
+  ],
+  "handEditedKeys": [
+    "name",
+    "price"
+  ],
+  "language": "ru",
+  "media": {
+    "images": [],
+    "videos": []
+  },
+  "normalizedSnapshot": null,
+  "renderEvidence": null,
+  "schemaRevision": "golden-v1",
+  "source": {
+    "assetId": "",
+    "fileName": "装饰画.psd",
+    "sha256": "sha256:source-cn"
+  },
+  "typeId": 5001,
+  "validationIssues": []
+}

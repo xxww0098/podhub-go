@@ -1,0 +1,36 @@
+{
+  "note": "手算形状。publish_gate 断言 state=valid、usable=false，并断言随后 GET 的 data.config 与 PUT 返回值相等。digest 与 revision 数字随目录和既有配置变化。SKU 未上架时 denial=sku_not_published。issues 空数组要写出。values 键按 BTreeMap 排序，fixed: 前缀下 currency < depth < dimension < height < vat < weight < weight_unit < width。",
+  "status": 200,
+  "response": {
+    "data": {
+      "config": {
+        "productId": "<scp>",
+        "descriptionCategoryId": 17033561,
+        "typeId": 91497,
+        "language": "zh_hans",
+        "values": {
+          "fixed:currency_code": [{ "kind": "text", "value": "RUB" }],
+          "fixed:depth": [{ "kind": "integer", "value": 100 }],
+          "fixed:dimension_unit": [{ "kind": "text", "value": "mm" }],
+          "fixed:height": [{ "kind": "integer", "value": 300 }],
+          "fixed:vat": [{ "kind": "decimal", "value": "0.2" }],
+          "fixed:weight": [{ "kind": "integer", "value": 350 }],
+          "fixed:weight_unit": [{ "kind": "text", "value": "g" }],
+          "fixed:width": [{ "kind": "integer", "value": 400 }]
+        },
+        "fixedTags": ["<sixteen_tags>"],
+        "promptText": "<canonical TEST_BRIEF>",
+        "aiOutput": { "title": true, "description": true, "tags": true },
+        "revision": "<config revision after write_judgement>",
+        "state": "valid",
+        "validatedCatalogDigest": "<ozon_category_current.content_digest>",
+        "issues": [],
+        "usable": false,
+        "denial": "sku_not_published",
+        "updatedAtMs": "<unix_ms>",
+        "draftPromptRevision": 1,
+        "publishedPromptRevision": 1
+      }
+    }
+  }
+}

@@ -1,0 +1,4 @@
+{"chats":[
+    {"chat":{"created_at":"2026-08-10T09:14:22Z","chat_id":"c-19f3a8e2b71d4c0a","chat_status":"OPENED","chat_type":"BUYER_SELLER"},"first_unread_message_id":"88412003","last_message_id":"88412088","unread_count":3},
+    {"chat":{"created_at":"2026-08-09T11:00:00Z","chat_id":"c-00closed","chat_status":"CLOSED","chat_type":"BUYER_SELLER"},"first_unread_message_id":"","last_message_id":"11","unread_count":0}
+],"total_unread_count":5,"cursor":"eyJvIjoyfQ","has_next":true}

@@ -1,0 +1,182 @@
+{
+  "categoryKey": "decorative-wall-art-40x50",
+  "descriptionCategoryId": 17027906,
+  "typeId": 91976,
+  "language": "default",
+  "schemaRevision": "local-v1",
+  "draft": {
+    "values": {
+      "barcode": {
+        "kind": "text",
+        "value": "4006381333931"
+      },
+      "brand": {
+        "kind": "text",
+        "value": "NoBrand"
+      },
+      "depth": {
+        "kind": "text",
+        "value": "300"
+      },
+      "description": {
+        "kind": "text",
+        "value": "Синтетический образец #44 для сопоставления native↔WASM."
+      },
+      "height": {
+        "kind": "text",
+        "value": "25"
+      },
+      "merge": {
+        "kind": "text",
+        "value": "group-a"
+      },
+      "name": {
+        "kind": "text",
+        "value": "Настенная роспись №44"
+      },
+      "offer_id": {
+        "kind": "text",
+        "value": "SYN-044"
+      },
+      "price": {
+        "kind": "text",
+        "value": "144.08"
+      },
+      "weight": {
+        "kind": "text",
+        "value": "310"
+      },
+      "width": {
+        "kind": "text",
+        "value": "400"
+      }
+    },
+    "complex_values": []
+  },
+  "handEditedKeys": [
+    "description",
+    "name",
+    "offer_id",
+    "price"
+  ],
+  "fieldOrigins": [
+    {
+      "address": {
+        "kind": "plain",
+        "field_key": "barcode"
+      },
+      "kind": "card_default",
+      "source_ref": null,
+      "updated_at_ms": 1700000100044
+    },
+    {
+      "address": {
+        "kind": "plain",
+        "field_key": "brand"
+      },
+      "kind": "card_default",
+      "source_ref": null,
+      "updated_at_ms": 1700000100044
+    },
+    {
+      "address": {
+        "kind": "plain",
+        "field_key": "depth"
+      },
+      "kind": "card_default",
+      "source_ref": null,
+      "updated_at_ms": 1700000100044
+    },
+    {
+      "address": {
+        "kind": "plain",
+        "field_key": "description"
+      },
+      "kind": "manual",
+      "source_ref": null,
+      "updated_at_ms": 1700000100044
+    },
+    {
+      "address": {
+        "kind": "plain",
+        "field_key": "height"
+      },
+      "kind": "card_default",
+      "source_ref": null,
+      "updated_at_ms": 1700000100044
+    },
+    {
+      "address": {
+        "kind": "plain",
+        "field_key": "merge"
+      },
+      "kind": "card_default",
+      "source_ref": null,
+      "updated_at_ms": 1700000100044
+    },
+    {
+      "address": {
+        "kind": "plain",
+        "field_key": "name"
+      },
+      "kind": "manual",
+      "source_ref": null,
+      "updated_at_ms": 1700000100044
+    },
+    {
+      "address": {
+        "kind": "plain",
+        "field_key": "offer_id"
+      },
+      "kind": "manual",
+      "source_ref": null,
+      "updated_at_ms": 1700000100044
+    },
+    {
+      "address": {
+        "kind": "plain",
+        "field_key": "price"
+      },
+      "kind": "manual",
+      "source_ref": null,
+      "updated_at_ms": 1700000100044
+    },
+    {
+      "address": {
+        "kind": "plain",
+        "field_key": "weight"
+      },
+      "kind": "card_default",
+      "source_ref": null,
+      "updated_at_ms": 1700000100044
+    },
+    {
+      "address": {
+        "kind": "plain",
+        "field_key": "width"
+      },
+      "kind": "card_default",
+      "source_ref": null,
+      "updated_at_ms": 1700000100044
+    }
+  ],
+  "normalizedSnapshot": null,
+  "validationIssues": [],
+  "source": {
+    "assetId": "",
+    "sha256": "sha256:synthetic-044",
+    "fileName": "synthetic-044.psd"
+  },
+  "renderEvidence": null,
+  "media": {
+    "images": [],
+    "videos": []
+  },
+  "ai": {
+    "requestId": "",
+    "candidates": [],
+    "promptSha256": "",
+    "modelVersion": ""
+  },
+  "failureLog": []
+}

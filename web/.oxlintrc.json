@@ -1,0 +1,131 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "jsPlugins": [
+    "@shadcn/lint"
+  ],
+  "rules": {
+    "shadcn/no-restyle": [
+      "warn",
+      {
+        "allow": [
+          "layout"
+        ],
+        "contracts": [
+          {
+            "pattern": ".*Trigger$",
+            "deny": []
+          },
+          {
+            "pattern": "(Content|Header|Footer)$",
+            "allow": [
+              "layout",
+              "spacing"
+            ]
+          },
+          {
+            "pattern": "^Table(Cell|Head|Row|Header|Body|Footer)$",
+            "allow": [
+              "layout",
+              "spacing",
+              "color",
+              "typography"
+            ]
+          }
+        ]
+      }
+    ],
+    "shadcn/no-arbitrary-values": [
+      "warn",
+      {
+        "allow": [
+          "layout",
+          "transition-*",
+          "tracking-*",
+          "shadow-*",
+          "drop-shadow-*",
+          "outline-offset-*",
+          "ring-*",
+          "stroke-*",
+          "blur-*",
+          "backdrop-blur-*",
+          "from-*",
+          "to-*"
+        ]
+      }
+    ],
+    "shadcn/no-raw-colors": [
+      "warn",
+      {
+        "allow": [
+          "text-meta",
+          "text-compact",
+          "text-md",
+          "shadow-overlay",
+          "hover:shadow-overlay",
+          "shadow-raise",
+          "hover:shadow-raise"
+        ]
+      }
+    ],
+    "shadcn/no-inline-styles": [
+      "warn",
+      {
+        "allow": [
+          "width",
+          "height",
+          "top",
+          "left",
+          "transform",
+          "flexGrow",
+          "backgroundColor"
+        ]
+      }
+    ],
+    "shadcn/require-static-classes": "warn"
+  },
+  "overrides": [
+    {
+      "files": [
+        "src/components/ui/**"
+      ],
+      "rules": {
+        "shadcn/no-restyle": "off",
+        "shadcn/no-arbitrary-values": "off",
+        "shadcn/require-static-classes": "off"
+      }
+    },
+    {
+      "files": [
+        "src/features/plans/payment-channels.tsx",
+        "src/features/site/public-site.tsx"
+      ],
+      "rules": {
+        "shadcn/no-raw-colors": "off"
+      }
+    },
+    {
+      "files": [
+        "src/features/workflow/workbench/workbench-grid.tsx",
+        "src/features/workflow/workbench/workbench-live-status-button.tsx",
+        "src/features/workflow/workbench/workbench-prepare-controls.tsx",
+        "src/features/workflow/workbench/workbench-ribbon.tsx",
+        "src/features/workflow/workbench/workbench-row.tsx",
+        "src/features/workflow/workbench/workbench-send-controls.tsx"
+      ],
+      "rules": {
+        "shadcn/require-static-classes": "off"
+      }
+    },
+    {
+      "files": [
+        "src/components/identity-mark.tsx",
+        "src/features/workflow/workbench/workbench-row.tsx",
+        "src/features/workflow/workbench/workbench-send-controls.tsx",
+        "src/features/workflow/store-quota-picker.tsx"
+      ],
+      "rules": {
+        "shadcn/no-inline-styles": "off"
+      }
+    }
+  ]
+}

@@ -1,0 +1,82 @@
+@media (max-width: 980px) {
+  .public-site .c-hero-inner {
+    grid-template-columns: 1fr 0.7fr;
+  }
+
+  .public-site .c-hero-photo {
+    object-position: 58% center;
+  }
+
+  .public-site .c-process {
+    grid-template-columns: 1fr;
+  }
+
+  .public-site .c-capability-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 700px) {
+  .public-site .wrap {
+    width: min(calc(100% - 32px), 1280px);
+  }
+
+  .public-site .header nav {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 0;
+  }
+
+  .public-site .header nav a {
+    white-space: nowrap;
+  }
+
+  .public-site .c-hero {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .public-site .c-hero-photo {
+    position: relative;
+    order: 2;
+    height: 300px;
+    object-position: 70% center;
+  }
+
+  .public-site .c-hero-inner {
+    display: block;
+    min-height: 0;
+  }
+
+  .public-site .c-hero-copy {
+    padding-block: 42px 35px;
+  }
+
+  .public-site .c-hero h1 {
+    font-size: clamp(2.4rem, 9vw, 3.7rem);
+  }
+
+  .public-site .c-hero-visual {
+    display: none;
+  }
+
+  .public-site .c-hero-actions a {
+    width: 100%;
+  }
+
+  .public-site .c-steps,
+  .public-site .c-product-grid,
+  .public-site .catalog-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .public-site .c-section-heading {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .public-site .c-capability-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}

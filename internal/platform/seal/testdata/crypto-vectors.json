@@ -1,0 +1,65 @@
+{
+  "integration_config": {
+    "aad_utf8": "platform_integration_config|v1",
+    "ciphertext_hex": "12e0183c0cc7b4f58eb2b64bfe6223a28f95845996cf8883d93aaef5f29e9b46665ac97ac04f6c60ba6f7c79f1d3fb61b11dcbf0a7bf0e8caf6bb42aada2e1d92e01aa4d2f0a316698b0037df9ded7a45a20eb32c6010b11c5fd5f98ef386837894dc7e47029480104c3e6e5caef450a2cdfecd9eb485dd5071fdace68acd7543d9020c2810fb1fa1ffc5fb8cf902ba4a100f59ecc39a99bbcbf4f4189ee42940a8f2a5a251e1fddebbd9e2f5b9001da2d1726184e04c3617727150b2654132e1c172b309bd17960614a37a9e20ad6ebd31ded46f08eb435952ae719959e0177662df1b9a0eb7841c771640bb3a02f47eda813ae5576e63b323ec2383df8d5a9396e4ef34cf12f58e0b54926516b3f70ca6a60eb1057e185cf565f1d26083a2f0ffac9e0444fa77645a9b231780f1d1d2dbd7c91ce393d9831080c48d9668461fa7b322c38c4fce326a46f917a8b0ced3066ffb18762c32fa4ee9c58208d94a36433056d745916cf14d6e31f7c417bf433f5ce4c02c72fb46e34792a69b7203bfec2c8fbab67f2321f",
+    "ciphertext_len": 393,
+    "example_rejected": "set-a-random-32-plus-character-server-secret",
+    "kdf": "SHA-256(utf8(trim(key_string)))",
+    "key_env": "CLOUD_INTEGRATION_CONFIG_KEY",
+    "key_hex": "0a7468a60f61d4f32834ff92fe0e576521431b4ce04151e30630f9e52cea81a3",
+    "key_string": "integration-config-test-key-at-least-32-bytes",
+    "layout": "nonce is a separate bytea column (12 bytes). ciphertext column is AES-256-GCM output = plaintext || 16-byte tag. There is NO version byte inside the blob.",
+    "legacy_no_aad": {
+      "ciphertext_hex": "05a70c3e07dbf9e7b6b6b44bff62390a3eb810dfd094499c73ffdabfeda90a",
+      "note": "decrypt tries AAD first, then ciphertext-only (no AAD) with the same nonce",
+      "plaintext_utf8": "legacy snapshot"
+    },
+    "nonce_hex": "030303030303030303030303",
+    "plaintext_utf8": "{\"schemaVersion\":1,\"aiAccounts\":[],\"aiDefaultModel\":\"\",\"storageBuckets\":[{\"id\":\"delegate\",\"label\":\"d\",\"role\":\"private\",\"provider\":\"cloudflare\",\"endpoint\":\"https://example.r2.cloudflarestorage.com\",\"region\":\"auto\",\"bucket\":\"podhub-private\",\"keyPrefix\":\"\",\"publicBaseUrl\":\"\",\"forcePathStyle\":true,\"accessKeyId\":\"AKIA\",\"secretAccessKey\":\"secret\",\"sessionToken\":\"\",\"active\":true}]}",
+    "tag_is_last_16_bytes": true
+  },
+  "store_credential_v1": {
+    "key_env": "CLOUD_SELLER_CREDENTIAL_KEY",
+    "key_string": "test-seller-credential-key-aaaaaaaaaaaa",
+    "example_rejected": "change-me-seller-credential-key-32chars",
+    "key_id": "k1",
+    "kdf": "SHA-256(utf8(trim(key_string)))",
+    "kek_hex": "3aa80f5bdb165501d5dba71930ea51bfe48413b3a5eb792e5bc8d1f6a16a3233",
+    "binding": {
+      "org_id": 7,
+      "store_id": 42,
+      "credential_revision": 3
+    },
+    "aad_utf8": "store_seller_credential|v1|7|42|3",
+    "client_id": "4995868",
+    "api_key": "763954c3-5e68-48c9-b2a9-fa5dcbcd77e9",
+    "plaintext_hex": "343939353836380037363339353463332d356536382d343863392d623261392d666135646362636437376539",
+    "nonce_hex": "111111111111111111111111",
+    "ciphertext_hex": "bbb770f2c63a2cc37c7eec50ff850a6c0b45578f66651f29a8024388807d2b03cfb9345aaf0f5fc7d5bb0ee2b903710def372566d4d51fb321ccdd97",
+    "fingerprint_hex": "4926adccb534d5d215fd9fc85b5b07297707a354ba26fad2bed1cff9e3c7fd6a",
+    "fingerprint_info": "seller-credential-fingerprint",
+    "layout": "v1: nonce and ciphertext are separate columns. plaintext = utf8(client_id) || 0x00 || utf8(api_key). AES-256-GCM tag appended. No version byte."
+  },
+  "store_credential_v2": {
+    "kek_hex": "3aa80f5bdb165501d5dba71930ea51bfe48413b3a5eb792e5bc8d1f6a16a3233",
+    "key_id": "k1",
+    "dek_hex": "2222222222222222222222222222222222222222222222222222222222222222",
+    "payload_nonce_hex": "333333333333333333333333",
+    "dek_nonce_hex": "444444444444444444444444",
+    "payload_aad_utf8": "store_seller_credential|v1|7|42|3",
+    "wrap_aad_utf8": "store_seller_dek|v2|7|42|k1",
+    "plaintext_hex": "343939353836380037363339353463332d356536382d343863392d623261392d666135646362636437376539",
+    "payload_ciphertext_hex": "42faffdf4d1a4e683fdba84920e56ea108940eb1609d5dc969ee0594acee3b50ed899a339259b7e0709a50cb45ee53c91e0d03f5feabc2c580bf5d3d",
+    "wrapped_dek_hex": "1bef6e436a9086801ff09d8da00b9ae6e137b622925dd2caa90a88ebdbda1faef3f5ca924e5ed4185f22246300a35a0e",
+    "wrapped_dek_len": 48,
+    "layout": "v2 is not a version byte. Rows carry wrapped_dek (48 bytes = 32 DEK + 16 tag) and dek_nonce (12). Payload ciphertext uses the store AAD under the DEK. Wrap AAD binds org, store, and key_id, not credential_revision.",
+    "go_open_conditions": [
+      "AES-256-GCM, 12-byte nonce, 16-byte tag appended",
+      "KEK = SHA-256(utf-8 trim of CLOUD_SELLER_CREDENTIAL_KEY), length \u003e= 32, not the example string",
+      "v1 open: decrypt ciphertext with store AAD using KEK",
+      "v2 open: decrypt wrapped_dek with wrap AAD using KEK to recover 32-byte DEK, then decrypt payload ciphertext with store AAD using DEK",
+      "plaintext split on the first 0x00 byte into client_id and api_key, both valid UTF-8",
+      "AAD strings must match exactly including the decimal org/store/revision with no padding"
+    ]
+  }
+}

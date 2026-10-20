@@ -1,0 +1,30 @@
+[package]
+name = "render"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+description = "PSD template to product slice compute core. Bytes in, bytes out: no filesystem or threads; a host clock supplies diagnostics. The same crate runs in the browser worker on wasm32-unknown-unknown (ADR-0085 decision 3)."
+
+[lints]
+workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+psdx = { workspace = true, features = ["serde", "placed"] }
+image = { workspace = true, features = ["jpeg", "png", "webp"] }
+# Only AI image preparation: single-threaded SIMD, no image/rayon feature fan-out.
+fast_image_resize = { workspace = true, features = ["std"] }
+png = "0.18.1"
+jpeg-encoder = { workspace = true, features = ["std"] }
+sha2.workspace = true
+serde = { workspace = true, features = ["std", "derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+image = { workspace = true, features = ["jpeg"] }
+jpeg-decoder = { version = "0.3.2", default-features = false }
+serde_json.workspace = true

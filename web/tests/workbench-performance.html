@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Workbench performance checks</title></head>
+  <body>
+    <header style="padding:12px;display:flex;gap:12px;align-items:center">
+      <label>测试行数 <input id="count" type="number" min="1" max="10000" value="1000" style="width:90px"></label>
+      <button id="run" type="button">载入工作台</button>
+      <button id="stream" type="button">开始状态更新</button>
+      <output id="results" aria-live="polite">等待运行</output>
+    </header>
+    <div id="fixture" style="height:calc(100vh - 64px);padding:12px;min-width:0;display:flex;flex-direction:column;overflow:hidden"></div>
+    <script type="module" src="./workbench-performance.browser.tsx"></script>
+  </body>
+</html>

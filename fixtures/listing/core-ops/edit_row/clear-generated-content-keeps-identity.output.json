@@ -1,0 +1,247 @@
+{
+  "fact": "Stale",
+  "invalidation": {
+    "contentState": "draft",
+    "mediaState": "pending",
+    "submissionState": null
+  },
+  "row": {
+    "ai": {
+      "candidates": [],
+      "modelVersion": "",
+      "promptSha256": "",
+      "requestId": ""
+    },
+    "categoryKey": "golden-core-ops",
+    "descriptionCategoryId": 900001,
+    "draft": {
+      "complex_values": [],
+      "values": {
+        "offer_id": {
+          "kind": "text",
+          "value": "ART-001"
+        }
+      }
+    },
+    "failureLog": [],
+    "fieldOrigins": [
+      {
+        "address": {
+          "field_key": "offer_id",
+          "kind": "plain"
+        },
+        "kind": "card_default",
+        "source_ref": null,
+        "updated_at_ms": 1700000000000
+      }
+    ],
+    "handEditedKeys": [],
+    "language": "ru",
+    "media": {
+      "images": [],
+      "videos": []
+    },
+    "normalizedSnapshot": null,
+    "renderEvidence": null,
+    "schemaRevision": "golden-v1",
+    "source": {
+      "assetId": "asset-seed",
+      "fileName": "seed.psd",
+      "sha256": "sha256:seed-source"
+    },
+    "typeId": 5001,
+    "validationIssues": []
+  },
+  "stored": {
+    "ai": {
+      "candidates": [],
+      "modelVersion": "",
+      "promptSha256": "",
+      "requestId": ""
+    },
+    "categoryKey": "golden-core-ops",
+    "descriptionCategoryId": 900001,
+    "draft": {
+      "complex_values": [],
+      "values": {
+        "offer_id": {
+          "kind": "text",
+          "value": "ART-001"
+        }
+      }
+    },
+    "failureLog": [],
+    "fieldOrigins": [
+      {
+        "address": {
+          "field_key": "offer_id",
+          "kind": "plain"
+        },
+        "kind": "card_default",
+        "source_ref": null,
+        "updated_at_ms": 1700000000000
+      }
+    ],
+    "handEditedKeys": [],
+    "language": "ru",
+    "media": {
+      "images": [],
+      "videos": []
+    },
+    "normalizedSnapshot": null,
+    "renderEvidence": null,
+    "schemaRevision": "golden-v1",
+    "schemaSnapshot": {
+      "catalog_schema_version": 1,
+      "category_key": "golden-core-ops",
+      "description_category_id": 900001,
+      "fields": [
+        {
+          "aspect": null,
+          "attribute_id": null,
+          "complex_group_collection": false,
+          "complex_id": null,
+          "constraints": {
+            "collection": false,
+            "dictionary_id": null,
+            "max_value_count": null
+          },
+          "description": "",
+          "editor": "text",
+          "group": "基础",
+          "key": "offer_id",
+          "label": "Offer ID",
+          "options": [],
+          "options_truncated": false,
+          "raw_type": null,
+          "read_only": false,
+          "required": true
+        },
+        {
+          "aspect": null,
+          "attribute_id": null,
+          "complex_group_collection": false,
+          "complex_id": null,
+          "constraints": {
+            "collection": false,
+            "dictionary_id": null,
+            "max_value_count": null
+          },
+          "description": "",
+          "editor": "text",
+          "group": "基础",
+          "key": "name",
+          "label": "商品名称",
+          "options": [],
+          "options_truncated": false,
+          "raw_type": null,
+          "read_only": false,
+          "required": true
+        },
+        {
+          "aspect": null,
+          "attribute_id": null,
+          "complex_group_collection": false,
+          "complex_id": null,
+          "constraints": {
+            "collection": false,
+            "dictionary_id": null,
+            "max_value_count": null
+          },
+          "description": "",
+          "editor": "decimal",
+          "group": "基础",
+          "key": "price",
+          "label": "价格 (RUB)",
+          "options": [],
+          "options_truncated": false,
+          "raw_type": null,
+          "read_only": false,
+          "required": true
+        },
+        {
+          "aspect": null,
+          "attribute_id": "900",
+          "complex_group_collection": false,
+          "complex_id": null,
+          "constraints": {
+            "collection": true,
+            "dictionary_id": "900",
+            "max_value_count": null
+          },
+          "description": "",
+          "editor": "multi_select",
+          "group": "属性",
+          "key": "tags",
+          "label": "标签",
+          "options": [
+            {
+              "id": "1",
+              "info": "",
+              "picture": "",
+              "value": "精选"
+            }
+          ],
+          "options_truncated": true,
+          "raw_type": null,
+          "read_only": false,
+          "required": false
+        },
+        {
+          "aspect": null,
+          "attribute_id": null,
+          "complex_group_collection": true,
+          "complex_id": "10",
+          "constraints": {
+            "collection": false,
+            "dictionary_id": null,
+            "max_value_count": null
+          },
+          "description": "",
+          "editor": "text",
+          "group": "规格",
+          "key": "size",
+          "label": "尺寸",
+          "options": [],
+          "options_truncated": false,
+          "raw_type": null,
+          "read_only": false,
+          "required": false
+        },
+        {
+          "aspect": null,
+          "attribute_id": null,
+          "complex_group_collection": true,
+          "complex_id": "10",
+          "constraints": {
+            "collection": false,
+            "dictionary_id": null,
+            "max_value_count": null
+          },
+          "description": "",
+          "editor": "text",
+          "group": "规格",
+          "key": "color",
+          "label": "颜色",
+          "options": [],
+          "options_truncated": false,
+          "raw_type": null,
+          "read_only": false,
+          "required": false
+        }
+      ],
+      "label": "测试类目",
+      "recipe_id": 0,
+      "recipe_revision": 1,
+      "schema_revision": "golden-v1",
+      "type_id": 5001
+    },
+    "source": {
+      "assetId": "asset-seed",
+      "fileName": "seed.psd",
+      "sha256": "sha256:seed-source"
+    },
+    "typeId": 5001,
+    "validationIssues": []
+  }
+}

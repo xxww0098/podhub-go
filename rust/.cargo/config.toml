@@ -1,0 +1,6 @@
+[target.wasm32-unknown-unknown]
+# The browser renderer and listing-core target Chromium; vectorize image work
+# on its CPU. Kept here (not in the build scripts) so hosts without the
+# pinned toolchain still get the same flags. Costs of dropping it: the
+# listing-core artifact crosses its 1.5 MiB size gate (E-076).
+rustflags = ["-C", "target-feature=+simd128"]

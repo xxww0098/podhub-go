@@ -1,0 +1,33 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    // Vite 入口：index.html 内联 <script src="/src/main.tsx">，由 knip 的 vite 插件跟进。
+    "index.html",
+    // bun test 与 *.browser.* 浏览器 harness：由 bun test / tests/*.html 直引，不走 src 的 import 图。
+    "tests/**/*.{ts,tsx}",
+    // package.json scripts 直调（api:routes → gen-routes.ts），不经 import 图。
+    "scripts/**/*.ts"
+  ],
+  "project": [
+    // .css 一并纳入：index.css / public-site.css 由 main.tsx 静态 import，缺了会报 "imports not followed" 提示。
+    "src/**/*.{ts,tsx,css}",
+    "tests/**/*.{ts,tsx}",
+    "scripts/**/*.ts"
+  ],
+  "ignore": [
+    // vendored shadcn/Base UI 基础件按整套保留，并不要求每个导出都有业务消费。
+    "src/components/ui/**"
+  ],
+  "ignoreBinaries": [
+    // api:check 脚本调用系统 diff 比对生成的 schema。
+    "diff"
+  ],
+  // 测试支撑模块的导出大多只被同文件其他 helper 组合使用。
+  "ignoreExportsUsedInFile": true,
+  "ignoreIssues": {
+    // supplierDbNav / useSupplierDbNav 是同一 zustand store 的刻意双名导出（本体 + hook 别名），两侧都有调用方。
+    "src/features/supplier-dbs/supplier-db-nav.ts": [
+      "duplicates"
+    ]
+  }
+}

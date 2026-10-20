@@ -1,0 +1,37 @@
+[package]
+name = "listing-tags"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Narrow host of listing-core banned-tag functions. Not the browser listing-core-wasm artifact."
+
+# Same exception as `rust/crates/listing-core-wasm` and `rust/crates/render-wasm`: the
+# workspace denies `unsafe_code`, and this crate is a raw-pointer wasm32 C ABI
+# boundary that cannot honor it. Cargo's `[lints] workspace = true` is
+# all-or-nothing, so the workspace set is restated with that one key flipped.
+[lints.rust]
+unsafe_code = "allow"
+unused_must_use = "deny"
+unreachable_pub = "warn"
+raw_borrows_via_references = "deny"
+
+[lints.clippy]
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+undocumented_unsafe_blocks = "deny"
+missing_safety_doc = "deny"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+doctest = false
+
+[[bin]]
+name = "oracle"
+path = "src/bin/oracle.rs"
+
+[dependencies]
+serde = { workspace = true, features = ["std", "derive"] }
+serde_json.workspace = true
+unicode-normalization = "0.1.24"

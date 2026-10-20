@@ -1,0 +1,21 @@
+{"returns":[
+        {
+            "id":"88120011",
+            "return_reason_name":"Товар не подошел / не понравился",
+            "type":"FullReturn",
+            "schema":"Fbs",
+            "posting_number":"33920145-0018-1",
+            "product":{"sku":"1784451901","offer_id":"WALL-ART-4060-NAVY","name":"Постер на холсте 40×60 — абстракция «Тихий залив»","quantity":1},
+            "logistic":{"return_date":"2026-08-12T09:14:00Z"},
+            "visual":{"status":{"id":12,"display_name":"At the pick-up point","sys_name":"ArrivedAtReturnPlace"},"change_moment":"2026-08-14T16:02:11Z"}
+        },
+        {
+            "id":"88120012",
+            "return_reason_name":"Брак / повреждение при доставке. Покупатель приложил фото вскрытой упаковки и помятого угла рамы.",
+            "schema":"Fbo",
+            "posting_number":"51290883-0003-2",
+            "product":{"sku":"190002211","offer_id":"CANVAS-ALTAI-80","name":"Настенная картина «Горы Алтая», холст 80×120, очень длинное русское название чтобы проверить перенос","quantity":2},
+            "logistic":{"return_date":"2026-08-10T04:00:00Z"},
+            "visual":{"status":{"id":4,"display_name":"Moving to warehouse","sys_name":"MovingToReturnPlace"},"change_moment":"2026-08-11T08:40:00Z"}
+        }
+    ],"has_next":true}

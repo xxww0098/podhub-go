@@ -1,0 +1,54 @@
+[package]
+name = "listing-core-wasm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Browser WASM boundary for listing-core: the browser runs the same seed/edit/validate field rules Cloud runs natively, through a stable C ABI (browser-owned-listing slice 03, ADR-0107)."
+
+# The workspace denies `unsafe_code`. Like `rust/crates/render-wasm`, this crate is
+# a raw-pointer wasm32 C ABI boundary and cannot; the two of them are the only
+# places in the tree that may say so (see `rust/crates/render-wasm/Cargo.toml`'s
+# comment and the root `Cargo.toml`). Cargo's `[lints] workspace = true` is
+# all-or-nothing, so the workspace set is restated here with that one key
+# flipped, plus the two clippy lints that make the exception pay for itself —
+# identical to render-wasm's own override, for the same reason.
+[lints.rust]
+unsafe_code = "allow"
+unused_must_use = "deny"
+unreachable_pub = "warn"
+raw_borrows_via_references = "deny"
+
+[lints.clippy]
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+undocumented_unsafe_blocks = "deny"
+missing_safety_doc = "deny"
+
+[features]
+# Browser listing state machine. Drops the host-only snapshot_from_fields
+# export. Freeze (op 11) and record_render (op 5) stay on `call`.
+browser = []
+
+[lib]
+# `rlib` (not just `cdylib`) so `cargo test -p listing-core-wasm`'s
+# integration tests (`tests/`) can link this crate as an ordinary Rust
+# dependency and call its `extern "C"` exports directly, native, without a
+# wasm runtime — the wasm32 artifact itself is built and exercised from the
+# browser/Bun side (`bun run wasm:build`, `web/tests/listing-core-wasm.test.ts`).
+crate-type = ["cdylib", "rlib"]
+doctest = false
+
+[dependencies]
+listing-core.workspace = true
+serde = { workspace = true, features = ["std", "derive"] }
+serde_json.workspace = true
+
+[dev-dependencies]
+# `test-support`: this crate's own tests reconstruct the exact ambient
+# schema/card `rust/crates/listing-core/src/ops/golden_tests` pinned its golden
+# fixtures against (`golden_schema_material`, `golden_card`), so the wasm ABI
+# can be replayed against slice 02's committed golden JSON byte-for-byte
+# instead of a second, hand-transcribed copy of that fixture data.
+listing-core = { workspace = true, features = ["test-support"] }

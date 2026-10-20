@@ -1,0 +1,13 @@
+{"orders":[
+    {"order_id":9007199254740993,"order_number":"00-0001-2489176-001","state":"IN_TRANSIT","created_date":"2026-08-12T08:11:00Z",
+     "dropoff_warehouse":{"warehouse_id":102000,"name":"Хоругвино кросс-док","address":"МО"},
+     "timeslot":{"timeslot":{"from":"2026-08-18T06:00:00Z","to":"2026-08-18T14:00:00Z"},
+                 "timezone_info":{"offset":"+03:00","iana_name":"Europe/Moscow"}},
+     "supplies":[{"supply_id":11,"bundle_id":"bundle-a",
+                  "storage_warehouse":{"warehouse_id":9007199254740993,"name":"Хоругвино","address":"МО","arrival_date":""}}]},
+    {"order_id":9002,"order_number":"00-0001-2489176-002","state":"ORDER_STATE_READY_TO_SUPPLY","created_date":"2026-08-14T10:00:00Z",
+     "dropoff_warehouse":{"warehouse_id":102000,"name":"Хоругвино кросс-док","address":"МО"},
+     "timeslot":{"timeslot":{"from":"","to":""},"timezone_info":{"offset":"","iana_name":""}},
+     "supplies":[{"supply_id":12,"bundle_id":"bundle-b",
+                  "storage_warehouse":{"warehouse_id":180561,"name":"Тверь — распределительный центр имени очень длинного русского названия склада","address":"Тверь","arrival_date":""}}]}
+]}

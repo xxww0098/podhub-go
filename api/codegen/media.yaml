@@ -1,0 +1,8 @@
+package: mediagen
+output: internal/media/http/gen/openapi.gen.go
+generate:
+  models: true
+  chi-server: true
+output-options:
+  include-tags:
+    - media

@@ -1,0 +1,109 @@
+{
+  "ai": {
+    "candidates": [],
+    "modelVersion": "",
+    "promptSha256": "",
+    "requestId": ""
+  },
+  "categoryKey": "decorative-wall-art-40x50",
+  "descriptionCategoryId": 17027906,
+  "draft": {
+    "complex_values": [],
+    "values": {
+      "barcode": {
+        "kind": "text",
+        "value": "4006381333931"
+      },
+      "brand": {
+        "kind": "text",
+        "value": "NoBrand"
+      },
+      "currency_code": {
+        "kind": "text",
+        "value": "RUB"
+      },
+      "depth": {
+        "kind": "text",
+        "value": "300"
+      },
+      "description": {
+        "kind": "text",
+        "value": "40 × 50 cm"
+      },
+      "dimension_unit": {
+        "kind": "text",
+        "value": "mm"
+      },
+      "height": {
+        "kind": "text",
+        "value": "25"
+      },
+      "merge": {
+        "kind": "text",
+        "value": "group-a"
+      },
+      "name": {
+        "kind": "text",
+        "value": " Настенная картина "
+      },
+      "offer_id": {
+        "kind": "text",
+        "value": "  ART-001  "
+      },
+      "price": {
+        "kind": "text",
+        "value": "90"
+      },
+      "vat": {
+        "kind": "text",
+        "value": "0"
+      },
+      "weight": {
+        "kind": "text",
+        "value": "310"
+      },
+      "weight_unit": {
+        "kind": "text",
+        "value": "g"
+      },
+      "width": {
+        "kind": "text",
+        "value": "400"
+      }
+    }
+  },
+  "failureLog": [],
+  "fieldOrigins": [],
+  "handEditedKeys": [
+    "barcode",
+    "brand",
+    "currency_code",
+    "depth",
+    "description",
+    "dimension_unit",
+    "height",
+    "merge",
+    "name",
+    "offer_id",
+    "price",
+    "vat",
+    "weight",
+    "weight_unit",
+    "width"
+  ],
+  "language": "ru",
+  "media": {
+    "images": [],
+    "videos": []
+  },
+  "normalizedSnapshot": null,
+  "renderEvidence": null,
+  "schemaRevision": "local-v1",
+  "source": {
+    "assetId": "",
+    "fileName": "golden.psd",
+    "sha256": "sha256:golden-revalidate"
+  },
+  "typeId": 91976,
+  "validationIssues": []
+}

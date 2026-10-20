@@ -1,0 +1,221 @@
+{
+  "fact": "Blocked",
+  "issues": [
+    {
+      "address": {
+        "field_key": "width",
+        "kind": "plain"
+      },
+      "code": "required",
+      "field_key": "width",
+      "message": "宽度 (mm) 为必填项",
+      "parameters": {},
+      "remediation": null,
+      "severity": "blocking"
+    },
+    {
+      "address": {
+        "field_key": "height",
+        "kind": "plain"
+      },
+      "code": "required",
+      "field_key": "height",
+      "message": "高度 (mm) 为必填项",
+      "parameters": {},
+      "remediation": null,
+      "severity": "blocking"
+    },
+    {
+      "address": {
+        "field_key": "depth",
+        "kind": "plain"
+      },
+      "code": "required",
+      "field_key": "depth",
+      "message": "深度 (mm) 为必填项",
+      "parameters": {},
+      "remediation": null,
+      "severity": "blocking"
+    },
+    {
+      "address": {
+        "field_key": "weight",
+        "kind": "plain"
+      },
+      "code": "required",
+      "field_key": "weight",
+      "message": "重量 (g) 为必填项",
+      "parameters": {},
+      "remediation": null,
+      "severity": "blocking"
+    },
+    {
+      "address": {
+        "field_key": "currency_code",
+        "kind": "plain"
+      },
+      "code": "required",
+      "field_key": "currency_code",
+      "message": "价格币种为必填项",
+      "parameters": {},
+      "remediation": "在「默认字段」选择店铺币种后再发送",
+      "severity": "blocking"
+    }
+  ],
+  "row": {
+    "ai": {
+      "candidates": [],
+      "modelVersion": "",
+      "promptSha256": "",
+      "requestId": ""
+    },
+    "categoryKey": "golden-core-ops",
+    "descriptionCategoryId": 900001,
+    "draft": {
+      "complex_values": [],
+      "values": {
+        "name": {
+          "kind": "text",
+          "value": "Decorative Wall Art"
+        },
+        "offer_id": {
+          "kind": "text",
+          "value": "ART-001"
+        },
+        "price": {
+          "kind": "text",
+          "value": "99.90"
+        },
+        "tags": {
+          "kind": "multi_select",
+          "value": [
+            {
+              "dictionary_value_id": 2,
+              "value": "限量"
+            }
+          ]
+        }
+      }
+    },
+    "failureLog": [],
+    "fieldOrigins": [
+      {
+        "address": {
+          "field_key": "offer_id",
+          "kind": "plain"
+        },
+        "kind": "card_default",
+        "source_ref": null,
+        "updated_at_ms": 1700000000000
+      },
+      {
+        "address": {
+          "field_key": "name",
+          "kind": "plain"
+        },
+        "kind": "manual",
+        "source_ref": null,
+        "updated_at_ms": 1700000000200
+      },
+      {
+        "address": {
+          "field_key": "price",
+          "kind": "plain"
+        },
+        "kind": "manual",
+        "source_ref": null,
+        "updated_at_ms": 1700000000200
+      },
+      {
+        "address": {
+          "field_key": "tags",
+          "kind": "plain"
+        },
+        "kind": "manual",
+        "source_ref": null,
+        "updated_at_ms": 1700000000200
+      }
+    ],
+    "handEditedKeys": [
+      "name",
+      "price",
+      "tags"
+    ],
+    "language": "ru",
+    "media": {
+      "images": [],
+      "videos": []
+    },
+    "normalizedSnapshot": null,
+    "renderEvidence": null,
+    "schemaRevision": "golden-v1",
+    "source": {
+      "assetId": "asset-seed",
+      "fileName": "seed.psd",
+      "sha256": "sha256:seed-source"
+    },
+    "typeId": 5001,
+    "validationIssues": [
+      {
+        "address": {
+          "field_key": "width",
+          "kind": "plain"
+        },
+        "code": "required",
+        "field_key": "width",
+        "message": "宽度 (mm) 为必填项",
+        "parameters": {},
+        "remediation": null,
+        "severity": "blocking"
+      },
+      {
+        "address": {
+          "field_key": "height",
+          "kind": "plain"
+        },
+        "code": "required",
+        "field_key": "height",
+        "message": "高度 (mm) 为必填项",
+        "parameters": {},
+        "remediation": null,
+        "severity": "blocking"
+      },
+      {
+        "address": {
+          "field_key": "depth",
+          "kind": "plain"
+        },
+        "code": "required",
+        "field_key": "depth",
+        "message": "深度 (mm) 为必填项",
+        "parameters": {},
+        "remediation": null,
+        "severity": "blocking"
+      },
+      {
+        "address": {
+          "field_key": "weight",
+          "kind": "plain"
+        },
+        "code": "required",
+        "field_key": "weight",
+        "message": "重量 (g) 为必填项",
+        "parameters": {},
+        "remediation": null,
+        "severity": "blocking"
+      },
+      {
+        "address": {
+          "field_key": "currency_code",
+          "kind": "plain"
+        },
+        "code": "required",
+        "field_key": "currency_code",
+        "message": "价格币种为必填项",
+        "parameters": {},
+        "remediation": "在「默认字段」选择店铺币种后再发送",
+        "severity": "blocking"
+      }
+    ]
+  }
+}

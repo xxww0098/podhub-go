@@ -1,0 +1,54 @@
+{
+  "items": [
+    {
+      "offer_id": "ART-001",
+      "barcode": "4006381333931",
+      "name": "Настенная картина",
+      "description_category_id": 17027906,
+      "type_id": 91976,
+      "price": "90",
+      "currency_code": "RUB",
+      "vat": "0",
+      "depth": 300,
+      "width": 400,
+      "height": 25,
+      "dimension_unit": "mm",
+      "weight": 310,
+      "weight_unit": "g",
+      "primary_image": "https://media.example.invalid/hero.jpg",
+      "color_image": "https://media.example.invalid/hero.jpg",
+      "images": [
+        "https://media.example.invalid/hero.jpg"
+      ],
+      "attributes": [
+        {
+          "id": 31,
+          "complex_id": 0,
+          "values": [
+            {
+              "value": "NoBrand"
+            }
+          ]
+        },
+        {
+          "id": 4191,
+          "complex_id": 0,
+          "values": [
+            {
+              "value": "40 × 50 cm"
+            }
+          ]
+        },
+        {
+          "id": 8292,
+          "complex_id": 0,
+          "values": [
+            {
+              "value": "group-a"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

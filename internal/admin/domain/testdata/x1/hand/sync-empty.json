@@ -1,0 +1,13 @@
+{
+  "note": "手算。无候选时 sync_prompt_copies 仍 200，并写一条 sc_supplier_prompts_synced。测试不断言这个空体。",
+  "response": {
+    "data": {
+      "counts": { "updated": 0, "upToDate": 0, "unmatched": 0, "failed": 0 },
+      "updated": [],
+      "upToDate": [],
+      "unmatched": [],
+      "failed": [],
+      "detailsTruncated": false
+    }
+  }
+}

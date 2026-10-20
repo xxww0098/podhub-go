@@ -1,0 +1,21 @@
+{"counter":"3","last_id":91004,"result":[
+        {
+            "cancellation_id":91003,
+            "cancellation_initiator":"CLIENT",
+            "cancellation_reason":{"id":352,"name":"Покупатель передумал"},
+            "cancellation_reason_message":"Нужен другой размер рамки 50×70",
+            "cancelled_at":"2026-08-15T07:22:00Z",
+            "posting_number":"33920145-0021-1",
+            "state":{"id":1,"name":"Ожидает решения продавца","state":"ON_APPROVAL"}
+        },
+        {
+            "cancellation_id":91004,
+            "cancellation_initiator":"OZON",
+            "cancellation_reason":{"id":11,"name":"Невозможно доставить"},
+            "cancellation_reason_message":"",
+            "cancelled_at":"2026-08-13T19:01:44Z",
+            "approve_date":"2026-08-13T19:10:00Z",
+            "posting_number":"44881220-0007-3",
+            "state":{"id":2,"name":"Одобрено","state":"APPROVED"}
+        }
+    ]}

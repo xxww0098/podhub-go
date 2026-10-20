@@ -1,0 +1,27 @@
+{
+  "note": "手算。GET 详情在 staff_crud 创建 row_body 之后、调价之前。测试只断言 props 与归档后 rows 长度。db 头字段顺序见 SupplierDbData。acceptsDelegate=false 也要写出。无成员则省略 accountEmail。",
+  "status": 200,
+  "response": {
+    "data": {
+      "db": {
+        "sourceId": "<source>",
+        "name": "<create name>",
+        "country": "CN",
+        "contact": "ops@factory.invalid",
+        "internalNote": "旺季产能足",
+        "listed": true,
+        "icon": "🏭",
+        "acceptsDelegate": false,
+        "viewPrefs": { "kanban": "status" },
+        "rowCount": 1,
+        "publishedCount": 0,
+        "createdAtMs": "<unix_ms>",
+        "updatedAtMs": "<unix_ms>",
+        "createdBy": "<actor_public_id>",
+        "creatorName": "平台货源管理员"
+      },
+      "propDefs": [],
+      "rows": ["见 post-row-staff-crud.response.json 的 row"]
+    }
+  }
+}

@@ -1,0 +1,8 @@
+package: healthgen
+output: internal/platform/health/gen/openapi.gen.go
+generate:
+  models: true
+  chi-server: true
+output-options:
+  include-tags:
+    - health

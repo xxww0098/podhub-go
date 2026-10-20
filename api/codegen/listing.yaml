@@ -1,0 +1,10 @@
+package: listinggen
+output: internal/listing/http/gen/openapi.gen.go
+generate:
+  models: true
+  chi-server: true
+output-options:
+  include-operation-ids:
+    - listListingJobs
+    - getListingRun
+    - postListingSubmit

@@ -1,0 +1,11 @@
+# Route entries (METHOD /path) in internal/app/testdata/routes.txt that are
+# absent from api/openapi.yaml. This list may only shrink. When an operation is
+# added to the spec, delete the line and lower routesOpenAPIAllowlistMax in
+# routes_openapi_test.go.
+#
+# The unit is method+path, not path: a documented GET says nothing about
+# whether POST exists on the same path.
+#
+# Chi catch-alls are not listed here. api/openapi.yaml documents them as a
+# {seller_path} parameter plus x-podhub-path, and wildcardCoverageErrors in
+# routes_openapi_test.go bridges the two spellings.
