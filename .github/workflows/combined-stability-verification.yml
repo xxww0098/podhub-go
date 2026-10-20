@@ -17,7 +17,7 @@ jobs:
       matrix:
         part: [go-full, web-full, lint-codegen, regression-race]
     env:
-      EVIDENCE: ${{ runner.temp }}/combined-evidence
+      EVIDENCE: /tmp/podhub-combined-evidence
       LISTING_TAGS_WASM: wasm/dist/server/listing-tags.wasm
       WASM_HOST_PROBE: wasm/dist/test/host-probe.wasm
       LISTING_CORE_WASM: wasm/dist/server/listing-core.wasm
@@ -108,5 +108,5 @@ jobs:
         if: always()
         with:
           name: combined-${{ matrix.part }}
-          path: ${{ runner.temp }}/combined-evidence
+          path: /tmp/podhub-combined-evidence
           retention-days: 14
