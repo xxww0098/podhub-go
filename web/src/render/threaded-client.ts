@@ -104,11 +104,32 @@ export function createRuntimeHost(options: RuntimeHostOptions) {
     createBatch(): Pick<RenderBatch, "withLane" | "prepareAiImage" | "dispose"> {
       const owner = nextOwner++
       owners.add(owner)
+      const cancellation = new AbortController()
+      // Cancels this caller's wait, not shared initialization or Rust compute.
+      // Always observe the underlying promise, including its late rejection.
+      const waitForOwner = <T>(promise: Promise<T>): Promise<T> => new Promise((resolve, reject) => {
+        const signal = cancellation.signal
+        const stopped = () => {
+          signal.removeEventListener("abort", stopped)
+          reject(signal.reason)
+        }
+        signal.addEventListener("abort", stopped, { once: true })
+        promise.then(value => {
+          signal.removeEventListener("abort", stopped)
+          if (signal.aborted) reject(signal.reason)
+          else resolve(value)
+        }, error => {
+          signal.removeEventListener("abort", stopped)
+          reject(error)
+        })
+        if (signal.aborted) stopped()
+      })
       const alive = () => {
         if (!owners.has(owner)) throw failure("The render batch was disposed", "RENDER_CANCELLED")
       }
       const dispose = () => {
         if (!owners.delete(owner)) return
+        cancellation.abort(failure("The render batch was disposed", "RENDER_CANCELLED"))
         const state = current
         if (!state) return
         if (!owners.size) { destroy(state, failure("The render batch ended", "RENDER_CANCELLED")); return }
@@ -127,7 +148,7 @@ export function createRuntimeHost(options: RuntimeHostOptions) {
         async withLane<T>(key: string, run: (lane: RenderLane) => Promise<T>): Promise<T> {
           alive()
           const state = runtime()
-          await state.ready
+          await waitForOwner(state.ready)
           alive()
           const grant = await call(state, "acquire", { owner, key }, [], owner) as {
             leaseId: number; template?: { sha256: string; id: number } | null
@@ -140,25 +161,34 @@ export function createRuntimeHost(options: RuntimeHostOptions) {
             return call(state, op, { leaseId, ...(listing ? { listing } : {}), ...args }, transfer, owner)
           }
           const retain: RenderLane["retainTemplate"] = async (sha256, bytes) => {
+            alive()
             if (sha256 !== key) throw failure("Template differs from the admitted input", "RENDER_TEMPLATE_FINGERPRINT")
             if (held && !state.dead) return held.id
             const id = await invoke("retain", { bytes }, [bytes.buffer]) as number
             held = { sha256, id }
             return id
           }
+          let result: T
           try {
             alive()
-            return await run({
-              heldTemplate: () => state.dead ? undefined : held,
+            result = await waitForOwner(run({
+              heldTemplate: () => state.dead || cancellation.signal.aborted ? undefined : held,
               forgetHeldTemplate: () => { held = undefined },
               bindListing: (hint) => { listing = hint },
               retainTemplate: retain,
               renderProduct: (templateId, bytes, name, intent) => invoke("render", { templateId, bytes, name, intent }, [bytes.buffer]) as Promise<RenderResult>,
               prepareAiImage: bytes => invoke("prepare", { bytes }, [bytes.buffer]) as Promise<RenderBytes>,
-            })
+            }))
           } finally {
-            if (!state.dead) await call(state, "release", { leaseId }).catch(() => {})
+            if (!state.dead) {
+              // Send cleanup exactly once. Rust keeps a busy lease draining;
+              // the request watchdog remains armed even if this caller leaves.
+              const released = call(state, "release", { leaseId }).catch(() => {})
+              if (!cancellation.signal.aborted) await waitForOwner(released)
+            }
           }
+          alive()
+          return result
         },
         prepareAiImage(bytes, cancelled) {
           return this.withLane("prepare-ai-image", lane => {
