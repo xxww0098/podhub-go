@@ -1,0 +1,190 @@
+name: publish-verified-psd
+on:
+  push:
+    branches: [verify/publish-tested-psd-20261020]
+permissions:
+  contents: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: be364cb76e87dc9ea178cd322b888ab3b641d998
+          fetch-depth: 1
+      - name: Download the exact successful verification artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/psd-publish"
+          gh api repos/xxww0098/podhub-go/actions/runs/39435644983 > "$RUNNER_TEMP/psd-publish/run.json"
+          gh api repos/xxww0098/podhub-go/actions/artifacts/12272141287 > "$RUNNER_TEMP/psd-publish/artifact.json"
+          python3 - <<'PY'
+          import json, os, pathlib
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'psd-publish'
+          run = json.loads((root / 'run.json').read_text())
+          artifact = json.loads((root / 'artifact.json').read_text())
+          assert run['conclusion'] == 'success'
+          assert run['head_sha'] == 'a17565628998f1ad6c55e4e424ef2c1e0f5ad408'
+          assert run['repository']['full_name'] == 'xxww0098/podhub-go'
+          assert artifact['workflow_run']['id'] == 39435644983
+          assert artifact['workflow_run']['head_sha'] == run['head_sha']
+          assert artifact['name'] == 'psd-photocraft-verification-v2'
+          assert not artifact['expired']
+          assert artifact['digest'] == 'sha256:a715d1e5e4735abe558f46cc0aa1f42940e0d7ea28f46532212f16fd59c22d2d'
+          PY
+          gh api repos/xxww0098/podhub-go/actions/artifacts/12272141287/zip > "$RUNNER_TEMP/psd-publish/evidence.zip"
+          python3 - <<'PY'
+          import hashlib, os, pathlib, zipfile
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'psd-publish'
+          data = (root / 'evidence.zip').read_bytes()
+          assert hashlib.sha256(data).hexdigest() == 'a715d1e5e4735abe558f46cc0aa1f42940e0d7ea28f46532212f16fd59c22d2d'
+          names = ['verified.patch', 'staged-blobs.txt', 'verification-commit.txt', 'changes.txt', 'rows-before.log', 'rows-after.log', 'native-after.log', 'web-render.log', 'threaded-browser.log', 'toolchain.txt', 'cpu.txt']
+          with zipfile.ZipFile(root / 'evidence.zip') as archive:
+              for name in names:
+                  info = archive.getinfo(name)
+                  assert info.file_size < 32 * 1024 * 1024
+                  (root / name).write_bytes(archive.read(name))
+          assert (root / 'verification-commit.txt').read_text().strip() == 'a17565628998f1ad6c55e4e424ef2c1e0f5ad408'
+          print((root / 'changes.txt').read_text())
+          PY
+      - name: Apply tested bytes and verify every staged blob
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = be364cb76e87dc9ea178cd322b888ab3b641d998
+          git apply --check --index "$RUNNER_TEMP/psd-publish/verified.patch"
+          git apply --index "$RUNNER_TEMP/psd-publish/verified.patch"
+          python3 - <<'PY'
+          import os, pathlib, subprocess
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'psd-publish'
+          changes = subprocess.check_output(['git', 'diff', '--cached', '--name-only', '-z']).decode().strip('\0').split('\0')
+          sources = {'rust/crates/render/src/media/slab/mod.rs', 'rust/crates/render/src/media/slab/borrowed_rows_tests.rs'}
+          assert sources <= set(changes)
+          assert all(p in sources or p.startswith('wasm/dist/') for p in changes)
+          actual = subprocess.check_output(['git', 'ls-files', '-s', 'rust/crates/render/src/media/slab', 'wasm/dist']).decode()
+          assert actual == (root / 'staged-blobs.txt').read_text(), 'published files differ from the tested files'
+          print('Verified: all source and WASM Git blob IDs match successful run 39435644983.')
+          PY
+          bash scripts/check-wasm-dist.sh
+          git diff --cached --check
+          git diff --exit-code
+      - name: Record measured scope and source attribution
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, re, statistics, subprocess
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'psd-publish'
+          measurements = {}
+          for phase in ['before', 'after']:
+              text = (root / f'rows-{phase}.log').read_text()
+              entries = re.findall(r'window-row (\d+x\d+) sample=(\d+) five_frames_us=(\d+)', text)
+              groups = {}
+              for shape, sample, value in entries:
+                  groups.setdefault(shape, []).append(int(value))
+              assert set(groups) == {'4096x2048', '2048x1024'}
+              assert all(len(values) == 5 for values in groups.values())
+              measurements[phase] = {key: {'samples_us': values, 'median_us': statistics.median(values)} for key, values in groups.items()}
+          native = re.findall(r'test result: ok\. (\d+) passed; (\d+) failed; (\d+) ignored;', (root / 'native-after.log').read_text())
+          assert native and all(int(item[1]) == 0 for item in native)
+          counts = {key: sum(int(item[i]) for item in native) for i, key in enumerate(['passed', 'failed', 'ignored'])}
+          web = (root / 'web-render.log').read_text()
+          assert re.search(r'\b72 pass\b', web) and re.search(r'\b0 fail\b', web)
+          browser_lines = (root / 'threaded-browser.log').read_text().splitlines()
+          browser = next(json.loads(line) for line in browser_lines if line.startswith('{"passed":'))
+          assert browser['passed'] is True
+          summary = {'verification_run': 39435644983, 'artifact_sha256': 'a715d1e5e4735abe558f46cc0aa1f42940e0d7ea28f46532212f16fd59c22d2d', 'benchmarks': measurements, 'native': counts, 'web_passed': 72, 'browser': browser}
+          (root / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+          table = ['| Row microbenchmark (five frames) | Before median | After median | Elapsed reduction |', '|---|---:|---:|---:|']
+          for shape in ['4096x2048', '2048x1024']:
+              before = measurements['before'][shape]['median_us']
+              after = measurements['after'][shape]['median_us']
+              table.append(f'| {shape} | {before / 1000:.3f} ms | {after / 1000:.3f} ms | {(1-after/before)*100:.2f}% |')
+          doc = '''# PSD WASM: borrow retained rows on identity exports
+
+Base: `be364cb76e87dc9ea178cd322b888ab3b641d998`.
+Verification: [run 39435644983](https://github.com/xxww0098/podhub-go/actions/runs/39435644983), completed successfully before this branch was published.
+
+## Reference and scope
+
+Studied PhotoCraft at `46e538b3a2bacb533e89c7a30a99bbf2d91c3381`:
+- [crates/raster/src/lib.rs](https://github.com/storytold/photocraft/blob/46e538b3a2bacb533e89c7a30a99bbf2d91c3381/crates/raster/src/lib.rs): immutable Arc-shared pixel storage and bounded surface work.
+- [crates/compose/src/lib.rs](https://github.com/storytold/photocraft/blob/46e538b3a2bacb533e89c7a30a99bbf2d91c3381/crates/compose/src/lib.rs): tiled/banded output avoids retaining another complete composite.
+
+This is an independently implemented optimization of PodHub's existing slab/window renderer, not copied PhotoCraft code or a new dependency. PodHub already uses bounded slabs and an immutable reuse window. No sparse-tile rewrite, GPU migration, PSD parser replacement, color/depth expansion, thread-count change, or resource-budget relaxation is included.
+
+## Production change
+
+`WindowRgbaRows::source_row` borrows the resident Arc-backed pixel slice.
+For output dimensions equal to the export rectangle, `read_rgba_row` copies only the requested cropped segment into the encoder's existing output buffer. Transparent padding fills that buffer directly. This removes one temporary full-document-width allocation/copy per row request on this path, not every copy in the render pipeline.
+
+Scaled exports retain the existing copy adapter and bilinear arithmetic. Slab refill, resource admission, cancellation checks, JPEG quality, alpha handling, and output protocol remain unchanged.
+
+An earlier general Cow-based candidate passed correctness checks but showed approximately 9% slower scaled sampling in its own benchmark run (39433526178); it was rejected. The accepted patch narrows the optimization instead of trading scaled performance for an attractive fast-path result.
+
+## Measurement
+
+Rust 1.99.0, Linux GitHub-hosted runner, release profile. Five samples per case; each sample reads five frames after warm-up. The two cases use a retained 4096x2048 RGBA window. These are native row-read microbenchmarks, not browser end-to-end PSD timings or measured peak-memory savings. About 1% variation in scaled sampling is not claimed as a meaningful speedup. No timing assertion was added.
+
+''' + '\n'.join(table) + f'''
+
+## Correctness and artifacts
+
+- Native `cargo test --locked -p render -p psdx -p render-wasm`: {counts['passed']} passed, {counts['failed']} failed, {counts['ignored']} ignored. The new manual row benchmark is ignored in the ordinary suite and was explicitly executed before and after; the existing manual timing/flamegraph tests remain ignored.
+- The pointer-alias regression fails on the original implementation and passes on the optimized implementation.
+- Independent old-algorithm oracle covers crop, canvas padding, identity/scaled exports, repeated/reverse reads, and identical JPEG bytes at qualities 1/82/100.
+- Freshly rebuilt WASM render/worker tests: 72 passed, 0 failed.
+- Real Chrome threaded-render fixture: passed, including watchdog recovery and unsupported-depth refusal; this is a correctness check, not a large-template benchmark.
+- `make wasm`, source/artifact manifest verification, and `bun run build`: passed.
+- All committed source/binary blobs were compared with `staged-blobs.txt` from the successful verification artifact. The manifest was not hand-edited during publication.
+
+The all-workspace manifest requires rebuilding every committed module. This can change unrelated module bytes because the existing build embeds nondeterministic LLVM symbol IDs; no listing-rule source was changed. PR-level full Go/frontend CI is separate from these targeted checks.
+
+## Reproduce
+
+```sh
+cd rust
+cargo test --locked -p render -p psdx -p render-wasm
+cargo test --locked --release -p render window_row_benchmark -- --ignored --nocapture
+cd ..
+make wasm
+bash scripts/check-wasm-dist.sh
+cd web
+bun install --frozen-lockfile
+bun test --preload ./tests/network-guard.preload.ts ./tests/render-wasm.test.ts ./tests/render-worker.test.ts ./src/render
+bun run build
+```
+
+The Chrome fixture procedure and original logs are preserved in the linked verification run. Neither this optimization nor its verification deploys to production or writes production data.
+'''
+          destination = pathlib.Path('docs/parity/psd-window-row-optimization.md')
+          assert not destination.exists()
+          destination.parent.mkdir(parents=True, exist_ok=True)
+          destination.write_text(doc)
+          print(json.dumps(summary, indent=2))
+          print((root / 'cpu.txt').read_text())
+          PY
+          git add docs/parity/psd-window-row-optimization.md
+          git diff --cached --check
+          bash scripts/check-wasm-dist.sh
+      - name: Publish only the new tested topic branch
+        run: |
+          set -euo pipefail
+          branch=perf/psd-window-rows-20261020
+          test -z "$(git ls-remote --heads origin "refs/heads/$branch")"
+          git config user.name 'PodHub verification'
+          git config user.email 'verification@users.noreply.github.com'
+          git commit -m 'perf(render): borrow retained PSD rows for identity exports' -m 'Verified source and rebuilt WASM from run 39435644983. Preserve scaled resampling and renderer resource limits. Reference PhotoCraft storage/compositing principles without adding dependencies.'
+          git push origin "HEAD:refs/heads/$branch"
+          git rev-parse HEAD | tee "$RUNNER_TEMP/psd-publish/published-commit.txt"
+          git rev-parse HEAD^{tree} | tee "$RUNNER_TEMP/psd-publish/published-tree.txt"
+          git diff --stat HEAD^ HEAD | tee "$RUNNER_TEMP/psd-publish/published-changes.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: psd-published-evidence
+          path: ${{ runner.temp }}/psd-publish
+          retention-days: 14
