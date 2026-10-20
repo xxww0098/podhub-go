@@ -1,0 +1,61 @@
+name: verify-wasm-fsm-20261021
+on:
+  push:
+    branches: [verify/wasm-fsm-20261021]
+permissions:
+  contents: read
+jobs:
+  verify:
+    name: verify (${{ matrix.part }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [rust-state, web-cancel]
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_DEV_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.3'
+      - name: Install native and WASM toolchains
+        if: matrix.part == 'rust-state'
+        run: |
+          rustup toolchain install 1.99.0 --profile minimal --component rustfmt --target wasm32-unknown-unknown
+          rustup toolchain install nightly-2026-09-14 --profile minimal --component rust-src
+          cargo +1.99.0 install wasm-bindgen-cli --debug --version 0.2.127 --locked
+      - name: Lockfile install
+        working-directory: web
+        run: bun install --frozen-lockfile
+      - name: Establish baseline and reproduce regressions
+        run: python3 .verification/wasm-fsm/verify.py '${{ matrix.part }}' baseline
+      - name: Apply isolated fix and test
+        run: python3 .verification/wasm-fsm/verify.py '${{ matrix.part }}' candidate
+      - name: Rebuild WASM and run artifact goldens
+        if: matrix.part == 'rust-state'
+        run: python3 .verification/wasm-fsm/verify.py '${{ matrix.part }}' wasm
+      - name: Real threaded browser lifecycle
+        env:
+          PODHUB_MOCK_GATE: '1'
+        run: |
+          set -euo pipefail
+          cp .verification/wasm-fsm/browser.mjs web/.fsm-browser.mjs
+          cd web
+          node .fsm-browser.mjs 2>&1 | tee "$RUNNER_TEMP/fsm-${{ matrix.part }}/threaded-browser.log"
+          rm .fsm-browser.mjs
+      - name: Publish only the verified topic branch
+        run: python3 .verification/wasm-fsm/verify.py '${{ matrix.part }}' publish
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: wasm-fsm-${{ matrix.part }}
+          path: ${{ runner.temp }}/fsm-${{ matrix.part }}
+          retention-days: 14
