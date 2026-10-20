@@ -1,0 +1,55 @@
+name: trace-feedback-lifetime
+on:
+  push:
+    branches: [verify/wasm-telemetry-leak-20261021]
+permissions:
+  contents: read
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.3'
+      - name: Install locked frontend
+        working-directory: web
+        run: bun install --frozen-lockfile
+      - name: Trace baseline receipt ownership without changing guards or assertions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess, os, re
+          evidence = Path(os.environ['RUNNER_TEMP']) / 'feedback-trace'
+          evidence.mkdir()
+          p = Path('web/src/lib/error-feedback-reporting.ts')
+          text = p.read_text()
+          text = text.replace('    if (context.sessionKey === sessionKey) return', '    console.error("FEEDBACK_TRACE", JSON.stringify({event: "context", context, previous: sessionKey, stack: new Error().stack}))\n    if (context.sessionKey === sessionKey) return', 1)
+          text = text.replace('    if (!sessionKey || queue.length >= 1_000) return', '    console.error("FEEDBACK_TRACE", JSON.stringify({event: "report", sessionKey, errorId: input.errorId, code: input.code, stack: new Error().stack}))\n    if (!sessionKey || queue.length >= 1_000) return', 1)
+          text = text.replace('      response = await Promise.race([deps.fetch', '      console.error("FEEDBACK_TRACE", JSON.stringify({event: "flush", sessionKey, ids: batch.map(item => item.id)}))\n      response = await Promise.race([deps.fetch', 1)
+          p.write_text(text)
+          with (evidence / 'trace-full.log').open('w') as out:
+              result = subprocess.run(['bun','run','test'], cwd='web', stdout=out, stderr=subprocess.STDOUT)
+          (evidence / 'exit.txt').write_text(str(result.returncode))
+          lines = (evidence / 'trace-full.log').read_text(errors='replace').splitlines()
+          print('FULL_TEST_EXIT',result.returncode)
+          for i,line in enumerate(lines):
+              if 'FEEDBACK_TRACE' in line or '(fail)' in line or 'unregistered network attempt' in line:
+                  print(f'{i+1}: {line}')
+          print('\n'.join(lines[-15:]))
+          print('CONTEXT_CALL_SITES')
+          for p in Path('web').rglob('*.test.ts*'):
+              if 'node_modules' in p.parts: continue
+              for i,line in enumerate(p.read_text(errors='replace').splitlines()):
+                  if 'setErrorTelemetryContext' in line or 'rememberAccountOverview(' in line or 'setErrorFeedbackContext(' in line:
+                      print(str(p),i+1,line.strip())
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: feedback-lifetime-original-baseline-trace
+          path: ${{ runner.temp }}/feedback-trace
+          retention-days: 14
