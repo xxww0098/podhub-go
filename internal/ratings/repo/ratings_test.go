@@ -174,14 +174,14 @@ func TestRatingsParity(t *testing.T) {
 	if strings.Contains(body, secret) {
 		t.Fatal("response contains a secret")
 	}
-	wantUnknown := `"ratingKey":"rating_delivery_complaints_fbo","name":"Жалобы по FBO","valueType":"RATIO","status":"UNKNOWN","currentValue":null,"pastValue":null,"noData":true,"direction":"no_data"`
+	wantUnknown := `"rating_key":"rating_delivery_complaints_fbo","name":"Жалобы по FBO","value_type":"RATIO","status":"UNKNOWN","current_value":null,"past_value":null,"no_data":true,"direction":"no_data"`
 	if !strings.Contains(body, wantUnknown) {
 		t.Fatalf("missing no-data marker %s", body)
 	}
-	if strings.Contains(body, `"status":"UNKNOWN","currentValue":0`) {
+	if strings.Contains(body, `"status":"UNKNOWN","current_value":0`) {
 		t.Fatal("unknown rendered as zero")
 	}
-	wantBad := `"ratingKey":"rating_price_green","name":"价格指数","valueType":"WEIRD","status":"BAD","currentValue":2,"pastValue":null,"noData":false,"direction":"up"`
+	wantBad := `"rating_key":"rating_price_green","name":"价格指数","value_type":"WEIRD","status":"BAD","current_value":2,"past_value":null,"no_data":false,"direction":"up"`
 	if !strings.Contains(body, wantBad) {
 		t.Fatalf("missing direction %s", body)
 	}
