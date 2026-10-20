@@ -16,6 +16,7 @@
  * resolves), not in `wasm.ts`.
  */
 
+import { instantiateWasm } from "../lib/wasm-loader"
 import { createListingCore, type ListingCore } from "./wasm"
 import type { WbMaterial, WbProductConfig, WbPreview, WbIssue, WbSchemaHandle } from "./wb-types"
 import type {
@@ -52,10 +53,9 @@ import type {
 export type * from "./types"
 
 /**
- * Fetches and instantiates the module at `url`. Streaming compile first;
- * falls back to buffered `instantiate` when a dev server answers with the
- * wrong MIME type and streaming compilation refuses (same fallback shape as
- * `web/src/render/wasm.ts`'s `loadRenderModule`).
+ * Fetches and instantiates the module at `url` once. The shared loader uses
+ * streaming for the WASM MIME type and consumes the same response as bytes
+ * otherwise. Compile/link/start failures are never retried.
  */
 type LoadedCore = { core: ListingCore; module: WebAssembly.Module }
 
@@ -88,11 +88,8 @@ async function loadCore(url: string | BufferSource | WebAssembly.Module): Promis
     if (!bun) throw new Error("listing-core-wasm 文件地址只能在 Bun 里直接读取")
     const path = decodeURIComponent(new URL(url).pathname)
     ;({ instance, module } = await WebAssembly.instantiate(await bun.file(path).arrayBuffer(), imports))
-  } else try {
-    ;({ instance, module } = await WebAssembly.instantiateStreaming(fetch(url), imports))
-  } catch {
-    const bytes = await (await fetch(url)).arrayBuffer()
-    ;({ instance, module } = await WebAssembly.instantiate(bytes, imports))
+  } else {
+    ;({ instance, module } = await instantiateWasm(url, imports))
   }
   memory = (instance.exports as unknown as { memory: WebAssembly.Memory }).memory
   return { core: createListingCore(instance.exports), module }

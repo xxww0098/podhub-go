@@ -41,11 +41,19 @@ func fillRandom(_ context.Context, mod api.Module, ptr, n uint32) {
 	if n == 0 {
 		return
 	}
-	buf := make([]byte, n)
-	if _, err := rand.Read(buf); err != nil {
-		return
+	// Read returns a view of guest memory. Validate before generating entropy,
+	// then fill that view directly instead of allocating and copying n bytes.
+	memory := mod.Memory()
+	if memory == nil {
+		panic("wasm fill_random: guest has no memory")
 	}
-	_ = mod.Memory().Write(ptr, buf)
+	buf, ok := memory.Read(ptr, n)
+	if !ok {
+		panic("wasm fill_random: guest memory range is out of bounds")
+	}
+	if _, err := rand.Read(buf); err != nil {
+		panic(fmt.Errorf("wasm fill_random: %w", err))
+	}
 }
 
 // Close releases the runtime.
@@ -65,12 +73,31 @@ func (c *Compiled) Instantiate(ctx context.Context, name string) (*Guest, error)
 	if err != nil {
 		return nil, err
 	}
-	return &Guest{mod: mod}, nil
+	return &Guest{mod: mod, functions: make(map[string]api.Function)}, nil
 }
 
-// Guest is one instantiated module.
+// Guest is one instantiated module. Its owner must serialize all access:
+// both linear memory and cached function call stacks belong to this instance.
 type Guest struct {
-	mod api.Module
+	mod       api.Module
+	functions map[string]api.Function
+}
+
+// function resolves an export once per guest. wazero creates a call engine
+// and stack on each ExportedFunction lookup; recreating those for every ABI
+// call dominates small operations. Never share these handles across guests.
+func (g *Guest) function(name string) api.Function {
+	if g == nil || g.mod == nil {
+		return nil
+	}
+	if fn := g.functions[name]; fn != nil {
+		return fn
+	}
+	fn := g.mod.ExportedFunction(name)
+	if fn != nil {
+		g.functions[name] = fn
+	}
+	return fn
 }
 
 // Close drops the instance. The compiled module stays usable.
@@ -83,12 +110,12 @@ func (g *Guest) Close(ctx context.Context) error {
 
 // Exported reports whether name is a function export.
 func (g *Guest) Exported(name string) bool {
-	return g != nil && g.mod != nil && g.mod.ExportedFunction(name) != nil
+	return g.function(name) != nil
 }
 
 // Call invokes a function export.
 func (g *Guest) Call(ctx context.Context, name string, args ...uint64) ([]uint64, error) {
-	fn := g.mod.ExportedFunction(name)
+	fn := g.function(name)
 	if fn == nil {
 		return nil, fmt.Errorf("missing export %s", name)
 	}
