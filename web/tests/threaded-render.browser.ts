@@ -22,9 +22,26 @@ export async function verifyThreadedRenderer() {
   const [template, design] = await Promise.all([read(templateUrl), read(designUrl)])
   const key = await digest(template)
   const workers: Worker[] = []
+  let releaseInit!: () => void
+  let observeInit!: () => void
+  const initialized = new Promise<void>(resolve => { observeInit = resolve })
   const client = createPreparationClient({ maxLanes: 2, budgetBytes: 512 * 2 ** 20, requestTimeoutMs: 3000,
     spawn: () => {
       const worker = new Worker(new URL("../src/render/threaded-worker.ts", import.meta.url), { type: "module" })
+      if (!workers.length) {
+        // Hold the real WASM initialization reply at the host boundary so Stop
+        // is tested deterministically while another owner shares its ready.
+        const hold = (event: MessageEvent) => {
+          if (event.data.id !== 1) return
+          event.stopImmediatePropagation()
+          releaseInit = () => {
+            worker.removeEventListener("message", hold)
+            worker.dispatchEvent(new MessageEvent("message", { data: event.data }))
+          }
+          observeInit()
+        }
+        worker.addEventListener("message", hold)
+      }
       workers.push(worker)
       return worker
     },
@@ -46,7 +63,23 @@ export async function verifyThreadedRenderer() {
   }
   try {
     assert(workers.length === 0, "Creating a batch must not create Workers")
-    await check(await render())
+    const cancelled = client.createBatch()
+    let entered = false
+    const stopped = cancelled.withLane(key, async () => { entered = true }).then(
+      () => { throw new Error("A cancelled initialization caller must reject") },
+      error => assert(error.code === "RENDER_CANCELLED", "Initialization cancellation must keep its code"),
+    )
+    const first = render()
+    await initialized
+    cancelled.dispose()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([stopped, new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("Stop waited for shared initialization")), 1000)
+      })])
+      assert(!entered, "Cancelled initialization must not read PSD bytes")
+    } finally { clearTimeout(timer); releaseInit() }
+    await check(await first)
     const parallel = await Promise.all(Array.from({ length: 6 }, () => render()))
     await Promise.all(parallel.map(check))
     assert(parses === 1, "Concurrent jobs must share one parsed template")
@@ -83,7 +116,7 @@ export async function verifyThreadedRenderer() {
     batch.disposeRender()
     const prepared = await batch.prepareAiImage(design.slice())
     assert(prepared.length > 0 && workers.length === 3, "AI has an independent runtime after render disposal")
-    return { passed: true, parses, runtimes: workers.length, failureCode, structuralRefusal: refusal?.code, memory: client.measure() }
+    return { passed: true, initializationCancellation: true, parses, runtimes: workers.length, failureCode, structuralRefusal: refusal?.code, memory: client.measure() }
   } finally {
     batch.dispose()
     assert(client.measure().residentBytes === 0, "Disposal must release the runtime")

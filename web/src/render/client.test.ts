@@ -11,7 +11,7 @@ async function until(check: () => boolean) {
 }
 
 /** Protocol stub, not a duplicate scheduler: admission decisions are supplied
- * by each test. Rust's actual FIFO/budget/cancellation tests live in scheduler.rs. */
+ * by each test. Rust's actual FIFO/budget/cancellation tests live in scheduler/. */
 class RuntimeWorker extends EventTarget {
   calls: Request[] = []
   silent = new Set<string>()
@@ -99,6 +99,76 @@ test("disposing a Rust waiter rejects it without reading PSD or cancelling anoth
   worker.silent.clear()
   await b.withLane("T", async () => {})
   b.dispose()
+})
+
+test("cancelling during shared initialization stops every caller before init completes", async () => {
+  const worker = new RuntimeWorker()
+  worker.silent.add("init")
+  const host = createRuntimeHost({ spawn: () => worker.asWorker(), maxLanes: 2, budgetBytes: 1000 })
+  const a = host.createBatch(), b = host.createBatch()
+  let entered = 0, stopped = 0
+  const jobs = [1, 2].map(() => assert.rejects(a.withLane("T", async () => { entered++ }), { code: "RENDER_CANCELLED" }).then(() => { stopped++ }))
+  const surviving = b.withLane("T", async () => { entered++ })
+  try {
+    a.dispose(); a.dispose()
+    await until(() => stopped === 2)
+    assert.equal(entered, 0)
+    assert.equal(worker.calls.some(c => c.op === "acquire"), false)
+    assert.equal(worker.terminated, false)
+  } finally {
+    worker.reply(worker.calls.find(c => c.op === "init")!)
+    await Promise.all([...jobs, surviving])
+    b.dispose()
+  }
+  assert.equal(entered, 1)
+})
+
+test("cancelling a caller waiting outside the Worker rejects before that wait ends", async () => {
+  const worker = new RuntimeWorker()
+  const host = createRuntimeHost({ spawn: () => worker.asWorker(), maxLanes: 2, budgetBytes: 1000 })
+  const a = host.createBatch(), b = host.createBatch()
+  let resume!: () => void
+  const blocked = new Promise<void>(resolve => { resume = resolve })
+  let entered = false, stopped = false, cleaned = false
+  const result = assert.rejects(a.withLane("T", async lane => {
+    entered = true
+    try {
+      await blocked
+      return await lane.renderProduct(7, new Uint8Array([1]), "late")
+    } finally { cleaned = true }
+  }), { code: "RENDER_CANCELLED" }).then(() => { stopped = true })
+  try {
+    await until(() => entered)
+    a.dispose()
+    await until(() => stopped)
+    assert.equal(cleaned, false, "caller cancellation must not pretend its work finished")
+    await b.withLane("T", async () => {})
+  } finally {
+    resume()
+    await result
+    await until(() => cleaned)
+    b.dispose()
+  }
+  assert.equal(worker.calls.some(c => c.op === "render"), false)
+})
+
+test("cancellation rejects even while lease cleanup is awaiting its Worker reply", async () => {
+  const worker = new RuntimeWorker()
+  worker.silent.add("release")
+  const host = createRuntimeHost({ spawn: () => worker.asWorker(), maxLanes: 2, budgetBytes: 1000 })
+  const a = host.createBatch(), b = host.createBatch()
+  let stopped = false
+  const result = assert.rejects(a.withLane("T", async () => 7), { code: "RENDER_CANCELLED" }).then(() => { stopped = true })
+  try {
+    await until(() => worker.calls.some(c => c.op === "release"))
+    a.dispose()
+    await until(() => stopped)
+    assert.equal(worker.terminated, false)
+  } finally {
+    worker.reply(worker.calls.find(c => c.op === "release")!)
+    await result
+    b.dispose()
+  }
 })
 
 for (const mode of ["fatal", "error", "messageerror", "send"] as const) {
