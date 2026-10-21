@@ -14,10 +14,10 @@ import (
 // the product before the cost is known) and must read back as a row with a
 // nil platformPrice rather than disappear.
 //
-// Note what is NOT selected: o.cost_cents and o.shipping_cost_cents. The
-// manager writes them through RowInput but never sees them again (doc 8.3),
-// so they are absent from the SELECT list, from CatalogRow, and therefore
-// from every JSON response.
+// o.cost_cents and o.shipping_cost_cents ARE selected: doc 8.2 lists the manager
+// as an authorised reader of sc_source_offers. What must never leak is the pair
+// (cost, platform price) to a SELLER, and the seller surface is a different
+// handler that does not use this projection.
 const rowSelect = `
 SELECT p.product_id, p.source_id, p.title, p.description, p.variant_group,
        p.published, p.revision, p.description_category_id, p.type_id,
@@ -27,7 +27,7 @@ SELECT p.product_id, p.source_id, p.title, p.description, p.variant_group,
        p.gallery, p.psd, p.product_videos, p.created_at_ms, p.updated_at_ms,
        s.sku_id, s.platform_code, s.lead_time, s.published,
        s.suggested_retail_cents, s.suggested_old_price_cents,
-       v.price_cents,
+       o.cost_cents, o.shipping_cost_cents, v.price_cents,
        COALESCE(p.prompt_name, ''), COALESCE(p.prompt_file_name, ''),
        (SELECT COUNT(*) FROM public.prompt_revisions r WHERE r.product_id = p.product_id) > 0,
        EXISTS (SELECT 1 FROM public.supplier_ozon_configs c
@@ -37,6 +37,7 @@ SELECT p.product_id, p.source_id, p.title, p.description, p.variant_group,
                   AND c2.type_id IS NOT NULL)
   FROM public.sc_products p
   JOIN public.sc_skus s ON s.product_id = p.product_id
+  LEFT JOIN public.sc_source_offers o ON o.source_id = p.source_id AND o.sku_id = s.sku_id
   LEFT JOIN LATERAL (
       SELECT price_cents FROM public.sc_price_versions pv
        WHERE pv.sku_id = s.sku_id ORDER BY pv.id DESC LIMIT 1
@@ -60,7 +61,7 @@ func scanRow(rows rower) (contract.CatalogRow, error) {
 		&gallery, &psd, &videos, &row.CreatedAtMS, &row.UpdatedAtMS,
 		&row.SKUID, &row.PlatformCode, &row.LeadTime, &skuPub,
 		&row.SuggestedRetailCents, &row.SuggestedOldPriceCents,
-		&row.PlatformPriceCents,
+		&row.CostCents, &row.ShippingCostCents, &row.PlatformPriceCents,
 		&promptName, &promptFileName, &hasPrompt, &hasConfig, &hasCategory,
 	); err != nil {
 		return contract.CatalogRow{}, constraint(err)

@@ -2,8 +2,6 @@ package integration
 
 import (
 	"context"
-	"encoding/json"
-	"strings"
 	"testing"
 	"time"
 
@@ -202,12 +200,11 @@ func TestSupplierCatalogManagerIsolationAcrossSources(t *testing.T) {
 	}
 }
 
-// TestSupplierCatalogCostIsWriteOnly pins doc 8.3: the manager may WRITE the
-// supply cost but must never read it back. The wire type has no field for it,
-// so this test asserts the cheaper, stronger property: the value really lands
-// in the column (a superuser read proves the write worked) while the row the
-// manager gets back carries no cost at all.
-func TestSupplierCatalogCostIsWriteOnly(t *testing.T) {
+// TestSupplierCatalogCostRoundTrips pins doc 8.2/8.3: the manager is one of the
+// three authorised readers of sc_source_offers, so the cost he enters must come
+// back on read. The leak that matters is (cost, platform price) reaching a
+// SELLER, which is a different handler and a different RLS arm entirely.
+func TestSupplierCatalogCostRoundTrips(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	pool := migratedPool(t, ctx)
@@ -232,17 +229,36 @@ func TestSupplierCatalogCostIsWriteOnly(t *testing.T) {
 		t.Fatalf("stored cost=%d shipping=%d, want 1234/56", cost, ship)
 	}
 
-	// The response shape has no cost fields. Marshalling and scanning the JSON
-	// for the names is the assertion a struct-shape check cannot make: it
-	// catches a field that was added with a json tag.
-	blob, err := json.Marshal(row)
-	if err != nil {
-		t.Fatalf("marshal row: %v", err)
+	if row.CostCents == nil || *row.CostCents != 1234 {
+		t.Fatalf("create returned costCents=%v, want 1234", row.CostCents)
 	}
-	for _, banned := range []string{"costCents", "shippingCostCents", "cost_cents", "shipping_cost_cents"} {
-		if strings.Contains(string(blob), banned) {
-			t.Fatalf("the manager row response contains %q; doc 8.3 makes the cost write-only: %s", banned, blob)
-		}
+	if row.ShippingCostCents == nil || *row.ShippingCostCents != 56 {
+		t.Fatalf("create returned shippingCostCents=%v, want 56", row.ShippingCostCents)
+	}
+
+	// And it round-trips through a fresh read, not just the create response.
+	read, err := repo.Row(ctx, manager, source, row.ProductID)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if read.CostCents == nil || *read.CostCents != 1234 {
+		t.Fatalf("read back costCents=%v, want 1234", read.CostCents)
+	}
+
+	// The manager must NOT get the platform price: that is the half of the
+	// pair that turns a cost into a margin.
+	if read.PlatformPriceCents != nil {
+		t.Fatalf("a manager read platformPriceCents=%v; only staff may see or set it", *read.PlatformPriceCents)
+	}
+
+	// An UPDATE through this surface must not be able to write the price column
+	// either, even though RowInput has no field for it: pin the refusal at the
+	// DB, so a future field addition cannot quietly open it.
+	if err := db.InTx(ctx, pool, db.CatalogManager(manager), func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `INSERT INTO sc_price_versions (sku_id, price_cents, created_at_ms) VALUES ($1, 999, 1)`, row.SKUID)
+		return err
+	}); err == nil {
+		t.Fatalf("a catalog manager wrote a platform price; the sc_price_versions arm must stay SELECT-only")
 	}
 }
 

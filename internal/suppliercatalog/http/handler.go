@@ -202,9 +202,10 @@ func (d Deps) setPublished(w http.ResponseWriter, r *http.Request, on bool) {
 	writeData(w, http.StatusOK, row)
 }
 
-// rowWire is the request body. costCents and shippingCostCents are writable
-// here even though they are absent from the response: that asymmetry IS the
-// rule from doc 8.3, not an oversight.
+// rowWire is the request body. costCents and shippingCostCents are writable AND
+// readable here (doc 8.2 lists the manager as an authorised reader of
+// sc_source_offers); what stays out is platformPriceCents, which only
+// /api/admin/* may set.
 type rowWire struct {
 	Title                 string          `json:"title"`
 	PlatformCode          string          `json:"platformCode"`

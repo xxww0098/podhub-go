@@ -80,10 +80,14 @@ func (r RowReadiness) Ready() bool { return len(MissingKeys(r)) == 0 }
 
 // CatalogRow is one row as a catalog manager sees it.
 //
-// costCents and shippingCostCents are absent on purpose: the manager may write
-// the supply cost through RowInput but must not read the platform-side cost
-// columns back, so neither column appears in this shape. platformPriceCents is
-// read-only here and only /api/admin/* may change it.
+// costCents and shippingCostCents ARE present: doc 8.2 makes the manager one of
+// the three authorised readers of sc_source_offers (alongside staff and the
+// workspace's own settlement), and 8.3's parenthetical says the cost he entered
+// is his to see. The reason to hide it from sellers and anonymous callers is
+// that cost plus platform price reveals the margin; the manager already sets the
+// cost, so showing it back leaks nothing he does not own.
+//
+// platformPriceCents is read-only here; only /api/admin/* may change it.
 type CatalogRow struct {
 	ProductID              string                     `json:"productId"`
 	SKUID                  string                     `json:"skuId"`
@@ -96,6 +100,8 @@ type CatalogRow struct {
 	Published              bool                       `json:"published"`
 	Archived               bool                       `json:"archived"`
 	Readiness              RowReadiness               `json:"readiness"`
+	CostCents              *int64                     `json:"costCents"`
+	ShippingCostCents      *int64                     `json:"shippingCostCents"`
 	PlatformPriceCents     *int64                     `json:"platformPriceCents"`
 	SuggestedRetailCents   *int64                     `json:"suggestedRetailCents"`
 	SuggestedOldPriceCents *int64                     `json:"suggestedOldPriceCents"`
