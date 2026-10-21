@@ -36,23 +36,23 @@ func statusErr(code int, message, kind string) error {
 	return Status{Code: code, Message: message, Kind: kind}
 }
 
-// DraftData is SubmitListingDraftsData. Field order is the Rust struct.
+// DraftData is the SubmitListingDraftsData HTTP response.
 // AcceptedSchemaRevisions is the server rule for this cache payload: the
 // order-independent revision, and the legacy order-sensitive revision when
 // it differs. A row matching either is unchanged. The browser only displays
 // this list; it does not refuse on its own.
 type DraftData struct {
-	ServerSchemaRevision    string      `json:"serverSchemaRevision"`
-	AcceptedSchemaRevisions []string    `json:"acceptedSchemaRevisions,omitempty"`
+	ServerSchemaRevision    string      `json:"server_schema_revision"`
+	AcceptedSchemaRevisions []string    `json:"accepted_schema_revisions,omitempty"`
 	Items                   []DraftItem `json:"items"`
 }
 
 // DraftItem is one SubmitListingDraftItemResult. Empty lists and nil
 // options are omitted, matching skip_serializing_if.
 type DraftItem struct {
-	RowID      string          `json:"rowId"`
+	RowID      string          `json:"row_id"`
 	Outcome    string          `json:"outcome"`
-	SkipReason string          `json:"skipReason,omitempty"`
+	SkipReason string          `json:"skip_reason,omitempty"`
 	Issues     json.RawMessage `json:"issues,omitempty"`
 	Blockers   json.RawMessage `json:"blockers,omitempty"`
 	Detail     string          `json:"detail,omitempty"`
@@ -63,17 +63,17 @@ type DraftItem struct {
 // IntentView is the empty-history ListingIntentView a fresh queued intent
 // serializes to. Derived facts that are None stay omitted.
 type IntentView struct {
-	SubmissionIssues        []struct{} `json:"submissionIssues"`
-	CurrentIssueStatus      string     `json:"currentIssueStatus"`
-	CanResume               bool       `json:"canResume"`
+	SubmissionIssues        []struct{} `json:"submission_issues"`
+	CurrentIssueStatus      string     `json:"current_issue_status"`
+	CanResume               bool       `json:"can_resume"`
 	ID                      string     `json:"id"`
-	StoreID                 string     `json:"storeId"`
-	ListingRowID            string     `json:"listingRowId"`
-	RowRevision             int64      `json:"rowRevision"`
-	ClientOperationID       string     `json:"clientOperationId"`
+	StoreID                 string     `json:"store_id"`
+	ListingRowID            string     `json:"listing_row_id"`
+	RowRevision             int64      `json:"row_revision"`
+	ClientOperationID       string     `json:"client_operation_id"`
 	State                   string     `json:"state"`
-	SubmissionReceiptStatus string     `json:"submissionReceiptStatus"`
-	UpdatedAtMS             int64      `json:"updatedAtMs"`
+	SubmissionReceiptStatus string     `json:"submission_receipt_status"`
+	UpdatedAtMS             int64      `json:"updated_at_ms"`
 }
 
 // BatchData is SubmitListingBatchData.

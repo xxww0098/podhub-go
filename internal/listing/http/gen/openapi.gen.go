@@ -13,6 +13,1065 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for DraftBlocker0Kind.
+const (
+	VideoSnapshotIncomplete DraftBlocker0Kind = "video_snapshot_incomplete"
+)
+
+// Valid indicates whether the value is a known member of the DraftBlocker0Kind enum.
+func (e DraftBlocker0Kind) Valid() bool {
+	switch e {
+	case VideoSnapshotIncomplete:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DraftBlocker1Kind.
+const (
+	ShippingNotReady DraftBlocker1Kind = "shipping_not_ready"
+)
+
+// Valid indicates whether the value is a known member of the DraftBlocker1Kind enum.
+func (e DraftBlocker1Kind) Valid() bool {
+	switch e {
+	case ShippingNotReady:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DraftFieldAddress0Kind.
+const (
+	DraftFieldAddress0KindPlain DraftFieldAddress0Kind = "plain"
+)
+
+// Valid indicates whether the value is a known member of the DraftFieldAddress0Kind enum.
+func (e DraftFieldAddress0Kind) Valid() bool {
+	switch e {
+	case DraftFieldAddress0KindPlain:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DraftFieldAddress1Kind.
+const (
+	DraftFieldAddress1KindComplex DraftFieldAddress1Kind = "complex"
+)
+
+// Valid indicates whether the value is a known member of the DraftFieldAddress1Kind enum.
+func (e DraftFieldAddress1Kind) Valid() bool {
+	switch e {
+	case DraftFieldAddress1KindComplex:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DraftIssueParameter0Kind.
+const (
+	Text DraftIssueParameter0Kind = "text"
+)
+
+// Valid indicates whether the value is a known member of the DraftIssueParameter0Kind enum.
+func (e DraftIssueParameter0Kind) Valid() bool {
+	switch e {
+	case Text:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DraftIssueParameter1Kind.
+const (
+	Integer DraftIssueParameter1Kind = "integer"
+)
+
+// Valid indicates whether the value is a known member of the DraftIssueParameter1Kind enum.
+func (e DraftIssueParameter1Kind) Valid() bool {
+	switch e {
+	case Integer:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DraftIssueSeverity.
+const (
+	Blocking DraftIssueSeverity = "blocking"
+	Warning  DraftIssueSeverity = "warning"
+)
+
+// Valid indicates whether the value is a known member of the DraftIssueSeverity enum.
+func (e DraftIssueSeverity) Valid() bool {
+	switch e {
+	case Blocking:
+		return true
+	case Warning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for FieldAddressView0Kind.
+const (
+	FieldAddressView0KindPlain FieldAddressView0Kind = "plain"
+)
+
+// Valid indicates whether the value is a known member of the FieldAddressView0Kind enum.
+func (e FieldAddressView0Kind) Valid() bool {
+	switch e {
+	case FieldAddressView0KindPlain:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for FieldAddressView1Kind.
+const (
+	FieldAddressView1KindComplex FieldAddressView1Kind = "complex"
+)
+
+// Valid indicates whether the value is a known member of the FieldAddressView1Kind enum.
+func (e FieldAddressView1Kind) Valid() bool {
+	switch e {
+	case FieldAddressView1KindComplex:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for FieldLayerView.
+const (
+	DatabaseDefault FieldLayerView = "database_default"
+	Instance        FieldLayerView = "instance"
+	Ocr             FieldLayerView = "ocr"
+	Renderer        FieldLayerView = "renderer"
+	SellerSku       FieldLayerView = "seller_sku"
+	SourceFile      FieldLayerView = "source_file"
+	SystemDefault   FieldLayerView = "system_default"
+	UserCustom      FieldLayerView = "user_custom"
+)
+
+// Valid indicates whether the value is a known member of the FieldLayerView enum.
+func (e FieldLayerView) Valid() bool {
+	switch e {
+	case DatabaseDefault:
+		return true
+	case Instance:
+		return true
+	case Ocr:
+		return true
+	case Renderer:
+		return true
+	case SellerSku:
+		return true
+	case SourceFile:
+		return true
+	case SystemDefault:
+		return true
+	case UserCustom:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ImportFollowupPhase.
+const (
+	ImportFollowupPhaseCreated          ImportFollowupPhase = "created"
+	ImportFollowupPhaseImportFailed     ImportFollowupPhase = "import_failed"
+	ImportFollowupPhaseModerating       ImportFollowupPhase = "moderating"
+	ImportFollowupPhaseModerationFailed ImportFollowupPhase = "moderation_failed"
+	ImportFollowupPhasePending          ImportFollowupPhase = "pending"
+	ImportFollowupPhaseSkipped          ImportFollowupPhase = "skipped"
+)
+
+// Valid indicates whether the value is a known member of the ImportFollowupPhase enum.
+func (e ImportFollowupPhase) Valid() bool {
+	switch e {
+	case ImportFollowupPhaseCreated:
+		return true
+	case ImportFollowupPhaseImportFailed:
+		return true
+	case ImportFollowupPhaseModerating:
+		return true
+	case ImportFollowupPhaseModerationFailed:
+		return true
+	case ImportFollowupPhasePending:
+		return true
+	case ImportFollowupPhaseSkipped:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ImportProbePhase.
+const (
+	Checking    ImportProbePhase = "checking"
+	NeedsManual ImportProbePhase = "needs_manual"
+)
+
+// Valid indicates whether the value is a known member of the ImportProbePhase enum.
+func (e ImportProbePhase) Valid() bool {
+	switch e {
+	case Checking:
+		return true
+	case NeedsManual:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for IntentErrorCode.
+const (
+	CancelRequested          IntentErrorCode = "cancel_requested"
+	INTENTPAYLOADUNREADABLE  IntentErrorCode = "INTENT_PAYLOAD_UNREADABLE"
+	MEDIALEASEUNAVAILABLE    IntentErrorCode = "MEDIA_LEASE_UNAVAILABLE"
+	MEDIAOBJECTMISSING       IntentErrorCode = "MEDIA_OBJECT_MISSING"
+	OZONACCESSUNCLASSIFIED   IntentErrorCode = "OZON_ACCESS_UNCLASSIFIED"
+	OZONCREDENTIALINVALID    IntentErrorCode = "OZON_CREDENTIAL_INVALID"
+	OZONDISPATCHINTERRUPTED  IntentErrorCode = "OZON_DISPATCH_INTERRUPTED"
+	OZONEGRESSUNAVAILABLE    IntentErrorCode = "OZON_EGRESS_UNAVAILABLE"
+	OZONEGRESSUNREACHABLE    IntentErrorCode = "OZON_EGRESS_UNREACHABLE"
+	OZONPERMISSIONDENIED     IntentErrorCode = "OZON_PERMISSION_DENIED"
+	OZONRATELIMITED          IntentErrorCode = "OZON_RATE_LIMITED"
+	OZONROWREJECTED          IntentErrorCode = "OZON_ROW_REJECTED"
+	OZONSTOREPAUSED          IntentErrorCode = "OZON_STORE_PAUSED"
+	OZONSUBMITINFLIGHT       IntentErrorCode = "OZON_SUBMIT_IN_FLIGHT"
+	OZONSUBMITNOTDISPATCHED  IntentErrorCode = "OZON_SUBMIT_NOT_DISPATCHED"
+	OZONSUBMITRETRYEXHAUSTED IntentErrorCode = "OZON_SUBMIT_RETRY_EXHAUSTED"
+	OZONWRITESDISABLED       IntentErrorCode = "OZON_WRITES_DISABLED"
+	SHIPPINGNOTREADY         IntentErrorCode = "SHIPPING_NOT_READY"
+	STORECREDENTIALERROR     IntentErrorCode = "STORE_CREDENTIAL_ERROR"
+	STORECREDENTIALEXPIRED   IntentErrorCode = "STORE_CREDENTIAL_EXPIRED"
+	STORECREDENTIALMISSING   IntentErrorCode = "STORE_CREDENTIAL_MISSING"
+)
+
+// Valid indicates whether the value is a known member of the IntentErrorCode enum.
+func (e IntentErrorCode) Valid() bool {
+	switch e {
+	case CancelRequested:
+		return true
+	case INTENTPAYLOADUNREADABLE:
+		return true
+	case MEDIALEASEUNAVAILABLE:
+		return true
+	case MEDIAOBJECTMISSING:
+		return true
+	case OZONACCESSUNCLASSIFIED:
+		return true
+	case OZONCREDENTIALINVALID:
+		return true
+	case OZONDISPATCHINTERRUPTED:
+		return true
+	case OZONEGRESSUNAVAILABLE:
+		return true
+	case OZONEGRESSUNREACHABLE:
+		return true
+	case OZONPERMISSIONDENIED:
+		return true
+	case OZONRATELIMITED:
+		return true
+	case OZONROWREJECTED:
+		return true
+	case OZONSTOREPAUSED:
+		return true
+	case OZONSUBMITINFLIGHT:
+		return true
+	case OZONSUBMITNOTDISPATCHED:
+		return true
+	case OZONSUBMITRETRYEXHAUSTED:
+		return true
+	case OZONWRITESDISABLED:
+		return true
+	case SHIPPINGNOTREADY:
+		return true
+	case STORECREDENTIALERROR:
+		return true
+	case STORECREDENTIALEXPIRED:
+		return true
+	case STORECREDENTIALMISSING:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListingBatchSkipReason.
+const (
+	ListingBatchSkipReasonAlreadyAccepted  ListingBatchSkipReason = "already_accepted"
+	ListingBatchSkipReasonBlocked          ListingBatchSkipReason = "blocked"
+	ListingBatchSkipReasonComposeFailed    ListingBatchSkipReason = "compose_failed"
+	ListingBatchSkipReasonNotFound         ListingBatchSkipReason = "not_found"
+	ListingBatchSkipReasonRevisionMismatch ListingBatchSkipReason = "revision_mismatch"
+	ListingBatchSkipReasonStoreMismatch    ListingBatchSkipReason = "store_mismatch"
+	ListingBatchSkipReasonStoreUnbound     ListingBatchSkipReason = "store_unbound"
+	ListingBatchSkipReasonWaiting          ListingBatchSkipReason = "waiting"
+)
+
+// Valid indicates whether the value is a known member of the ListingBatchSkipReason enum.
+func (e ListingBatchSkipReason) Valid() bool {
+	switch e {
+	case ListingBatchSkipReasonAlreadyAccepted:
+		return true
+	case ListingBatchSkipReasonBlocked:
+		return true
+	case ListingBatchSkipReasonComposeFailed:
+		return true
+	case ListingBatchSkipReasonNotFound:
+		return true
+	case ListingBatchSkipReasonRevisionMismatch:
+		return true
+	case ListingBatchSkipReasonStoreMismatch:
+		return true
+	case ListingBatchSkipReasonStoreUnbound:
+		return true
+	case ListingBatchSkipReasonWaiting:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListingBuildState.
+const (
+	ListingBuildStateBuilt ListingBuildState = "built"
+	ListingBuildStateStale ListingBuildState = "stale"
+)
+
+// Valid indicates whether the value is a known member of the ListingBuildState enum.
+func (e ListingBuildState) Valid() bool {
+	switch e {
+	case ListingBuildStateBuilt:
+		return true
+	case ListingBuildStateStale:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListingCurrentIssueStatus.
+const (
+	ListingCurrentIssueStatusAbsent         ListingCurrentIssueStatus = "absent"
+	ListingCurrentIssueStatusPresent        ListingCurrentIssueStatus = "present"
+	ListingCurrentIssueStatusUndeterminable ListingCurrentIssueStatus = "undeterminable"
+)
+
+// Valid indicates whether the value is a known member of the ListingCurrentIssueStatus enum.
+func (e ListingCurrentIssueStatus) Valid() bool {
+	switch e {
+	case ListingCurrentIssueStatusAbsent:
+		return true
+	case ListingCurrentIssueStatusPresent:
+		return true
+	case ListingCurrentIssueStatusUndeterminable:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListingDispatchEvidence.
+const (
+	NotDispatched ListingDispatchEvidence = "not_dispatched"
+	Rejected      ListingDispatchEvidence = "rejected"
+	Unknown       ListingDispatchEvidence = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the ListingDispatchEvidence enum.
+func (e ListingDispatchEvidence) Valid() bool {
+	switch e {
+	case NotDispatched:
+		return true
+	case Rejected:
+		return true
+	case Unknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListingIssueAction.
+const (
+	ListingIssueActionCheckStore ListingIssueAction = "check_store"
+	ListingIssueActionEditRow    ListingIssueAction = "edit_row"
+	ListingIssueActionReconcile  ListingIssueAction = "reconcile"
+	ListingIssueActionRecover    ListingIssueAction = "recover"
+	ListingIssueActionResume     ListingIssueAction = "resume"
+	ListingIssueActionWait       ListingIssueAction = "wait"
+)
+
+// Valid indicates whether the value is a known member of the ListingIssueAction enum.
+func (e ListingIssueAction) Valid() bool {
+	switch e {
+	case ListingIssueActionCheckStore:
+		return true
+	case ListingIssueActionEditRow:
+		return true
+	case ListingIssueActionReconcile:
+		return true
+	case ListingIssueActionRecover:
+		return true
+	case ListingIssueActionResume:
+		return true
+	case ListingIssueActionWait:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListingIssueScope.
+const (
+	Row   ListingIssueScope = "row"
+	Store ListingIssueScope = "store"
+)
+
+// Valid indicates whether the value is a known member of the ListingIssueScope enum.
+func (e ListingIssueScope) Valid() bool {
+	switch e {
+	case Row:
+		return true
+	case Store:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListingSubmissionReceiptStatus.
+const (
+	ListingSubmissionReceiptStatusAbsent     ListingSubmissionReceiptStatus = "absent"
+	ListingSubmissionReceiptStatusUnreadable ListingSubmissionReceiptStatus = "unreadable"
+	ListingSubmissionReceiptStatusValid      ListingSubmissionReceiptStatus = "valid"
+)
+
+// Valid indicates whether the value is a known member of the ListingSubmissionReceiptStatus enum.
+func (e ListingSubmissionReceiptStatus) Valid() bool {
+	switch e {
+	case ListingSubmissionReceiptStatusAbsent:
+		return true
+	case ListingSubmissionReceiptStatusUnreadable:
+		return true
+	case ListingSubmissionReceiptStatusValid:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OcrRecoveryAttemptKind.
+const (
+	ContractRetry OcrRecoveryAttemptKind = "contract_retry"
+	Original      OcrRecoveryAttemptKind = "original"
+)
+
+// Valid indicates whether the value is a known member of the OcrRecoveryAttemptKind enum.
+func (e OcrRecoveryAttemptKind) Valid() bool {
+	switch e {
+	case ContractRetry:
+		return true
+	case Original:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OcrRecoveryAttemptStatus.
+const (
+	OcrRecoveryAttemptStatusAbsent          OcrRecoveryAttemptStatus = "absent"
+	OcrRecoveryAttemptStatusDispatching     OcrRecoveryAttemptStatus = "dispatching"
+	OcrRecoveryAttemptStatusFailed          OcrRecoveryAttemptStatus = "failed"
+	OcrRecoveryAttemptStatusHeld            OcrRecoveryAttemptStatus = "held"
+	OcrRecoveryAttemptStatusSettled         OcrRecoveryAttemptStatus = "settled"
+	OcrRecoveryAttemptStatusUnbilledUnknown OcrRecoveryAttemptStatus = "unbilled_unknown"
+)
+
+// Valid indicates whether the value is a known member of the OcrRecoveryAttemptStatus enum.
+func (e OcrRecoveryAttemptStatus) Valid() bool {
+	switch e {
+	case OcrRecoveryAttemptStatusAbsent:
+		return true
+	case OcrRecoveryAttemptStatusDispatching:
+		return true
+	case OcrRecoveryAttemptStatusFailed:
+		return true
+	case OcrRecoveryAttemptStatusHeld:
+		return true
+	case OcrRecoveryAttemptStatusSettled:
+		return true
+	case OcrRecoveryAttemptStatusUnbilledUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RowStageView.
+const (
+	RowStageViewAccepted          RowStageView = "accepted"
+	RowStageViewAwaitingContent   RowStageView = "awaiting_content"
+	RowStageViewBuildStale        RowStageView = "build_stale"
+	RowStageViewCandidatesPending RowStageView = "candidates_pending"
+	RowStageViewFieldsInvalid     RowStageView = "fields_invalid"
+	RowStageViewMediaFailed       RowStageView = "media_failed"
+	RowStageViewOperatorAttested  RowStageView = "operator_attested"
+	RowStageViewOutcomeUnknown    RowStageView = "outcome_unknown"
+	RowStageViewPublishRejected   RowStageView = "publish_rejected"
+	RowStageViewQueued            RowStageView = "queued"
+	RowStageViewReadyToPublish    RowStageView = "ready_to_publish"
+	RowStageViewRecognitionFailed RowStageView = "recognition_failed"
+	RowStageViewRecognizing       RowStageView = "recognizing"
+	RowStageViewRendering         RowStageView = "rendering"
+	RowStageViewSubmitting        RowStageView = "submitting"
+	RowStageViewUploading         RowStageView = "uploading"
+)
+
+// Valid indicates whether the value is a known member of the RowStageView enum.
+func (e RowStageView) Valid() bool {
+	switch e {
+	case RowStageViewAccepted:
+		return true
+	case RowStageViewAwaitingContent:
+		return true
+	case RowStageViewBuildStale:
+		return true
+	case RowStageViewCandidatesPending:
+		return true
+	case RowStageViewFieldsInvalid:
+		return true
+	case RowStageViewMediaFailed:
+		return true
+	case RowStageViewOperatorAttested:
+		return true
+	case RowStageViewOutcomeUnknown:
+		return true
+	case RowStageViewPublishRejected:
+		return true
+	case RowStageViewQueued:
+		return true
+	case RowStageViewReadyToPublish:
+		return true
+	case RowStageViewRecognitionFailed:
+		return true
+	case RowStageViewRecognizing:
+		return true
+	case RowStageViewRendering:
+		return true
+	case RowStageViewSubmitting:
+		return true
+	case RowStageViewUploading:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ShippingReadinessReason.
+const (
+	ShippingReadinessReasonDeliveryMethodNotActive  ShippingReadinessReason = "delivery_method_not_active"
+	ShippingReadinessReasonFailed                   ShippingReadinessReason = "failed"
+	ShippingReadinessReasonInjectNotAvailable       ShippingReadinessReason = "inject_not_available"
+	ShippingReadinessReasonMissingBind              ShippingReadinessReason = "missing_bind"
+	ShippingReadinessReasonNonIntegratedUnsupported ShippingReadinessReason = "non_integrated_unsupported"
+	ShippingReadinessReasonResultUnknown            ShippingReadinessReason = "result_unknown"
+	ShippingReadinessReasonShopNotInjected          ShippingReadinessReason = "shop_not_injected"
+	ShippingReadinessReasonStaleVersion             ShippingReadinessReason = "stale_version"
+	ShippingReadinessReasonWaiting                  ShippingReadinessReason = "waiting"
+	ShippingReadinessReasonWeightUnitUnpinned       ShippingReadinessReason = "weight_unit_unpinned"
+	ShippingReadinessReasonWritesDisabled           ShippingReadinessReason = "writes_disabled"
+)
+
+// Valid indicates whether the value is a known member of the ShippingReadinessReason enum.
+func (e ShippingReadinessReason) Valid() bool {
+	switch e {
+	case ShippingReadinessReasonDeliveryMethodNotActive:
+		return true
+	case ShippingReadinessReasonFailed:
+		return true
+	case ShippingReadinessReasonInjectNotAvailable:
+		return true
+	case ShippingReadinessReasonMissingBind:
+		return true
+	case ShippingReadinessReasonNonIntegratedUnsupported:
+		return true
+	case ShippingReadinessReasonResultUnknown:
+		return true
+	case ShippingReadinessReasonShopNotInjected:
+		return true
+	case ShippingReadinessReasonStaleVersion:
+		return true
+	case ShippingReadinessReasonWaiting:
+		return true
+	case ShippingReadinessReasonWeightUnitUnpinned:
+		return true
+	case ShippingReadinessReasonWritesDisabled:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ShippingReadinessStatus.
+const (
+	ShippingReadinessStatusBlocked ShippingReadinessStatus = "blocked"
+	ShippingReadinessStatusReady   ShippingReadinessStatus = "ready"
+	ShippingReadinessStatusStale   ShippingReadinessStatus = "stale"
+)
+
+// Valid indicates whether the value is a known member of the ShippingReadinessStatus enum.
+func (e ShippingReadinessStatus) Valid() bool {
+	switch e {
+	case ShippingReadinessStatusBlocked:
+		return true
+	case ShippingReadinessStatusReady:
+		return true
+	case ShippingReadinessStatusStale:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SubmitDraftOutcome.
+const (
+	SubmitDraftOutcomeCreated  SubmitDraftOutcome = "created"
+	SubmitDraftOutcomeReplayed SubmitDraftOutcome = "replayed"
+	SubmitDraftOutcomeResumed  SubmitDraftOutcome = "resumed"
+	SubmitDraftOutcomeSkipped  SubmitDraftOutcome = "skipped"
+)
+
+// Valid indicates whether the value is a known member of the SubmitDraftOutcome enum.
+func (e SubmitDraftOutcome) Valid() bool {
+	switch e {
+	case SubmitDraftOutcomeCreated:
+		return true
+	case SubmitDraftOutcomeReplayed:
+		return true
+	case SubmitDraftOutcomeResumed:
+		return true
+	case SubmitDraftOutcomeSkipped:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SubmitDraftSkipReason.
+const (
+	SubmitDraftSkipReasonBlocked       SubmitDraftSkipReason = "blocked"
+	SubmitDraftSkipReasonComposeFailed SubmitDraftSkipReason = "compose_failed"
+	SubmitDraftSkipReasonMediaExpired  SubmitDraftSkipReason = "media_expired"
+	SubmitDraftSkipReasonMediaForeign  SubmitDraftSkipReason = "media_foreign"
+	SubmitDraftSkipReasonOfferBusy     SubmitDraftSkipReason = "offer_busy"
+	SubmitDraftSkipReasonSchemaStale   SubmitDraftSkipReason = "schema_stale"
+)
+
+// Valid indicates whether the value is a known member of the SubmitDraftSkipReason enum.
+func (e SubmitDraftSkipReason) Valid() bool {
+	switch e {
+	case SubmitDraftSkipReasonBlocked:
+		return true
+	case SubmitDraftSkipReasonComposeFailed:
+		return true
+	case SubmitDraftSkipReasonMediaExpired:
+		return true
+	case SubmitDraftSkipReasonMediaForeign:
+		return true
+	case SubmitDraftSkipReasonOfferBusy:
+		return true
+	case SubmitDraftSkipReasonSchemaStale:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WorkflowAiPhase.
+const (
+	WorkflowAiPhaseFailed  WorkflowAiPhase = "failed"
+	WorkflowAiPhasePending WorkflowAiPhase = "pending"
+	WorkflowAiPhaseReady   WorkflowAiPhase = "ready"
+	WorkflowAiPhaseRunning WorkflowAiPhase = "running"
+)
+
+// Valid indicates whether the value is a known member of the WorkflowAiPhase enum.
+func (e WorkflowAiPhase) Valid() bool {
+	switch e {
+	case WorkflowAiPhaseFailed:
+		return true
+	case WorkflowAiPhasePending:
+		return true
+	case WorkflowAiPhaseReady:
+		return true
+	case WorkflowAiPhaseRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WorkflowAllowedAction.
+const (
+	WorkflowAllowedActionEditFields       WorkflowAllowedAction = "edit_fields"
+	WorkflowAllowedActionPrepare          WorkflowAllowedAction = "prepare"
+	WorkflowAllowedActionPublish          WorkflowAllowedAction = "publish"
+	WorkflowAllowedActionReconcile        WorkflowAllowedAction = "reconcile"
+	WorkflowAllowedActionRecover          WorkflowAllowedAction = "recover"
+	WorkflowAllowedActionRetryAi          WorkflowAllowedAction = "retry_ai"
+	WorkflowAllowedActionRetryMedia       WorkflowAllowedAction = "retry_media"
+	WorkflowAllowedActionReviewCandidates WorkflowAllowedAction = "review_candidates"
+)
+
+// Valid indicates whether the value is a known member of the WorkflowAllowedAction enum.
+func (e WorkflowAllowedAction) Valid() bool {
+	switch e {
+	case WorkflowAllowedActionEditFields:
+		return true
+	case WorkflowAllowedActionPrepare:
+		return true
+	case WorkflowAllowedActionPublish:
+		return true
+	case WorkflowAllowedActionReconcile:
+		return true
+	case WorkflowAllowedActionRecover:
+		return true
+	case WorkflowAllowedActionRetryAi:
+		return true
+	case WorkflowAllowedActionRetryMedia:
+		return true
+	case WorkflowAllowedActionReviewCandidates:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WorkflowFieldPhase.
+const (
+	WorkflowFieldPhaseDirty      WorkflowFieldPhase = "dirty"
+	WorkflowFieldPhaseInvalid    WorkflowFieldPhase = "invalid"
+	WorkflowFieldPhaseValid      WorkflowFieldPhase = "valid"
+	WorkflowFieldPhaseValidating WorkflowFieldPhase = "validating"
+)
+
+// Valid indicates whether the value is a known member of the WorkflowFieldPhase enum.
+func (e WorkflowFieldPhase) Valid() bool {
+	switch e {
+	case WorkflowFieldPhaseDirty:
+		return true
+	case WorkflowFieldPhaseInvalid:
+		return true
+	case WorkflowFieldPhaseValid:
+		return true
+	case WorkflowFieldPhaseValidating:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WorkflowMediaPhase.
+const (
+	WorkflowMediaPhaseFailed    WorkflowMediaPhase = "failed"
+	WorkflowMediaPhasePending   WorkflowMediaPhase = "pending"
+	WorkflowMediaPhaseReady     WorkflowMediaPhase = "ready"
+	WorkflowMediaPhaseRendered  WorkflowMediaPhase = "rendered"
+	WorkflowMediaPhaseRendering WorkflowMediaPhase = "rendering"
+	WorkflowMediaPhaseUploading WorkflowMediaPhase = "uploading"
+)
+
+// Valid indicates whether the value is a known member of the WorkflowMediaPhase enum.
+func (e WorkflowMediaPhase) Valid() bool {
+	switch e {
+	case WorkflowMediaPhaseFailed:
+		return true
+	case WorkflowMediaPhasePending:
+		return true
+	case WorkflowMediaPhaseReady:
+		return true
+	case WorkflowMediaPhaseRendered:
+		return true
+	case WorkflowMediaPhaseRendering:
+		return true
+	case WorkflowMediaPhaseUploading:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WorkflowMediaStage.
+const (
+	Render WorkflowMediaStage = "render"
+	Upload WorkflowMediaStage = "upload"
+)
+
+// Valid indicates whether the value is a known member of the WorkflowMediaStage enum.
+func (e WorkflowMediaStage) Valid() bool {
+	switch e {
+	case Render:
+		return true
+	case Upload:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WorkflowReadinessBlockerCode.
+const (
+	WorkflowReadinessBlockerCodeAiFailed            WorkflowReadinessBlockerCode = "ai_failed"
+	WorkflowReadinessBlockerCodeAiPending           WorkflowReadinessBlockerCode = "ai_pending"
+	WorkflowReadinessBlockerCodeAiRunning           WorkflowReadinessBlockerCode = "ai_running"
+	WorkflowReadinessBlockerCodeCandidatesUnsettled WorkflowReadinessBlockerCode = "candidates_unsettled"
+	WorkflowReadinessBlockerCodeFieldsDirty         WorkflowReadinessBlockerCode = "fields_dirty"
+	WorkflowReadinessBlockerCodeFieldsInvalid       WorkflowReadinessBlockerCode = "fields_invalid"
+	WorkflowReadinessBlockerCodeFieldsValidating    WorkflowReadinessBlockerCode = "fields_validating"
+	WorkflowReadinessBlockerCodeMediaFailed         WorkflowReadinessBlockerCode = "media_failed"
+	WorkflowReadinessBlockerCodeMediaPending        WorkflowReadinessBlockerCode = "media_pending"
+	WorkflowReadinessBlockerCodeMediaRunning        WorkflowReadinessBlockerCode = "media_running"
+	WorkflowReadinessBlockerCodeOperatorAttested    WorkflowReadinessBlockerCode = "operator_attested"
+	WorkflowReadinessBlockerCodeOutcomeUnknown      WorkflowReadinessBlockerCode = "outcome_unknown"
+	WorkflowReadinessBlockerCodePublishConflict     WorkflowReadinessBlockerCode = "publish_conflict"
+	WorkflowReadinessBlockerCodePublishRejected     WorkflowReadinessBlockerCode = "publish_rejected"
+)
+
+// Valid indicates whether the value is a known member of the WorkflowReadinessBlockerCode enum.
+func (e WorkflowReadinessBlockerCode) Valid() bool {
+	switch e {
+	case WorkflowReadinessBlockerCodeAiFailed:
+		return true
+	case WorkflowReadinessBlockerCodeAiPending:
+		return true
+	case WorkflowReadinessBlockerCodeAiRunning:
+		return true
+	case WorkflowReadinessBlockerCodeCandidatesUnsettled:
+		return true
+	case WorkflowReadinessBlockerCodeFieldsDirty:
+		return true
+	case WorkflowReadinessBlockerCodeFieldsInvalid:
+		return true
+	case WorkflowReadinessBlockerCodeFieldsValidating:
+		return true
+	case WorkflowReadinessBlockerCodeMediaFailed:
+		return true
+	case WorkflowReadinessBlockerCodeMediaPending:
+		return true
+	case WorkflowReadinessBlockerCodeMediaRunning:
+		return true
+	case WorkflowReadinessBlockerCodeOperatorAttested:
+		return true
+	case WorkflowReadinessBlockerCodeOutcomeUnknown:
+		return true
+	case WorkflowReadinessBlockerCodePublishConflict:
+		return true
+	case WorkflowReadinessBlockerCodePublishRejected:
+		return true
+	default:
+		return false
+	}
+}
+
+// DraftBlocker A fact outside the Draft's fields that refused it before any Intent.
+type DraftBlocker struct {
+	union json.RawMessage
+}
+
+// DraftBlocker0 The supplier product's stored video snapshot does not match the
+// Card's videos. The server only knows the snapshot is incomplete —
+// not which video or how many are missing — so it claims no more.
+type DraftBlocker0 struct {
+	Kind              DraftBlocker0Kind `json:"kind"`
+	SupplierProductId string            `json:"supplier_product_id"`
+}
+
+// DraftBlocker0Kind defines model for DraftBlocker.0.Kind.
+type DraftBlocker0Kind string
+
+// DraftBlocker1 The Store's shipping injection is not ready for this row's platform
+// SKU; the readiness facts exactly as the shipping owner computed them.
+type DraftBlocker1 struct {
+	Kind            DraftBlocker1Kind         `json:"kind"`
+	PinnedVersion   *int64                    `json:"pinned_version,omitempty"`
+	Reasons         []ShippingReadinessReason `json:"reasons"`
+	RequiredVersion *int64                    `json:"required_version,omitempty"`
+	Status          ShippingReadinessStatus   `json:"status"`
+}
+
+// DraftBlocker1Kind defines model for DraftBlocker.1.Kind.
+type DraftBlocker1Kind string
+
+// DraftFieldAddress defines model for DraftFieldAddress.
+type DraftFieldAddress struct {
+	union json.RawMessage
+}
+
+// DraftFieldAddress0 defines model for DraftFieldAddress.0.
+type DraftFieldAddress0 struct {
+	FieldKey string                 `json:"field_key"`
+	Kind     DraftFieldAddress0Kind `json:"kind"`
+}
+
+// DraftFieldAddress0Kind defines model for DraftFieldAddress.0.Kind.
+type DraftFieldAddress0Kind string
+
+// DraftFieldAddress1 defines model for DraftFieldAddress.1.
+type DraftFieldAddress1 struct {
+	FieldKey   string                 `json:"field_key"`
+	GroupKey   string                 `json:"group_key"`
+	ItemId     string                 `json:"item_id"`
+	Kind       DraftFieldAddress1Kind `json:"kind"`
+	ValueIndex *int32                 `json:"value_index,omitempty"`
+}
+
+// DraftFieldAddress1Kind defines model for DraftFieldAddress.1.Kind.
+type DraftFieldAddress1Kind string
+
+// DraftFieldIssue defines model for DraftFieldIssue.
+type DraftFieldIssue struct {
+	Address DraftFieldAddress `json:"address"`
+
+	// Code Open string; see the module documentation.
+	Code        string                         `json:"code"`
+	FieldKey    string                         `json:"field_key"`
+	Message     string                         `json:"message"`
+	Parameters  map[string]DraftIssueParameter `json:"parameters"`
+	Remediation *string                        `json:"remediation,omitempty"`
+	Severity    DraftIssueSeverity             `json:"severity"`
+}
+
+// DraftIssueParameter defines model for DraftIssueParameter.
+type DraftIssueParameter struct {
+	union json.RawMessage
+}
+
+// DraftIssueParameter0 defines model for DraftIssueParameter.0.
+type DraftIssueParameter0 struct {
+	Kind  DraftIssueParameter0Kind `json:"kind"`
+	Value string                   `json:"value"`
+}
+
+// DraftIssueParameter0Kind defines model for DraftIssueParameter.0.Kind.
+type DraftIssueParameter0Kind string
+
+// DraftIssueParameter1 defines model for DraftIssueParameter.1.
+type DraftIssueParameter1 struct {
+	Kind  DraftIssueParameter1Kind `json:"kind"`
+	Value int64                    `json:"value"`
+}
+
+// DraftIssueParameter1Kind defines model for DraftIssueParameter.1.Kind.
+type DraftIssueParameter1Kind string
+
+// DraftIssueSeverity defines model for DraftIssueSeverity.
+type DraftIssueSeverity string
+
+// FieldAddressView defines model for FieldAddressView.
+type FieldAddressView struct {
+	union json.RawMessage
+}
+
+// FieldAddressView0 defines model for FieldAddressView.0.
+type FieldAddressView0 struct {
+	FieldKey string                `json:"field_key"`
+	Kind     FieldAddressView0Kind `json:"kind"`
+}
+
+// FieldAddressView0Kind defines model for FieldAddressView.0.Kind.
+type FieldAddressView0Kind string
+
+// FieldAddressView1 defines model for FieldAddressView.1.
+type FieldAddressView1 struct {
+	FieldKey   string                `json:"field_key"`
+	GroupKey   string                `json:"group_key"`
+	ItemId     string                `json:"item_id"`
+	Kind       FieldAddressView1Kind `json:"kind"`
+	ValueIndex *int32                `json:"value_index,omitempty"`
+}
+
+// FieldAddressView1Kind defines model for FieldAddressView.1.Kind.
+type FieldAddressView1Kind string
+
+// FieldLayerView Wire name of a build layer. Core `FieldLayer` serializes as a Rust variant
+// (`DatabaseDefault`); this enum is the HTTP name.
+type FieldLayerView string
+
+// ImportFollowupPhase Where an accepted import is, after a read of the import task and the
+// product. Absent means the screen keeps 「已受理」.
+type ImportFollowupPhase string
+
+// ImportFollowupView Operator-facing import or moderation progress for an accepted row.
+// The browser copies `detail` as written; it does not classify Ozon.
+type ImportFollowupView struct {
+	Detail string `json:"detail"`
+
+	// Phase Where an accepted import is, after a read of the import task and the
+	// product. Absent means the screen keeps 「已受理」.
+	Phase ImportFollowupPhase `json:"phase"`
+}
+
+// ImportProbePhase Whether an unknown import is still on the automatic read schedule.
+type ImportProbePhase string
+
+// ImportProbeView Progress of the read-only import probe. Present only while the current
+// input's Intent is `unknown`. The browser formats the clock; it does not
+// decide the phase.
+type ImportProbeView struct {
+	// NextCheckAtMs Next automatic read, unix milliseconds. Absent after the cap: a
+	// leftover `reconcile_after` on a stopped row is not a promise.
+	NextCheckAtMs *int64 `json:"next_check_at_ms,omitempty"`
+
+	// Passes Recorded observations, including a historical `probePassCount`.
+	Passes int32 `json:"passes"`
+
+	// Phase Whether an unknown import is still on the automatic read schedule.
+	Phase ImportProbePhase `json:"phase"`
+}
+
+// IntentErrorCode A `last_error_code` this build writes. Persisted Intents may carry
+// other values; those read as raw `lastErrorCode` with no
+// `knownErrorCode`.
+type IntentErrorCode string
+
+// ListingBatchSkipReason Why one row of a batch was not submitted. Every one of these is decided
+// before any Seller call, so none of them is a Seller failure.
+type ListingBatchSkipReason string
+
+// ListingBuildSourceView defines model for ListingBuildSourceView.
+type ListingBuildSourceView struct {
+	Address FieldAddressView `json:"address"`
+
+	// Layer Wire name of a build layer. Core `FieldLayer` serializes as a Rust variant
+	// (`DatabaseDefault`); this enum is the HTTP name.
+	Layer FieldLayerView `json:"layer"`
+}
+
+// ListingBuildState `stale` or `built`. Derived on read; the row column alone is not enough.
+type ListingBuildState string
+
+// ListingCurrentIssueStatus What the stored history says about the current input's issue.
+type ListingCurrentIssueStatus string
+
+// ListingDispatchEvidence defines model for ListingDispatchEvidence.
+type ListingDispatchEvidence string
+
 // ListingError defines model for ListingError.
 type ListingError struct {
 	BehaviorChange       *string `json:"behavior_change,omitempty"`
@@ -22,8 +1081,215 @@ type ListingError struct {
 	RustFreezeChecksTags *bool   `json:"rust_freeze_checks_tags,omitempty"`
 }
 
+// ListingIntentView One Intent as stored, plus the read facts every consumer needs to act on
+// it without re-deriving them from `submissionIssues`: that list is the
+// displayable history (unbindable elements are omitted), never a way to find
+// the current issue by taking its last element.
+type ListingIntentView struct {
+	// CanResume Domain readiness to resume this Intent for the same input: a
+	// definite, classified pre-dispatch or rejected outcome on a `rejected`
+	// Intent. `false` for unknown, undeterminable, unproven or terminal
+	// outcomes. Not an authorization: the caller's own permissions still
+	// decide whether it may act.
+	CanResume           bool          `json:"can_resume"`
+	CancelRequestedAtMs *int64        `json:"cancel_requested_at_ms,omitempty"`
+	ClientOperationId   string        `json:"client_operation_id"`
+	CurrentIssue        *ListingIssue `json:"current_issue,omitempty"`
+
+	// CurrentIssueStatus What the stored history says about the current input's issue.
+	CurrentIssueStatus ListingCurrentIssueStatus `json:"current_issue_status"`
+	ExternalTaskId     *string                   `json:"external_task_id,omitempty"`
+
+	// HasLiveReconcileClaim GET/list snapshot only: a reconciler claim is live by database time.
+	// Absent when not enriched or the Intent changed during the read; absence
+	// is unknown, never `false`. This is not release authorization.
+	HasLiveReconcileClaim *bool `json:"has_live_reconcile_claim,omitempty"`
+
+	// HasUnfinishedDispatchJob GET/list snapshot only: an org-scoped `listing.submit.batch` Job in
+	// queued/running/retry_wait/uncertain names this exact Intent. Absence is
+	// unknown. Even two explicit `false` values require the release POST's
+	// atomic recheck; after release, read the exact Intent afresh.
+	HasUnfinishedDispatchJob *bool            `json:"has_unfinished_dispatch_job,omitempty"`
+	Id                       string           `json:"id"`
+	ImportProbe              *ImportProbeView `json:"import_probe,omitempty"`
+	KnownErrorCode           *IntentErrorCode `json:"known_error_code,omitempty"`
+
+	// LastErrorCode The stored value as written — possibly one this build does not
+	// declare.
+	LastErrorCode         *string                   `json:"last_error_code,omitempty"`
+	ListingRowId          string                    `json:"listing_row_id"`
+	ReconciliationOutcome interface{}               `json:"reconciliation_outcome,omitempty"`
+	RowRevision           int64                     `json:"row_revision"`
+	State                 string                    `json:"state"`
+	StoreId               string                    `json:"store_id"`
+	SubmissionIssues      []ListingIssue            `json:"submission_issues"`
+	SubmissionReceipt     *ListingSubmissionReceipt `json:"submission_receipt,omitempty"`
+
+	// SubmissionReceiptStatus Whether the stored transport receipt could be shown.
+	SubmissionReceiptStatus ListingSubmissionReceiptStatus `json:"submission_receipt_status"`
+	UpdatedAtMs             int64                          `json:"updated_at_ms"`
+}
+
+// ListingIssue defines model for ListingIssue.
+type ListingIssue struct {
+	AllowedActions []ListingIssueAction `json:"allowed_actions"`
+
+	// Code Open string: a `KnownIssueKey` code of `phase` for every issue this
+	// build mints; another value is kept as written and is unclassified.
+	Code               string                  `json:"code"`
+	CreatedAtMs        int64                   `json:"created_at_ms"`
+	CredentialRevision int64                   `json:"credential_revision"`
+	DispatchEvidence   ListingDispatchEvidence `json:"dispatch_evidence"`
+	Endpoint           string                  `json:"endpoint"`
+	HttpStatus         *int32                  `json:"http_status,omitempty"`
+	InputRevision      int64                   `json:"input_revision"`
+	IntentId           string                  `json:"intent_id"`
+
+	// Phase Open string: `pre_dispatch` or `submit` for every issue this build
+	// mints (the stage of its `KnownIssueKey`); another value is kept as
+	// written and is unclassified.
+	Phase              string `json:"phase"`
+	ProviderCode       *int64 `json:"provider_code,omitempty"`
+	Remediation        string `json:"remediation"`
+	RequestHash        string `json:"request_hash"`
+	ResolvedAtMs       *int64 `json:"resolved_at_ms,omitempty"`
+	RetryAfterFallback bool   `json:"retry_after_fallback"`
+	RetryAfterMs       *int64 `json:"retry_after_ms,omitempty"`
+	RowId              string `json:"row_id"`
+
+	// SafeMessage Credential-redacted at the dispatch boundary, at most 512 characters.
+	SafeMessage string            `json:"safe_message"`
+	Scope       ListingIssueScope `json:"scope"`
+	StoreId     string            `json:"store_id"`
+	Summary     string            `json:"summary"`
+
+	// TraceId Stable worker job identity, also recorded in the listing_job trace span.
+	TraceId string `json:"trace_id"`
+}
+
+// ListingIssueAction defines model for ListingIssueAction.
+type ListingIssueAction string
+
+// ListingIssueScope defines model for ListingIssueScope.
+type ListingIssueScope string
+
+// ListingRowBuildView defines model for ListingRowBuildView.
+type ListingRowBuildView struct {
+	Sources []ListingBuildSourceView `json:"sources"`
+
+	// State `stale` or `built`. Derived on read; the row column alone is not enough.
+	State ListingBuildState `json:"state"`
+}
+
+// ListingRowProjection Read-only semantics shared by every row response. The browser only formats them.
+type ListingRowProjection struct {
+	Ai WorkflowAiPhase `json:"ai"`
+
+	// CanResume Domain readiness to resume the latest Intent for the current input,
+	// by the same rule as the Intent view's `canResume`. Not an
+	// authorization.
+	CanResume bool `json:"can_resume"`
+
+	// CurrentIssueStatus What the stored history says about the current input's issue.
+	CurrentIssueStatus ListingCurrentIssueStatus `json:"current_issue_status"`
+	ErrorCode          *string                   `json:"error_code,omitempty"`
+	ErrorDetail        *string                   `json:"error_detail,omitempty"`
+	Fields             WorkflowFieldPhase        `json:"fields"`
+	ImageCompleted     int32                     `json:"image_completed"`
+	ImageTotal         int32                     `json:"image_total"`
+	ImportFollowup     *ImportFollowupView       `json:"import_followup,omitempty"`
+	ImportProbe        *ImportProbeView          `json:"import_probe,omitempty"`
+	Media              WorkflowMediaPhase        `json:"media"`
+	MediaFailureStage  *WorkflowMediaStage       `json:"media_failure_stage,omitempty"`
+	ProductId          *int64                    `json:"product_id,omitempty"`
+
+	// Readiness Pure, read-only projection of every fact currently blocking publication.
+	// It is returned at the renderer boundary and is never persisted.
+	Readiness         WorkflowReadinessReport   `json:"readiness"`
+	RunId             *string                   `json:"run_id,omitempty"`
+	Sku               *int64                    `json:"sku,omitempty"`
+	Stage             RowStageView              `json:"stage"`
+	SubmissionIssue   *ListingIssue             `json:"submission_issue,omitempty"`
+	SubmissionReceipt *ListingSubmissionReceipt `json:"submission_receipt,omitempty"`
+
+	// SubmissionReceiptStatus Whether the stored transport receipt could be shown.
+	SubmissionReceiptStatus ListingSubmissionReceiptStatus `json:"submission_receipt_status"`
+	TaskId                  *string                        `json:"task_id,omitempty"`
+}
+
+// ListingRowView defines model for ListingRowView.
+type ListingRowView struct {
+	// Ai `{ candidates, summary?, promptSha256, modelVersion }`.
+	Ai           interface{}         `json:"ai"`
+	Build        ListingRowBuildView `json:"build"`
+	CardId       string              `json:"card_id"`
+	ContentState string              `json:"content_state"`
+
+	// Draft `WorkflowCategoryDraft` (`{ values, complex_values }`): the
+	// operator-visible field values.
+	Draft interface{} `json:"draft"`
+	Id    string      `json:"id"`
+
+	// Media `{ images, videos, videoCover? }` lifecycle media.
+	Media       interface{}      `json:"media"`
+	MediaState  string           `json:"media_state"`
+	OcrRecovery *OcrRecoveryView `json:"ocr_recovery,omitempty"`
+
+	// Payload The row payload without the server-only `schemaSnapshot`.
+	// Includes `schemaRevision`, `normalizedSnapshot`, `handEditedKeys`,
+	// and the sections projected above.
+	Payload interface{} `json:"payload"`
+
+	// Projection Read-only semantics shared by every row response. The browser only formats them.
+	Projection ListingRowProjection `json:"projection"`
+
+	// RenderEvidence Committed render evidence, when an executor wrote one back.
+	RenderEvidence interface{} `json:"render_evidence,omitempty"`
+	Revision       int64       `json:"revision"`
+
+	// Source `{ assetId, sha256, fileName }` of the PSD / photo the row came from.
+	Source          interface{} `json:"source"`
+	StoreId         *string     `json:"store_id,omitempty"`
+	SubmissionState string      `json:"submission_state"`
+	UpdatedAtMs     int64       `json:"updated_at_ms"`
+
+	// ValidationIssues `FieldIssue[]` from the last validate: why the row is `blocked`.
+	ValidationIssues interface{} `json:"validation_issues"`
+	ValidationState  string      `json:"validation_state"`
+
+	// ViewRevision Monotonic response version. Draft CAS continues to use `revision`.
+	ViewRevision int64 `json:"view_revision"`
+}
+
+// ListingSubmissionReceipt A stored transport receipt as a response shows it. Tolerates keys a newer
+// writer adds; a missing required field or a wrong type makes the stored
+// receipt `unreadable` rather than silently absent (see
+// `ListingSubmissionReceiptStatus`).
+type ListingSubmissionReceipt struct {
+	BatchId        string  `json:"batch_id"`
+	HttpStatus     *int32  `json:"http_status,omitempty"`
+	ItemCount      int32   `json:"item_count"`
+	ReceivedAtMs   *int64  `json:"received_at_ms,omitempty"`
+	ResponseBody   *string `json:"response_body,omitempty"`
+	TaskId         *int64  `json:"task_id,omitempty"`
+	TransportError *string `json:"transport_error,omitempty"`
+}
+
+// ListingSubmissionReceiptStatus Whether the stored transport receipt could be shown.
+type ListingSubmissionReceiptStatus string
+
 // ListingSubmitRequest defines model for ListingSubmitRequest.
 type ListingSubmitRequest struct {
+	union json.RawMessage
+}
+
+// ListingSubmitResponse defines model for ListingSubmitResponse.
+type ListingSubmitResponse struct {
+	Data ListingSubmitResponse_Data `json:"data"`
+}
+
+// ListingSubmitResponse_Data defines model for ListingSubmitResponse.Data.
+type ListingSubmitResponse_Data struct {
 	union json.RawMessage
 }
 
@@ -32,6 +1298,66 @@ type ListingTagCheckRequest struct {
 	RulesVersion string    `json:"rules_version"`
 	Tags         *[]string `json:"tags,omitempty"`
 	Text         *string   `json:"text,omitempty"`
+}
+
+// OcrRecoveryAttemptKind defines model for OcrRecoveryAttemptKind.
+type OcrRecoveryAttemptKind string
+
+// OcrRecoveryAttemptStatus defines model for OcrRecoveryAttemptStatus.
+type OcrRecoveryAttemptStatus string
+
+// OcrRecoveryAttemptView defines model for OcrRecoveryAttemptView.
+type OcrRecoveryAttemptView struct {
+	Attempt      OcrRecoveryAttemptKind   `json:"attempt"`
+	RequestId    *string                  `json:"request_id,omitempty"`
+	ResultUsable *bool                    `json:"result_usable,omitempty"`
+	Status       OcrRecoveryAttemptStatus `json:"status"`
+}
+
+// OcrRecoveryView Paid OCR attempts for one Job. Read-only; HTTP 200 `absent` is not a promise.
+type OcrRecoveryView struct {
+	Attempts   []OcrRecoveryAttemptView `json:"attempts"`
+	JobState   string                   `json:"job_state"`
+	LeaseEpoch int64                    `json:"lease_epoch"`
+}
+
+// RowStageView defines model for RowStageView.
+type RowStageView string
+
+// ShippingReadinessReason defines model for ShippingReadinessReason.
+type ShippingReadinessReason string
+
+// ShippingReadinessStatus defines model for ShippingReadinessStatus.
+type ShippingReadinessStatus string
+
+// SubmitDraftOutcome What happened to one submitted Draft. None of these is a Seller verdict:
+// the Intent's state (and its `taskId` once accepted) is the outcome.
+type SubmitDraftOutcome string
+
+// SubmitDraftSkipReason Why one Draft was skipped. Every one of these is decided before any
+// Seller call, so none of them is a Seller failure.
+type SubmitDraftSkipReason string
+
+// SubmitListingBatchData defines model for SubmitListingBatchData.
+type SubmitListingBatchData struct {
+	Items []SubmitListingBatchItemData `json:"items"`
+}
+
+// SubmitListingBatchItemData defines model for SubmitListingBatchItemData.
+type SubmitListingBatchItemData struct {
+	// Blockers `op_workflow::OperationBlocker[]` when `skipped` is `blocked`.
+	Blockers *[]interface{} `json:"blockers,omitempty"`
+	Created  bool           `json:"created"`
+
+	// Detail Free-text detail for `compose_failed`; empty otherwise.
+	Detail *string `json:"detail,omitempty"`
+
+	// Fields Human-readable names of required fields that need attention after a schema change.
+	Fields  *[]string               `json:"fields,omitempty"`
+	Intent  *ListingIntentView      `json:"intent,omitempty"`
+	Row     *ListingRowView         `json:"row,omitempty"`
+	RowId   string                  `json:"row_id"`
+	Skipped *ListingBatchSkipReason `json:"skipped,omitempty"`
 }
 
 // SubmitListingBatchRequest Freeze stored rows at the server revisions the operator selected.
@@ -49,6 +1375,43 @@ type SubmitListingBatchRequest struct {
 	} `json:"expected_revisions"`
 	RowIds  []openapi_types.UUID `json:"row_ids"`
 	StoreId openapi_types.UUID   `json:"store_id"`
+}
+
+// SubmitListingDraftItemResult defines model for SubmitListingDraftItemResult.
+type SubmitListingDraftItemResult struct {
+	// Blockers Non-field refusals (supplier video snapshot, shipping readiness),
+	// present only when `skip_reason` is `blocked` for such a reason.
+	Blockers *[]DraftBlocker `json:"blockers,omitempty"`
+
+	// Detail Free-text detail for `compose_failed`; empty otherwise.
+	Detail *string `json:"detail,omitempty"`
+
+	// Fields Human-readable names of required fields that need attention after a schema change.
+	Fields *[]string          `json:"fields,omitempty"`
+	Intent *ListingIntentView `json:"intent,omitempty"`
+
+	// Issues Field findings of the server's `build → validate`, present only when
+	// `skip_reason` is `blocked` for a field reason. Every one is a
+	// validate-stage finding (`KnownIssueKey` with `stage: validate` when
+	// its code is declared): this endpoint has no other field producer.
+	Issues *[]DraftFieldIssue `json:"issues,omitempty"`
+
+	// Outcome What happened to one submitted Draft. None of these is a Seller verdict:
+	// the Intent's state (and its `taskId` once accepted) is the outcome.
+	Outcome    SubmitDraftOutcome     `json:"outcome"`
+	RowId      string                 `json:"row_id"`
+	SkipReason *SubmitDraftSkipReason `json:"skip_reason,omitempty"`
+}
+
+// SubmitListingDraftsData defines model for SubmitListingDraftsData.
+type SubmitListingDraftsData struct {
+	// AcceptedSchemaRevisions Current and accepted legacy schema revisions for this snapshot. Advisory only; the server decides whether a submitted revision can be accepted.
+	AcceptedSchemaRevisions *[]string                      `json:"accepted_schema_revisions,omitempty"`
+	Items                   []SubmitListingDraftItemResult `json:"items"`
+
+	// ServerSchemaRevision The Category Schema revision every item was checked against —
+	// `SchemaMaterial::revision()` for the Card's own coordinate.
+	ServerSchemaRevision string `json:"server_schema_revision"`
 }
 
 // SubmitListingDraftsRequest Send 1..=100 browser-owned Drafts to one Store under one Card
@@ -85,8 +1448,286 @@ type SubmitListingError1 struct {
 	Error string `json:"error"`
 }
 
+// WorkflowAiPhase defines model for WorkflowAiPhase.
+type WorkflowAiPhase string
+
+// WorkflowAllowedAction defines model for WorkflowAllowedAction.
+type WorkflowAllowedAction string
+
+// WorkflowFieldPhase defines model for WorkflowFieldPhase.
+type WorkflowFieldPhase string
+
+// WorkflowMediaPhase defines model for WorkflowMediaPhase.
+type WorkflowMediaPhase string
+
+// WorkflowMediaStage defines model for WorkflowMediaStage.
+type WorkflowMediaStage string
+
+// WorkflowReadinessBlockerCode defines model for WorkflowReadinessBlockerCode.
+type WorkflowReadinessBlockerCode string
+
+// WorkflowReadinessReport Pure, read-only projection of every fact currently blocking publication.
+// It is returned at the renderer boundary and is never persisted.
+type WorkflowReadinessReport struct {
+	AllowedActions []WorkflowAllowedAction        `json:"allowed_actions"`
+	Blockers       []WorkflowReadinessBlockerCode `json:"blockers"`
+
+	// CanStartPublishAttempt Dirty + preparation ready may start a validate-and-publish attempt.
+	// Invalid never can. Distinct from [`Self::ready_to_publish`].
+	CanStartPublishAttempt bool `json:"can_start_publish_attempt"`
+	ReadyToPublish         bool `json:"ready_to_publish"`
+}
+
 // PostListingSubmitJSONRequestBody defines body for PostListingSubmit for application/json ContentType.
 type PostListingSubmitJSONRequestBody = ListingSubmitRequest
+
+// AsDraftBlocker0 returns the union data inside the DraftBlocker as a DraftBlocker0
+func (t DraftBlocker) AsDraftBlocker0() (DraftBlocker0, error) {
+	var body DraftBlocker0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromDraftBlocker0 overwrites any union data inside the DraftBlocker as the provided DraftBlocker0
+func (t *DraftBlocker) FromDraftBlocker0(v DraftBlocker0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeDraftBlocker0 performs a merge with any union data inside the DraftBlocker, using the provided DraftBlocker0
+func (t *DraftBlocker) MergeDraftBlocker0(v DraftBlocker0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsDraftBlocker1 returns the union data inside the DraftBlocker as a DraftBlocker1
+func (t DraftBlocker) AsDraftBlocker1() (DraftBlocker1, error) {
+	var body DraftBlocker1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromDraftBlocker1 overwrites any union data inside the DraftBlocker as the provided DraftBlocker1
+func (t *DraftBlocker) FromDraftBlocker1(v DraftBlocker1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeDraftBlocker1 performs a merge with any union data inside the DraftBlocker, using the provided DraftBlocker1
+func (t *DraftBlocker) MergeDraftBlocker1(v DraftBlocker1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t DraftBlocker) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *DraftBlocker) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsDraftFieldAddress0 returns the union data inside the DraftFieldAddress as a DraftFieldAddress0
+func (t DraftFieldAddress) AsDraftFieldAddress0() (DraftFieldAddress0, error) {
+	var body DraftFieldAddress0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromDraftFieldAddress0 overwrites any union data inside the DraftFieldAddress as the provided DraftFieldAddress0
+func (t *DraftFieldAddress) FromDraftFieldAddress0(v DraftFieldAddress0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeDraftFieldAddress0 performs a merge with any union data inside the DraftFieldAddress, using the provided DraftFieldAddress0
+func (t *DraftFieldAddress) MergeDraftFieldAddress0(v DraftFieldAddress0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsDraftFieldAddress1 returns the union data inside the DraftFieldAddress as a DraftFieldAddress1
+func (t DraftFieldAddress) AsDraftFieldAddress1() (DraftFieldAddress1, error) {
+	var body DraftFieldAddress1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromDraftFieldAddress1 overwrites any union data inside the DraftFieldAddress as the provided DraftFieldAddress1
+func (t *DraftFieldAddress) FromDraftFieldAddress1(v DraftFieldAddress1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeDraftFieldAddress1 performs a merge with any union data inside the DraftFieldAddress, using the provided DraftFieldAddress1
+func (t *DraftFieldAddress) MergeDraftFieldAddress1(v DraftFieldAddress1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t DraftFieldAddress) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *DraftFieldAddress) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsDraftIssueParameter0 returns the union data inside the DraftIssueParameter as a DraftIssueParameter0
+func (t DraftIssueParameter) AsDraftIssueParameter0() (DraftIssueParameter0, error) {
+	var body DraftIssueParameter0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromDraftIssueParameter0 overwrites any union data inside the DraftIssueParameter as the provided DraftIssueParameter0
+func (t *DraftIssueParameter) FromDraftIssueParameter0(v DraftIssueParameter0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeDraftIssueParameter0 performs a merge with any union data inside the DraftIssueParameter, using the provided DraftIssueParameter0
+func (t *DraftIssueParameter) MergeDraftIssueParameter0(v DraftIssueParameter0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsDraftIssueParameter1 returns the union data inside the DraftIssueParameter as a DraftIssueParameter1
+func (t DraftIssueParameter) AsDraftIssueParameter1() (DraftIssueParameter1, error) {
+	var body DraftIssueParameter1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromDraftIssueParameter1 overwrites any union data inside the DraftIssueParameter as the provided DraftIssueParameter1
+func (t *DraftIssueParameter) FromDraftIssueParameter1(v DraftIssueParameter1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeDraftIssueParameter1 performs a merge with any union data inside the DraftIssueParameter, using the provided DraftIssueParameter1
+func (t *DraftIssueParameter) MergeDraftIssueParameter1(v DraftIssueParameter1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t DraftIssueParameter) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *DraftIssueParameter) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsFieldAddressView0 returns the union data inside the FieldAddressView as a FieldAddressView0
+func (t FieldAddressView) AsFieldAddressView0() (FieldAddressView0, error) {
+	var body FieldAddressView0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromFieldAddressView0 overwrites any union data inside the FieldAddressView as the provided FieldAddressView0
+func (t *FieldAddressView) FromFieldAddressView0(v FieldAddressView0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeFieldAddressView0 performs a merge with any union data inside the FieldAddressView, using the provided FieldAddressView0
+func (t *FieldAddressView) MergeFieldAddressView0(v FieldAddressView0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsFieldAddressView1 returns the union data inside the FieldAddressView as a FieldAddressView1
+func (t FieldAddressView) AsFieldAddressView1() (FieldAddressView1, error) {
+	var body FieldAddressView1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromFieldAddressView1 overwrites any union data inside the FieldAddressView as the provided FieldAddressView1
+func (t *FieldAddressView) FromFieldAddressView1(v FieldAddressView1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeFieldAddressView1 performs a merge with any union data inside the FieldAddressView, using the provided FieldAddressView1
+func (t *FieldAddressView) MergeFieldAddressView1(v FieldAddressView1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t FieldAddressView) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *FieldAddressView) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
 
 // AsSubmitListingBatchRequest returns the union data inside the ListingSubmitRequest as a SubmitListingBatchRequest
 func (t ListingSubmitRequest) AsSubmitListingBatchRequest() (SubmitListingBatchRequest, error) {
@@ -172,6 +1813,68 @@ func (t ListingSubmitRequest) MarshalJSON() ([]byte, error) {
 }
 
 func (t *ListingSubmitRequest) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsSubmitListingBatchData returns the union data inside the ListingSubmitResponse_Data as a SubmitListingBatchData
+func (t ListingSubmitResponse_Data) AsSubmitListingBatchData() (SubmitListingBatchData, error) {
+	var body SubmitListingBatchData
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromSubmitListingBatchData overwrites any union data inside the ListingSubmitResponse_Data as the provided SubmitListingBatchData
+func (t *ListingSubmitResponse_Data) FromSubmitListingBatchData(v SubmitListingBatchData) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeSubmitListingBatchData performs a merge with any union data inside the ListingSubmitResponse_Data, using the provided SubmitListingBatchData
+func (t *ListingSubmitResponse_Data) MergeSubmitListingBatchData(v SubmitListingBatchData) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsSubmitListingDraftsData returns the union data inside the ListingSubmitResponse_Data as a SubmitListingDraftsData
+func (t ListingSubmitResponse_Data) AsSubmitListingDraftsData() (SubmitListingDraftsData, error) {
+	var body SubmitListingDraftsData
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromSubmitListingDraftsData overwrites any union data inside the ListingSubmitResponse_Data as the provided SubmitListingDraftsData
+func (t *ListingSubmitResponse_Data) FromSubmitListingDraftsData(v SubmitListingDraftsData) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeSubmitListingDraftsData performs a merge with any union data inside the ListingSubmitResponse_Data, using the provided SubmitListingDraftsData
+func (t *ListingSubmitResponse_Data) MergeSubmitListingDraftsData(v SubmitListingDraftsData) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t ListingSubmitResponse_Data) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *ListingSubmitResponse_Data) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }

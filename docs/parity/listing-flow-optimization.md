@@ -1,6 +1,6 @@
 # 上架流程优化与回归证据
 
-首轮基线：`be364cb76e87dc9ea178cd322b888ab3b641d998`。改动前端发送边界、Go 提交持久化和 worker 执行循环。第二轮补齐 stored-row 的版本契约和批次结算事务；两轮均不修改 Rust 规则、WASM 产物、迁移或既有配额 SQL。
+首轮基线：`be364cb76e87dc9ea178cd322b888ab3b641d998`。改动前端发送边界、Go 提交持久化和 worker 执行循环。第二轮补齐 stored-row 的版本契约和批次结算事务；第三轮补齐成功响应、回执读取和浏览器 fixture 契约。三轮均不修改 Rust 规则、WASM 产物、迁移或既有配额 SQL。
 
 创建 PR 时，主分支已推进到 `64cb010656ef795b608050e04376d7674aa691ee`。新增的主分支改动与本批文件无重叠；随后还在 GitHub 生成的合并版本上验证前端与仓库 CI。
 
@@ -45,7 +45,7 @@ bun run check
 # 仓库根；PODHUB_PARITY_DSN 指向新建的隔离测试数据库
 PODHUB_ALLOW_SUPERUSER_DB=1 OTEL_TRACES_SAMPLER=always_on \
   go test -race -p 1 -count=1 \
-  ./internal/listing/submit/... ./internal/queue/... ./internal/seller/... \
+  ./internal/listing/submit/... ./internal/listing/read/... ./internal/queue/... ./internal/seller/... \
   ./internal/app/api ./tests/parity ./tests/archtest ./tests/testkit
 
 PODHUB_ALLOW_SUPERUSER_DB=1 OTEL_TRACES_SAMPLER=always_on \
@@ -153,6 +153,54 @@ HTTP 外层统一使用仓库要求的 snake_case：stored-row 使用 `store_id`
 请求断言先在旧实现得到红灯，修正后 `submit/...`、`api`、`testkit` 四个有测试的包启用 `-race -count=1`，145 项含子测试全部通过，0 跳过、0 失败。其中新增 PostgreSQL 草稿入队回归验证 HTTP 外层解析成功，传给测试模块的 WASM item 字节保持原样；旧 camelCase 字段不能替代必填字段，`rules_version` 会进入规则握手。
 
 本次修正与 `main@032a3a8` 的合并版本重新完成前端构建、TypeScript、API 一致性、knip 和全量测试（3,159 通过、2 跳过、0 失败）。lint 再次与纯 main 对照，仍为同样的 819 条告警，新增 0 条。实际发送、诊断记录和浏览器 pipeline mock 的请求字段已同步；没有执行真实浏览器 pipeline，不能据此宣称其既有响应 fixture 或端到端场景全部通过。
+
+## 第三轮：成功回执与后续读取契约
+
+本轮从 `118b1cb` 继续；主分支仍为 `032a3a8`。上一轮完成了请求外层，但 Go 的 Draft 成功响应及两份 Intent 视图仍输出 camelCase，浏览器 decoder 和现有 OpenAPI schema 则使用 snake_case。服务端已经入队的请求会在客户端变成 `listing_contract_invalid`，要求用户核对；随后 GET 若仍返回旧字段，同样无法完成核对。此前提交及五条 Intent 路由的 200 仅声明 `type: object`，成功响应没有实际字段约束。
+
+### 实际响应与严格契约同步
+
+- 提交响应的 `server_schema_revision`、`accepted_schema_revisions`、`row_id`、`skip_reason` 及 Intent 字段使用已有前端约定。stored-row 的嵌套 Intent 同步修正；不增加 camelCase 别名。
+- GET/list、单条 GET、cancel、probe、release 的 Intent 视图及 `next_cursor`、`released_intent_ids` 同步对齐。GET 查询参数和 release 请求形状沿用各自既有约定。
+- `ListingIssue` 的已声明字段只在出站投影映射。数据库中的 `allowedActions`、`resolvedAtMs` 等历史键不改写，任意扩展内容不递归改名，WASM item、作业 payload 和对账原始内容也不改写。
+- 六条路由的 200 接入严格的 `data` envelope，复用已有 Draft、Batch、Intent、列表和 release schema。补齐实际返回的 `accepted_schema_revisions` 与 `fields`，保留 `additionalProperties: false`，不把校验改成允许任意对象。
+
+`TestSubmitSuccessResponsesMatchContract` 比较实际 Go 响应序列化，并交由 OpenAPI 校验；覆盖 created、accepted replay、跳过、字段问题、空数组及缺省字段。旧实现的 11 个成功分支有 8 个失败。`TestSubmitSuccessContractRejectsMalformedBodies` 验证空壳、null 列表、旧字段、残缺 Intent 和额外字段被拒绝。`TestSendDraftsSuccessResponseContract` 使用真实 PostgreSQL，一次请求返回 created / replayed / skipped，核对入队数量及原状态，再校验实际序列化结果；其 WASM 模块为确定性 fixture，不声称真实 Seller 端到端。
+
+### 读状态的两项有意修正
+
+这两项不是结果等价的字段重命名，而是按现有 OpenAPI 的明确约束修正已有投影：
+
+1. `can_resume` 只在 `rejected` 且当前问题允许 resume 时为 true。queued / unknown 仍可以显示当前问题，但不能据历史动作宣称可恢复。取消、释放和派发的数据库判定保持原有实现。
+2. 存储回执缺少精确键名的 `batch_id` / `item_count`，或已声明字段类型错误时，返回 `submission_receipt_status: unreadable`，不输出伪装成有效回执的对象。缺失或 null 仍是 absent；有效回执在投影中保留去除首尾空白后的原始 JSON 和新 writer 添加的额外键，不附加 schema 未声明的正数或非空限制。大小写不同的扩展键不会被误当成已声明字段。
+
+回归分别由 `TestIntentResumeOnlyForRejected` 和 `TestIntentReceiptRequiresDeclaredFields` 先在旧实现失败。Intent HTTP 回归还核对 release facts 的省略、显式 false 和 true 的区别；省略继续代表未知。
+
+### 浏览器 fixture 与真实 decoder
+
+`publish-pipeline-mocks.test.ts` 直接调用现有 mock 和生产 `submitListingDrafts` / `readListingIntents`，没有复制 decoder。旧 fixture 得到 1 通过、7 失败；修复响应字段后 8 项通过，覆盖受理、schema/media 跳过、queued 后读回 accepted 及 task id、丢响应后只 GET 核对、原始请求证据和原 deadline。fixture 出口使用现有 `DraftSubmitResult` / `IntentPage` 类型，防止字段再次漂移。
+
+真实浏览器 runner 要求其提供的 no-env/native sandbox wrapper 和固定 Chrome channel；当前环境缺少这些运行条件，未放松 runner、网络保护或验收标志。这里的证据是实际 HTTP decoder 与 fixture 测试，不是浏览器端到端验收。
+
+提交中的旧 Intent 重放仍使用已有轻量投影：读回 state，但不在入队过程中补拉完整历史、回执或 release facts。本轮没有为这条分支新增查询；完整记录由现有 Intent 读取接口提供。
+
+### 第三轮最终验证
+
+以下验证基于本轮改动与 `main@032a3a8` 的合并工作树；数据库测试使用本机 PostgreSQL 的独立测试库。
+
+| 检查 | 结果 |
+| --- | --- |
+| submit / read / api / testkit / parity / archtest，启用 `-race` | 最终各包运行合计 **267 pass / 0 skip / 0 fail**，8 个有测试的包 |
+| 既有 `TestListingIntentsCatalog -race`，独立新库 | 通过；涵盖租户、角色、取消和 release 的原有集成断言 |
+| 前端完整测试 | **3,167 pass / 2 skip / 0 fail**，428 个文件 |
+| 前端 build、TypeScript、WASM 校验、`api:check`、deadcode | 通过 |
+| 20 个 Go OpenAPI 配置及 TypeScript schema | 已按最终 OpenAPI 生成并检查一致性 |
+| `go vet`、Go 格式、`git diff --check` | 通过 |
+| 前端 lint | 819 条警告、0 errors；与纯 main 的完整诊断逐条比较，新增 0、移除 0 |
+
+`read/http` 的既有锁顺序测试会自行启动 PostgreSQL。第一次以 root 执行时被 `initdb` 拒绝；随后将原样编译的 race 测试以 postgres 用户、标准包目录运行，整个包 30 项通过，包括锁顺序及新响应回归。上述 267 项按每个包的最终运行汇总，不把早先失败计为通过；没有跳过或改写该测试。Catalog 使用单独的新库，避免与另一组既有 fixture 复用固定主键。
+
+完整 `bun run check` 仍在 lint 最后一步退出 1，因为 819 超过既有阈值 818；没有提高阈值，也不将本地完整 check 描述为全绿。真实浏览器端到端仍未执行，边界见上文。
 
 ## 收益与边界
 

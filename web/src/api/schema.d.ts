@@ -2043,6 +2043,18 @@ export interface components {
       writer_leases: components["schemas"]["WriterLeaseHealth"][];
     };
     ListingSubmitRequest: components["schemas"]["SubmitListingBatchRequest"] | components["schemas"]["SubmitListingDraftsRequest"] | components["schemas"]["ListingTagCheckRequest"];
+    ListingSubmitResponse: {
+      data: components["schemas"]["SubmitListingBatchData"] | components["schemas"]["SubmitListingDraftsData"];
+    };
+    ListingIntentResponse: {
+      data: components["schemas"]["ListingIntentView"];
+    };
+    ListingIntentsResponse: {
+      data: components["schemas"]["ListingIntentsPage"];
+    };
+    ListingReleaseUnknownResponse: {
+      data: components["schemas"]["ReleaseUnknownListingIntentsData"];
+    };
     /**
      * @description Freeze stored rows at the server revisions the operator selected.
      * Each row_ids entry must have exactly one expected_revisions entry;
@@ -7571,6 +7583,8 @@ export interface components {
       created: boolean;
       /** @description Free-text detail for `compose_failed`; empty otherwise. */
       detail?: string | null;
+      /** @description Human-readable names of required fields that need attention after a schema change. */
+      fields?: string[];
       intent?: null | components["schemas"]["ListingIntentView"];
       row?: null | components["schemas"]["ListingRowView"];
       row_id: string;
@@ -7579,15 +7593,17 @@ export interface components {
     SubmitListingDraftItemResult: {
       /**
        * @description Non-field refusals (supplier video snapshot, shipping readiness),
-       * present only when `skipReason` is `blocked` for such a reason.
+       * present only when `skip_reason` is `blocked` for such a reason.
        */
       blockers?: components["schemas"]["DraftBlocker"][];
       /** @description Free-text detail for `compose_failed`; empty otherwise. */
       detail?: string | null;
+      /** @description Human-readable names of required fields that need attention after a schema change. */
+      fields?: string[];
       intent?: null | components["schemas"]["ListingIntentView"];
       /**
        * @description Field findings of the server's `build → validate`, present only when
-       * `skipReason` is `blocked` for a field reason. Every one is a
+       * `skip_reason` is `blocked` for a field reason. Every one is a
        * validate-stage finding (`KnownIssueKey` with `stage: validate` when
        * its code is declared): this endpoint has no other field producer.
        */
@@ -7597,6 +7613,8 @@ export interface components {
       skip_reason?: null | components["schemas"]["SubmitDraftSkipReason"];
     };
     SubmitListingDraftsData: {
+      /** @description Current and accepted legacy schema revisions for this snapshot. Advisory only; the server decides whether a submitted revision can be accepted. */
+      accepted_schema_revisions?: string[];
       items: components["schemas"]["SubmitListingDraftItemResult"][];
       /**
        * @description The Category Schema revision every item was checked against —
@@ -9068,7 +9086,7 @@ export interface operations {
       /** @description Batch or Draft send frozen and enqueued; per-row items */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["ListingSubmitResponse"];
         };
       };
       /** @description The body is not a tag check, a banned tag refused the gate, the Draft envelope is invalid, or the stored-row IDs and revision pins are not a one-to-one match */
@@ -9915,7 +9933,7 @@ export interface operations {
       /** @description Intents */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["ListingIntentsResponse"];
         };
       };
       /** @description limit or cursor rejected */
@@ -9955,7 +9973,7 @@ export interface operations {
       /** @description Released intents */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["ListingReleaseUnknownResponse"];
         };
       };
       /** @description Body refused */
@@ -10001,7 +10019,7 @@ export interface operations {
       /** @description The intent */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["ListingIntentResponse"];
         };
       };
       /** @description Not signed in */
@@ -10035,7 +10053,7 @@ export interface operations {
       /** @description Cancelled */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["ListingIntentResponse"];
         };
       };
       /** @description Not signed in */
@@ -10075,7 +10093,7 @@ export interface operations {
       /** @description Probe result */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["ListingIntentResponse"];
         };
       };
       /** @description Not signed in */

@@ -1,11 +1,11 @@
 /** Logical business ledger is separate from the context guard's network ledger. */
 import type { CategorySchemaSnapshot, LeanRow } from "@/listing-core/types"
-import type { DraftSubmitRequest } from "@/bindings/http-listing-submit"
+import type { DraftSubmitRequest, DraftSubmitResult } from "@/bindings/http-listing-submit"
 import { route } from "@/api/routes"
 import { sha256 } from "@/features/workflow/platforms/core"
 import { wbCatalogFixture, wbFixtureState } from "./publish-pipeline-fixtures"
 import { recordBusiness, recordNative } from "./publish-pipeline-metrics"
-import type { ListingIntent } from "@/bindings/http-listing-intents"
+import type { IntentPage, ListingIntent } from "@/bindings/http-listing-intents"
 import { createDiagnosticMocks } from "./publish-pipeline-diagnostic-mocks"
 import { createWorkbenchMocks } from "./publish-pipeline-workbench-mocks"
 export type FixtureMode = "accepted" | "unknown" | "schema" | "media" | "stop" | "late" | "diagnostic" | "request-400" | "request-409"
@@ -87,8 +87,8 @@ export function installPipelineMocks(initialSchema: CategorySchemaSnapshot) {
           || selected.length === 0 || selected.length > 100 || selected.some((id) => !/^[A-Za-z0-9_.-]{1,128}$/.test(id))) throw new Error("Unexpected S16 Intent inspection")
         recordNative("mock-intent-query", { storeId: url.searchParams.get("storeId"), [key]: selected, limit: 100, latestPerRow: true })
         const items = [...intents.values()].filter((intent) => intent.store_id === url.searchParams.get("storeId") && selected.includes(key === "rowIds" ? intent.listing_row_id : intent.id))
-          .map((intent) => mode === "reconcile-pending-200" ? { ...intent, state: "accepted", externalTaskId: "42" } : intent)
-        response = Response.json({ data: { items, nextCursor: null } })
+          .map((intent) => mode === "reconcile-pending-200" ? { ...intent, state: "accepted", external_task_id: "42" } : intent)
+        response = Response.json({ data: { items, next_cursor: null } satisfies IntentPage })
         recordBusiness({ ...base, ...identity, event: "response", status: 200, signalAborted: signal?.aborted ?? false })
         return response
       }
@@ -111,22 +111,22 @@ export function installPipelineMocks(initialSchema: CategorySchemaSnapshot) {
           return Response.json({ code, error: "Mock typed request-level refusal" }, { status: 409 })
         }
         const repair = (mode === "schema" || mode === "media") && body!.store_id === "fixture-a" && attempt === 1
-        const items = body!.items.map((item) => {
-          if (repair) return { rowId: item.rowId, outcome: "skipped", skipReason: mode === "schema" ? "schema_stale" : "media_expired" }
+        const items: DraftSubmitResult["items"] = body!.items.map((item) => {
+          if (repair) return { row_id: item.rowId, outcome: "skipped", skip_reason: mode === "schema" ? "schema_stale" : "media_expired" }
           const intent: ListingIntent = { id: crypto.randomUUID(), listing_row_id: item.rowId, row_revision: 0, store_id: body!.store_id,
             client_operation_id: `fixture-server:${item.rowId}`, state: "accepted", external_task_id: "42", can_resume: false,
             current_issue_status: "absent", submission_issues: [], submission_receipt_status: "absent", updated_at_ms: Date.now() }
-          return { rowId: item.rowId, outcome: "created", intent }
+          return { row_id: item.rowId, outcome: "created", intent }
         })
         if (mode === "reconcile-pending-200" || mode === "reconcile-lost-history") {
           for (const item of items) if ("intent" in item && item.intent) {
-            item.intent.id = `fixture-intent-${item.rowId}`
+            item.intent.id = `fixture-intent-${item.row_id}`
             if (mode === "reconcile-pending-200" && body!.store_id === "fixture-a") { item.intent.state = "queued"; item.intent.external_task_id = "" }
             intents.set(item.intent.id, { ...item.intent })
           }
           if (mode === "reconcile-lost-history" && body!.store_id === "fixture-a") throw new TypeError("Mock committed response lost")
         }
-        response = Response.json({ data: { serverSchemaRevision: initialSchema.schema_revision, items } })
+        response = Response.json({ data: { server_schema_revision: initialSchema.schema_revision, items } satisfies DraftSubmitResult })
         recordBusiness({ ...base, ...identity, event: "response", status: 200, signalAborted: signal?.aborted ?? false,
           draftHashes: hashes, schemaRevisions: body!.items.map((item) => item.schemaRevision), renewedMedia: body!.items.every((item) => JSON.stringify(item.media ?? null).includes("renewed.jpg")) })
         return response
@@ -140,7 +140,7 @@ export function installPipelineMocks(initialSchema: CategorySchemaSnapshot) {
         response = Response.json({ data: selected.map((row) => ({ rowId: row.id, revision: row.rev, state: "confirmed", images: row.images.map((image) => ({
           ...image, phase: "public_ready", public_url: "https://media.example.invalid/renewed.jpg", object_key: "fixture/renewed.jpg", account_id: "fixture-account",
         })) })) })
-      } else response = Response.json({ data: { items: [], nextCursor: null } })
+      } else response = Response.json({ data: { items: [], next_cursor: null } satisfies IntentPage })
       recordBusiness({ ...base, ...identity, event: "response", status: response.status, signalAborted: signal?.aborted ?? false })
       return response
     } catch (error) { recordBusiness({ ...base, ...identity, event: "rejection", signalAborted: signal?.aborted ?? false }); throw error }

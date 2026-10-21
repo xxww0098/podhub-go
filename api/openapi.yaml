@@ -182,7 +182,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                "$ref": "#/components/schemas/ListingSubmitResponse"
         '400':
           description: The body is not a tag check, a banned tag refused the gate, the Draft envelope is invalid, or the stored-row IDs and revision pins are not a one-to-one match
           content:
@@ -1055,7 +1055,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                "$ref": "#/components/schemas/ListingIntentsResponse"
         '400':
           description: limit or cursor rejected
           content:
@@ -1098,7 +1098,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                "$ref": "#/components/schemas/ListingReleaseUnknownResponse"
         '400':
           description: Body refused
           content:
@@ -1147,7 +1147,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                "$ref": "#/components/schemas/ListingIntentResponse"
         '401':
           description: Not signed in
           content:
@@ -1184,7 +1184,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                "$ref": "#/components/schemas/ListingIntentResponse"
         '401':
           description: Not signed in
           content:
@@ -1227,7 +1227,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                "$ref": "#/components/schemas/ListingIntentResponse"
         '401':
           description: Not signed in
           content:
@@ -18526,6 +18526,40 @@ components:
       - "$ref": "#/components/schemas/SubmitListingBatchRequest"
       - "$ref": "#/components/schemas/SubmitListingDraftsRequest"
       - "$ref": "#/components/schemas/ListingTagCheckRequest"
+    ListingSubmitResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      properties:
+        data:
+          oneOf:
+          - "$ref": "#/components/schemas/SubmitListingBatchData"
+          - "$ref": "#/components/schemas/SubmitListingDraftsData"
+    ListingIntentResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      properties:
+        data:
+          "$ref": "#/components/schemas/ListingIntentView"
+    ListingIntentsResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      properties:
+        data:
+          "$ref": "#/components/schemas/ListingIntentsPage"
+    ListingReleaseUnknownResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      properties:
+        data:
+          "$ref": "#/components/schemas/ReleaseUnknownListingIntentsData"
     SubmitListingBatchRequest:
       type: object
       additionalProperties: false
@@ -30247,6 +30281,11 @@ components:
           type: string
           description: Free-text detail for `compose_failed`; empty otherwise.
           nullable: true
+        fields:
+          type: array
+          items:
+            type: string
+          description: Human-readable names of required fields that need attention after a schema change.
         intent:
           oneOf:
           - type: 'null'
@@ -30275,11 +30314,16 @@ components:
             "$ref": "#/components/schemas/DraftBlocker"
           description: |-
             Non-field refusals (supplier video snapshot, shipping readiness),
-            present only when `skipReason` is `blocked` for such a reason.
+            present only when `skip_reason` is `blocked` for such a reason.
         detail:
           type: string
           description: Free-text detail for `compose_failed`; empty otherwise.
           nullable: true
+        fields:
+          type: array
+          items:
+            type: string
+          description: Human-readable names of required fields that need attention after a schema change.
         intent:
           oneOf:
           - type: 'null'
@@ -30290,7 +30334,7 @@ components:
             "$ref": "#/components/schemas/DraftFieldIssue"
           description: |-
             Field findings of the server's `build → validate`, present only when
-            `skipReason` is `blocked` for a field reason. Every one is a
+            `skip_reason` is `blocked` for a field reason. Every one is a
             validate-stage finding (`KnownIssueKey` with `stage: validate` when
             its code is declared): this endpoint has no other field producer.
         outcome:
@@ -30308,6 +30352,11 @@ components:
       - server_schema_revision
       - items
       properties:
+        accepted_schema_revisions:
+          type: array
+          items:
+            type: string
+          description: Current and accepted legacy schema revisions for this snapshot. Advisory only; the server decides whether a submitted revision can be accepted.
         items:
           type: array
           items:

@@ -71,6 +71,8 @@ Go 的做法：
 
 批次结算也改成一次 `queue.MutateRunning` 事务：intent、写账、占用、行投影和 job 共同受租约限制。原来逐条清空 Lease 并提交、最后才 Finish 的方式会让失效 worker 留下已提交终态。新回归通过真实租约回收复现并验证该差异；已保存的正 `task_id` 继续独立保留，恢复扫描接收该事实且不重复 import。单条与批次共用行结算 SQL，已有终态不重写。
 
+随后补齐成功响应契约：DraftData、DraftItem 与提交 IntentView 的 HTTP 字段统一为已有前端/OpenAPI 的 snake_case，200 响应改为严格的 `data: DraftData | BatchData`，补充已有的 `accepted_schema_revisions`、`fields`。这修复了成功入队后被浏览器判为合同不符的问题。旧字段不再作为别名；WASM 项、状态、SQL 和提交中的轻量重放投影不变。真实 PostgreSQL mixed Draft 回归与实际序列化校验覆盖新建、重放、跳过及空列表；详细红绿证据见同一验证记录。
+
 ## 不能证明与 Rust 一致、留给决定的缺口
 
 1. 三条发送路由现在走 listing-core wasm 的 op 9 再 op 11，成功则入队，worker 再拨 loopback。HTTP 返回的是入队回执（意图 `queued`），不是 Rust 在进程内派发之后的意图。列对拍在 worker 跑完之后。没有数据库连接时是 503 `服务暂不可用`，不再是 501 `freeze_not_ported`。没有 `store_id`/`items` 的旧正文仍是标签闸：命中 400 `banned_tag`，干净则 400 `validation` `请求格式无效`。
