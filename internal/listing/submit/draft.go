@@ -179,6 +179,7 @@ func SendDrafts(ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, bo
 			items = append(items, *refusal)
 			continue
 		}
+		frozen.cardID = req.CardID
 		ready = append(ready, frozen)
 	}
 	data := DraftData{
@@ -215,7 +216,7 @@ func SendDrafts(ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, bo
 		}
 		return data, nil
 	}
-	enqueued, err := enqueueDrafts(ctx, tx, orgID, userID, req.StoreID, req.CardID, admitted)
+	enqueued, err := enqueueDrafts(ctx, tx, orgID, userID, req.StoreID, admitted)
 	if err != nil {
 		return DraftData{}, err
 	}
@@ -284,17 +285,21 @@ func SendStored(ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, st
 		}
 		return BatchData{Items: items}, nil
 	}
-	cardID := admitted[0].cardID
-	enqueued, err := enqueueDrafts(ctx, tx, orgID, userID, storeID, cardID, admitted)
+	enqueued, err := enqueueDrafts(ctx, tx, orgID, userID, storeID, admitted)
 	if err != nil {
 		return BatchData{}, err
 	}
-	for _, row := range admitted {
+	for _, item := range enqueued {
+		// A replay does not enqueue work or transition the existing intent.
+		// Leave its row projection (including updated_at) unchanged as well.
+		if item.Outcome != "created" {
+			continue
+		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE public.listing_rows
 			   SET submission_state = 'queued', updated_at = clock_timestamp()
 			 WHERE org_id = $1 AND id = $2::uuid AND revision = $3`,
-			orgID, row.rowID, row.revision); err != nil {
+			orgID, item.Intent.ListingRowID, item.Intent.RowRevision); err != nil {
 			return BatchData{}, statusErr(500, "服务暂不可用", "internal")
 		}
 	}
@@ -400,9 +405,15 @@ func loadSnapshot(ctx context.Context, tx pgx.Tx, mod contract.Module, card card
 
 func gateSchema(ctx context.Context, tx pgx.Tx, raw []byte, loaded loadedSchema) ([]byte, *DraftItem, bool, error) {
 	stored := draftRevision(raw)
-	before, err := previousSchemaFields(ctx, tx, stored)
-	if err != nil {
-		return nil, nil, false, statusErr(500, "服务暂不可用", "internal")
+	var before []schemaField
+	var err error
+	// Matching revisions are already accepted by decideSchema. History is
+	// needed only to compare a different revision, not once per current row.
+	if stored != loaded.current && stored != loaded.legacy {
+		before, err = previousSchemaFields(ctx, tx, stored)
+		if err != nil {
+			return nil, nil, false, statusErr(500, "服务暂不可用", "internal")
+		}
 	}
 	decision := decideSchema(stored, loaded.current, loaded.legacy, before, loaded.after, filledFieldKeys(raw))
 	if len(decision.Block) > 0 {
@@ -651,7 +662,7 @@ const readIntentSQL = `
 				  FROM public.submission_intents
 				 WHERE org_id = $1 AND store_id = $2::uuid AND client_operation_id = $3`
 
-func enqueueDrafts(ctx context.Context, tx pgx.Tx, orgID, userID int64, storeID, cardID string, ready []frozen) ([]DraftItem, error) {
+func enqueueDrafts(ctx context.Context, tx pgx.Tx, orgID, userID int64, storeID string, ready []frozen) ([]DraftItem, error) {
 	digests := make([]string, len(ready))
 	for i, row := range ready {
 		digests[i] = row.digest
@@ -669,7 +680,7 @@ func enqueueDrafts(ctx context.Context, tx pgx.Tx, orgID, userID int64, storeID,
 	for i, row := range ready {
 		minted[i] = newID()
 		batch.Queue(insertIntentSQL,
-			minted[i], orgID, storeID, row.rowID, row.revision, row.clientOp, row.digest, row.offerID, cardID)
+			minted[i], orgID, storeID, row.rowID, row.revision, row.clientOp, row.digest, row.offerID, row.cardID)
 		batch.Queue(readIntentSQL, orgID, storeID, row.clientOp)
 	}
 	var replays []int

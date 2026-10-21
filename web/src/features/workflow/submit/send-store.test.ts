@@ -118,3 +118,29 @@ test("duplicate-offer preflight uses the Card's current targets instead of the r
   openCard(CARD, TYPE, "store-a,store-b")
   assert.equal(publishPreflight(workbench, undefined, { session: { authenticated: true } }).ok, true)
 })
+
+test("association conflicts outside the selected send cohort do not block healthy rows", () => {
+  const ids = ["healthy", "moved-a", "moved-b"]
+  const workbench = { cardId: CARD, queueFrozenIds: ["healthy"],
+    rows: ids.map((id) => ({ id, draftId: id, imageName: `${id}.png`, status: "ready" as const, ai: "done" as const, render: "done" as const, upload: "done" as const, log: "" })),
+    productDrafts: Object.fromEntries(ids.map((id) => [id, {
+      target_store_id: id === "healthy" ? "store-current" : "store-old",
+      draft: { values: { offer_id: { kind: "text", value: `PH-${id}` } }, complex_values: [] },
+    }])) as never,
+  }
+  openCard(CARD, TYPE, "store-current")
+  const account = { session: { authenticated: true } }
+  const selected = publishPreflight(workbench, new Set(["healthy"]), account)
+  assert.equal(selected.ok, true)
+  if (selected.ok) assert.deepEqual(selected.draftIds, ["healthy"])
+  assert.equal(publishPreflight(workbench, undefined, account).ok, true, "continuation is scoped to its frozen cohort too")
+  const moved = publishPreflight(workbench, new Set(["moved-b"]), account)
+  assert.equal(moved.ok, false)
+  if (!moved.ok) {
+    assert.equal(moved.focusRowId, "moved-b")
+    assert.match(moved.message, /1 行/)
+  }
+  const all = publishPreflight({ ...workbench, queueFrozenIds: ids }, undefined, account)
+  assert.equal(all.ok, false)
+  if (!all.ok) assert.match(all.message, /2 行/)
+})

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -343,10 +344,10 @@ type counted struct {
 	reads  *counter
 }
 
-type counter struct{ n int }
+type counter struct{ n atomic.Int64 }
 
-func (c *counter) Load() int { return c.n }
-func (c *counter) Add()      { c.n++ }
+func (c *counter) Load() int { return int(c.n.Load()) }
+func (c *counter) Add()      { c.n.Add(1) }
 
 func serve(t *testing.T, fn func(http.ResponseWriter, string)) *counted {
 	t.Helper()

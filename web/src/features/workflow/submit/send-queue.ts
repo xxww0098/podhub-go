@@ -1,5 +1,5 @@
 /** S16: one scheduler, serial per platform/destination and two destinations globally. */
-import type { PublishBlock, PublishHaltReason } from "../rows/types"
+import type { LocalRow, PublishBlock, PublishHaltReason } from "../rows/types"
 import { spendBusy, spendRepair, spendSubmit, waitForAdmission } from "./queue/budgets"
 import { splitPreparedRows } from "./queue/chunks"
 import { destinationKey, withDestination } from "./queue/destination"
@@ -129,36 +129,65 @@ export function createSendQueue(options: SendQueueOptions) {
       for (const chunk of chunks) {
         if (stopped() || halted.has(key)) return
         // Recheck after earlier network waits: edits/deletions must not be sent at old pins.
-        const items = chunk.filter((item) => options.rows.get(item.rowId)?.rev === item.revision)
+        let items = chunk.filter((item) => options.rows.get(item.rowId)?.rev === item.revision)
         if (items.length === 0) continue
         if (block.busyRetryAt !== undefined && busyExhausted()) { await haltAdmission(block, "store_busy", "deadline_exhausted"); return }
         const busyRetry = block.busyRetryAt !== undefined
         if (!spendSubmit(block.budget)) { block.state = "halted"; halted.add(key); await persist(); return }
         block.state = "sending"
         const pins = new Map<string, number>()
+        const admissions = new Map<string, LocalRow["submission"]>()
         for (const item of items) {
-          const updated = options.rows.update(item.rowId, (row) => ({ ...row, submission: {
+          const submission: NonNullable<LocalRow["submission"]> = {
             platform: block.platform, storeId: block.destination, logicalBlockId: block.id,
             sendActionId: queue!.actionId, state: "submitting", offerId: item.offerId, digest: item.digest,
-          } }), { expectRev: item.revision })
+          }
+          admissions.set(item.rowId, submission)
+          const updated = options.rows.update(item.rowId, (row) => ({ ...row, submission }), { expectRev: item.revision })
           if (!updated) throw new Error("Row changed during synchronous submit admission")
           pins.set(item.rowId, item.revision + 1)
           queue.locks.push({ platform: block.platform, destination: block.destination, offerId: item.offerId, rowId: item.rowId, state: "pending" })
         }
         await persist() // durable action, parent budget, pins and locks before the first fetch
+        const deadlineAt = now() + 150_000
+        inFlight.set(block.id, deadlineAt)
+        emit()
+        // Persistence and the final notification admit edits, deletion and new receipts. An old
+        // freeze is no longer sendable once its admitted row pin has changed.
+        // Reject only our own unsent marker; preserve later content/authority.
+        for (;;) {
+          const stale = items.filter((item) => {
+            const row = options.rows.get(item.rowId)
+            return !row || row.rev !== pins.get(item.rowId) || row.storeId !== block.destination
+              || row.workspaceUuid !== options.workspaceUuid || row.cardId !== options.cardId
+              || row.submission !== admissions.get(item.rowId)
+          })
+          if (!stale.length) break
+          const staleIds = new Set(stale.map((item) => item.rowId))
+          items = items.filter((item) => !staleIds.has(item.rowId))
+          remaining = remaining.filter((id) => !staleIds.has(id))
+          block.remainingRowIds = [...remaining]
+          for (const item of stale) {
+            const current = options.rows.get(item.rowId)
+            const pin = current && current.submission === admissions.get(item.rowId) ? current.rev : pins.get(item.rowId)!
+            applyFact(options, queue, block, item, pin, { state: "rejected", canResume: true, code: "row_changed_before_dispatch" })
+          }
+          // Local projections notify subscribers synchronously; a sibling they
+          // edit must pass the same fence before this request can leave.
+        }
+        if (items.length === 0) { inFlight.delete(block.id); await persist(); continue }
         if (stopped()) {
           for (const item of items) applyFact(options, queue, block, item, pins.get(item.rowId)!, { state: "rejected", canResume: true, code: "stopped_before_dispatch" })
           block.state = "pending"
+          inFlight.delete(block.id)
           await persist()
           return
         }
         if (busyRetry && busyExhausted()) {
           for (const item of items) applyFact(options, queue, block, item, pins.get(item.rowId)!, { state: "rejected", canResume: true, admission: "store_busy", code: "store_busy" })
+          inFlight.delete(block.id)
           await haltAdmission(block, "store_busy", "deadline_exhausted"); return
         }
-        const deadlineAt = now() + 150_000
-        inFlight.set(block.id, deadlineAt)
-        emit()
         let facts: ReadonlyMap<string, SendFact>
         // A Stop during durable preflight must retain this busy reservation and its deadline.
         delete block.busyRetryAt
