@@ -299,6 +299,7 @@ var postRustConstraints = map[string]map[string]bool{
 // non-extension function stays at 35: the Rust head count of 34 plus
 // prune_aged_inbox from migration 00300.
 var intentionalFunctions = map[string]bool{
+	"subscription_capacity":                true,
 	"subscription_store_allowed":           true,
 	"subscription_member_allowed":          true,
 	"billing_due_subscriptions":            true,

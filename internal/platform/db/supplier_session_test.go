@@ -39,6 +39,13 @@ var orgPolicyShapes = map[string]bool{
 	`((org_id IS NOT NULL) AND <ORG:org_id>)`:                                                                              true,
 	`(set_id IN ( SELECT s.id FROM automation_asset_sets s WHERE <ORG:s.org_id>))`:                                         true,
 	`((user_id = (NULLIF(current_setting('app.current_wallet_user_id'::text, true), ''::text))::bigint) AND <ORG:org_id>)`: true,
+	// 00365: catalog reads keep org equality inside the binding/order EXISTS.
+	`(EXISTS ( SELECT 1 FROM delegate_bindings b WHERE ((b.source_id = sc_sources.source_id) AND <ORG:b.org_id>)))`:                                                                                                            true,
+	`(EXISTS ( SELECT 1 FROM delegate_bindings b WHERE ((b.source_id = sc_source_prop_defs.source_id) AND <ORG:b.org_id>)))`:                                                                                                   true,
+	`(EXISTS ( SELECT 1 FROM delegate_bindings b WHERE ((b.source_id = sc_products.source_id) AND <ORG:b.org_id>)))`:                                                                                                           true,
+	`(EXISTS ( SELECT 1 FROM (sc_products p JOIN delegate_bindings b ON ((b.source_id = p.source_id))) WHERE ((p.product_id = sc_skus.product_id) AND <ORG:b.org_id>)))`:                                                       true,
+	`(EXISTS ( SELECT 1 FROM ((sc_skus k JOIN sc_products p ON ((p.product_id = k.product_id))) JOIN delegate_bindings b ON ((b.source_id = p.source_id))) WHERE ((k.sku_id = sc_price_versions.sku_id) AND <ORG:b.org_id>)))`: true,
+	`(EXISTS ( SELECT 1 FROM (delegate_dispatches d JOIN delegate_orders o ON ((o.order_id = d.order_id))) WHERE ((d.source_id = sc_source_offers.source_id) AND <ORG:o.org_id>)))`:                                            true,
 }
 
 // orgZeroUnguarded are policy tables whose org_id has neither a foreign key
@@ -105,6 +112,7 @@ func TestOrgPoliciesUseEqualityOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer rows.Close()
 	type target struct{ table, column string }
 	targets := map[target]bool{}
 	policies := 0
@@ -122,10 +130,16 @@ func TestOrgPoliciesUseEqualityOnly(t *testing.T) {
 			for _, m := range orgAtom.FindAllStringSubmatch(expr, -1) {
 				tbl, col := table, m[1]
 				if alias, c, ok := strings.Cut(m[1], "."); ok {
-					if alias != "s" || !strings.Contains(expr, "FROM automation_asset_sets s") {
+					if alias == "s" && strings.Contains(expr, "FROM automation_asset_sets s") {
+						tbl = "automation_asset_sets"
+					} else if alias == "b" && strings.Contains(expr, "delegate_bindings b") {
+						tbl = "delegate_bindings"
+					} else if alias == "o" && strings.Contains(expr, "delegate_orders o") {
+						tbl = "delegate_orders"
+					} else {
 						t.Fatalf("%s.%s: unknown alias in %q", table, name, m[0])
 					}
-					tbl, col = "automation_asset_sets", c
+					col = c
 				}
 				targets[target{tbl, col}] = true
 			}
@@ -197,6 +211,7 @@ func TestOrgPoliciesUseEqualityOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer rows.Close()
 	for rows.Next() {
 		var s string
 		if err := rows.Scan(&s); err != nil {
@@ -303,7 +318,7 @@ func TestSupplierOrgZeroMatchesUnset(t *testing.T) {
 				t.Errorf("user %d %s: org \"0\" %s, unset %s", user, tbl, oldCounts[tbl], newCounts[tbl])
 			}
 		}
-		if oldCounts["supplier_wallets"] != "1" || oldCounts["store_rating_snapshots"] != "0" {
+		if oldCounts["sc_source_fulfillers"] != "1" || oldCounts["supplier_wallets"] != "0" || oldCounts["store_rating_snapshots"] != "0" {
 			t.Fatalf("user %d seed not visible as expected: %v", user, oldCounts)
 		}
 	}
@@ -376,8 +391,9 @@ func TestSupplierSessionIsolatesSuppliers(t *testing.T) {
 			sql  string
 			want string
 		}{
-			{`SELECT string_agg(source_id, ',' ORDER BY source_id) FROM supplier_wallets`, "src-sa"},
-			{`SELECT string_agg(source_id, ',' ORDER BY source_id) FROM supplier_withdrawals`, "src-sa"},
+			{`SELECT coalesce(string_agg(source_id, ',' ORDER BY source_id), '') FROM supplier_wallets`, ""},
+			{`SELECT coalesce(string_agg(source_id, ',' ORDER BY source_id), '') FROM supplier_withdrawals`, ""},
+			{`SELECT string_agg(source_id, ',' ORDER BY source_id) FROM sc_source_fulfillers`, "src-sa"},
 			{`SELECT string_agg(source_id, ',' ORDER BY source_id) FROM sc_source_members`, "src-sa"},
 			{`SELECT coalesce(string_agg(org_id::text, ','), '') FROM store_rating_snapshots`, ""},
 		} {
@@ -510,6 +526,7 @@ func seedSessionSupplier(t *testing.T, ctx context.Context, pool *pgxpool.Pool, 
 			`DELETE FROM supplier_withdrawals WHERE source_id = $1`,
 			`DELETE FROM supplier_wallet_ledger WHERE source_id = $1`,
 			`DELETE FROM supplier_wallets WHERE source_id = $1`,
+			`DELETE FROM sc_source_fulfillers WHERE source_id = $1`,
 			`DELETE FROM sc_source_members WHERE source_id = $1`,
 			`DELETE FROM sc_sources WHERE source_id = $1`,
 		} {
@@ -521,11 +538,12 @@ func seedSessionSupplier(t *testing.T, ctx context.Context, pool *pgxpool.Pool, 
 		sql  string
 		args []any
 	}{
-		{`INSERT INTO account_users (id, public_id, email, password_hash, role, name, target, supplier_id, plan, created_at, updated_at)
-		  VALUES ($1, $2, $3, 'x', 'user', 't', '/workspace', '', 'lite', clock_timestamp(), clock_timestamp())`,
+		{`INSERT INTO account_users (id, public_id, email, password_hash, role, name, target, supplier_id, account_kind, plan, created_at, updated_at)
+		  VALUES ($1, $2, $3, 'x', 'user', 't', '/supplier', '', 'supplier', 'lite', clock_timestamp(), clock_timestamp())`,
 			[]any{userID, fmt.Sprintf("sup%d", userID), fmt.Sprintf("sup%d@example.invalid", userID)}},
 		{`INSERT INTO sc_sources (source_id, name, created_at_ms, updated_at_ms) VALUES ($1, $1, 1, 1)`, []any{sourceID}},
 		{`INSERT INTO sc_source_members (source_id, user_id, created_by, created_at_ms) VALUES ($1, $2, $2, 1)`, []any{sourceID, userID}},
+		{`INSERT INTO sc_source_fulfillers (source_id, user_id, created_at_ms) VALUES ($1, $2, 1)`, []any{sourceID, userID}},
 		{`INSERT INTO supplier_wallets (source_id, balance_microfen, held_microfen, updated_at_ms) VALUES ($1, 100, 0, 1)`, []any{sourceID}},
 		{`INSERT INTO supplier_withdrawals
 		      (source_id, amount_cents, amount_microfen, channel, account, real_name, status, requested_at_ms)
