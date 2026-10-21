@@ -2,6 +2,8 @@
 
 基线：`be364cb76e87dc9ea178cd322b888ab3b641d998`。本批改动前端发送边界、Go 提交持久化和 worker 执行循环，不修改 Rust 规则、WASM 产物、API、迁移或既有配额 SQL。
 
+创建 PR 时，主分支已推进到 `64cb010656ef795b608050e04376d7674aa691ee`。新增的主分支改动与本批文件无重叠；随后还在 GitHub 生成的合并版本上验证前端与仓库 CI。
+
 ## 问题与修复
 
 | 位置 | 原行为 | 修复后的行为 |
@@ -59,16 +61,20 @@ git diff --check
 
 数据库 `-race` 回归还检出了既有 `submit_parity_test.go` 假 Seller 计数器的并发读写。其辅助 `counter` 改为 `atomic.Int64`，调用接口及断言保持不变；复跑全部选定集成测试后不再报告数据竞争。
 
+合并版本的首轮 CI 有一项前端网络保护失败：WB 持久化回归期间出现未注册的 `/api/events/inbox` 请求；同一版本完整本地复跑则通过。随后发现准备流程测试的 `record().restore()` 只恢复 fetch，遗留了账户上下文及反馈定时器。新增两条 fake-clock 回归在未修复版本稳定产生同一请求签名（0 通过、2 失败）。修复在外层传输 fixture 退出时先失效账户、取消旧反馈，再恢复原账户及 fetch；保留返回后等待回执的断言，未改生产上报或网络保护。定向 42 项测试通过。此证据确认了可重现的跨测试泄漏机制，未追踪首轮 CI 请求的具体 receipt ID。
+
 ### 最终本地结果
 
 | 检查 | 结果 |
 | --- | --- |
-| `web/bun run check` | 构建、类型检查、API 生成一致性、knip、lint 全部通过；测试 3,122 通过、2 跳过、0 失败 |
+| 最新主分支合并版本的前端检查 | 构建、类型检查、API 生成一致性、knip 通过；测试 3,146 通过、2 跳过、0 失败；lint 的既有基线问题见下 |
 | 上述 Go 提交、队列、Seller、parity、archtest 包的 `-race` | 109 项测试（含子测试）通过；11 个有测试的包通过，另 4 个包无测试文件 |
 | 12 项选定的数据库集成测试，每项独立新数据库、启用 `-race` | 含子测试共 46 项通过，0 跳过、0 失败；无数据竞争 |
 | 队列执行专项重复测试 | 5 个子测试 × 3 轮通过，启用 `-race` |
 | 共享 Seller Port 并发专项 | 20 轮通过，启用 `-race` |
 | `go vet`、WASM 产物 hash 检查、`git diff --check` | 全部通过 |
+
+初始基线上的完整 `bun run check` 曾全部通过（3,122 通过、2 跳过）。最新主分支合并版本的 `check` 在最后一步 lint 失败：819 条告警超过现有 818 阈值。另开纯 `main@64cb010` 工作树复跑 lint，同样失败；按文件和消息逐条对照，两边 819 条告警完全一致，本 PR 未新增告警。相较初始基线，上游拖拽文件新增两条 inline transition 告警，登录页减少一条。未调高阈值；此项主分支基线问题仍存在。
 
 选定的数据库集成测试为：`TestQueueLoopExecution`、`TestListingBatchLoopSerializesOneOrgAndMakesProgress`、`TestParallelBatchReceiptSurvivesLeaseLock`、`TestOrgBatchCapDoesNotSend`、`TestReconcilerClosesFailedSubmitting`、`TestSubmitSellerColumns`、`TestSubmissionOfferFence`、`TestBrowserDirectConcurrentGrants`、`TestBrowserDirectWorkerDoesNotDialSubmitting`、`TestListingIntentsCatalog`、`TestListingHotPath`、`TestResultConsistency`。本地结果不等同于仓库全量 CI；PR 的 CI 单独报告。
 
