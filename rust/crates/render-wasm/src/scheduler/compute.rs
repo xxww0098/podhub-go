@@ -6,14 +6,15 @@ use super::{
     admission::{Peak, State},
     error::RuntimeError,
 };
-use futures_channel::oneshot;
-use std::cell::RefCell;
+#[cfg(feature = "threads")]
+use {futures_channel::oneshot, std::cell::RefCell};
 
 pub(super) struct Computed<T> {
     pub value: T,
     pub peak: Option<Peak>,
 }
 
+#[cfg(feature = "threads")]
 pub(super) async fn run<T: Send + 'static>(
     state: &RefCell<State>,
     lease: u32,

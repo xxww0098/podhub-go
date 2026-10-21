@@ -3,7 +3,7 @@ name: ci
 # Push runs only on main. A branch commit is tested by pull_request, so the
 # same SHA is not started twice. A newer run of the same ref cancels the old one.
 # Rust/WASM is built locally and committed with its source manifest.
-# CI verifies and consumes those artifacts; no Rust toolchain is needed.
+# Go/Web CI verifies and consumes those artifacts; native Rust tests run separately.
 on:
   push:
     branches:
@@ -15,6 +15,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  rust:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: native render and scheduler tests
+        run: cargo test --locked -p render -p psdx -p render-wasm
+
   lint:
     runs-on: ubuntu-latest
     steps:
