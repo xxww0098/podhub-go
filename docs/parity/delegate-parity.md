@@ -113,7 +113,9 @@ PODHUB_PARITY_DSN='postgres://postgres:postgres@127.0.0.1:5432/podhub?sslmode=di
 - 催单没有 Rust 测试 JSON。冷却 30 分钟、只更新 `dispatched`/`accepted`，按规格实现。
 - 这 16 条路由的 Seller 读不经过 `seller.Egress` 槽位和频率预留，因为 `Egress.Read` 不设置 `Client-Id` / `Api-Key`。只打 loopback。
 - 上游代理归 `internal/seller`，路径是 `{uuid}/*`。`%2F` 与 Caddy 413 仍未逐字节确认。
-- oapi-codegen 仍未选定为 utoipa 的替代。`internal/delegate/http/gen` 仍只有包注释。
+- oapi-codegen 的位置：已由 [decisions.md](../decisions.md) D2 定案（`api/openapi.yaml` 是唯一 spec，oapi-codegen 生成 models 与 chi 路由），本节不再重复。`internal/delegate/http/gen` 仍只有包注释这一点仍是本域缺口。
 - 缺绑定使 `b.active IS TRUE` 为假，从而 `awaiting_setup`。这与 00205 的执行结果一致。
 - `delegate_settlements` 没有转移函数。供应商结算状态机仍是 `ErrUnproven`。卖家撤单/收口按规格里的 UPDATE 退回冻结，不调用那个状态机。
 - `delegate.posting_sync` 的 tick 仍空转。本任务不改 `internal/queue`。
+
+派单收件人固定（履约人数量、历史包 `fulfiller_id IS NULL` 的处理、驳回闩改履约人级）不属本域的「和 Rust 对过什么」，统一登记在 [decisions.md](../decisions.md) 的 O11、O12，方案见 [account-permission-model.md](../architecture/account-permission-model.md) §7。

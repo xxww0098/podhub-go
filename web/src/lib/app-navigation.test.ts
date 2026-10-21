@@ -11,6 +11,7 @@ import {
   navItemsFor,
   navModesFor,
   spaceScreens,
+  sidebarGroupsFor,
   type NavAudience,
 } from "./app-navigation"
 import { defaultAdminScreen } from "./admin-surface"
@@ -18,6 +19,27 @@ import { SCREEN_LABELS } from "./app-screens"
 
 const PLAIN_ACCOUNT: NavAudience = { isAgent: false, isStaff: false }
 const STAFF_ACCOUNT: NavAudience = { isAgent: false, isStaff: true }
+
+test("sidebar shows all business groups in workflow order without duplicating or widening access", () => {
+  const groups = sidebarGroupsFor("workbench", PLAIN_ACCOUNT)
+  assert.deepEqual(groups.map((group) => group.label), ["总览", "商品经营", "订单履约", "客户服务"])
+  assert.deepEqual(groups.map((group) => group.items.map((item) => item.id)), [
+    ["console"],
+    ["catalog", "listing", "products"],
+    ["ops-shipping", "delegate-orders", "ops-returns", "ops-supply"],
+    ["message-center", "ops-voice"],
+  ])
+  for (const audience of [PLAIN_ACCOUNT, STAFF_ACCOUNT, { isAgent: true, isStaff: true, isSuperAdmin: true }]) {
+    for (const surface of ["workbench", "admin"] as const) {
+      const painted = sidebarGroupsFor(surface, audience).flatMap((group) => group.items.map((item) => item.id))
+      const modes = surface === "admin" ? ["admin" as const] : navModesFor(audience)
+      const allowed = modes.flatMap((mode) => navItemsFor(mode, audience)).map((item) => item.id)
+      assert.deepEqual([...painted].sort(), [...allowed].sort())
+      assert.equal(painted.length, new Set(painted).size)
+    }
+  }
+  assert.deepEqual(sidebarGroupsFor("admin", PLAIN_ACCOUNT), [])
+})
 
 test("平台管理 is a staff-only mode: hidden from plain accounts, last for staff", () => {
   const plain = navModesFor(PLAIN_ACCOUNT)

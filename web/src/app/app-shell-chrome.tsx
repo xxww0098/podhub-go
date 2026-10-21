@@ -2,8 +2,7 @@ import { PanelLeftClose, PanelLeftOpen, Settings, Store } from "lucide-react"
 import { useWorkflowProgress } from "@/features/workflow/workbench/listing-workbench-store"
 import { WorkflowTaskProgress } from "@/features/workflow/workflow-task-progress"
 import { ThemeToggleCompact } from "@/components/theme-toggle"
-import { Badge } from "@/components/ui/badge"
-import { SidebarGroup, SidebarGroupContent, SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "@/components/ui/sidebar"
+import { SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "@/components/ui/sidebar"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { SCREEN_LABELS, type AppScreen } from "@/lib/app-screens"
 import type { NavItem } from "@/lib/app-navigation"
@@ -54,7 +53,7 @@ export function SidebarUtilityBar({ onOpenSettings }: { onOpenSettings: () => vo
     <div
       role="toolbar"
       aria-label="侧栏工具"
-      className="inset-well flex w-full items-center gap-0.5 rounded-lg p-0.5 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:shadow-none group-data-[collapsible=icon]:p-0"
+      className="flex w-full items-center gap-1 rounded-xl border border-sidebar-border bg-muted/40 p-1 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:border-0 group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-0"
     >
       <Tooltip>
         <TooltipTrigger
@@ -63,19 +62,19 @@ export function SidebarUtilityBar({ onOpenSettings }: { onOpenSettings: () => vo
               type="button"
               aria-label={collapseLabel}
               onClick={toggleSidebar}
-              className="flex h-6 min-w-0 flex-1 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring group-data-[collapsible=icon]:order-last group-data-[collapsible=icon]:size-9 group-data-[collapsible=icon]:flex-none group-data-[collapsible=icon]:hover:bg-sidebar-accent"
+              className="flex h-11 min-w-0 flex-1 cursor-pointer items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-sidebar hover:text-foreground active:bg-sidebar-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring group-data-[collapsible=icon]:order-last group-data-[collapsible=icon]:w-9 group-data-[collapsible=icon]:flex-none group-data-[collapsible=icon]:hover:bg-sidebar-accent"
             />
           }
         >
           {collapsed ? (
-            <PanelLeftOpen className="size-4" aria-hidden />
+            <PanelLeftOpen className="size-5" aria-hidden />
           ) : (
-            <PanelLeftClose className="size-3.5" aria-hidden />
+            <PanelLeftClose className="size-5" aria-hidden />
           )}
         </TooltipTrigger>
         <TooltipContent>{collapseLabel}</TooltipContent>
       </Tooltip>
-      <ThemeToggleCompact className="size-auto h-6 min-w-0 flex-1 rounded-md group-data-[collapsible=icon]:size-9 group-data-[collapsible=icon]:flex-none" />
+      <ThemeToggleCompact className="size-auto h-11 min-w-0 flex-1 hover:bg-sidebar active:bg-sidebar-accent group-data-[collapsible=icon]:w-9 group-data-[collapsible=icon]:flex-none group-data-[collapsible=icon]:hover:bg-sidebar-accent" />
       <Tooltip>
         <TooltipTrigger
           render={
@@ -83,11 +82,11 @@ export function SidebarUtilityBar({ onOpenSettings }: { onOpenSettings: () => vo
               type="button"
               aria-label="设置"
               onClick={() => onOpenSettings()}
-              className="flex h-6 min-w-0 flex-1 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring group-data-[collapsible=icon]:size-9 group-data-[collapsible=icon]:flex-none group-data-[collapsible=icon]:hover:bg-sidebar-accent"
+              className="flex h-11 min-w-0 flex-1 cursor-pointer items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-sidebar hover:text-foreground active:bg-sidebar-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring group-data-[collapsible=icon]:w-9 group-data-[collapsible=icon]:flex-none group-data-[collapsible=icon]:hover:bg-sidebar-accent"
             />
           }
         >
-          <Settings className="size-3.5" aria-hidden />
+          <Settings className="size-5" aria-hidden />
         </TooltipTrigger>
         <TooltipContent>设置</TooltipContent>
       </Tooltip>
@@ -96,23 +95,26 @@ export function SidebarUtilityBar({ onOpenSettings }: { onOpenSettings: () => vo
 }
 
 export function NavGroup({
+  label,
   items,
   screen,
   onScreenChange,
-  badges,
 }: {
+  label: string
   items: readonly NavItem[]
   screen: AppScreen
   onScreenChange: (screen: AppScreen) => void
-  badges?: Partial<Record<AppScreen, string>>
 }) {
+  const { isMobile, setOpenMobile } = useSidebar()
   return (
-    <SidebarGroup className="px-3.5 pb-2.5 pt-3.5">
+    <SidebarGroup role="group" aria-label={label}>
+      <SidebarGroupLabel>
+        {label}
+      </SidebarGroupLabel>
       <SidebarGroupContent>
-        <SidebarMenu className="gap-0.5">
+        <SidebarMenu>
           {items.map((item) => {
             const Icon = item.icon
-            const badge = badges?.[item.id]
             const active = screen === item.id
             return (
               <SidebarMenuItem key={item.id}>
@@ -129,25 +131,13 @@ export function NavGroup({
                     preloadScreen(item.id)
                     prefetchScreenData(item.id)
                   }}
-                  onClick={() => onScreenChange(item.id)}
-                  /* "You are here" needs no fifth device: the system already
-                     says selection is Cabinet Blue and active chrome is recess
-                     fill. So the row fills, the label goes to full ink, and the
-                     glyph — the only mark that is the same shape in every row —
-                     takes the blue. A drawn bar would be a new vocabulary for a
-                     job two existing rules already do. */
-                  className="data-active:[&>svg]:text-brand"
+                  onClick={() => {
+                    onScreenChange(item.id)
+                    if (isMobile) setOpenMobile(false)
+                  }}
                 >
                   <Icon />
-                  <span className="font-medium tracking-[0.015em] select-none">{SCREEN_LABELS[item.id]}</span>
-                  {badge ? (
-                    <Badge
-                      variant="outline"
-                      className="ml-auto font-mono text-meta font-semibold tabular-nums group-data-[collapsible=icon]:hidden"
-                    >
-                      {badge}
-                    </Badge>
-                  ) : null}
+                  <span className="select-none">{SCREEN_LABELS[item.id]}</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             )

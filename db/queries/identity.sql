@@ -49,6 +49,7 @@ INSERT INTO audit_logs (
 
 -- name: ResolveAccount :one
 SELECT u.id, u.public_id, u.email, u.role, p.name, p.supplier_id,
+       u.account_kind, u.must_change_password,
        COALESCE(active_workspace.org_id, 0)::bigint AS org_id,
        COALESCE(active_workspace.workspace_role, '')::text AS workspace_role
 FROM account_sessions s
@@ -225,6 +226,11 @@ FOR UPDATE;
 UPDATE account_users
 SET password_hash = $1, updated_at = clock_timestamp()
 WHERE id = $2;
+
+-- name: ClearMustChangePassword :exec
+UPDATE account_users
+SET must_change_password = false
+WHERE id = $1;
 
 -- name: RecentOpenEmailToken :one
 SELECT count(*)::bigint AS n

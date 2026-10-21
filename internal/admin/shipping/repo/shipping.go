@@ -79,7 +79,7 @@ func (r ShippingRepo) read(ctx context.Context, code string, fn func(pgx.Tx) err
 	if r.Pool == nil {
 		return corecontract.Fail(500, code, "服务暂不可用")
 	}
-	tx, err := corerepo.BeginAdmin(ctx, r.Pool)
+	tx, err := corerepo.BeginStaff(ctx, r.Pool)
 	if err != nil {
 		return corerepo.MapAdmin(err, code)
 	}
@@ -95,7 +95,7 @@ func (r ShippingRepo) write(ctx context.Context, fn func(pgx.Tx) error) error {
 	if r.Pool == nil {
 		return corecontract.Fail(500, "INTERNAL", "服务暂不可用")
 	}
-	tx, err := corerepo.BeginAdmin(ctx, r.Pool)
+	tx, err := corerepo.BeginStaff(ctx, r.Pool)
 	if err != nil {
 		return corerepo.MapAdmin(err, "INTERNAL")
 	}

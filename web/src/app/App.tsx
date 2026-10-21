@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Empty, EmptyContent, EmptyMedia } from "@/components/ui/empty"
 import { Spinner } from "@/components/ui/spinner"
 import { LoginScreen } from "@/features/account/login-screen"
+import { LockedAccountScreen } from "@/app/locked-account-screen"
 import {
   invalidateAccountOverview,
   rememberAccountOverview,
@@ -36,6 +37,11 @@ type AuthState =
   | { phase: "loading" }
   | { phase: "anonymous" }
   | { phase: "failed"; message: string; reason?: unknown }
+  // The session is real but locked: Cloud answered the startup probe with
+  // 403 PASSWORD_CHANGE_REQUIRED (doc §4.2). Nothing of the signed-in shell may
+  // paint — every route but the whitelist is refused — so this phase owns the
+  // whole screen with the forced password change form.
+  | { phase: "locked" }
   | { phase: "authenticated"; overview: AccountOverview }
 
 /**
@@ -53,6 +59,14 @@ export async function loadAuthState(
     } catch (reason) {
       if (commandErrorCode(reason) === "unauthenticated") {
         return { phase: "anonymous" }
+      }
+      // A locked account is not a transient failure: Cloud's gate refuses every
+      // route outside the whitelist, the boot probe included, until the
+      // password changes. Returning here rather than falling through keeps the
+      // 403 out of the retry loop — two more identical refusals would only
+      // delay the form the operator has to fill in anyway.
+      if (commandErrorCode(reason) === "cloud_password_change_required") {
+        return { phase: "locked" }
       }
       failure = reason
     }
@@ -80,13 +94,16 @@ export function authStateForOverview(overview: AccountOverview): AuthState {
  * the fetch client reports every 401 on `window`. Re-probing on the probe's own
  * refusal made an anonymous visitor refetch forever — one more 401 per attempt
  * (measured: hundreds per second while a stale Cookie stayed in the browser).
- * While loading, already anonymous, or failed, the 401 is the probe's own
- * answer and must not schedule another one.
+ * While loading, already anonymous, or failed, the 401 is the probe's own answer
+ * and must not schedule another one. `locked` is different: that phase exists
+ * only because a probe proved a live session, and the sole request it makes is
+ * the user's password write — a 401 there means the Cookie died under the form,
+ * so re-probing is exactly how the operator gets back to the sign-in page.
  */
 export function refusalRetiresSession(
-  phase: "loading" | "anonymous" | "failed" | "authenticated",
+  phase: "loading" | "anonymous" | "failed" | "locked" | "authenticated",
 ): boolean {
-  return phase === "authenticated"
+  return phase === "authenticated" || phase === "locked"
 }
 
 function publishAuthOverview(overview: AccountOverview): AuthState {
@@ -223,6 +240,14 @@ export function App() {
     )
   }
 
+  // The forced password change owns the whole page: no shell, no sidebar, no
+  // navigation. Every one of those routes answers 403 PASSWORD_CHANGE_REQUIRED
+  // until the new password is saved, so painting them would only show a frame
+  // full of refusals.
+  if (auth.phase === "locked") {
+    return <LockedAccountScreen />
+  }
+
   if (auth.phase === "failed") {
     const retry = () => {
       setAuth({ phase: "loading" })
@@ -244,6 +269,17 @@ export function App() {
     return <SessionCheckFailed message={auth.message} onRetry={retry} reason={auth.reason} />
   }
 
+  /**
+   * The login write succeeded but Cloud's gate refuses every route until this
+   * account's password is changed (doc §4.2). The Cookie already points at that
+   * account, so the signed-in shell that is currently painted no longer matches
+   * the session — hand the whole page to the forced password change.
+   */
+  const lockAccount = () => {
+    setAddingAccount(false)
+    setAuth({ phase: "locked" })
+  }
+
   const signIn = (next: AccountOverview) => {
     // `/login` is the workbench's front door and leaves the address on `/`;
     // `/admin` is an address of its own and must survive sign-in, so only the
@@ -255,19 +291,35 @@ export function App() {
   }
 
   if (auth.phase === "anonymous") {
-    if (invitationCredential) return <LoginScreen onSignedIn={signIn} />
+    if (invitationCredential) {
+      return (
+        <LoginScreen
+          onSignedIn={signIn}
+          onPasswordChangeRequired={lockAccount}
+        />
+      )
+    }
     // Anonymous standing has exactly two outcomes: a public page, or the way
     // in. `/admin` resolves to the login page and keeps its address.
     // `/supplier` is the factory surface's own boundary: an anonymous visitor
     // gets the embedded 厂家登录卡 on the same address (ADR-0100 §E.20).
     if (isSupplierPath(address.pathname)) {
-      return <SupplierApp onSignedIn={signIn} />
+      return (
+        <SupplierApp
+          onSignedIn={signIn}
+          // This is the anonymous mount, i.e. the one that actually paints
+          // the factory login card. A newly provisioned supplier account is
+          // always created with must_change_password = true, so its very
+          // first sign-in lands here and must hand over to the password form.
+          onPasswordChangeRequired={lockAccount}
+        />
+      )
     }
     const route = resolveRoute(address, routeAudienceFor({ authenticated: false }))
     return route.kind === "public" ? (
       <PublicSite page={route.page} />
     ) : (
-      <LoginScreen onSignedIn={signIn} />
+      <LoginScreen onSignedIn={signIn} onPasswordChangeRequired={lockAccount} />
     )
   }
 
@@ -297,6 +349,10 @@ export function App() {
       <SupplierApp
         overview={overview}
         onSignedOut={signedOut}
+        // The supplier surface has no LoginScreen of its own, so it needs the
+        // same hand-over: every provisioned factory account signs in with a
+        // password that must be changed before the gate opens.
+        onPasswordChangeRequired={lockAccount}
       />
     )
   }
@@ -308,6 +364,13 @@ export function App() {
       <LoginScreen
         onCancel={() => setAddingAccount(false)}
         onSignedIn={() => window.location.assign("/")}
+        // The added account can be locked too, and its `accountLogin` swaps
+        // `sid` to it before the overview read is refused. Staying on this
+        // card would paint a "check your password" toast and leave a shell
+        // whose Cookie now names a different account; the previous session is
+        // not lost either way — the `sids` stack cookie still lists it, and
+        // the account switcher offers it once the new password is saved.
+        onPasswordChangeRequired={lockAccount}
       />
     )
   }

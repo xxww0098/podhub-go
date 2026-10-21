@@ -13,9 +13,11 @@ type (
 )
 
 type (
-	SourceRef    = supcontract.SourceRef
-	Member       = supcontract.Member
-	AccountGroup = supcontract.AccountGroup
+	SourceRef      = supcontract.SourceRef
+	Member         = supcontract.Member
+	AccountGroup   = supcontract.AccountGroup
+	Fulfiller      = supcontract.Fulfiller
+	CatalogManager = supcontract.CatalogManager
 )
 
 // GroupAccounts keeps adjacent rows that share a source id together.

@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/tooltip"
 import { PanelLeftIcon } from "lucide-react"
 
-const SIDEBAR_WIDTH = "13rem"
+const SIDEBAR_WIDTH = "19.25rem"
 const SIDEBAR_WIDTH_MOBILE = "18rem"
 const SIDEBAR_WIDTH_ICON = "3rem"
 const SIDEBAR_KEYBOARD_SHORTCUT = "b"
@@ -352,7 +352,7 @@ function SidebarHeader({ className, ...props }: React.ComponentProps<"div">) {
     <div
       data-slot="sidebar-header"
       data-sidebar="header"
-      className={cn("flex flex-col gap-2 px-3.5 pb-3.5 pt-4.5", RAIL_GUTTER, className)}
+      className={cn("flex flex-col gap-2.5 px-6.5 pb-2 pt-5", RAIL_GUTTER, className)}
       {...props}
     />
   )
@@ -389,7 +389,7 @@ function SidebarContent({ className, ...props }: React.ComponentProps<"div">) {
       data-slot="sidebar-content"
       data-sidebar="content"
       className={cn(
-        "no-scrollbar flex min-h-0 flex-1 flex-col gap-0 overflow-auto group-data-[collapsible=icon]:overflow-hidden",
+        "no-scrollbar flex min-h-0 flex-1 flex-col gap-0 overflow-x-hidden overflow-y-auto",
         className
       )}
       {...props}
@@ -403,7 +403,7 @@ function SidebarGroup({ className, ...props }: React.ComponentProps<"div">) {
       data-slot="sidebar-group"
       data-sidebar="group"
       className={cn(
-        "relative flex w-full min-w-0 flex-col gap-1 px-3 py-2.5",
+        "relative flex w-full min-w-0 flex-col gap-2 px-6.5 pb-4 pt-3 group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:py-1",
         RAIL_GUTTER,
         className
       )}
@@ -422,7 +422,7 @@ function SidebarGroupLabel({
     props: mergeProps<"div">(
       {
         className: cn(
-          "flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-meta font-bold tracking-[0.09em] text-foreground uppercase ring-sidebar-ring outline-hidden transition-[height,opacity,padding,margin] duration-200 ease-settle group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:m-0 group-data-[collapsible=icon]:h-0 group-data-[collapsible=icon]:overflow-hidden group-data-[collapsible=icon]:p-0 group-data-[collapsible=icon]:opacity-0 focus-visible:ring-2 [&>svg]:size-3 [&>svg]:shrink-0",
+          "flex h-6 shrink-0 items-center gap-1.5 rounded-md px-0.5 text-sm font-medium text-faint-foreground ring-sidebar-ring outline-hidden transition-[height,opacity,padding,margin] duration-200 ease-settle group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:m-0 group-data-[collapsible=icon]:h-0 group-data-[collapsible=icon]:overflow-hidden group-data-[collapsible=icon]:p-0 group-data-[collapsible=icon]:opacity-0 focus-visible:ring-2 [&>svg]:size-3 [&>svg]:shrink-0",
           className
         ),
       },
@@ -497,7 +497,7 @@ function SidebarMenuItem({ className, ...props }: React.ComponentProps<"li">) {
 }
 
 const sidebarMenuButtonVariants = cva(
-  "peer/menu-button group/menu-button flex h-9 w-full cursor-pointer items-center gap-2.5 overflow-hidden rounded-lg px-3 text-left text-compact font-medium tracking-[0.015em] text-foreground ring-sidebar-ring outline-hidden transition-colors group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsible=icon]:size-9! group-data-[collapsible=icon]:p-2.5! hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 active:bg-[color-mix(in_oklch,var(--sidebar-accent),var(--foreground)_10%)] active:text-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-open:hover:bg-sidebar-accent data-open:hover:text-foreground data-active:bg-card data-active:font-medium data-active:text-foreground data-active:shadow-raise [&_svg]:size-4 [&_svg]:shrink-0 [&>span:last-child]:truncate",
+  "peer/menu-button group/menu-button flex w-full cursor-pointer items-center gap-5 overflow-hidden rounded-lg px-5 text-left font-normal text-foreground ring-sidebar-ring outline-hidden transition-colors group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsible=icon]:size-9! group-data-[collapsible=icon]:p-2.5! hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 active:bg-sidebar-accent disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-active:bg-sidebar-primary data-active:font-medium data-active:text-sidebar-primary-foreground data-active:hover:bg-sidebar-primary data-active:hover:text-sidebar-primary-foreground [&_svg]:size-6 [&_svg]:shrink-0 group-data-[collapsible=icon]:[&_svg]:size-4 [&>span:last-child]:truncate",
   {
     variants: {
       variant: {
@@ -506,7 +506,7 @@ const sidebarMenuButtonVariants = cva(
           "bg-background shadow-[0_0_0_1px_var(--sidebar-border)] hover:bg-sidebar-accent hover:text-foreground hover:shadow-[0_0_0_1px_var(--sidebar-accent)]",
       },
       size: {
-        default: "h-9.5 text-sm",
+        default: "h-11 text-xl",
         sm: "h-7 text-xs",
         lg: "h-12 text-sm group-data-[collapsible=icon]:p-0!",
       },

@@ -21,6 +21,7 @@ import (
 	"github.com/xxww0098/podhub-go/internal/platform/db/sqlc"
 	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
 	"github.com/xxww0098/podhub-go/tests/parity"
+	"github.com/xxww0098/podhub-go/tests/testkit"
 )
 
 func TestIdentityAndTenantIsolation(t *testing.T) {
@@ -83,6 +84,38 @@ func TestIdentityAndTenantIsolation(t *testing.T) {
 		Body:   []byte(`{"data":{"authenticated":false,"active_workspace":null,"workspaces":[],"unusable_workspaces":[],"accounts":[]}}`),
 	}); err != nil {
 		t.Fatal(err)
+	}
+	spec, err := testkit.LoadOpenAPI()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, cookie := range []string{"", adaCookie} {
+		overview := get(t, handler, "/api/view/account-overview", cookie)
+		if overview.Code != http.StatusOK {
+			t.Fatalf("overview: %d %s", overview.Code, overview.Body.String())
+		}
+		if err := spec.CheckResponse(http.MethodGet, "/api/view/account-overview", overview.Code, overview.Header(), overview.Body.Bytes()); err != nil {
+			t.Fatal(err)
+		}
+		var wire struct {
+			Data struct {
+				Session struct {
+					Authenticated bool   `json:"authenticated"`
+					Email         string `json:"email"`
+				} `json:"session"`
+				OwnedCount int64 `json:"owned_count"`
+				OwnedLimit int64 `json:"owned_limit"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(overview.Body.Bytes(), &wire); err != nil {
+			t.Fatal(err)
+		}
+		if wire.Data.OwnedLimit != 3 || wire.Data.Session.Authenticated != (cookie != "") {
+			t.Fatalf("overview standing: %s", overview.Body.String())
+		}
+		if cookie != "" && (wire.Data.OwnedCount != 1 || wire.Data.Session.Email != "ada@pod.example") {
+			t.Fatalf("overview account: %s", overview.Body.String())
+		}
 	}
 
 	bob := postJSON(t, handler, "/api/auth/register", `{"email":"bob@pod.example","password":"correct-horse","name":"Bob"}`, "register-idem-2", "")

@@ -220,6 +220,7 @@ func TestDispatchAssetsOrgZero(t *testing.T) {
 	seedSource(t, ctx, pool, sourceA, "dda-a")
 	seedSource(t, ctx, pool, sourceB, "dda-b")
 	seedMember(t, ctx, pool, sourceA, memberA, "active")
+	seedFulfiller(t, ctx, pool, sourceA, memberA)
 	t.Cleanup(func() {
 		cleanupDelegate(t, context.Background(), pool, orgA, sellerA, sourceA)
 		cleanupDelegate(t, context.Background(), pool, orgB, sellerB, sourceB)

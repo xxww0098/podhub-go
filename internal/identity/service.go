@@ -40,6 +40,9 @@ const (
 	msgBadRole         = "工作空间角色无效"
 	msgBusy            = "资源正在更新，请稍后重试"
 	msgMediaGone       = "媒体对象已进入回收，请重新上传"
+	// msgPasswordChangeRequired is the body of the 403 PASSWORD_CHANGE_REQUIRED
+	// gate; the code is the contract, the message is display text.
+	msgPasswordChangeRequired = "请先修改密码"
 )
 
 // Result is one HTTP reply. Cookies are raw Set-Cookie values.
@@ -139,6 +142,13 @@ type account struct {
 	orgID         int64
 	workspaceRole string
 	target        string
+	// accountKind is the stored account_users.account_kind: platform or
+	// supplier. It is the single source of truth for which surface the account
+	// belongs to; target stayed a login landing-page hint only.
+	accountKind string
+	// mustChangePassword gates every route except the small whitelist in
+	// middleware.go (doc §4.2).
+	mustChangePassword bool
 }
 
 var (

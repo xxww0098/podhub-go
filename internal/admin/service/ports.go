@@ -23,7 +23,7 @@ type Store interface {
 	ListAccounts(ctx context.Context, actor contract.Actor) ([]domain.Member, error)
 	CreateAccount(ctx context.Context, actor contract.Actor, in domain.NormalizedAccount, publicID string, nowMs int64, password string) (domain.Member, *string, error)
 	PatchAccount(ctx context.Context, actor contract.Actor, memberID string, in domain.AccountPatch, passwordHash string) (domain.Member, *string, error)
-	DeleteAccount(ctx context.Context, actor contract.Actor, memberID string) error
+	DeleteAccount(ctx context.Context, actor contract.Actor, memberID string, nowMs int64) error
 	// AccountStaff reads account_users. Missing and disabled are found=false.
 	AccountStaff(ctx context.Context, userID int64) (found, staff bool, err error)
 	ListPrompts(ctx context.Context, actor contract.Actor) ([]domain.Prompt, error)
@@ -33,6 +33,14 @@ type Store interface {
 	ListGrants(ctx context.Context, actor contract.Actor) ([]domain.GrantView, error)
 	CreateGrant(ctx context.Context, actor contract.Actor, in domain.GrantInput) (domain.GrantView, string, error)
 	RevokeGrant(ctx context.Context, actor contract.Actor, id string) (string, error)
+	// SourceRoleStore is the two staff-side authorization tables. Fulfiller is
+	// the supplier-portal role; catalog manager is the /api/catalog role.
+	ListFulfillers(ctx context.Context, actor contract.Actor, sourceID string) ([]domain.Fulfiller, error)
+	GrantFulfiller(ctx context.Context, actor contract.Actor, sourceID string, userID, nowMs int64) (domain.Fulfiller, error)
+	RevokeFulfiller(ctx context.Context, actor contract.Actor, sourceID, fulfillerID string, nowMs int64) error
+	ListCatalogManagers(ctx context.Context, actor contract.Actor, sourceID string) ([]domain.CatalogManager, error)
+	GrantCatalogManager(ctx context.Context, actor contract.Actor, sourceID string, userID, nowMs int64) (domain.CatalogManager, error)
+	RevokeCatalogManager(ctx context.Context, actor contract.Actor, sourceID, managerID string, nowMs int64) error
 }
 
 // Rows is the supplier-db success path. The repo implements it.

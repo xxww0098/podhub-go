@@ -17,9 +17,11 @@ func TestSellerBindingsRLS(t *testing.T) {
 	orgB := seedOrg(t, ctx, pool, userB, "sell-b")
 	source := "src_seller_rls"
 	seedSource(t, ctx, pool, source, "seller-rls")
+	// Order matters: removing the source row fails with a restrict violation
+	// while org B's bindings still point at it, so the org-only pass runs first.
 	t.Cleanup(func() {
-		cleanupDelegate(t, context.Background(), pool, orgA, userA, source)
 		cleanupDelegate(t, context.Background(), pool, orgB, userB, "")
+		cleanupDelegate(t, context.Background(), pool, orgA, userA, source)
 	})
 	storeA := uuid.NewString()
 	storeB := uuid.NewString()

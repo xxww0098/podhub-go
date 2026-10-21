@@ -67,6 +67,9 @@ type Order struct {
 	SettledCents    int64           `json:"settledCents"`
 	NudgeCount      int32           `json:"nudgeCount"`
 	NudgedAtMS      *int64          `json:"nudgedAtMs,omitempty"`
+	// DispatchBlockedReason is set when the order is ready but the platform
+	// could not decide which fulfiller receives the packet. Empty otherwise.
+	DispatchBlockedReason string `json:"dispatchBlockedReason,omitempty"`
 }
 
 // PostingProductView is DelegatePostingsProductView.

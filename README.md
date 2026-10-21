@@ -114,4 +114,5 @@ AGPL-3.0 第 13 条：如果你修改了本程序，并通过计算机网络向�
 - 目录与依赖规则：[docs/architecture-tree.md](docs/architecture-tree.md)
 - 未决与已决事项：[docs/decisions.md](docs/decisions.md)
 - 订阅与账期方案：[docs/architecture/subscription-billing.md](docs/architecture/subscription-billing.md)
+- 账号与权限模型：[docs/architecture/account-permission-model.md](docs/architecture/account-permission-model.md)
 - 各域对拍：[docs/parity](docs/parity/)，回归清单在 [docs/parity/regression-checklist.md](docs/parity/regression-checklist.md)

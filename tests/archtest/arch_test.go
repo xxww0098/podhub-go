@@ -31,7 +31,7 @@ var layers = map[string]bool{"domain": true, "service": true, "repo": true, "htt
 var level = map[string]int{
 	"identity": 1,
 	"queue":    2, "media": 2, "catalog": 2, "billing": 2, "seller": 2, "telemetry": 2,
-	"listing/core": 3, "ai": 3, "supply": 3, "delegate": 3, "supplier": 3, "agent": 3, "ops": 3, "shipping": 3, "ozonerr": 3, "ratings": 3, "warehouse": 3, "store": 3,
+	"listing/core": 3, "ai": 3, "supply": 3, "delegate": 3, "supplier": 3, "suppliercatalog": 3, "agent": 3, "ops": 3, "shipping": 3, "ozonerr": 3, "ratings": 3, "warehouse": 3, "store": 3,
 	"listing/rules": 4, "automation": 4,
 	"listing/read": 5, "listing/write": 5,
 	"listing/submit": 6, "mcp": 6,

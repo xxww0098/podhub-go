@@ -43,8 +43,7 @@
   --card-foreground: var(--foreground);
   --popover: #ffffff;
   --popover-foreground: var(--foreground);
-  /* The sidebar is the desk: a warm gray ground the white sheet floats on. */
-  --sidebar: #ededed;
+  --sidebar: #ffffff;
   --sidebar-foreground: var(--foreground);
 
   /* recessed fill used inside panels — never as a page ground */
@@ -171,11 +170,11 @@
 
   --radius: 0.625rem;
 
-  --sidebar-primary: var(--primary);
+  --sidebar-primary: #262725;
   --sidebar-primary-foreground: var(--primary-foreground);
   --sidebar-accent: #e4e4e2;
   --sidebar-accent-foreground: var(--foreground);
-  --sidebar-border: #dcdcd9;
+  --sidebar-border: #e5e7eb;
   --sidebar-ring: var(--ring);
 
   --chart-1: var(--st-flight);

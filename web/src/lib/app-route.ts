@@ -90,7 +90,7 @@ export function resolveRoute(address: RouteAddress, audience: RouteAudience): Ap
     return {
       kind: "admin",
       screen: adminScreenFromSearch(address.search, audience),
-      // A known `settings` id this rank may not open still reaches the sheet,
+      // A known `settings` id this rank may not open still reaches the settings page,
       // which refuses it by name; an unknown id opens nothing at all.
       settings: settingsFromSearch(address.search) ?? null,
     }

@@ -28,6 +28,11 @@ type AdminStore interface {
 type DispatchInput struct {
 	SourceID string
 	LineIDs  []string
+	// FulfillerID lets staff pick the recipient explicitly when the source has
+	// no unambiguous active fulfiller, or to override the automatic choice.
+	// Empty means "use the source's single active fulfiller". It must belong
+	// to the same source; writePackets verifies that before writing a packet.
+	FulfillerID string
 }
 
 // DecodeDispatch folds every JSON rejection into the fixed validation sentence.
@@ -39,8 +44,9 @@ func DecodeDispatch(body []byte) (DispatchInput, error) {
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	var raw struct {
-		SourceID *string  `json:"sourceId"`
-		LineIDs  []string `json:"lineIds"`
+		SourceID    *string  `json:"sourceId"`
+		LineIDs     []string `json:"lineIds"`
+		FulfillerID *string  `json:"fulfillerId"`
 	}
 	if err := dec.Decode(&raw); err != nil || dec.More() {
 		return DispatchInput{}, contract.Validation("请求格式无效")
@@ -54,6 +60,9 @@ func DecodeDispatch(body []byte) (DispatchInput, error) {
 		return DispatchInput{}, err
 	}
 	out.LineIDs = ids
+	if raw.FulfillerID != nil {
+		out.FulfillerID = strings.TrimSpace(*raw.FulfillerID)
+	}
 	return out, nil
 }
 

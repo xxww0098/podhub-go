@@ -69,7 +69,7 @@ function DialogContent({
   ...props
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean
-  layout?: "default" | "panel" | "settings"
+  layout?: "default" | "panel"
 }) {
   return (
     <DialogPortal>
@@ -84,7 +84,6 @@ function DialogContent({
           "fixed top-1/2 left-1/2 z-50 grid w-full grid-cols-1 max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground shadow-overlay outline-none transition-[opacity,transform,translate,scale] duration-150 ease-settle data-closed:pointer-events-none data-closed:invisible sm:max-w-md",
           "data-ending-style:scale-[0.98] data-ending-style:opacity-0 data-ending-style:duration-100 data-starting-style:scale-[0.98] data-starting-style:opacity-0",
           layout === "panel" && "flex max-h-[calc(100dvh-2rem)] flex-col gap-0 overflow-hidden p-0",
-          layout === "settings" && "h-[min(90dvh,52rem)] max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] gap-0 overflow-hidden p-0 sm:max-w-7xl",
           className
         )}
         {...props}

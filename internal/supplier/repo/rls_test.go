@@ -8,16 +8,25 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 
 	"github.com/xxww0098/podhub-go/internal/platform/config"
 	"github.com/xxww0098/podhub-go/internal/platform/db"
-	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
-	"github.com/xxww0098/podhub-go/internal/supplier/contract"
 )
 
-func TestWalletRLS(t *testing.T) {
+// TestSupplierHasNoFundsAccess is §11.6 row 5: a supplier session reads zero
+// rows from every funds table, including its own source's.
+//
+// 00363 drops supplier_source_isolation from supplier_wallets,
+// supplier_wallet_ledger and supplier_withdrawals (§6.1, §9). Before that
+// migration those tables gave a supplier session a self arm keyed on
+// app.current_supplier_user_id, and this test asserted one supplier saw its own
+// rows but not another's. That arm is gone, so the only correct answer is 0 for
+// every supplier. The rows themselves stay put: this is an access rule, not a
+// delete.
+func TestSupplierHasNoFundsAccess(t *testing.T) {
 	pool, ctx := parityDB(t)
 	userA, userB := int64(882001), int64(882002)
 	sourceA, sourceB := "src_wallet_a", "src_wallet_b"
@@ -39,63 +48,48 @@ func TestWalletRLS(t *testing.T) {
 		       ($2, 2, 2000000, 'bank', 'b', 'm', 'requested', 2)`, sourceA, sourceB); err != nil {
 		t.Fatal(err)
 	}
-	repo := New(pool, tenant.BeginApp)
-	wallets, err := repo.ListWallets(ctx, 0, userA)
-	if err != nil || len(wallets) != 1 || wallets[0].SourceID != sourceA || wallets[0].BalanceMicrofen != 100 || wallets[0].HeldMicrofen != 10 {
-		t.Fatalf("wallets %+v %v", wallets, err)
-	}
-	rows, err := repo.ListWithdrawals(ctx, 0, userB)
-	if err != nil || len(rows) != 1 || rows[0].SourceID != sourceB || rows[0].AmountCents != 2 || rows[0].Status != "requested" {
-		t.Fatalf("withdrawals %+v %v", rows, err)
-	}
-	if _, err := repo.ListWallets(ctx, 0, 0); err != contract.ErrNoTenant {
-		t.Fatal(err)
+
+	tables := []string{"supplier_wallets", "supplier_wallet_ledger", "supplier_withdrawals", "delegate_settlements"}
+	for _, user := range []struct {
+		id     int64
+		source string
+	}{{userA, sourceA}, {userB, sourceB}} {
+		sess := db.Supplier(user.id)
+		err := db.InTx(ctx, pool, sess, func(tx pgx.Tx) error {
+			for _, table := range tables {
+				var n int
+				if err := tx.QueryRow(ctx, "SELECT count(*) FROM "+table).Scan(&n); err != nil {
+					return fmt.Errorf("count %s: %w", table, err)
+				}
+				if n != 0 {
+					return fmt.Errorf("supplier %d sees %d rows in %s, want 0", user.id, n, table)
+				}
+			}
+			// The insert is expected to fail, and in PostgreSQL a failed
+			// statement aborts the whole transaction -- committing afterwards
+			// degrades to a rollback. Run it in a savepoint so the denial is
+			// observed without poisoning the transaction we still commit.
+			sp, err := tx.Begin(ctx)
+			if err != nil {
+				return err
+			}
+			_, insErr := sp.Exec(ctx, `
+				INSERT INTO supplier_wallets (source_id, balance_microfen, held_microfen, updated_at_ms)
+				VALUES ($1, 1, 0, 1)`, user.source)
+			_ = sp.Rollback(ctx)
+			if insErr == nil {
+				return fmt.Errorf("supplier %d inserted a wallet row", user.id)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 
-	bare, err := pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer bare.Rollback(ctx)
-	if _, err := bare.Exec(ctx, `SELECT set_config('role', 'podhub_app', true)`); err != nil {
-		t.Fatal(err)
-	}
-	var n int
-	if err := bare.QueryRow(ctx, `SELECT count(*) FROM supplier_wallets`).Scan(&n); err != nil || n != 0 {
-		t.Fatalf("missing GUC wallets %d %v", n, err)
-	}
-	if err := bare.QueryRow(ctx, `SELECT count(*) FROM supplier_withdrawals`).Scan(&n); err != nil || n != 0 {
-		t.Fatalf("missing GUC withdrawals %d %v", n, err)
-	}
-	_, err = bare.Exec(ctx, `
-		INSERT INTO supplier_wallets (source_id, balance_microfen, held_microfen, updated_at_ms)
-		VALUES ($1, 1, 0, 1)`, sourceA)
-	if err == nil {
-		t.Fatal("missing GUC inserted a wallet")
-	}
-
-	tx, err := tenant.BeginApp(ctx, pool.Begin, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.current_supplier_user_id', $1, true)`, fmt.Sprint(userA)); err != nil {
-		t.Fatal(err)
-	}
-	tag, err := tx.Exec(ctx, `
-		UPDATE supplier_wallets SET balance_microfen = 1 WHERE source_id = $1`, sourceB)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tag.RowsAffected() != 0 {
-		t.Fatalf("supplier A updated source B (%d rows)", tag.RowsAffected())
-	}
-	var visible int
-	if err := tx.QueryRow(ctx, `SELECT count(*) FROM supplier_wallets WHERE source_id = $1`, sourceB).Scan(&visible); err != nil {
-		t.Fatal(err)
-	}
-	if visible != 0 {
-		t.Fatalf("supplier A can see source B")
+	var stored int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM supplier_wallets`).Scan(&stored); err != nil || stored < 2 {
+		t.Fatalf("wallets disappeared %d %v", stored, err)
 	}
 }
 

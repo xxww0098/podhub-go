@@ -118,10 +118,11 @@ test("平台货源 is a workspace screen and not ops or suppliers", () => {
   )
   assert.match(html, /平台货源/)
   assert.match(html, /批量上架/)
-  assert.doesNotMatch(html, /订单发货|入仓供货/)
+  assert.match(html, /订单发货/)
+  assert.match(html, /入仓供货/)
   assert.doesNotMatch(html, new RegExp(SCREEN_LABELS["supplier-dbs"]))
   // 工作台屏「平台货源」含管理模式文案「平台」子串，模式 tab 断言须锚定
-  // NavModeSwitcher 的 aria-label 属性，不能拿裸标签当子串匹配。
+  // 分组的 aria-label 属性，不能拿裸标签当子串匹配。
   assert.doesNotMatch(html, new RegExp(`aria-label="${NAVIGATION.admin.label}"`))
 })
 
@@ -146,13 +147,13 @@ test("主菜单只给 staff 渲染「平台管理」模式，列表管理在其�
   const screenLabel = SCREEN_LABELS["supplier-dbs"]
   for (const role of ["admin", "super_admin"]) {
     assert.match(shell(role), new RegExp(modeTab), `${role} 看不到平台管理模式`)
-    assert.doesNotMatch(shell(role), new RegExp(screenLabel), `${role} 停在 catalog 时不该看到管理屏条目`)
+    assert.match(shell(role), new RegExp(screenLabel), `${role} 应始终看到获准访问的管理条目`)
   }
   for (const role of ["user", "owner", "manager"]) {
     assert.doesNotMatch(shell(role), new RegExp(modeTab), `${role} 不该看到平台管理模式`)
     assert.doesNotMatch(shell(role), new RegExp(screenLabel), `${role} 不该看到管理屏条目`)
   }
-  // 切进 supplier-dbs 屏：模式 tab 与其唯一条目一起画出。
+  // 管理条目和分组不再依赖当前选中的业务屏。
   const deepLink = shell("admin", "supplier-dbs")
   assert.match(deepLink, new RegExp(screenLabel))
   assert.match(deepLink, new RegExp(modeTab))

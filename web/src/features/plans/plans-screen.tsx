@@ -97,7 +97,7 @@ export function PlansScreen({
 
   const next = view.next
   const future = view.periods.filter((p) => new Date(p.starts_at).getTime() > Date.now())
-  const reduction = next.stores < view.stores.limit || next.members < view.members.limit || next.plan_key !== view.plan_key
+  const reduction = view.status === "active" && (next.stores < view.stores.limit || next.members < view.members.limit || next.plan_key !== view.plan_key)
   const hasPaidReduction = future.some((p) => p.stores < view.stores.limit)
 
   return <div className="flex w-full flex-col gap-6">
@@ -118,7 +118,7 @@ export function PlansScreen({
       </div> : <p className="text-sm text-muted-foreground">只有工作区所有者或管理员可以管理订阅。</p>}
     </section>
 
-    <section className="flex flex-col gap-3 border-t border-border pt-5">
+    {view.status !== "free" && <section className="flex flex-col gap-3 border-t border-border pt-5">
       <h3 className="font-semibold">下次续费配置</h3>
       <p>{planName(next.plan_key)} · {next.stores} 家店铺 · {next.members} 名成员 <strong className="ml-2">{yuanLabel(view.next_renewal.amount_cents)}/月</strong></p>
       <p className="text-sm text-muted-foreground">{subscriptionDate(next.effective_at)} 起，下一段尚未购买的服务按此配置计费。保存配置不代表已经付款。</p>
@@ -128,7 +128,7 @@ export function PlansScreen({
         <Button size="sm" variant="outline" onClick={() => setEditor({ action: "schedule" })}>修改下期配置</Button>
         {(reduction || hasPaidReduction) && <Button size="sm" variant="outline" onClick={() => setEditor({ action: "change", restore: true })}>恢复为 {view.stores.limit} 家，预览补差</Button>}
       </div>}
-    </section>
+    </section>}
 
     {future.length > 0 && <section className="flex flex-col gap-3 border-t border-border pt-5">
       <h3 className="flex items-center gap-2 font-semibold"><CalendarClock className="size-4" /> 已付款的未来服务</h3>

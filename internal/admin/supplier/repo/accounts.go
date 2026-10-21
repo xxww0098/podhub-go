@@ -115,7 +115,10 @@ func (r Portal) PatchAccount(ctx context.Context, actor outcome.Actor, memberID 
 			if err := lockAccount(ctx, tx, userID); err != nil {
 				return err
 			}
-			tag, err := tx.Exec(ctx, `UPDATE account_users SET password_hash = $1, updated_at = clock_timestamp() WHERE id = $2`, passwordHash, userID)
+			// Doc §4.2: a super-admin resetting a supplier's password is the same
+			// "staff reset" write point as users.SetPassword, so it raises the flag
+			// too. Only identity's POST /api/auth/password clears it.
+			tag, err := tx.Exec(ctx, `UPDATE account_users SET password_hash = $1, must_change_password = true, updated_at = clock_timestamp() WHERE id = $2`, passwordHash, userID)
 			if err != nil {
 				return corerepo.MapDB(err)
 			}
@@ -153,17 +156,21 @@ func (r Portal) PatchAccount(ctx context.Context, actor outcome.Actor, memberID 
 	return member, initial, err
 }
 
-func (r Portal) DeleteAccount(ctx context.Context, actor outcome.Actor, memberID string) error {
+func (r Portal) DeleteAccount(ctx context.Context, actor outcome.Actor, memberID string, nowMs int64) error {
 	return r.withTx(ctx, actor.OrgID, func(tx pgx.Tx) error {
 		if err := corerepo.AssertWrite(ctx, tx); err != nil {
 			return err
 		}
-		tag, err := tx.Exec(ctx, `DELETE FROM sc_source_members WHERE member_id = $1::uuid`, memberID)
+		var userID int64
+		err := tx.QueryRow(ctx, `DELETE FROM sc_source_members WHERE member_id = $1::uuid RETURNING user_id`, memberID).Scan(&userID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return corerepo.NotFound("厂家成员不存在")
+		}
 		if err != nil {
 			return corerepo.MapDB(err)
 		}
-		if tag.RowsAffected() == 0 {
-			return corerepo.NotFound("厂家成员不存在")
+		if err := disableSourceRoles(ctx, tx, userID, actor.UserID, nowMs); err != nil {
+			return err
 		}
 		return corerepo.Audit(ctx, tx, actor, "supplier_portal", "supplier_account", memberID, "DELETE", "/api/admin/supplier-accounts/{member_id}", "supplier_account_unbound", `{}`)
 	})
@@ -202,14 +209,14 @@ func provision(ctx context.Context, tx pgx.Tx, actor outcome.Actor, sourceID, em
 		return "", nil, corerepo.MapDB(err)
 	}
 	var userID int64
-	var role string
+	var role, accountKind string
 	var disabled bool
 	err = tx.QueryRow(ctx, `
-		SELECT id::bigint, role, disabled_at IS NOT NULL
+		SELECT id::bigint, role, disabled_at IS NOT NULL, account_kind
 		  FROM account_users
 		 WHERE lower(email) = $1
 		 ORDER BY (email = $1) DESC
-		 LIMIT 1`, email).Scan(&userID, &role, &disabled)
+		 LIMIT 1`, email).Scan(&userID, &role, &disabled, &accountKind)
 	var initial *string
 	if errors.Is(err, pgx.ErrNoRows) {
 		if len(password) > 72 {
@@ -229,8 +236,10 @@ func provision(ctx context.Context, tx pgx.Tx, actor outcome.Actor, sourceID, em
 		}
 		err = tx.QueryRow(ctx, `
 			INSERT INTO account_users
-			       (public_id, email, password_hash, role, name, target, supplier_id, plan, created_at, updated_at)
-			VALUES ($1, $2, $3, 'user', $4, '/supplier', '', 'free', clock_timestamp(), clock_timestamp())
+			       (public_id, email, password_hash, role, name, target, supplier_id, plan,
+			        account_kind, must_change_password, created_at, updated_at)
+			VALUES ($1, $2, $3, 'user', $4, '/supplier', '', 'free', 'supplier', true,
+			        clock_timestamp(), clock_timestamp())
 			RETURNING id::bigint`, publicID, email, string(hash), display).Scan(&userID)
 		if corerepo.Constraint(err) != "" {
 			return "", nil, corerepo.Conflict("邮箱已注册")
@@ -242,6 +251,9 @@ func provision(ctx context.Context, tx pgx.Tx, actor outcome.Actor, sourceID, em
 	} else if err != nil {
 		return "", nil, corerepo.MapDB(err)
 	} else {
+		if accountKind == "platform" {
+			return "", nil, corerepo.Conflict("该邮箱已是平台账号，不能绑定为厂家成员")
+		}
 		if role != "user" {
 			return "", nil, corerepo.Conflict("不能绑定管理员邮箱")
 		}

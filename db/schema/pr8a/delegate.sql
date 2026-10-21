@@ -4,16 +4,27 @@ CREATE TABLE delegate_dispatches (
     state text NOT NULL
 );
 
-CREATE FUNCTION delegate_supplier_accept(dispatch_id uuid, supplier_user_id bigint)
-RETURNS text LANGUAGE sql AS $$ SELECT ''::text $$;
+-- Signatures must match db/migrations/00364_fulfiller_functions.sql. The three
+-- packet actions are fulfiller-gated: p_fulfiller_id is the packet's pinned
+-- recipient, and the body rejects a caller who is not that person.
+CREATE FUNCTION delegate_supplier_accept(
+    p_dispatch_id uuid,
+    p_supplier_user_id bigint,
+    p_fulfiller_id uuid
+) RETURNS text LANGUAGE sql AS $$ SELECT ''::text $$;
 
-CREATE FUNCTION delegate_supplier_reject(dispatch_id uuid, supplier_user_id bigint, reason text)
-RETURNS text LANGUAGE sql AS $$ SELECT ''::text $$;
+CREATE FUNCTION delegate_supplier_reject(
+    p_dispatch_id uuid,
+    p_supplier_user_id bigint,
+    p_reason text,
+    p_fulfiller_id uuid
+) RETURNS text LANGUAGE sql AS $$ SELECT ''::text $$;
 
 CREATE FUNCTION delegate_supplier_ship(
-    dispatch_id uuid,
-    supplier_user_id bigint,
-    tracking_no text,
-    note text,
-    now_ms bigint
+    p_dispatch_id uuid,
+    p_supplier_user_id bigint,
+    p_tracking_no text,
+    p_note text,
+    p_now_ms bigint,
+    p_fulfiller_id uuid
 ) RETURNS text LANGUAGE sql AS $$ SELECT ''::text $$;

@@ -31,7 +31,7 @@ func TestFilterAndCursor(t *testing.T) {
 	}
 }
 
-func TestRejectShipWithdrawalText(t *testing.T) {
+func TestRejectShipText(t *testing.T) {
 	if _, err := RejectReason("  "); err == nil {
 		t.Fatal("blank")
 	}
@@ -46,20 +46,6 @@ func TestRejectShipWithdrawalText(t *testing.T) {
 	}
 	if _, _, err := ShipFields("", string(make([]rune, 501))); err == nil {
 		t.Fatal("note")
-	}
-	in, err := CheckWithdrawal("src", 99, "alipay", "a", "n")
-	if err == nil || in.AmountCents != 0 {
-		t.Fatal(err)
-	}
-	in, err = CheckWithdrawal(" Src ", 100, " bank ", " acct ", " 名 ")
-	if err != nil || in.Channel != "bank" || in.SourceID != " Src " || in.Account != "acct" || in.AmountMicrofen != 100*1_000_000 {
-		t.Fatalf("%+v %v", in, err)
-	}
-	if _, err := CheckWithdrawal("s", 100, "Alipay", "a", "n"); err == nil {
-		t.Fatal("case")
-	}
-	if _, err := CheckWithdrawal("s", 100_000_001, "alipay", "a", "n"); err == nil {
-		t.Fatal("cap")
 	}
 }
 

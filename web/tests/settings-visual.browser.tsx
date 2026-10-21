@@ -1,4 +1,4 @@
-// Dev-only full SettingsDialog. All identities and endpoints below are fictional.
+// Dev-only full React settings page. All identities and endpoints below are fictional.
 // Open /tests/settings-visual.html?section=ocr&dark. Unknown requests fail closed.
 import { useState } from "react"
 import { createRoot } from "react-dom/client"
@@ -10,9 +10,8 @@ import { aiAccountsHttp } from "@/bindings/http-ai-accounts"
 import { supplierDbsHttp } from "@/bindings/http-supplier-dbs"
 import { listingHttp } from "@/bindings/http-listing"
 import { route } from "@/api/routes"
-import { SettingsDialog } from "@/app/settings-dialog"
+import { AppShell } from "@/app/app-shell"
 import { Toaster } from "@/components/ui/toast"
-import { Button } from "@/components/ui/button"
 import { NotificationsProvider } from "@/features/notifications/notifications"
 import { rememberAccountOverview } from "@/features/account/account-overview-cache"
 import { settingsRowsFor, type SettingsSection } from "@/lib/settings-sections"
@@ -180,7 +179,7 @@ adminHttp.adminAiUsageSummary = async () => ({ absorbed_microfen: 0, cache_hit_r
 
 // Small executable fixture checks catch missing navigation and transport leaks.
 const sections = settingsRowsFor("super_admin")
-if (sections.length !== 20) throw new Error(`Expected 20 settings sections; got ${sections.length}`)
+if (sections.length !== 21) throw new Error(`Expected 21 settings sections; got ${sections.length}`)
 try {
   await window.fetch("https://unknown.example.invalid/api/probe")
   throw new Error("Network guard did not reject unknown URL")
@@ -191,21 +190,20 @@ initTheme()
 rememberAccountOverview(overview)
 
 function Fixture() {
-  const [open, setOpen] = useState(true)
   const [account, setAccount] = useState(overview)
-  const [section, setSection] = useState<SettingsSection>(() => sections.find((row) => row.id === params.get("section"))?.id ?? "account")
-  function navigate(next: SettingsSection) {
+  const [section, setSection] = useState<SettingsSection | null>(() => sections.find((row) => row.id === params.get("section"))?.id ?? "account")
+  function navigate(next: SettingsSection | null) {
     setSection(next)
     const url = new URL(location.href)
-    url.searchParams.set("section", next)
+    if (next) url.searchParams.set("section", next)
+    else url.searchParams.delete("section")
     history.replaceState(null, "", url)
   }
   return <NotificationsProvider>
-    <main className="p-6"><p className="mb-4 text-sm text-muted-foreground">设置视觉检查 · 全部为虚构数据 · 无网络访问</p>
-      <Button onClick={() => setOpen(true)}>打开完整设置</Button>
-    </main>
-    <SettingsDialog open={open} onOpenChange={setOpen} overview={account} onOverviewChange={setAccount}
-      section={section} onSectionChange={navigate} onOpenNotifications={() => { navigate("notifications"); setOpen(true) }} />
+    <AppShell screen="supplier-dbs" adminSurface settingsRequest={section} onSettingsRequestChange={navigate}
+      overview={account} onOverviewChange={setAccount} onSignedOut={() => {}} onScreenChange={() => {}}>
+      <h1>平台货源</h1>
+    </AppShell>
     <Toaster />
   </NotificationsProvider>
 }

@@ -76,6 +76,7 @@ import {
 import { formatDateTimeShort } from "@/lib/format"
 import { formatYuan } from "@/lib/money"
 import { notifyCommandError, notifySuccess } from "@/lib/notify"
+import { errorMessage } from "@/lib/error-message"
 import { cn } from "@/lib/utils"
 import { platformRoleLabel } from "@/lib/platform-role"
 
@@ -187,6 +188,7 @@ export function UsersScreen({
   const [workspaceFilter, setWorkspaceFilter] = useState("all")
   const [directory, setDirectory] = useState<AdminUsersOverview>()
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string>()
   const [busy, setBusy] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [editing, setEditing] = useState<AdminDirectoryPersonView>()
@@ -202,9 +204,15 @@ export function UsersScreen({
     if (!soft) setLoading(true)
     try {
       const next = await adminHttp.adminListUsers()
-      if (request === directoryRequest.current) setDirectory(next)
+      if (request === directoryRequest.current) {
+        setDirectory(next)
+        setLoadError(undefined)
+      }
     } catch (reason) {
-      if (request === directoryRequest.current) notifyCommandError(reason, "无法加载平台账户，请稍后重试。")
+      if (request === directoryRequest.current) {
+        setLoadError(errorMessage(reason, "无法加载平台账户，请稍后重试。"))
+        notifyCommandError(reason, "无法加载平台账户，请稍后重试。")
+      }
     } finally {
       if (request === directoryRequest.current) setLoading(false)
     }
@@ -530,7 +538,7 @@ export function UsersScreen({
                   size="sm"
                   className="cursor-pointer"
                   onClick={() => setCreateOpen(true)}
-                  disabled={busy}
+                  disabled={busy || loading || Boolean(loadError)}
                 >
                   <UserPlus className="size-3.5" data-icon="inline-start" />
                   创建账户
@@ -609,6 +617,13 @@ export function UsersScreen({
             icon={Users}
             busy
             title="正在加载账户与工作空间数据…"
+          />
+        ) : loadError ? (
+          <PlatformAdminEmpty
+            icon={ShieldCheck}
+            title="无法加载平台账户"
+            description={loadError}
+            action={<Button size="sm" variant="outline" onClick={() => void reload()}>重试</Button>}
           />
         ) : viewMode === "members" ? (
           /* Members View */

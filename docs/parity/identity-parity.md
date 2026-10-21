@@ -54,6 +54,8 @@
 
 ## 需要用户决定
 
-- oapi-codegen 是否取代 utoipa。本 PR 只用它生成路由。
+- oapi-codegen 的位置：已由 [decisions.md](../decisions.md) D2 定案（`api/openapi.yaml` 是唯一 spec，oapi-codegen 生成 models 与 chi 路由，响应字节手写），本节不再重复。
 - 上面 2–14 是否接受为本阶段的缺口，还是要在合并前逐项补到与 Rust 字节一致。
 - 派生并发上限（第 10 条）要用哪组池常量。在读到 Rust 数字之前，不要把 8/4/4/2/64 当成已经对齐。
+
+账号用途（`account_kind`）、`must_change_password` 的接口白名单、供应商账号能否复用平台邮箱这几项不属本域，统一登记在 [decisions.md](../decisions.md) 的 O13。本文只保留身份对拍本身的缺口。

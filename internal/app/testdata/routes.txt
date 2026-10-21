@@ -5,6 +5,8 @@ DELETE /api/admin/prompts/{prompt_id}
 DELETE /api/admin/seller-relay/nodes/{node_id}
 DELETE /api/admin/supplier-accounts/{member_id}
 DELETE /api/admin/supplier-dbs/{source_id}
+DELETE /api/admin/supplier-dbs/{source_id}/catalog-managers/{manager_id}
+DELETE /api/admin/supplier-dbs/{source_id}/fulfillers/{fulfiller_id}
 DELETE /api/admin/supplier-dbs/{source_id}/props/{prop_id}
 DELETE /api/admin/supplier-dbs/{source_id}/rows/{product_id}
 DELETE /api/admin/videos/{video_id}
@@ -49,6 +51,8 @@ GET /api/admin/supplier-automation/grants
 GET /api/admin/supplier-db-storage/objects
 GET /api/admin/supplier-dbs
 GET /api/admin/supplier-dbs/{source_id}
+GET /api/admin/supplier-dbs/{source_id}/catalog-managers
+GET /api/admin/supplier-dbs/{source_id}/fulfillers
 GET /api/admin/supplier-dbs/{source_id}/rows/{product_id}/ozon-config
 GET /api/admin/supplier-dbs/{source_id}/rows/{product_id}/prompt/diff
 GET /api/admin/supplier-prompts
@@ -98,6 +102,7 @@ GET /api/listing/rows/{id}
 GET /api/listing/rules
 GET /api/me/catalog/banned-tags
 GET /api/media/supplier-products/{product_id}/templates/{digest}
+GET /api/notifications
 GET /api/ops/console/snapshot
 GET /api/platform-catalog
 GET /api/platform-catalog/products/{product_id}
@@ -109,14 +114,14 @@ GET /api/seller/delegate/posting-states
 GET /api/seller/delegate/sources
 GET /api/seller/warehouses
 GET /api/seller/warehouses/{warehouse_id}
+GET /api/supplier-catalog/sources
 GET /api/supplier-dbs/catalog
 GET /api/supplier-dbs/catalog/images/{source_id}/{file}
 GET /api/supplier/dispatches
 GET /api/supplier/dispatches/{dispatch_id}
 GET /api/supplier/dispatches/{dispatch_id}/assets/{asset_id}
 GET /api/supplier/me
-GET /api/supplier/wallet
-GET /api/supplier/withdrawals
+GET /api/view/account-overview
 GET /api/workspaces
 GET /api/workspaces/members
 GET /api/workspaces/products
@@ -164,6 +169,8 @@ POST /api/admin/supplier-db-storage/objects/delete
 POST /api/admin/supplier-db-storage/objects/move
 POST /api/admin/supplier-db-storage/uploads
 POST /api/admin/supplier-dbs
+POST /api/admin/supplier-dbs/{source_id}/catalog-managers
+POST /api/admin/supplier-dbs/{source_id}/fulfillers
 POST /api/admin/supplier-dbs/{source_id}/props
 POST /api/admin/supplier-dbs/{source_id}/rows
 POST /api/admin/supplier-dbs/{source_id}/rows/{product_id}/price
@@ -253,6 +260,8 @@ POST /api/media/objects/{digest}/{extension}/presign
 POST /api/media/objects/{digest}/{extension}/probe
 POST /api/media/supplier-products/{product_id}/verify
 POST /api/media/upload-batches
+POST /api/notifications/read-all
+POST /api/notifications/{uuid}/read
 POST /api/ops/console/reconcile
 POST /api/ops/console/refresh-metrics
 POST /api/ops/message-center/history
@@ -286,7 +295,6 @@ POST /api/seller/warehouses/report
 POST /api/seller/warehouses/sync
 POST /api/supplier/dispatches/{dispatch_id}/accept
 POST /api/supplier/dispatches/{dispatch_id}/reject
-POST /api/supplier/withdrawals
 POST /api/workspaces
 POST /api/workspaces/dissolve
 POST /api/workspaces/leave

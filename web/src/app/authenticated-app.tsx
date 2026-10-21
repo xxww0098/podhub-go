@@ -131,7 +131,7 @@ export function AuthenticatedApp({
   onSignedOut: () => void
   onAddAccount: () => void
 }) {
-  // The address picks the surface, the screen and the admin sheet: what is
+  // The address picks the surface, the screen and the admin settings page: what is
   // painted and what the address claims are two readings of one resolver run,
   // so they can never drift apart.
   // Polls publish to the account cache without changing App props. The route
@@ -153,7 +153,7 @@ export function AuthenticatedApp({
   const surface: Surface = adminSurface ? "admin" : "workbench"
   const routeScreen: AppScreen | null =
     route.kind === "admin" || route.kind === "workbench" ? route.screen : null
-  // The admin sheet is URL state: `/admin?settings=media` opens, reloads and
+  // The admin settings page is URL state: `/admin?settings=media` opens, reloads and
   // stays shareable, while the workbench sheet keeps its ephemeral behaviour.
   const routeSettings: SettingsSection | null =
     route.kind === "admin" ? route.settings : null
@@ -299,7 +299,7 @@ export function AuthenticatedApp({
       // repainting `/admin` as a screen it does not own.
       if (adminSurface && !isAdminScreen(next)) {
         // Crossing surfaces keeps this window's own parameters (an invite code,
-        // a supplier-db open id) and drops only the admin sheet's state.
+        // a supplier-db open id) and drops only the admin settings page's state.
         window.location.assign(
           `/${nextSearch(withScreen(withoutSettings(window.location.search), next))}`,
         )
@@ -318,7 +318,7 @@ export function AuthenticatedApp({
     [adminSurface, surface, audience, screen],
   )
 
-  /** Open, switch or close the admin sheet by rewriting `?settings=`. */
+  /** Open, switch or close the admin settings page by rewriting `?settings=`. */
   const changeAdminSettings = useCallback((section: SettingsSection | null) => {
     replaceAddress({
       search: section

@@ -7,8 +7,8 @@ import (
 	"github.com/xxww0098/podhub-go/internal/supplier/domain"
 )
 
-// Portal is the supplier HTTP store. The wallet Port stays for the CHECK-only
-// helpers. A repository that implements Portal is wired through New.
+// Portal is the supplier HTTP store. A repository that implements Portal is
+// wired through New.
 type Portal interface {
 	Me(ctx context.Context, userID int64) (contract.MeData, error)
 	ListDispatches(ctx context.Context, userID int64, state string, cursor domain.Cursor) (contract.DispatchListData, error)
@@ -16,9 +16,6 @@ type Portal interface {
 	Accept(ctx context.Context, userID int64, dispatchID string) (contract.ActionData, error)
 	Reject(ctx context.Context, userID int64, dispatchID, reason string) (contract.ActionData, error)
 	Ship(ctx context.Context, userID int64, dispatchID, tracking, note string, nowMs int64) (contract.ActionData, error)
-	Wallets(ctx context.Context, userID int64) (contract.WalletListData, error)
-	Withdrawals(ctx context.Context, userID int64) (contract.WithdrawalListData, error)
-	CreateWithdrawal(ctx context.Context, userID int64, in domain.WithdrawalInput, nowMs int64) (contract.WithdrawalListData, error)
 	DownloadAsset(ctx context.Context, userID int64, dispatchID, assetID string, wantJSON bool, nowMs int64) (contract.AssetBytes, error)
 	Catalog(ctx context.Context, nowMs int64) (contract.CatalogData, error)
 	CatalogImage(ctx context.Context, sourceID, file string, edge uint32) (contract.ImageBody, error)
@@ -64,27 +61,6 @@ func (s Service) Ship(ctx context.Context, userID int64, dispatchID, tracking, n
 		return contract.ActionData{}, contract.ErrNotPorted
 	}
 	return s.portal.Ship(ctx, userID, dispatchID, tracking, note, nowMs)
-}
-
-func (s Service) Wallets(ctx context.Context, userID int64) (contract.WalletListData, error) {
-	if s.portal == nil {
-		return contract.WalletListData{}, contract.ErrNotPorted
-	}
-	return s.portal.Wallets(ctx, userID)
-}
-
-func (s Service) Withdrawals(ctx context.Context, userID int64) (contract.WithdrawalListData, error) {
-	if s.portal == nil {
-		return contract.WithdrawalListData{}, contract.ErrNotPorted
-	}
-	return s.portal.Withdrawals(ctx, userID)
-}
-
-func (s Service) CreateWithdrawal(ctx context.Context, userID int64, in domain.WithdrawalInput, nowMs int64) (contract.WithdrawalListData, error) {
-	if s.portal == nil {
-		return contract.WithdrawalListData{}, contract.ErrNotPorted
-	}
-	return s.portal.CreateWithdrawal(ctx, userID, in, nowMs)
 }
 
 func (s Service) DownloadAsset(ctx context.Context, userID int64, dispatchID, assetID string, wantJSON bool, nowMs int64) (contract.AssetBytes, error) {

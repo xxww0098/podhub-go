@@ -10,7 +10,6 @@ import (
 	sign "github.com/xxww0098/podhub-go/internal/platform/r2/sigv4"
 	"github.com/xxww0098/podhub-go/internal/platform/writer"
 	"github.com/xxww0098/podhub-go/internal/supplier/contract"
-	"github.com/xxww0098/podhub-go/internal/supplier/gen"
 )
 
 // BeginApp opens a podhub_app transaction for one org.
@@ -35,42 +34,6 @@ func (r Repo) WithBlobs(assets, catalog *sign.Account) Repo {
 	r.assets = assets
 	r.catalogStore = catalog
 	return r
-}
-
-func (r Repo) ListWallets(ctx context.Context, orgID, supplierUserID int64) ([]contract.Wallet, error) {
-	var out []contract.Wallet
-	err := r.withTx(ctx, orgID, supplierUserID, func(tx pgx.Tx) error {
-		rows, err := sqlcgen.New(tx).ListWallets(ctx)
-		if err != nil {
-			return err
-		}
-		out = make([]contract.Wallet, 0, len(rows))
-		for _, row := range rows {
-			out = append(out, contract.Wallet{
-				SourceID: row.SourceID, BalanceMicrofen: row.BalanceMicrofen, HeldMicrofen: row.HeldMicrofen,
-			})
-		}
-		return nil
-	})
-	return out, err
-}
-
-func (r Repo) ListWithdrawals(ctx context.Context, orgID, supplierUserID int64) ([]contract.WithdrawalRow, error) {
-	var out []contract.WithdrawalRow
-	err := r.withTx(ctx, orgID, supplierUserID, func(tx pgx.Tx) error {
-		rows, err := sqlcgen.New(tx).ListWithdrawals(ctx)
-		if err != nil {
-			return err
-		}
-		out = make([]contract.WithdrawalRow, 0, len(rows))
-		for _, row := range rows {
-			out = append(out, contract.WithdrawalRow{
-				WithdrawalID: row.WithdrawalID, SourceID: row.SourceID, Status: row.Status, AmountCents: row.AmountCents,
-			})
-		}
-		return nil
-	})
-	return out, err
 }
 
 func (r Repo) withTx(ctx context.Context, orgID, supplierUserID int64, fn func(pgx.Tx) error) error {

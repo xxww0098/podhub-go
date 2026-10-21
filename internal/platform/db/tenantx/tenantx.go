@@ -44,6 +44,11 @@ const (
 	GUCCurrentWalletUserID = "app.current_wallet_user_id"
 	// GUCCurrentSupplierUserID is the supplier user id.
 	GUCCurrentSupplierUserID = "app.current_supplier_user_id"
+	// GUCCurrentOrgUserID is the catalog manager's platform user id.
+	// The _org_user_ name is deliberate: it shares the bigint domain with
+	// app.current_org_id, so a mix-up would silently widen access instead of
+	// failing. Policies must read the exact name.
+	GUCCurrentOrgUserID = "app.current_org_user_id"
 	// GUCAutomationGrantID is the automation grant uuid.
 	GUCAutomationGrantID = "app.automation_grant_id"
 	// staffAccessOn is the only value policies compare for a staff session.
@@ -182,5 +187,17 @@ func EnterAutomationGrant(ctx context.Context, tx pgx.Tx, grantID string) error 
 // EnterCatalog sets the catalog writer role and no app GUC.
 func EnterCatalog(ctx context.Context, tx pgx.Tx) error {
 	_, err := tx.Exec(ctx, "SELECT set_config('role', $1, true)", RoleCatalog)
+	return err
+}
+
+// EnterCatalogManager sets the app role and app.current_org_user_id. It never
+// sets app.staff_access: a catalog manager is not staff, and the staff arm on
+// sc_source_members and the wallet tables would otherwise open every source.
+// The org GUC is left unset, like EnterSupplier.
+func EnterCatalogManager(ctx context.Context, tx pgx.Tx, userID int64) error {
+	_, err := tx.Exec(ctx,
+		"SELECT set_config('role', $1, true), set_config($2, $3, true)",
+		RoleApp, GUCCurrentOrgUserID, strconv.FormatInt(userID, 10),
+	)
 	return err
 }

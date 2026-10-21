@@ -36,7 +36,7 @@ func TestPR8BOperationsAreInOpenAPI(t *testing.T) {
 			t.Fatal(rt.Path)
 		}
 	}
-	if len(routes) != 18+13+2+40+3+76 {
+	if len(routes) != 18+13+2+46+3+76 {
 		t.Fatalf("routes %d", len(routes))
 	}
 	for _, rt := range routes {

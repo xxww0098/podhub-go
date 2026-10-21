@@ -160,19 +160,27 @@ const adminShell = (role: string, settingsRequest: "media" | null = null) =>
   )
 
 test("the /admin surface paints the staff rail, one mode and no switcher", () => {
-  const html = adminShell("super_admin", "media")
+  const html = adminShell("super_admin")
   assert.match(html, new RegExp(`aria-label="${adminScreenLabel}"`))
   /* One mode leaves nothing to switch between. */
   assert.doesNotMatch(html, /aria-label="导航模式"/)
-  /* The 平台管理 panes are a Portal-mounted sheet, so they are not in the shell's
-     markup: which panes a rank may mount is the settings vocabulary's answer, and
-     this is the label set the rail must resolve for super_admin. The behavioural
-     pin (ids, refused resolution, non-super ranks) lives in
-     src/lib/settings-sections.test.ts. */
+  // Platform settings replace business navigation only while settings is open.
   assert.deepEqual(
     adminSettingsRowsFor("super_admin").map((row) => row.label),
     ["用户", "厂家账号", "OCR", "AI 账号池", "对象存储", "支付", "网络代理", "提示词", "受限标签", "类目", "兑换", "代理", "日志", "订单"],
   )
+})
+
+test("admin settings replace business navigation with an inline page and a return control", () => {
+  const html = adminShell("super_admin", "media")
+  assert.match(html, /aria-label="设置分区"/)
+  assert.match(html, /aria-label="返回业务页面"/)
+  assert.match(html, /data-settings-page/)
+  assert.doesNotMatch(html, /aria-label="主导航"|role="dialog"|data-slot="dialog-content"/)
+  assert.match(html, /aria-label="对象存储"[^>]*aria-current="page"/)
+  const refused = adminShell("admin", "media")
+  assert.match(refused, /没有权限打开该设置/)
+  assert.doesNotMatch(refused, /aria-label="对象存储"/)
 })
 
 test("the /admin rail hides super_admin panes from an admin-rank session", () => {
@@ -207,7 +215,7 @@ test("the workbench shell never paints the admin rail or an admin section", () =
   )
   assert.doesNotMatch(html, /aria-label="对象存储"/)
   assert.doesNotMatch(html, /aria-label="提示词"/)
-  assert.match(html, /aria-label="导航模式"/)
+  assert.match(html, /aria-label="主导航"/)
 })
 
 test("AdminSurfaceDenied refuses without an alert role or raw error text", () => {

@@ -82,6 +82,10 @@ func TestWithTxSessions(t *testing.T) {
 
 // TestWithTxIsolatesSuppliers is the two-tenant case through withTx with
 // org 0, which is how every supplier-user read and write opens.
+//
+// The wallet arms are gone (§9: suppliers have no funds access), so isolation
+// is asserted through sc_source_members, which still carries a per-supplier
+// policy and is what Me() reads.
 func TestWithTxIsolatesSuppliers(t *testing.T) {
 	pool, ctx := parityDB(t)
 	userA, userB := int64(882101), int64(882102)
@@ -92,54 +96,31 @@ func TestWithTxIsolatesSuppliers(t *testing.T) {
 		dropSupplier(context.Background(), pool, userA, sourceA)
 		dropSupplier(context.Background(), pool, userB, sourceB)
 	})
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO supplier_wallets (source_id, balance_microfen, held_microfen, updated_at_ms)
-		VALUES ($1, 100, 0, 1), ($2, 200, 0, 1)`, sourceA, sourceB); err != nil {
-		t.Fatal(err)
-	}
 	repo := New(pool, tenant.BeginApp)
 	err := repo.withTx(ctx, 0, userA, func(tx pgx.Tx) error {
 		var sources string
-		if err := tx.QueryRow(ctx, `SELECT coalesce(string_agg(source_id, ','), '') FROM supplier_wallets`).Scan(&sources); err != nil {
-			return err
-		}
-		if sources != sourceA {
-			return fmt.Errorf("supplier A sees wallets %q", sources)
-		}
 		if err := tx.QueryRow(ctx, `SELECT coalesce(string_agg(source_id, ','), '') FROM sc_source_members`).Scan(&sources); err != nil {
 			return err
 		}
 		if sources != sourceA {
 			return fmt.Errorf("supplier A sees members %q", sources)
 		}
-		tag, err := tx.Exec(ctx, `UPDATE supplier_wallets SET balance_microfen = 0 WHERE source_id = $1`, sourceB)
-		if err != nil {
+		// Funds rows are invisible to a supplier session at all.
+		var funds int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM supplier_wallets`).Scan(&funds); err != nil {
 			return err
 		}
-		if tag.RowsAffected() != 0 {
-			return fmt.Errorf("supplier A updated source B (%d rows)", tag.RowsAffected())
-		}
-		if _, err := tx.Exec(ctx, `SAVEPOINT probe`); err != nil {
-			return err
-		}
-		_, insErr := tx.Exec(ctx, `
-			INSERT INTO supplier_withdrawals
-			    (source_id, amount_cents, amount_microfen, channel, account, real_name, status, requested_at_ms)
-			VALUES ($1, 1, 1000000, 'alipay', 'x', 'x', 'requested', 9)`, sourceB)
-		if _, err := tx.Exec(ctx, `ROLLBACK TO SAVEPOINT probe`); err != nil {
-			return err
-		}
-		if insErr == nil {
-			return errors.New("supplier A inserted a withdrawal for source B")
+		if funds != 0 {
+			return fmt.Errorf("supplier A sees %d wallet rows, want 0", funds)
 		}
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	wallets, err := repo.ListWallets(ctx, 0, userB)
-	if err != nil || len(wallets) != 1 || wallets[0].SourceID != sourceB || wallets[0].BalanceMicrofen != 200 {
-		t.Fatalf("supplier B wallets %+v %v", wallets, err)
+	me, err := repo.Me(ctx, userB)
+	if err != nil || len(me.Sources) != 1 || me.Sources[0].SourceID != sourceB {
+		t.Fatalf("supplier B sources %+v %v", me.Sources, err)
 	}
 }
 
@@ -170,23 +151,20 @@ func TestMissingTenantOpensNoTransaction(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	for _, ids := range [][2]int64{{0, 0}, {-1, 0}, {0, -1}, {-1, -1}} {
-		if _, err := repo.ListWallets(ctx, ids[0], ids[1]); err != contract.ErrNoTenant {
-			t.Fatalf("ListWallets %v: %v", ids, err)
-		}
-		if _, err := repo.ListWithdrawals(ctx, ids[0], ids[1]); err != contract.ErrNoTenant {
-			t.Fatalf("ListWithdrawals %v: %v", ids, err)
+		if _, err := repo.Me(ctx, ids[1]); err == nil || (ids[1] <= 0 && err != contract.ErrNoTenant) {
+			t.Fatalf("Me %v: %v", ids, err)
 		}
 	}
 	if n := dials.Load(); n != 0 {
 		t.Fatalf("missing tenant dialed %d times", n)
 	}
-	if _, err := New(nil, tenant.BeginApp).ListWallets(ctx, 0, 7); err != contract.ErrUnavailable {
+	if _, err := New(nil, tenant.BeginApp).Me(ctx, 7); err != contract.ErrUnavailable {
 		t.Fatalf("nil pool: %v", err)
 	}
-	if _, err := New(pool, nil).ListWallets(ctx, 0, 7); err != contract.ErrUnavailable {
+	if _, err := New(pool, nil).Me(ctx, 7); err != contract.ErrUnavailable {
 		t.Fatalf("nil begin: %v", err)
 	}
-	if _, err := repo.ListWallets(ctx, 0, 7); err == nil || dials.Load() == 0 {
+	if _, err := repo.Me(ctx, 7); err == nil || dials.Load() == 0 {
 		t.Fatalf("control call: err %v dials %d", err, dials.Load())
 	}
 }

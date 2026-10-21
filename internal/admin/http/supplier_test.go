@@ -106,6 +106,10 @@ func TestSupplierValidationAndAuthBytes(t *testing.T) {
 		t.Fatalf("pay json %d %s", rec.Code, rec.Body.String())
 	}
 	rec = call(staff, http.MethodGet, "/api/admin/supplier-automation/grants", "")
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "需要超级管理员权限") {
+		t.Fatalf("grant guard %d %s", rec.Code, rec.Body.String())
+	}
+	rec = call(super, http.MethodGet, "/api/admin/supplier-automation/grants", "")
 	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), "登录已失效") {
 		t.Fatalf("grant %d %s", rec.Code, rec.Body.String())
 	}
@@ -166,7 +170,7 @@ func (f fakeStore) CreateAccount(context.Context, contract.Actor, domain.Normali
 func (f fakeStore) PatchAccount(context.Context, contract.Actor, string, domain.AccountPatch, string) (domain.Member, *string, error) {
 	return domain.Member{}, nil, nil
 }
-func (f fakeStore) DeleteAccount(context.Context, contract.Actor, string) error { return nil }
+func (f fakeStore) DeleteAccount(context.Context, contract.Actor, string, int64) error { return nil }
 func (f fakeStore) AccountStaff(context.Context, int64) (bool, bool, error) {
 	return false, false, nil
 }
@@ -190,4 +194,22 @@ func (f fakeStore) CreateGrant(context.Context, contract.Actor, domain.GrantInpu
 }
 func (f fakeStore) RevokeGrant(context.Context, contract.Actor, string) (string, error) {
 	return "", nil
+}
+func (f fakeStore) ListFulfillers(context.Context, contract.Actor, string) ([]domain.Fulfiller, error) {
+	return nil, nil
+}
+func (f fakeStore) GrantFulfiller(context.Context, contract.Actor, string, int64, int64) (domain.Fulfiller, error) {
+	return domain.Fulfiller{}, nil
+}
+func (f fakeStore) RevokeFulfiller(context.Context, contract.Actor, string, string, int64) error {
+	return nil
+}
+func (f fakeStore) ListCatalogManagers(context.Context, contract.Actor, string) ([]domain.CatalogManager, error) {
+	return nil, nil
+}
+func (f fakeStore) GrantCatalogManager(context.Context, contract.Actor, string, int64, int64) (domain.CatalogManager, error) {
+	return domain.CatalogManager{}, nil
+}
+func (f fakeStore) RevokeCatalogManager(context.Context, contract.Actor, string, string, int64) error {
+	return nil
 }

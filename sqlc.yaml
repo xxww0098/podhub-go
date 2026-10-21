@@ -17,14 +17,6 @@ sql:
         out: internal/delegate/gen
         sql_package: pgx/v5
   - engine: postgresql
-    queries: db/queries/supplier
-    schema: db/schema/pr8a/supplier.sql
-    gen:
-      go:
-        package: sqlcgen
-        out: internal/supplier/gen
-        sql_package: pgx/v5
-  - engine: postgresql
     queries: db/queries/supply
     schema: db/schema/pr8a/supply.sql
     gen:

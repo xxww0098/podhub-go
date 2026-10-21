@@ -41,7 +41,7 @@ export function ThemeToggleCompact({ className }: { className?: string } = {}) {
           />
         }
       >
-        <Icon className="size-4" aria-hidden />
+        <Icon className="size-5" aria-hidden />
       </TooltipTrigger>
       <TooltipContent>{`外观：${current.label}`}</TooltipContent>
     </Tooltip>

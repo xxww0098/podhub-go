@@ -12,7 +12,7 @@ import (
 )
 
 func TestAdminRouteCounts(t *testing.T) {
-	if len(SupplierRoutes()) != 40 || len(CatalogRoutes()) != 3 || len(PlatformRoutes()) != 76 {
+	if len(SupplierRoutes()) != 46 || len(CatalogRoutes()) != 3 || len(PlatformRoutes()) != 76 {
 		t.Fatalf("supplier %d catalog %d platform %d", len(SupplierRoutes()), len(CatalogRoutes()), len(PlatformRoutes()))
 	}
 	for _, rt := range Routes() {

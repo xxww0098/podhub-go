@@ -165,6 +165,17 @@ func (q *Queries) ClearLoginAttempt(ctx context.Context, arg ClearLoginAttemptPa
 	return err
 }
 
+const clearMustChangePassword = `-- name: ClearMustChangePassword :exec
+UPDATE account_users
+SET must_change_password = false
+WHERE id = $1
+`
+
+func (q *Queries) ClearMustChangePassword(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, clearMustChangePassword, id)
+	return err
+}
+
 const consumeEmailToken = `-- name: ConsumeEmailToken :one
 UPDATE auth_email_tokens
 SET consumed_at = clock_timestamp()
@@ -839,6 +850,7 @@ func (q *Queries) ReplacePassword(ctx context.Context, arg ReplacePasswordParams
 
 const resolveAccount = `-- name: ResolveAccount :one
 SELECT u.id, u.public_id, u.email, u.role, p.name, p.supplier_id,
+       u.account_kind, u.must_change_password,
        COALESCE(active_workspace.org_id, 0)::bigint AS org_id,
        COALESCE(active_workspace.workspace_role, '')::text AS workspace_role
 FROM account_sessions s
@@ -864,14 +876,16 @@ LIMIT 1
 `
 
 type ResolveAccountRow struct {
-	ID            int64
-	PublicID      string
-	Email         string
-	Role          string
-	Name          string
-	SupplierID    string
-	OrgID         int64
-	WorkspaceRole string
+	ID                 int64
+	PublicID           string
+	Email              string
+	Role               string
+	Name               string
+	SupplierID         string
+	AccountKind        string
+	MustChangePassword bool
+	OrgID              int64
+	WorkspaceRole      string
 }
 
 func (q *Queries) ResolveAccount(ctx context.Context, tokenHash string) (ResolveAccountRow, error) {
@@ -884,6 +898,8 @@ func (q *Queries) ResolveAccount(ctx context.Context, tokenHash string) (Resolve
 		&i.Role,
 		&i.Name,
 		&i.SupplierID,
+		&i.AccountKind,
+		&i.MustChangePassword,
 		&i.OrgID,
 		&i.WorkspaceRole,
 	)

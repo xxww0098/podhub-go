@@ -24,6 +24,8 @@ func TestDispatchRLS(t *testing.T) {
 	seedSource(t, ctx, pool, sourceB, "rls-b")
 	seedMember(t, ctx, pool, sourceA, memberA, "active")
 	seedMember(t, ctx, pool, sourceB, memberB, "active")
+	seedFulfiller(t, ctx, pool, sourceA, memberA)
+	seedFulfiller(t, ctx, pool, sourceB, memberB)
 	t.Cleanup(func() {
 		cleanupDelegate(t, context.Background(), pool, orgA, sellerA, sourceA)
 		cleanupDelegate(t, context.Background(), pool, orgB, sellerB, sourceB)
@@ -54,6 +56,24 @@ func TestDispatchRLS(t *testing.T) {
 	both, err := repo.ListDispatches(ctx, orgB, memberA)
 	if err != nil || len(both) != 2 {
 		t.Fatalf("or policies %+v %v", both, err)
+	}
+
+	// Revoking a fulfiller must not hide the packets it is still holding.
+	// ux_sc_source_fulfillers_one_active allows a single active row per
+	// source, so a rebind is "disable the old one, add the new one". 00363
+	// deliberately keeps status out of the USING predicate so the disabled
+	// row keeps its history readable; only WITH CHECK and the definer gate
+	// in 00364 consult status. If USING filtered on active, revoking would
+	// silently erase the in-flight packets from the very supplier that has
+	// to finish them.
+	if _, err := pool.Exec(ctx, `
+		UPDATE sc_source_fulfillers SET status = 'disabled', revoked_at_ms = 2
+		WHERE source_id = $1`, sourceA); err != nil {
+		t.Fatal(err)
+	}
+	afterRevoke, err := repo.ListDispatches(ctx, 0, memberA)
+	if err != nil || !onlyDispatch(afterRevoke, dispatchA) {
+		t.Fatalf("revoked fulfiller lost its packet: %+v %v", afterRevoke, err)
 	}
 	if _, err := repo.ListDispatches(ctx, 0, 0); err != contract.ErrNoTenant {
 		t.Fatalf("missing tenant %v", err)

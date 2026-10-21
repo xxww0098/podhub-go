@@ -60,6 +60,20 @@ func seedMember(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sourceID 
 	}
 }
 
+// seedFulfiller binds a user as the active fulfiller of a source and returns
+// the fulfiller id a packet is pinned to. Dispatch reads this row to decide who
+// receives a packet, and the action functions in 00364 gate on the id.
+func seedFulfiller(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sourceID string, userID int64) string {
+	t.Helper()
+	var fulfillerID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO sc_source_fulfillers (source_id, user_id, status, created_by, created_at_ms)
+		VALUES ($1, $2, 'active', $2, 1) RETURNING fulfiller_id::text`, sourceID, userID).Scan(&fulfillerID); err != nil {
+		t.Fatal(err)
+	}
+	return fulfillerID
+}
+
 func seedOrder(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, sourceID, state string, lines []lineSpec) string {
 	t.Helper()
 	orderID, _ := seedPacketLines(t, ctx, pool, orgID, userID, sourceID, state, lines)
@@ -111,9 +125,14 @@ func seedPacketLines(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgI
 		if line.packet == "" {
 			continue
 		}
+		// A packet is pinned to the source's active fulfiller, exactly as
+		// dispatchReady and writePackets do. Without it the definer gate in
+		// 00364 rejects every action, because there is no legitimate recipient.
 		if err := pool.QueryRow(ctx, `
-			INSERT INTO delegate_dispatches (org_id, order_id, source_id, dispatch_no, payload, state, created_at_ms, updated_at_ms)
-			VALUES ($1, $2, $3, $4, jsonb_build_object('lines', jsonb_build_array(jsonb_build_object('line_id', $5::text))), $6, $7, $7)
+			INSERT INTO delegate_dispatches (org_id, order_id, source_id, dispatch_no, payload, state, fulfiller_id, created_at_ms, updated_at_ms)
+			VALUES ($1, $2, $3, $4, jsonb_build_object('lines', jsonb_build_array(jsonb_build_object('line_id', $5::text))), $6,
+			        (SELECT f.fulfiller_id FROM sc_source_fulfillers f
+			          WHERE f.source_id = $3 AND f.status = 'active'), $7, $7)
 			RETURNING dispatch_id::text`,
 			orgID, orderID, sourceID, "no-"+uuid.NewString(), lineID, line.packet, i+1).Scan(&lastDispatch); err != nil {
 			t.Fatal(err)
@@ -135,6 +154,9 @@ func cleanupDelegate(t testing.TB, ctx context.Context, pool *pgxpool.Pool, orgI
 		_, _ = pool.Exec(ctx, `DELETE FROM organizations WHERE id = $1`, orgID)
 	}
 	if sourceID != "" {
+		// Fulfillers first: delegate_dispatches carries a composite FK to
+		// (source_id, fulfiller_id), so the packets must already be gone.
+		_, _ = pool.Exec(ctx, `DELETE FROM sc_source_fulfillers WHERE source_id = $1`, sourceID)
 		_, _ = pool.Exec(ctx, `DELETE FROM sc_source_members WHERE source_id = $1`, sourceID)
 		_, _ = pool.Exec(ctx, `DELETE FROM supplier_wallets WHERE source_id = $1`, sourceID)
 		_, _ = pool.Exec(ctx, `DELETE FROM supplier_withdrawals WHERE source_id = $1`, sourceID)

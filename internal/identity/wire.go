@@ -106,6 +106,14 @@ type sessionDataWire struct {
 	NameChangedAtMS    *int64               `json:"name_changed_at_ms,omitempty"`
 	Accounts           []sessionAccountWire `json:"accounts"`
 	EmailVerified      *bool                `json:"email_verified,omitempty"`
+	// AccountKind and MustChangePassword are authenticated-only: the anonymous
+	// body is a separate literal (anonymousSessionBody), so neither appears
+	// there. account_kind is always non-empty for a signed-in session.
+	// must_change_password is omitted while false — absence reads as false, the
+	// same shape email_verified already uses — and present as true while the
+	// account is locked to the §4.2 whitelist.
+	AccountKind        string `json:"account_kind,omitempty"`
+	MustChangePassword bool   `json:"must_change_password,omitempty"`
 }
 
 func anonymousSessionBody() []byte {

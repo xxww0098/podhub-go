@@ -16,6 +16,7 @@ type Account struct {
 	SeatsUsed     int64
 	TokensUsed    int64
 	TokensMonthly int64
+	AccountKind   string
 }
 
 // Person is one directory member or unaffiliated account.

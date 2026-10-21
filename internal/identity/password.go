@@ -62,6 +62,15 @@ func (s *Service) Password(r *http.Request) Result {
 		if err := q.ReplacePassword(r.Context(), sqlc.ReplacePasswordParams{PasswordHash: nextHash, ID: acc.id}); err != nil {
 			return false, err
 		}
+		// A self password change is the one write that clears the lock: the same
+		// transaction swaps the hash and lifts must_change_password, so the flag
+		// can never outlive the password it was set against. Provision and staff
+		// SetPassword set it to true (doc §4.2); POST /api/auth/reset leaves it
+		// alone on purpose — a reset session is not signed in, and the user
+		// unlocks by signing in and changing the password here.
+		if err := q.ClearMustChangePassword(r.Context(), acc.id); err != nil {
+			return false, err
+		}
 		n, err := q.DeleteUserSessions(r.Context(), acc.id)
 		if err != nil {
 			return false, err
@@ -184,6 +193,10 @@ func (s *Service) Reset(r *http.Request) Result {
 		if err := q.ReplacePassword(r.Context(), sqlc.ReplacePasswordParams{PasswordHash: hash, ID: userID}); err != nil {
 			return false, err
 		}
+		// Deliberately does NOT clear must_change_password: this path is not
+		// signed in and belongs to the forgot-password flow, not to the doc
+		// §4.2 write points. The user signs in and clears it via
+		// POST /api/auth/password, which the gate keeps reachable.
 		if _, err := q.DeleteUserSessions(r.Context(), userID); err != nil {
 			return false, err
 		}

@@ -58,6 +58,8 @@ type AccountUser struct {
 	AgentAttributedAt      pgtype.Timestamptz
 	AgentAttributionBps    pgtype.Int4
 	AgentAttributionSource pgtype.Text
+	AccountKind            string
+	MustChangePassword     bool
 }
 
 type AiRequest struct {

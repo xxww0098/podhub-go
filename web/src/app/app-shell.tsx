@@ -26,19 +26,16 @@ import {
 import { withWorkflowCardId } from "@/features/workflow/workflow-navigation"
 import { replaceAddress } from "@/lib/address"
 import { Breadcrumb } from "@/components/breadcrumb"
-import { NavModeSwitcher } from "@/components/nav-mode-switcher"
 import { useScreenActive } from "@/components/screen-pane"
+import { cn } from "@/lib/utils"
 import {
-  SettingsDialog,
+  SettingsPage,
   SettingsOpenProvider,
-} from "@/app/settings-dialog"
-import { GlobalSearch } from "@/app/global-search"
-import {
-  adminSettingsRowsFor,
-  type SettingsSection,
-} from "@/lib/settings-sections"
+} from "@/app/settings-page"
+import { SettingsNavigation } from "@/app/settings-navigation"
+import { resolveSettingsPane, settingsRowsFor, type SettingsSection } from "@/lib/settings-sections"
 import { HeaderWalletBalance } from "@/components/workspace-quota-facts"
-import { WorkspaceMenu } from "@/components/workspace-switcher"
+import { AccountMenu, WorkspaceMenu } from "@/components/workspace-switcher"
 import {
   Sidebar,
   SidebarContent,
@@ -54,13 +51,8 @@ import {
   TooltipProvider,
 } from "@/components/ui/tooltip"
 import {
-  NAVIGATION,
-  modeOfScreen,
-  navItemsFor,
-  navModesFor,
-  staffNavModes,
+  sidebarGroupsFor,
   type NavAudience,
-  type NavMode,
 } from "@/lib/app-navigation"
 import { isPlatformStaffRole, isPlatformSuperAdminRole } from "@/lib/platform-role"
 import {
@@ -112,11 +104,11 @@ type AppShellProps = {
   screen: AppScreen
   onScreenChange: (screen: AppScreen) => void
   /**
-   * The `/admin` surface: staff-only nav, a settings rail, and a sheet whose
+   * The `/admin` surface: staff-only nav and a settings page whose
    * open/section state belongs to the caller (the URL) instead of this shell.
    */
   adminSurface?: boolean
-  /** The section the admin URL asks the sheet to open; null keeps it closed. */
+  /** The section the admin URL asks to open; null shows the business page. */
   settingsRequest?: SettingsSection | null
   /** Admin surface only: open (`section`) or close (`null`) by URL. */
   onSettingsRequestChange?: (section: SettingsSection | null) => void
@@ -164,18 +156,10 @@ export function AppShell({
   const entitlement = overview?.entitlement
   const isAgent = overview?.is_agent === true
   const isStaff = isPlatformStaffRole(overview?.session.role)
-  // Platform management is a super_admin surface; the main-menu 平台 mode is
-  // staff-wide. One predicate decides both, so an `admin` rank can run
-  // 货源管理 without ever seeing a platform-management pane.
-  const adminSettings = adminSettingsRowsFor(overview?.session.role)
   const audience: NavAudience = {
     isAgent, isStaff, isSuperAdmin: isPlatformSuperAdminRole(overview?.session.role),
   }
-  // `/admin` paints the staff modes and nothing else — one boundary, one
-  // audience. The workbench keeps the full switcher.
-  const visibleModes = adminSurface
-    ? staffNavModes().filter((mode) => navModesFor(audience).includes(mode))
-    : navModesFor(audience)
+  const navigation = sidebarGroupsFor(adminSurface ? "admin" : "workbench", audience)
   // Cloud owns Account Mode; the shell only projects what it was told. Never
   // re-derive it from the Workspace list — an empty list is not proof of standing.
   const standing: WorkspaceStandingView | undefined = overview?.account_mode
@@ -189,49 +173,42 @@ export function AppShell({
     : undefined
   const [trail, setTrail] = useState<TrailEntry>()
   const publishTrail = useCallback((entry?: TrailEntry) => setTrail(entry), [])
-  const [heldMode, setHeldMode] = useState<NavMode>("workbench")
-  const [lastByMode, setLastByMode] = useState<Partial<Record<NavMode, AppScreen>>>({})
-  const screenMode = modeOfScreen(screen)
-  const mode = screenMode && visibleModes.includes(screenMode) ? screenMode : heldMode
-  const [settingsOpen, setSettingsOpen] = useState(false)
-  const [settingsSection, setSettingsSection] =
-    useState<SettingsSection>("account")
-  // On `/admin` the sheet is URL state: the caller owns `?settings=`, so the
-  // address always names the pane that is open and a reload re-opens it. The
-  // workbench keeps the ephemeral sheet it has always had.
+  const [localSettingsSection, setLocalSettingsSection] = useState<SettingsSection | null>(null)
+  const settingsSection = adminSurface ? settingsRequest : localSettingsSection
+  const settingsOpen = settingsSection !== null
+  const settingsRows = settingsRowsFor(overview?.session.role)
+  const settingsResolution = resolveSettingsPane({ requested: settingsSection ?? "account", available: settingsRows, adminSurface })
+  const settingsPane = settingsResolution.kind === "pane" ? settingsResolution.section : ""
+  const settingsLabel = settingsRows.find((row) => row.id === settingsPane)?.label ?? "没有权限打开该设置"
+  // Admin settings stay URL-owned; business panes stay mounted underneath so
+  // returning restores the original page, form state and scroll position.
   const openSettings = useCallback(
     (section: SettingsSection = "account") => {
-      setSettingsSection(section)
       if (adminSurface) {
         onSettingsRequestChange?.(section)
         return
       }
-      setSettingsOpen(true)
+      setLocalSettingsSection(section)
     },
     [adminSurface, onSettingsRequestChange],
   )
-  const changeSettingsOpen = useCallback(
-    (open: boolean) => {
+  const closeSettings = useCallback(
+    () => {
       if (adminSurface) {
-        if (!open) onSettingsRequestChange?.(null)
+        onSettingsRequestChange?.(null)
         return
       }
-      setSettingsOpen(open)
+      setLocalSettingsSection(null)
     },
     [adminSurface, onSettingsRequestChange],
   )
 
-  useEffect(() => {
-    if (!adminSurface) return
-    if (settingsRequest) {
-      setSettingsSection(settingsRequest)
-      setSettingsOpen(true)
-      return
-    }
-    setSettingsOpen(false)
-  }, [adminSurface, settingsRequest])
+  const navigateFromShell = useCallback((next: AppScreen) => {
+    closeSettings()
+    onScreenChange(next)
+  }, [closeSettings, onScreenChange])
   const openPlans = useCallback(() => openSettings("plans"), [openSettings])
-  const openUsage = useCallback(() => onScreenChange("usage"), [onScreenChange])
+  const openUsage = useCallback(() => navigateFromShell("usage"), [navigateFromShell])
   // The bell and the settings pane both land here: the centre floats, so
   // opening it never repaints (or, on /admin, reloads across) the surface.
   const [inboxMounted, setInboxMounted] = useState(false)
@@ -249,25 +226,9 @@ export function AppShell({
     if (cardId) {
       replaceAddress({ search: withWorkflowCardId(window.location.search, cardId) })
     }
-    onScreenChange("listing")
-  }, [onScreenChange])
-  const openStores = useCallback(() => onScreenChange("stores"), [onScreenChange])
-
-  useEffect(() => {
-    const next = modeOfScreen(screen)
-    if (!next) return
-    if (NAVIGATION[next].staffOnly && !isStaff) return
-    setHeldMode(next)
-    setLastByMode((prev) => (prev[next] === screen ? prev : { ...prev, [next]: screen }))
-  }, [screen, isStaff])
-
-  const openMode = useCallback(
-    (next: NavMode) => {
-      setHeldMode(next)
-      onScreenChange(lastByMode[next] ?? NAVIGATION[next].items[0].id)
-    },
-    [lastByMode, onScreenChange],
-  )
+    navigateFromShell("listing")
+  }, [navigateFromShell])
+  const openStores = useCallback(() => navigateFromShell("stores"), [navigateFromShell])
 
   return (
     <TooltipProvider>
@@ -282,71 +243,66 @@ export function AppShell({
       <SidebarProvider className="h-svh overflow-hidden bg-sidebar">
         <Sidebar collapsible="icon">
           <SidebarHeader className="relative">
-            <div className="flex h-7 items-center gap-2 px-2 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
+            <div className="flex h-10 items-center justify-center gap-2 px-0 group-data-[collapsible=icon]:px-0">
               <img
                 src="/app-icon.svg"
                 alt=""
                 aria-hidden
-                className="size-7 shrink-0 rounded-md group-data-[collapsible=icon]:size-9"
+                className="size-10 shrink-0 rounded-md group-data-[collapsible=icon]:size-9"
               />
-              <span className="relative min-w-0 group-data-[collapsible=icon]:hidden">
-                <span className="block truncate text-md font-medium tracking-[-0.01em]">
+              <span className="flex min-w-0 items-baseline gap-1 group-data-[collapsible=icon]:hidden">
+                <span className="block truncate text-2xl font-semibold tracking-[-0.01em]">
                   PodHub
                 </span>
                 <span
                   aria-hidden
                   data-version-chip
-                  className="pointer-events-none absolute bottom-0 left-full ml-1 select-none whitespace-nowrap text-meta font-medium leading-none text-muted-foreground"
+                  className="pointer-events-none shrink-0 select-none whitespace-nowrap text-meta font-medium leading-none text-muted-foreground"
                 >
                   {productVersionLabel()}
                 </span>
               </span>
             </div>
-            {/* The identity block owns the rail's top edge; the hairline steps
-                the header's px-3.5 back out so the rule spans the rail edge to
-                edge, restating the width on the data variant that outbids the
-                primitive's own w-full. Dropped in the icon fold. */}
-            <SidebarSeparator className="-mx-3.5 my-1 data-[orientation=horizontal]:w-[calc(100%_+_1.75rem)] group-data-[collapsible=icon]:hidden" />
-            <GlobalSearch
-              audience={audience}
-              adminSurface={adminSurface}
-              adminSections={adminSettings}
-              workspaceId={overview?.active_workspace?.id}
-              onScreenChange={onScreenChange}
-              onOpenSettings={openSettings}
-            />
-            {visibleModes.length > 1 ? (
-              <NavModeSwitcher
-                mode={mode}
-                modes={visibleModes}
-                onModeChange={openMode}
-              />
-            ) : null}
-          </SidebarHeader>
-
-          <SidebarContent>
-            <NavGroup
-              /* A surface with no mode to paint (the admin boundary reached by
-                 a session that is not staff) paints no destinations at all. */
-              items={visibleModes.includes(mode) ? navItemsFor(mode, audience) : []}
-              screen={screen}
-              onScreenChange={onScreenChange}
-            />
-          </SidebarContent>
-
-          <SidebarFooter>
+            <SidebarSeparator className="mx-0 my-1 group-data-[collapsible=icon]:hidden" />
             <WorkspaceMenu
               overview={overview}
               standing={standing}
-              onOpenSpace={onScreenChange}
+              onOpenSpace={navigateFromShell}
               spaceScreen={isWorkspaceSpaceScreen(screen) ? screen : undefined}
               onSwitchWorkspace={onSwitchWorkspace}
+              onWorkspaceCreated={onWorkspaceCreated}
+              onOpenPlans={openPlans}
+              onOverviewChange={onOverviewChange}
+            />
+          </SidebarHeader>
+
+          <SidebarContent>
+            {settingsOpen ? (
+              <SettingsNavigation rows={settingsRows} pane={settingsPane} onSelect={openSettings} onBack={closeSettings} overview={overview} />
+            ) : (
+            <nav aria-label="主导航">
+              {navigation.map((group) => (
+                <NavGroup
+                  key={group.label}
+                  label={group.label}
+                  items={group.items}
+                  screen={screen}
+                  onScreenChange={navigateFromShell}
+                />
+              ))}
+            </nav>
+            )}
+          </SidebarContent>
+
+          <SidebarFooter>
+            <SidebarSeparator className="mx-0 group-data-[collapsible=icon]:hidden" />
+            <AccountMenu
+              overview={overview}
+              standing={standing}
               onSwitchAccount={onSwitchAccount}
               onLogoutAccount={onLogoutAccount}
               onAddAccount={onAddAccount}
               onWorkspaceCreated={onWorkspaceCreated}
-              onOpenPlans={openPlans}
-              onOverviewChange={onOverviewChange}
               onSignedOut={onSignedOut}
             />
             <SidebarUtilityBar onOpenSettings={openSettings} />
@@ -358,8 +314,8 @@ export function AppShell({
           <header className="mx-2.5 mt-2.5 flex h-11 shrink-0 items-center gap-2 rounded-xl border border-border/60 bg-muted/40 px-3">
             <SidebarTrigger className="md:hidden" />
             <Breadcrumb
-              moduleLabel={SCREEN_LABELS[screen] ?? screen}
-              trail={trail}
+              moduleLabel={settingsOpen ? "设置" : SCREEN_LABELS[screen] ?? screen}
+              trail={settingsOpen ? { label: settingsLabel, onExit: () => openSettings() } : trail}
             />
             <div className="flex-1" aria-hidden />
             <ShellHeaderActivity screen={screen} onOpenListing={openListing} />
@@ -386,9 +342,22 @@ export function AppShell({
               is the jitter operators feel as "the app reloading". Content
               measure stays fixed — swapping max-width on nav is CLS.
             */}
-            <div className="page-canvas mx-auto flex flex-1 flex-col gap-4">
+            <div className={cn("page-canvas mx-auto flex flex-1 flex-col gap-4", settingsOpen && "hidden")} hidden={settingsOpen} inert={settingsOpen} aria-hidden={settingsOpen}>
               {children}
             </div>
+            {settingsSection !== null ? (
+              <SettingsPage
+                onBack={closeSettings}
+                overview={overview}
+                onOverviewChange={onOverviewChange}
+                onSignedOut={onSignedOut}
+                onNavigate={navigateFromShell}
+                onOpenNotifications={openNotifications}
+                section={settingsSection}
+                onSectionChange={openSettings}
+                adminSurface={adminSurface}
+              />
+            ) : null}
           </div>
         </SidebarInset>
         {/* Once mounted it stays mounted: close animates out and the next
@@ -400,22 +369,10 @@ export function AppShell({
               onOpenChange={setInboxOpen}
               focusUuid={inboxFocus}
               notifications={notifications}
-              onNavigate={onScreenChange}
+              onNavigate={navigateFromShell}
             />
           </Suspense>
         ) : null}
-        <SettingsDialog
-          open={settingsOpen}
-          onOpenChange={changeSettingsOpen}
-          overview={overview}
-          onOverviewChange={onOverviewChange}
-          onSignedOut={onSignedOut}
-          onNavigate={onScreenChange}
-          onOpenNotifications={openNotifications}
-          section={settingsSection}
-          onSectionChange={openSettings}
-          adminSurface={adminSurface}
-        />
       </SidebarProvider>
       </SettingsOpenProvider>
       </TrailContext.Provider>

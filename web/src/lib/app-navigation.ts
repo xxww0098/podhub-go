@@ -122,6 +122,25 @@ export function navItemsFor(mode: NavMode, audience: NavAudience): NavItem[] {
  */
 export type Surface = "workbench" | "admin"
 
+const SIDEBAR_GROUPS: { label: string; screens: readonly AppScreen[] }[] = [
+  { label: "总览", screens: ["console"] },
+  { label: "商品经营", screens: ["catalog", "listing", "products"] },
+  { label: "订单履约", screens: ["ops-shipping", "delegate-orders", "ops-returns", "ops-supply"] },
+  { label: "客户服务", screens: ["message-center", "ops-voice"] },
+  { label: "代理", screens: ["agent"] },
+  { label: NAVIGATION.admin.label, screens: NAVIGATION.admin.items.map((item) => item.id) },
+]
+
+/** Group the existing permitted destinations without changing route permissions. */
+export function sidebarGroupsFor(surface: Surface, audience: NavAudience) {
+  const modes = surface === "admin" ? staffNavModes() : navModesFor(audience)
+  const items = modes.flatMap((mode) => navItemsFor(mode, audience))
+  return SIDEBAR_GROUPS.map(({ label, screens }) => ({
+    label,
+    items: screens.flatMap((id) => items.filter((item) => item.id === id)),
+  })).filter((group) => group.items.length > 0)
+}
+
 /**
  * Workbench screens that have an address but no sidebar row: the Workspace
  * switcher, the wallet chip and the notification bell each navigate to one.

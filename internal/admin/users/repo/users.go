@@ -22,7 +22,8 @@ SELECT u.id, u.public_id, u.email, u.role, p.name, u.plan,
        o.id AS org_id, o.plan AS org_plan, o.seat_limit,
        COALESCE(seats.used, 0) AS seats_used,
        COALESCE(tokens.used, 0) AS ai_tokens_used,
-       COALESCE(pl.ai_tokens_monthly, 0) AS ai_tokens_monthly
+       COALESCE(pl.ai_tokens_monthly, 0) AS ai_tokens_monthly,
+       u.account_kind
 FROM account_users u
 JOIN account_profiles p ON p.user_id = u.id
 LEFT JOIN LATERAL (
@@ -62,7 +63,7 @@ func scanAccount(row pgx.Row) (userscontract.Account, error) {
 	var seat *int64
 	err := row.Scan(&a.ID, &a.PublicID, &a.Email, &a.Role, &a.Name, &a.Plan,
 		&a.Disabled, &a.CreatedAt, &orgID, &orgPlan, &seat,
-		&a.SeatsUsed, &a.TokensUsed, &a.TokensMonthly)
+		&a.SeatsUsed, &a.TokensUsed, &a.TokensMonthly, &a.AccountKind)
 	if err != nil {
 		return userscontract.Account{}, err
 	}
@@ -551,6 +552,9 @@ func (s *Users) SetRole(ctx context.Context, actor corecontract.Actor, publicID,
 		if err != nil {
 			return err
 		}
+		if current.AccountKind != "" && current.AccountKind != "platform" {
+			return contract.Forbidden("供应商账号不能设为平台角色")
+		}
 		last := false
 		if userscontract.RankFromStored(current.Role) == userscontract.RankSuper {
 			last, err = s.lastSuper(ctx, tx)
@@ -601,7 +605,13 @@ func (s *Users) SetPassword(ctx context.Context, actor corecontract.Actor, publi
 		if err := tx.QueryRow(ctx, `SELECT id FROM account_users WHERE id = $1 FOR NO KEY UPDATE`, current.ID).Scan(&locked); err != nil {
 			return err
 		}
-		tag, err := tx.Exec(ctx, `UPDATE account_users SET password_hash = $1, updated_at = clock_timestamp() WHERE id = $2`, hash, current.ID)
+		// Doc §4.2: this is the "staff reset" write point and it always raises the
+		// flag, so the owner must pick a new password on the next sign-in. Only
+		// identity's POST /api/auth/password clears it.
+		tag, err := tx.Exec(ctx, `
+			UPDATE account_users
+			   SET password_hash = $1, must_change_password = true, updated_at = clock_timestamp()
+			 WHERE id = $2`, hash, current.ID)
 		if err != nil {
 			return err
 		}

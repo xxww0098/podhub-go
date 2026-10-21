@@ -72,6 +72,7 @@ func TestDispatchActionsMatchSQLFunction(t *testing.T) {
 	seedSource(t, ctx, pool, sourceID, "actions-880011")
 	seedMember(t, ctx, pool, sourceID, member, "active")
 	seedMember(t, ctx, pool, sourceID, other, "disabled")
+	fulfillerID := seedFulfiller(t, ctx, pool, sourceID, member)
 	t.Cleanup(func() {
 		cleanupDelegate(t, context.Background(), pool, orgID, member, sourceID)
 		cleanupDelegate(t, context.Background(), pool, 0, other, "")
@@ -113,14 +114,17 @@ func TestDispatchActionsMatchSQLFunction(t *testing.T) {
 		if reason != "no stock" {
 			t.Fatalf("reason %s", reason)
 		}
+		// The latch is fulfiller-scoped now (00362): it records the recipient
+		// the line was refused by, not the source, so a rebind to a different
+		// factory does not pin the line as permanently undispatchable.
 		if err := pool.QueryRow(ctx, `
-			SELECT l.last_rejected_source_id FROM delegate_order_lines l
+			SELECT l.last_rejected_fulfiller_id::text FROM delegate_order_lines l
 			JOIN delegate_dispatches d ON d.order_id = l.order_id
 			WHERE d.dispatch_id = $1`, dispatchID).Scan(&latched); err != nil {
 			t.Fatal(err)
 		}
-		if latched != sourceID {
-			t.Fatalf("latch %s", latched)
+		if latched != fulfillerID {
+			t.Fatalf("latch %s want %s", latched, fulfillerID)
 		}
 		if _, err := repo.Reject(ctx, 0, member, dispatchID, "again"); err != contract.ErrTerminal {
 			t.Fatalf("second reject %v", err)
@@ -166,10 +170,36 @@ func TestDispatchActionsMatchSQLFunction(t *testing.T) {
 		}
 	})
 
-	t.Run("disabled member", func(t *testing.T) {
+	// A packet pinned to another factory's fulfiller is invisible under
+	// delegate_fulfiller_isolation, so the repo cannot even name the
+	// recipient and reports not-found. That is not an information leak:
+	// DELEGATE_FORBIDDEN and DELEGATE_NOT_FOUND both reach the HTTP layer
+	// as a bare 404, so a caller cannot probe for other factories' packets.
+	t.Run("non-recipient", func(t *testing.T) {
 		_, dispatchID := seedPacket(t, ctx, pool, orgID, member, sourceID, "dispatched", "dispatched", &readyFalse)
-		if _, err := repo.Accept(ctx, 0, other, dispatchID); err != contract.ErrForbidden {
+		if _, err := repo.Accept(ctx, 0, other, dispatchID); err != contract.ErrNotFound {
+			t.Fatalf("non-recipient accept: %v", err)
+		}
+	})
+
+	// Revoking a fulfiller must stop them acting on packets they still hold.
+	// 00363 keeps status out of the USING predicate precisely so these
+	// packets stay readable; the definer function's active check is what
+	// turns the read into DELEGATE_FORBIDDEN.
+	t.Run("revoked fulfiller", func(t *testing.T) {
+		_, dispatchID := seedPacket(t, ctx, pool, orgID, member, sourceID, "dispatched", "dispatched", &readyFalse)
+		if _, err := pool.Exec(ctx, `
+			UPDATE sc_source_fulfillers SET status = 'disabled', revoked_at_ms = 2
+			WHERE fulfiller_id = $1::uuid`, fulfillerID); err != nil {
 			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			_, _ = pool.Exec(context.Background(), `
+				UPDATE sc_source_fulfillers SET status = 'active', revoked_at_ms = NULL
+				WHERE fulfiller_id = $1::uuid`, fulfillerID)
+		})
+		if _, err := repo.Accept(ctx, 0, member, dispatchID); err != contract.ErrForbidden {
+			t.Fatalf("revoked fulfiller accept: %v", err)
 		}
 	})
 

@@ -59,6 +59,7 @@ func (s *Service) sessionBody(ctx context.Context, cred Credentials, token strin
 	}
 	admin := RoleFromStored(acc.role).IsStaff()
 	mode := projectAccountMode(standing.OwnedCount, standing.MembershipCount)
+	kind := AccountKindFromStored(acc.accountKind)
 	data := sessionDataWire{
 		Authenticated:      true,
 		IsAdmin:            &admin,
@@ -73,6 +74,8 @@ func (s *Service) sessionBody(ctx context.Context, cred Credentials, token strin
 		AvatarRevision:     asInt64Ptr(marks.AvatarRevision),
 		NameChangedAtMS:    pgInt(marks.NameChangedAtMs),
 		Accounts:           accounts,
+		AccountKind:        kind,
+		MustChangePassword: acc.mustChangePassword,
 	}
 	if !verified {
 		falsy := false

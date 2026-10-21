@@ -18,7 +18,7 @@ import (
 const (
 	usableMember = `m.status = 'active' AND NOT m.manual_disabled AND NOT m.quota_suspended`
 	openStates   = `'awaiting_setup', 'ready', 'dispatched', 'in_production', 'shipped'`
-	orderCols    = `order_id::text, store_id::text, posting_number, seller_note, state, cancel_requested, posting_snapshot, logistics, created_at_ms, updated_at_ms`
+	orderCols    = `order_id::text, store_id::text, posting_number, seller_note, state, cancel_requested, posting_snapshot, logistics, created_at_ms, updated_at_ms, dispatch_blocked_reason`
 )
 
 func mapDB(err error) error {
@@ -298,7 +298,7 @@ func loadBindings(ctx context.Context, tx pgx.Tx, orgID int64, storeID, bindingI
 		SELECT b.binding_id::text, b.store_id::text, b.offer_id, b.note, b.active, b.revision,
 		       b.created_at_ms, b.updated_at_ms,
 		       s.source_id, s.name, s.country, s.icon,
-		       public.delegate_source_active_member_count(b.source_id)
+		       public.delegate_source_active_fulfiller_count(b.source_id)
 		  FROM delegate_bindings b
 		  JOIN sc_sources s ON s.source_id = b.source_id
 		 WHERE b.org_id = $1
@@ -312,12 +312,12 @@ func loadBindings(ctx context.Context, tx pgx.Tx, orgID int64, storeID, bindingI
 	var bindings []contract.Binding
 	for rows.Next() {
 		var row contract.Binding
-		var members int64
+		var fulfillers int64
 		if err := rows.Scan(&row.BindingID, &row.StoreID, &row.OfferID, &row.Note, &row.Active, &row.Revision,
-			&row.CreatedAtMS, &row.UpdatedAtMS, &row.Source.SourceID, &row.Source.Name, &row.Source.Country, &row.Source.Icon, &members); err != nil {
+			&row.CreatedAtMS, &row.UpdatedAtMS, &row.Source.SourceID, &row.Source.Name, &row.Source.Country, &row.Source.Icon, &fulfillers); err != nil {
 			return nil, err
 		}
-		row.Warning = domain.MemberWarning(members)
+		row.Warning = domain.FulfillerWarning(fulfillers)
 		row.Assets = []contract.Asset{}
 		bindings = append(bindings, row)
 	}

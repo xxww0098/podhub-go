@@ -15,7 +15,7 @@ test("confirming a remittance refreshes the shell overview", () => {
   assert.match(confirm, /await reload\(\)/)
   assert.match(confirm, /await onSessionMayChange\?\.\(\)/)
   const shell = readFileSync(
-    new URL("../src/app/settings-dialog.tsx", import.meta.url),
+    new URL("../src/app/settings-page.tsx", import.meta.url),
     "utf8",
   )
   assert.match(shell, /<OrdersScreen\s+onSessionMayChange=\{refreshOverview\}\s*\/>/)

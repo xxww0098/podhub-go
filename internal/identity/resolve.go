@@ -22,6 +22,7 @@ func (s *Service) resolveToken(ctx context.Context, token string) (account, bool
 		id: row.ID, publicID: row.PublicID, email: row.Email, role: row.Role,
 		name: row.Name, supplierID: row.SupplierID, orgID: row.OrgID,
 		workspaceRole: row.WorkspaceRole,
+		accountKind:   row.AccountKind, mustChangePassword: row.MustChangePassword,
 	}, true, nil
 }
 

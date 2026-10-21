@@ -599,6 +599,48 @@ export interface paths {
       };
     };
   };
+  "/api/admin/supplier-dbs/{source_id}/fulfillers": {
+    /** list_source_fulfillers */
+    get: operations["list_source_fulfillers"];
+    /** grant_source_fulfiller */
+    post: operations["grant_source_fulfiller"];
+    parameters: {
+      path: {
+        source_id: string;
+      };
+    };
+  };
+  "/api/admin/supplier-dbs/{source_id}/fulfillers/{fulfiller_id}": {
+    /** revoke_source_fulfiller */
+    delete: operations["revoke_source_fulfiller"];
+    parameters: {
+      path: {
+        source_id: string;
+        fulfiller_id: string;
+      };
+    };
+  };
+  "/api/admin/supplier-dbs/{source_id}/catalog-managers": {
+    /** list_catalog_managers */
+    get: operations["list_catalog_managers"];
+    /** grant_catalog_manager */
+    post: operations["grant_catalog_manager"];
+    parameters: {
+      path: {
+        source_id: string;
+      };
+    };
+  };
+  "/api/admin/supplier-dbs/{source_id}/catalog-managers/{manager_id}": {
+    /** revoke_catalog_manager */
+    delete: operations["revoke_catalog_manager"];
+    parameters: {
+      path: {
+        source_id: string;
+        manager_id: string;
+      };
+    };
+  };
   "/api/admin/supplier-dbs/{source_id}/rows/{product_id}/prompt/diff": {
     /** diff_supplier_prompt */
     get: operations["diff_supplier_prompt"];
@@ -1240,6 +1282,10 @@ export interface paths {
     /** List delegate sources */
     get: operations["delegate_list_sources"];
   };
+  "/api/supplier-catalog/sources": {
+    /** Sources this account may maintain as a catalogue manager */
+    get: operations["listSupplierCatalogSources"];
+  };
   "/api/supplier-dbs/catalog": {
     /** Supplier-DB catalog entries for the seller surface */
     get: operations["seller_supplier_db_catalog"];
@@ -1298,16 +1344,6 @@ export interface paths {
   "/api/supplier/me": {
     /** The signed-in supplier's portal profile */
     get: operations["supplierMe"];
-  };
-  "/api/supplier/wallet": {
-    /** The supplier's wallet balances */
-    get: operations["get_wallet"];
-  };
-  "/api/supplier/withdrawals": {
-    /** The supplier's withdrawal history */
-    get: operations["list_withdrawals"];
-    /** Request one withdrawal; idempotent via the Idempotency-Key header */
-    post: operations["request_withdrawal"];
   };
   "/api/seller/warehouses": {
     /** Cached Ozon warehouses for one store */
@@ -2597,6 +2633,11 @@ export interface components {
       workspaces: components["schemas"]["WorkspaceSummaryView"][];
     };
     AccountSessionView: {
+      /**
+       * @description platform or supplier. The single source of truth for which surface an
+       * account belongs to; `target` stays a login landing-page hint only.
+       */
+      account_kind?: string;
       authenticated: boolean;
       /**
        * @description `GET /api/avatars/me`, revision-stamped. Absent when the User has no
@@ -2611,6 +2652,12 @@ export interface components {
       email_verified?: boolean;
       /** @description Derived display flag (`role != user`). Not an authorization signal. */
       is_admin?: boolean;
+      /**
+       * @description True while a provisioned or staff-reset account has not replaced its
+       * password. While true every route answers 403 PASSWORD_CHANGE_REQUIRED
+       * except GET /api/auth/session, POST /api/auth/{login,logout,password}.
+       */
+      must_change_password?: boolean;
       name?: string;
       /**
        * Format: int64
@@ -2961,7 +3008,7 @@ export interface components {
       wallet_held_microfen: number;
     };
     AdminFactoryWithdrawalListData: {
-      withdrawals: components["schemas"]["SupplierWithdrawalView"][];
+      withdrawals: components["schemas"]["AdminFactoryWithdrawalView"][];
     };
     AdminMemberSeatApplyRequest: {
       /**
@@ -8125,31 +8172,7 @@ export interface components {
       reason?: string | null;
       tracking_no?: string | null;
     };
-    SupplierWalletListData: {
-      wallets: components["schemas"]["SupplierWalletView"][];
-    };
-    SupplierWalletView: {
-      /** Format: int64 */
-      available_microfen: number;
-      /** Format: int64 */
-      balance_microfen: number;
-      /** Format: int64 */
-      held_microfen: number;
-      name: string;
-      source_id: string;
-    };
-    SupplierWithdrawalListData: {
-      withdrawals: components["schemas"]["SupplierWithdrawalView"][];
-    };
-    SupplierWithdrawalRequest: {
-      account: string;
-      /** Format: int64 */
-      amount_cents: number;
-      channel: string;
-      real_name: string;
-      source_id: string;
-    };
-    SupplierWithdrawalView: {
+    AdminFactoryWithdrawalView: {
       account: string;
       /** Format: int64 */
       amount_cents: number;
@@ -14884,6 +14907,392 @@ export interface operations {
       };
     };
   };
+  /** list_source_fulfillers */
+  list_source_fulfillers: {
+    parameters: {
+      path: {
+        source_id: string;
+      };
+    };
+    responses: {
+      /** @description Implemented */
+      200: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Request or path parameter rejected */
+      400: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Not signed in */
+      401: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description The session guard refused */
+      403: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Record not found in this scope */
+      404: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Conflict with the current state */
+      409: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Rate or quota limit reached */
+      429: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Database or downstream error */
+      500: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description A dependency is unavailable */
+      503: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+    };
+  };
+  /** grant_source_fulfiller */
+  grant_source_fulfiller: {
+    parameters: {
+      path: {
+        source_id: string;
+      };
+    };
+    responses: {
+      /** @description Implemented */
+      200: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Request or path parameter rejected */
+      400: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Not signed in */
+      401: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description The session guard refused */
+      403: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Record not found in this scope */
+      404: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Conflict with the current state */
+      409: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Rate or quota limit reached */
+      429: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Database or downstream error */
+      500: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description A dependency is unavailable */
+      503: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+    };
+  };
+  /** revoke_source_fulfiller */
+  revoke_source_fulfiller: {
+    parameters: {
+      path: {
+        source_id: string;
+        fulfiller_id: string;
+      };
+    };
+    responses: {
+      /** @description Implemented */
+      200: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Request or path parameter rejected */
+      400: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Not signed in */
+      401: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description The session guard refused */
+      403: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Record not found in this scope */
+      404: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Conflict with the current state */
+      409: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Rate or quota limit reached */
+      429: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Database or downstream error */
+      500: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description A dependency is unavailable */
+      503: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+    };
+  };
+  /** list_catalog_managers */
+  list_catalog_managers: {
+    parameters: {
+      path: {
+        source_id: string;
+      };
+    };
+    responses: {
+      /** @description Implemented */
+      200: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Request or path parameter rejected */
+      400: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Not signed in */
+      401: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description The session guard refused */
+      403: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Record not found in this scope */
+      404: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Conflict with the current state */
+      409: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Rate or quota limit reached */
+      429: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Database or downstream error */
+      500: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description A dependency is unavailable */
+      503: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+    };
+  };
+  /** grant_catalog_manager */
+  grant_catalog_manager: {
+    parameters: {
+      path: {
+        source_id: string;
+      };
+    };
+    responses: {
+      /** @description Implemented */
+      200: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Request or path parameter rejected */
+      400: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Not signed in */
+      401: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description The session guard refused */
+      403: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Record not found in this scope */
+      404: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Conflict with the current state */
+      409: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Rate or quota limit reached */
+      429: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Database or downstream error */
+      500: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description A dependency is unavailable */
+      503: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+    };
+  };
+  /** revoke_catalog_manager */
+  revoke_catalog_manager: {
+    parameters: {
+      path: {
+        source_id: string;
+        manager_id: string;
+      };
+    };
+    responses: {
+      /** @description Implemented */
+      200: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Request or path parameter rejected */
+      400: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Not signed in */
+      401: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description The session guard refused */
+      403: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Record not found in this scope */
+      404: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Conflict with the current state */
+      409: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Rate or quota limit reached */
+      429: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Database or downstream error */
+      500: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description A dependency is unavailable */
+      503: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+    };
+  };
   /** diff_supplier_prompt */
   diff_supplier_prompt: {
     parameters: {
@@ -21037,6 +21446,35 @@ export interface operations {
       };
     };
   };
+  /** Sources this account may maintain as a catalogue manager */
+  listSupplierCatalogSources: {
+    responses: {
+      /** @description Implemented */
+      200: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Not signed in */
+      401: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description The session guard refused */
+      403: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Database or downstream error */
+      500: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+    };
+  };
   /** Supplier-DB catalog entries for the seller surface */
   seller_supplier_db_catalog: {
     responses: {
@@ -21458,159 +21896,6 @@ export interface operations {
       };
       /** @description Database or downstream error */
       500: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-    };
-  };
-  /** The supplier's wallet balances */
-  get_wallet: {
-    responses: {
-      /** @description Implemented */
-      200: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Request or path parameter rejected */
-      400: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Not signed in */
-      401: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description The session guard refused */
-      403: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Record not found in this scope */
-      404: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Conflict with the current state */
-      409: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Database or downstream error */
-      500: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-    };
-  };
-  /** The supplier's withdrawal history */
-  list_withdrawals: {
-    responses: {
-      /** @description Implemented */
-      200: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Request or path parameter rejected */
-      400: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Not signed in */
-      401: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description The session guard refused */
-      403: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Record not found in this scope */
-      404: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Conflict with the current state */
-      409: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Database or downstream error */
-      500: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-    };
-  };
-  /** Request one withdrawal; idempotent via the Idempotency-Key header */
-  request_withdrawal: {
-    responses: {
-      /** @description Implemented */
-      200: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Request or path parameter rejected */
-      400: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Not signed in */
-      401: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description The session guard refused */
-      403: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Record not found in this scope */
-      404: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Conflict with the current state */
-      409: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Rate or quota limit reached */
-      429: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Database or downstream error */
-      500: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description A dependency is unavailable */
-      503: {
         content: {
           "application/json": Record<string, never>;
         };
@@ -24250,7 +24535,9 @@ export interface operations {
     responses: {
       200: {
         content: {
-          "application/json": components["schemas"]["AccountOverviewData"];
+          "application/json": {
+            data: components["schemas"]["AccountOverviewData"];
+          };
         };
       };
       401: {

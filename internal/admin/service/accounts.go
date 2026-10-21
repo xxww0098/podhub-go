@@ -74,7 +74,7 @@ func (s Service) DeleteAccount(ctx context.Context, actor contract.Actor, member
 	if s.Store == nil {
 		return unavailable(nil)
 	}
-	return fillDisabled(s.Store.DeleteAccount(ctx, actor, id), msgPortalWrites)
+	return fillDisabled(s.Store.DeleteAccount(ctx, actor, id, s.nowMs()), msgPortalWrites)
 }
 
 func (s Service) AccountStaff(ctx context.Context, userID int64) (bool, bool, error) {

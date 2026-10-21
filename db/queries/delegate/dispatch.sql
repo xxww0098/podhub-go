@@ -1,14 +1,16 @@
 -- name: AcceptDispatch :one
 SELECT delegate_supplier_accept(
     sqlc.arg(dispatch_id)::uuid,
-    sqlc.arg(supplier_user_id)::bigint
+    sqlc.arg(supplier_user_id)::bigint,
+    sqlc.arg(fulfiller_id)::uuid
 )::text AS state;
 
 -- name: RejectDispatch :one
 SELECT delegate_supplier_reject(
     sqlc.arg(dispatch_id)::uuid,
     sqlc.arg(supplier_user_id)::bigint,
-    sqlc.arg(reason)::text
+    sqlc.arg(reason)::text,
+    sqlc.arg(fulfiller_id)::uuid
 )::text AS state;
 
 -- name: ShipDispatch :one
@@ -17,7 +19,8 @@ SELECT delegate_supplier_ship(
     sqlc.arg(supplier_user_id)::bigint,
     sqlc.arg(tracking_no)::text,
     sqlc.arg(note)::text,
-    sqlc.arg(now_ms)::bigint
+    sqlc.arg(now_ms)::bigint,
+    sqlc.arg(fulfiller_id)::uuid
 )::text AS state;
 
 -- name: ListDispatchStates :many

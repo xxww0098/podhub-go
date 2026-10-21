@@ -139,7 +139,7 @@ test("store list shows unread on one line and a brand ring on the selected store
   assert.match(html, /role="listbox"/)
 })
 
-test("the screen module lives under 运维 after 供货 and before 口碑", () => {
+test("the customer-service destinations remain after fulfilment in the grouped navigation", () => {
   const html = renderToStaticMarkup(
     <NotificationsProvider>
       <AppShell screen="message-center" onScreenChange={() => {}} onSignedOut={() => {}}>{null}</AppShell>
@@ -149,7 +149,8 @@ test("the screen module lives under 运维 after 供货 and before 口碑", () =
   const messageAt = html.indexOf("客服消息")
   const voiceAt = html.indexOf("评价口碑")
   assert.ok(supplyAt >= 0 && messageAt > supplyAt && voiceAt > messageAt)
-  assert.doesNotMatch(html, /批量上架|店铺商品/)
+  assert.match(html, /批量上架/)
+  assert.match(html, /店铺商品/)
 })
 
 test("MessageCenterScreen is the exported workbench", () => {

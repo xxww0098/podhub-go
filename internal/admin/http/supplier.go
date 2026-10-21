@@ -453,6 +453,78 @@ func (h handler) dispatch(w http.ResponseWriter, r *http.Request, rt Route, p Se
 			Revoked bool   `json:"revoked"`
 		}{id, true})
 		return true
+	case "GET /api/admin/supplier-dbs/{source_id}/fulfillers":
+		rows, err := svc.ListFulfillers(r.Context(), actor, chi.URLParam(r, "source_id"))
+		if err != nil {
+			writeFail(w, fam, err)
+			return true
+		}
+		writeData(w, http.StatusOK, struct {
+			Fulfillers []domain.Fulfiller `json:"fulfillers"`
+		}{rows})
+		return true
+	case "POST /api/admin/supplier-dbs/{source_id}/fulfillers":
+		body, err := readBody(r)
+		if err != nil {
+			writeFamily(w, fam, http.StatusBadRequest, "请求格式无效", contract.KindValidation)
+			return true
+		}
+		row, err := svc.GrantFulfiller(r.Context(), actor, chi.URLParam(r, "source_id"), body)
+		if err != nil {
+			writeFail(w, fam, err)
+			return true
+		}
+		writeData(w, http.StatusCreated, struct {
+			Fulfiller domain.Fulfiller `json:"fulfiller"`
+		}{row})
+		return true
+	case "DELETE /api/admin/supplier-dbs/{source_id}/fulfillers/{fulfiller_id}":
+		id := chi.URLParam(r, "fulfiller_id")
+		if err := svc.RevokeFulfiller(r.Context(), actor, chi.URLParam(r, "source_id"), id); err != nil {
+			writeFail(w, fam, err)
+			return true
+		}
+		writeData(w, http.StatusOK, struct {
+			FulfillerID string `json:"fulfillerId"`
+			Revoked     bool   `json:"revoked"`
+		}{id, true})
+		return true
+	case "GET /api/admin/supplier-dbs/{source_id}/catalog-managers":
+		rows, err := svc.ListCatalogManagers(r.Context(), actor, chi.URLParam(r, "source_id"))
+		if err != nil {
+			writeFail(w, fam, err)
+			return true
+		}
+		writeData(w, http.StatusOK, struct {
+			CatalogManagers []domain.CatalogManager `json:"catalogManagers"`
+		}{rows})
+		return true
+	case "POST /api/admin/supplier-dbs/{source_id}/catalog-managers":
+		body, err := readBody(r)
+		if err != nil {
+			writeFamily(w, fam, http.StatusBadRequest, "请求格式无效", contract.KindValidation)
+			return true
+		}
+		row, err := svc.GrantCatalogManager(r.Context(), actor, chi.URLParam(r, "source_id"), body)
+		if err != nil {
+			writeFail(w, fam, err)
+			return true
+		}
+		writeData(w, http.StatusCreated, struct {
+			CatalogManager domain.CatalogManager `json:"catalogManager"`
+		}{row})
+		return true
+	case "DELETE /api/admin/supplier-dbs/{source_id}/catalog-managers/{manager_id}":
+		id := chi.URLParam(r, "manager_id")
+		if err := svc.RevokeCatalogManager(r.Context(), actor, chi.URLParam(r, "source_id"), id); err != nil {
+			writeFail(w, fam, err)
+			return true
+		}
+		writeData(w, http.StatusOK, struct {
+			ManagerID string `json:"managerId"`
+			Revoked   bool   `json:"revoked"`
+		}{id, true})
+		return true
 	default:
 		return h.dispatchX1(w, r, rt, actor)
 	}

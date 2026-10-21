@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 import type { AccountOverview, WorkspaceStandingView } from "../src/bindings/commands"
 import {
   WorkspaceMenu,
+  AccountMenu,
   applyLocalWorkspaceSwitch,
 } from "../src/components/workspace-switcher"
 import { planTone } from "../src/components/workspace-display"
@@ -144,7 +145,7 @@ const standing: WorkspaceStandingView = {
   owned_limit: overview.owned_limit,
 }
 
-test("workspace menu names the active Workspace on the trigger and subtitles the owner role", () => {
+test("workspace trigger names the workspace and plan; the account trigger owns personal identity", () => {
   const html = renderToStaticMarkup(
     <SidebarProvider>
       <WorkspaceMenu
@@ -152,16 +153,17 @@ test("workspace menu names the active Workspace on the trigger and subtitles the
         standing={standing}
         onOpenSpace={() => {}}
         onSwitchWorkspace={() => {}}
-        onSignedOut={() => {}}
       />
     </SidebarProvider>
   )
 
-  assert.match(html, /aria-label="账户与 Workspace 演示 Workspace，专业版，owner"/)
+  assert.match(html, /aria-label="工作空间 演示 Workspace，专业版"/)
   assert.match(html, /data-plan="pro"/)
-  // The membership role is the only subtitle, owner included — the crown is
-  // gone, so ownership reads as measured text, not as an ornament.
-  assert.match(html, /所有者/)
+  assert.doesNotMatch(html, /seller@example.invalid/)
+  const account = renderToStaticMarkup(<SidebarProvider><AccountMenu overview={overview} standing={standing} onSignedOut={() => {}} /></SidebarProvider>)
+  assert.match(account, /aria-label="账户 Seller，owner"/)
+  assert.match(account, /seller@example.invalid/)
+  assert.doesNotMatch(account, /演示 Workspace|data-plan=/)
   assert.doesNotMatch(html, /data-slot="owner-crown"/)
   assert.match(
     readFileSync(new URL("../src/components/workspace-switcher.tsx", import.meta.url), "utf8"),
@@ -172,7 +174,7 @@ test("workspace menu names the active Workspace on the trigger and subtitles the
   assert.doesNotMatch(html, /供应商/)
 })
 
-test("workspace menu heads with the active Workspace, keeps the account a muted row, and anchors 退出登录 last", () => {
+test("workspace and account dropdowns keep their actions separate", () => {
   const source = readFileSync(new URL("../src/components/workspace-switcher.tsx", import.meta.url), "utf8")
   const menuStart = source.indexOf("<DropdownMenuContent")
   const menuEnd = source.indexOf("</DropdownMenuContent>", menuStart)
@@ -191,19 +193,16 @@ test("workspace menu heads with the active Workspace, keeps the account a muted 
     menu.indexOf("升级"),
     menu.indexOf("兑换码"),
     menu.indexOf("邀请成员"),
-    menu.indexOf("添加账号"),
-    menu.indexOf("<AccountActionsSubmenu"),
     menu.indexOf("可切换的 Workspace"),
     menu.indexOf("创建工作空间"),
-    menu.indexOf("其他已登录账号"),
-    menu.lastIndexOf("退出登录"),
   ]
   assert.ok(order.every((index) => index >= 0), "every region is present")
   assert.deepEqual([...order].sort((left, right) => left - right), order)
-  /* The head is the Workspace the trigger already names; the account is the
-     muted email row under the actions — its own user mark sits there, never
-     leading the menu. */
-  assert.ok(menu.indexOf("<WorkspaceMark") < menu.indexOf('kind="user"'))
+  assert.doesNotMatch(menu, /添加账号|退出登录|其他已登录账号|kind="user"/)
+  const account = source.slice(source.indexOf("export function AccountMenu"), source.indexOf("export function createWorkspaceRefusal"))
+  assert.match(account, /<StackedAccountItems/)
+  assert.match(account, /添加账号/)
+  assert.match(account, /退出登录/)
   /* 邀请成员 loads the directory when opened and hands the same dialog the
      团队协作区 pane uses; the row itself only renders for owner/manager. */
   assert.match(source, /accountGetWorkspaceDirectory\(\)/)
@@ -221,7 +220,7 @@ test("workspace menu heads with the active Workspace, keeps the account a muted 
      footer gear — duplicating it inside the menu is the website habit this
      console dropped. */
   assert.doesNotMatch(menu, /onOpenSettings|>\s*设置\s*</)
-  assert.match(menu, /onClick=\{\(\) => void signOut\(\)\}/)
+  assert.match(account, /onClick=\{\(\) => void signOut\(\)\}/)
   assert.doesNotMatch(source, /const WELL|bg-muted p-0\.5/)
   assert.doesNotMatch(menu, /<DropdownMenuLabel>Workspace</)
   assert.doesNotMatch(menu, /aria-label="本机设备"/)

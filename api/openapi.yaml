@@ -5958,6 +5958,404 @@ paths:
             application/json:
               schema:
                 type: object
+  "/api/admin/supplier-dbs/{source_id}/fulfillers":
+    parameters:
+    - in: path
+      name: source_id
+      required: true
+      schema:
+        type: string
+    get:
+      operationId: list_source_fulfillers
+      tags:
+      - admin
+      summary: list_source_fulfillers
+      responses:
+        '200':
+          description: Implemented
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          description: Request or path parameter rejected
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+        '403':
+          description: The session guard refused
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          description: Record not found in this scope
+          content:
+            application/json:
+              schema:
+                type: object
+        '409':
+          description: Conflict with the current state
+          content:
+            application/json:
+              schema:
+                type: object
+        '429':
+          description: Rate or quota limit reached
+          content:
+            application/json:
+              schema:
+                type: object
+        '500':
+          description: Database or downstream error
+          content:
+            application/json:
+              schema:
+                type: object
+        '503':
+          description: A dependency is unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+    post:
+      operationId: grant_source_fulfiller
+      tags:
+      - admin
+      summary: grant_source_fulfiller
+      responses:
+        '200':
+          description: Implemented
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          description: Request or path parameter rejected
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+        '403':
+          description: The session guard refused
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          description: Record not found in this scope
+          content:
+            application/json:
+              schema:
+                type: object
+        '409':
+          description: Conflict with the current state
+          content:
+            application/json:
+              schema:
+                type: object
+        '429':
+          description: Rate or quota limit reached
+          content:
+            application/json:
+              schema:
+                type: object
+        '500':
+          description: Database or downstream error
+          content:
+            application/json:
+              schema:
+                type: object
+        '503':
+          description: A dependency is unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+  "/api/admin/supplier-dbs/{source_id}/fulfillers/{fulfiller_id}":
+    parameters:
+    - in: path
+      name: source_id
+      required: true
+      schema:
+        type: string
+    - in: path
+      name: fulfiller_id
+      required: true
+      schema:
+        type: string
+    delete:
+      operationId: revoke_source_fulfiller
+      tags:
+      - admin
+      summary: revoke_source_fulfiller
+      responses:
+        '200':
+          description: Implemented
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          description: Request or path parameter rejected
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+        '403':
+          description: The session guard refused
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          description: Record not found in this scope
+          content:
+            application/json:
+              schema:
+                type: object
+        '409':
+          description: Conflict with the current state
+          content:
+            application/json:
+              schema:
+                type: object
+        '429':
+          description: Rate or quota limit reached
+          content:
+            application/json:
+              schema:
+                type: object
+        '500':
+          description: Database or downstream error
+          content:
+            application/json:
+              schema:
+                type: object
+        '503':
+          description: A dependency is unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+  "/api/admin/supplier-dbs/{source_id}/catalog-managers":
+    parameters:
+    - in: path
+      name: source_id
+      required: true
+      schema:
+        type: string
+    get:
+      operationId: list_catalog_managers
+      tags:
+      - admin
+      summary: list_catalog_managers
+      responses:
+        '200':
+          description: Implemented
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          description: Request or path parameter rejected
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+        '403':
+          description: The session guard refused
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          description: Record not found in this scope
+          content:
+            application/json:
+              schema:
+                type: object
+        '409':
+          description: Conflict with the current state
+          content:
+            application/json:
+              schema:
+                type: object
+        '429':
+          description: Rate or quota limit reached
+          content:
+            application/json:
+              schema:
+                type: object
+        '500':
+          description: Database or downstream error
+          content:
+            application/json:
+              schema:
+                type: object
+        '503':
+          description: A dependency is unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+    post:
+      operationId: grant_catalog_manager
+      tags:
+      - admin
+      summary: grant_catalog_manager
+      responses:
+        '200':
+          description: Implemented
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          description: Request or path parameter rejected
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+        '403':
+          description: The session guard refused
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          description: Record not found in this scope
+          content:
+            application/json:
+              schema:
+                type: object
+        '409':
+          description: Conflict with the current state
+          content:
+            application/json:
+              schema:
+                type: object
+        '429':
+          description: Rate or quota limit reached
+          content:
+            application/json:
+              schema:
+                type: object
+        '500':
+          description: Database or downstream error
+          content:
+            application/json:
+              schema:
+                type: object
+        '503':
+          description: A dependency is unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+  "/api/admin/supplier-dbs/{source_id}/catalog-managers/{manager_id}":
+    parameters:
+    - in: path
+      name: source_id
+      required: true
+      schema:
+        type: string
+    - in: path
+      name: manager_id
+      required: true
+      schema:
+        type: string
+    delete:
+      operationId: revoke_catalog_manager
+      tags:
+      - admin
+      summary: revoke_catalog_manager
+      responses:
+        '200':
+          description: Implemented
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          description: Request or path parameter rejected
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+        '403':
+          description: The session guard refused
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          description: Record not found in this scope
+          content:
+            application/json:
+              schema:
+                type: object
+        '409':
+          description: Conflict with the current state
+          content:
+            application/json:
+              schema:
+                type: object
+        '429':
+          description: Rate or quota limit reached
+          content:
+            application/json:
+              schema:
+                type: object
+        '500':
+          description: Database or downstream error
+          content:
+            application/json:
+              schema:
+                type: object
+        '503':
+          description: A dependency is unavailable
+          content:
+            application/json:
+              schema:
+                type: object
   "/api/admin/supplier-dbs/{source_id}/rows/{product_id}/prompt/diff":
     parameters:
     - in: path
@@ -12376,6 +12774,38 @@ paths:
             application/json:
               schema:
                 type: object
+  "/api/supplier-catalog/sources":
+    get:
+      operationId: listSupplierCatalogSources
+      tags:
+      - supplier-catalog
+      summary: Sources this account may maintain as a catalogue manager
+      responses:
+        '200':
+          description: Implemented
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+        '403':
+          description: The session guard refused
+          content:
+            application/json:
+              schema:
+                type: object
+        '500':
+          description: Database or downstream error
+          content:
+            application/json:
+              schema:
+                type: object
+
   "/api/supplier-dbs/catalog":
     get:
       operationId: seller_supplier_db_catalog
@@ -12828,164 +13258,6 @@ paths:
                 type: object
         '500':
           description: Database or downstream error
-          content:
-            application/json:
-              schema:
-                type: object
-  "/api/supplier/wallet":
-    get:
-      operationId: get_wallet
-      tags:
-      - supplier
-      summary: The supplier's wallet balances
-      responses:
-        '200':
-          description: Implemented
-          content:
-            application/json:
-              schema:
-                type: object
-        '400':
-          description: Request or path parameter rejected
-          content:
-            application/json:
-              schema:
-                type: object
-        '401':
-          description: Not signed in
-          content:
-            application/json:
-              schema:
-                type: object
-        '403':
-          description: The session guard refused
-          content:
-            application/json:
-              schema:
-                type: object
-        '404':
-          description: Record not found in this scope
-          content:
-            application/json:
-              schema:
-                type: object
-        '409':
-          description: Conflict with the current state
-          content:
-            application/json:
-              schema:
-                type: object
-        '500':
-          description: Database or downstream error
-          content:
-            application/json:
-              schema:
-                type: object
-  "/api/supplier/withdrawals":
-    get:
-      operationId: list_withdrawals
-      tags:
-      - supplier
-      summary: The supplier's withdrawal history
-      responses:
-        '200':
-          description: Implemented
-          content:
-            application/json:
-              schema:
-                type: object
-        '400':
-          description: Request or path parameter rejected
-          content:
-            application/json:
-              schema:
-                type: object
-        '401':
-          description: Not signed in
-          content:
-            application/json:
-              schema:
-                type: object
-        '403':
-          description: The session guard refused
-          content:
-            application/json:
-              schema:
-                type: object
-        '404':
-          description: Record not found in this scope
-          content:
-            application/json:
-              schema:
-                type: object
-        '409':
-          description: Conflict with the current state
-          content:
-            application/json:
-              schema:
-                type: object
-        '500':
-          description: Database or downstream error
-          content:
-            application/json:
-              schema:
-                type: object
-    post:
-      operationId: request_withdrawal
-      tags:
-      - supplier
-      summary: Request one withdrawal; idempotent via the Idempotency-Key header
-      responses:
-        '200':
-          description: Implemented
-          content:
-            application/json:
-              schema:
-                type: object
-        '400':
-          description: Request or path parameter rejected
-          content:
-            application/json:
-              schema:
-                type: object
-        '401':
-          description: Not signed in
-          content:
-            application/json:
-              schema:
-                type: object
-        '403':
-          description: The session guard refused
-          content:
-            application/json:
-              schema:
-                type: object
-        '404':
-          description: Record not found in this scope
-          content:
-            application/json:
-              schema:
-                type: object
-        '409':
-          description: Conflict with the current state
-          content:
-            application/json:
-              schema:
-                type: object
-        '429':
-          description: Rate or quota limit reached
-          content:
-            application/json:
-              schema:
-                type: object
-        '500':
-          description: Database or downstream error
-          content:
-            application/json:
-              schema:
-                type: object
-        '503':
-          description: A dependency is unavailable
           content:
             application/json:
               schema:
@@ -16257,7 +16529,13 @@ paths:
           content:
             application/json:
               schema:
-                "$ref": "#/components/schemas/AccountOverviewData"
+                type: object
+                required:
+                - data
+                properties:
+                  data:
+                    "$ref": "#/components/schemas/AccountOverviewData"
+                additionalProperties: false
         '401':
           description: ''
           content:
@@ -20055,6 +20333,11 @@ components:
       required:
       - authenticated
       properties:
+        account_kind:
+          type: string
+          description: |-
+            platform or supplier. The single source of truth for which surface an
+            account belongs to; `target` stays a login landing-page hint only.
         authenticated:
           type: boolean
         avatar_url:
@@ -20072,6 +20355,12 @@ components:
         is_admin:
           type: boolean
           description: Derived display flag (`role != user`). Not an authorization signal.
+        must_change_password:
+          type: boolean
+          description: |-
+            True while a provisioned or staff-reset account has not replaced its
+            password. While true every route answers 403 PASSWORD_CHANGE_REQUIRED
+            except GET /api/auth/session, POST /api/auth/{login,logout,password}.
         name:
           type: string
         name_changed_at_ms:
@@ -20757,7 +21046,7 @@ components:
         withdrawals:
           type: array
           items:
-            "$ref": "#/components/schemas/SupplierWithdrawalView"
+            "$ref": "#/components/schemas/AdminFactoryWithdrawalView"
       additionalProperties: false
     AdminMemberSeatApplyRequest:
       type: object
@@ -31774,71 +32063,7 @@ components:
           type: string
           nullable: true
       additionalProperties: false
-    SupplierWalletListData:
-      type: object
-      required:
-      - wallets
-      properties:
-        wallets:
-          type: array
-          items:
-            "$ref": "#/components/schemas/SupplierWalletView"
-      additionalProperties: false
-    SupplierWalletView:
-      type: object
-      required:
-      - source_id
-      - name
-      - balance_microfen
-      - held_microfen
-      - available_microfen
-      properties:
-        available_microfen:
-          type: integer
-          format: int64
-        balance_microfen:
-          type: integer
-          format: int64
-        held_microfen:
-          type: integer
-          format: int64
-        name:
-          type: string
-        source_id:
-          type: string
-      additionalProperties: false
-    SupplierWithdrawalListData:
-      type: object
-      required:
-      - withdrawals
-      properties:
-        withdrawals:
-          type: array
-          items:
-            "$ref": "#/components/schemas/SupplierWithdrawalView"
-      additionalProperties: false
-    SupplierWithdrawalRequest:
-      type: object
-      required:
-      - source_id
-      - amount_cents
-      - channel
-      - account
-      - real_name
-      properties:
-        account:
-          type: string
-        amount_cents:
-          type: integer
-          format: int64
-        channel:
-          type: string
-        real_name:
-          type: string
-        source_id:
-          type: string
-      additionalProperties: false
-    SupplierWithdrawalView:
+    AdminFactoryWithdrawalView:
       type: object
       required:
       - withdrawal_id

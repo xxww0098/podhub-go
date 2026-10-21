@@ -36,12 +36,20 @@ func TestCatalogMediaURLWhitelist(t *testing.T) {
 	shortH := mountCatalog(pool, sess, "short")
 	exampleH := mountCatalog(pool, sess, seal.ExampleIntegrationKey)
 
-	var rls bool
+	// 00365 turned RLS on for the catalog tables. Assert the post-00365
+	// invariant instead of the old "no RLS" world: forced RLS with at least
+	// one policy, so a bare table read cannot see every product.
+	var rls, forced bool
+	var policies int
 	if err := pool.QueryRow(ctx, `
-		SELECT c.relrowsecurity
+		SELECT c.relrowsecurity, c.relforcerowsecurity,
+		       (SELECT count(*) FROM pg_policy p WHERE p.polrelid = c.oid)
 		FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-		WHERE n.nspname = 'public' AND c.relname = 'sc_products'`).Scan(&rls); err != nil || rls {
-		t.Fatalf("sc_products rls %v %v", rls, err)
+		WHERE n.nspname = 'public' AND c.relname = 'sc_products'`).Scan(&rls, &forced, &policies); err != nil {
+		t.Fatalf("sc_products rls probe: %v", err)
+	}
+	if !rls || !forced || policies == 0 {
+		t.Fatalf("sc_products rls=%v forced=%v policies=%d", rls, forced, policies)
 	}
 
 	csrf := adminCall(ready, http.MethodPost, "/api/admin/platform-catalog/products", `{"title":"csrf"}`, http.Header{

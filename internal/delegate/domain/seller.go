@@ -255,12 +255,16 @@ func CanManage(role string) (manage bool, err error) {
 	}
 }
 
-// MemberWarning is the advisory when the factory has no active account.
-func MemberWarning(activeMembers int64) *string {
-	if activeMembers != 0 {
+// FulfillerWarning is the advisory when the factory has no active fulfiller.
+//
+// No fulfiller means no packet is created at all: dispatchReady records
+// dispatch_blocked_reason = 'no_fulfiller' and skips the source. Nothing
+// queues, so the message must not promise that it will.
+func FulfillerWarning(activeFulfillers int64) *string {
+	if activeFulfillers != 0 {
 		return nil
 	}
-	msg := "该厂家暂无可用账号，派发包会先排队等待"
+	msg := "该厂家暂无可用履约账号，派发包将无法创建，请联系平台处理"
 	return &msg
 }
 

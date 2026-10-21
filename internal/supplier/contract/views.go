@@ -113,41 +113,6 @@ type ActionData struct {
 	State      string `json:"state"`
 }
 
-// WalletView is one factory wallet, including a zero row when none is stored.
-type WalletView struct {
-	SourceID          string `json:"sourceId"`
-	Name              string `json:"name"`
-	BalanceMicrofen   int64  `json:"balanceMicrofen"`
-	HeldMicrofen      int64  `json:"heldMicrofen"`
-	AvailableMicrofen int64  `json:"availableMicrofen"`
-}
-
-// WalletListData is GET /api/supplier/wallet data.
-type WalletListData struct {
-	Wallets []WalletView `json:"wallets"`
-}
-
-// WithdrawalView is one withdrawal. Empty optionals are omitted.
-type WithdrawalView struct {
-	WithdrawalID  string  `json:"withdrawalId"`
-	SourceID      string  `json:"sourceId"`
-	Name          string  `json:"name"`
-	AmountCents   int64   `json:"amountCents"`
-	Channel       string  `json:"channel"`
-	Account       string  `json:"account"`
-	RealName      string  `json:"realName"`
-	Status        string  `json:"status"`
-	Reference     *string `json:"reference,omitempty"`
-	RejectReason  *string `json:"rejectReason,omitempty"`
-	RequestedAtMs int64   `json:"requestedAtMs"`
-	DecidedAtMs   *int64  `json:"decidedAtMs,omitempty"`
-}
-
-// WithdrawalListData is the list and the create response.
-type WithdrawalListData struct {
-	Withdrawals []WithdrawalView `json:"withdrawals"`
-}
-
 // DownloadGrant is the JSON asset grant.
 type DownloadGrant struct {
 	URL         string `json:"url"`

@@ -57,12 +57,13 @@ test("AppShell exposes the whole 平台管理 surface only to staff, panes only 
   assert.doesNotMatch(adminHtml, /aria-label="平台分区"/)
   assert.doesNotMatch(adminHtml, />集成</)
   assert.doesNotMatch(adminHtml, />兑换</)
-  assert.match(adminHtml, /aria-label="导航模式"/)
-  assert.match(adminHtml, /aria-label="工作台"/)
-  assert.match(adminHtml, /aria-label="履约"/)
+  assert.doesNotMatch(adminHtml, /aria-label="导航模式"/)
+  assert.match(adminHtml, /aria-label="主导航"/)
+  assert.match(adminHtml, /aria-label="商品经营"/)
+  assert.match(adminHtml, /aria-label="订单履约"/)
   assert.ok(
-    adminHtml.indexOf('aria-label="工作台"') < adminHtml.indexOf('aria-label="履约"'),
-    "nav modes are 工作台, 履约, then the staff mode",
+    adminHtml.indexOf('aria-label="商品经营"') < adminHtml.indexOf('aria-label="订单履约"'),
+    "business groups precede the staff-only group",
   )
   assert.match(adminHtml, /aria-label="数据大屏"/)
   assert.doesNotMatch(superHtml, /aria-label="平台分区"/)
@@ -85,7 +86,7 @@ test("AppShell exposes the whole 平台管理 surface only to staff, panes only 
   )
   assert.doesNotMatch(shellSource, /openSettings\("users"\)/)
   const settingsSource = readFileSync(
-    new URL("../src/app/settings-dialog.tsx", import.meta.url),
+    new URL("../src/app/settings-page.tsx", import.meta.url),
     "utf8",
   )
   assert.match(settingsSource, /settingsRowsFor\(overview\?\.session\.role\)/)
@@ -99,69 +100,26 @@ test("AppShell exposes the whole 平台管理 surface only to staff, panes only 
   assert.doesNotMatch(sectionsSource, /"agent"/)
 })
 
-test("AppShell titles the workspace menu with the active Workspace, not PlatformRole", () => {
-  const superHtml = renderToStaticMarkup(
-    <AppShell
-      screen="console"
-      overview={{
-        ...overview,
-        session: {
-          ...overview.session,
-          name: "李华",
-          email: "li@pod.com",
-          role: "super_admin",
-        },
-      }}
-      onScreenChange={() => {}}
-      onSignedOut={() => {}}
-      notifications={noNotifications}
-    >
-      <div />
-    </AppShell>,
-  )
-  assert.match(superHtml, /aria-label="账户与 Workspace 示例工作空间，专业版，超级管理员"/)
-  assert.doesNotMatch(superHtml, /aria-label="账户 超级管理员"/)
-  assert.doesNotMatch(superHtml, /aria-label="账户 平台管理员"/)
-
-  const adminHtml = renderToStaticMarkup(
-    <AppShell
-      screen="console"
-      overview={{
-        ...overview,
-        session: {
-          ...overview.session,
-          name: "周敏",
-          email: "zhou@pod.com",
-          role: "admin",
-        },
-      }}
-      onScreenChange={() => {}}
-      onSignedOut={() => {}}
-      notifications={noNotifications}
-    >
-      <div />
-    </AppShell>,
-  )
-  assert.match(adminHtml, /aria-label="账户与 Workspace 示例工作空间，专业版，平台管理员"/)
-  assert.doesNotMatch(adminHtml, /aria-label="账户 平台管理员"/)
-  // The trigger is the unified account+Workspace cell: it names the Workspace,
-  // its plan, and the account's own platform rank — never the menu glyph.
-  const menuLabel =
-    adminHtml.match(/aria-label="账户与 Workspace[^"]*"/)?.[0] ?? ""
-  assert.match(menuLabel, /示例工作空间/)
-  assert.match(menuLabel, /平台管理员/)
-
-  const menuSource = readFileSync(
-    new URL("../src/components/workspace-switcher.tsx", import.meta.url),
-    "utf8",
-  )
-  assert.match(menuSource, /账户与 Workspace/)
-  assert.doesNotMatch(
-    menuSource,
-    /platformStaffRoleLabel\(session\?\.role\) \?\?/,
-  )
-  /* The merged menu names the Workspace, never the staff rank. */
-  assert.doesNotMatch(menuSource, /staffLabel/)
+test("AppShell separates the header Workspace from the footer account identity", () => {
+  for (const [role, label] of [["admin", "平台管理员"], ["super_admin", "超级管理员"]]) {
+    const html = renderToStaticMarkup(
+      <AppShell screen="listing" overview={{ ...overview, session: { ...overview.session, name: "李华", email: "li@example.invalid", role } }} onScreenChange={() => {}} onSignedOut={() => {}} notifications={noNotifications}>
+        <div />
+      </AppShell>,
+    )
+    const header = html.slice(html.indexOf('data-sidebar="header"'), html.indexOf('data-sidebar="content"'))
+    const footer = html.slice(html.indexOf('data-sidebar="footer"'), html.indexOf('data-slot="sidebar-rail"'))
+    assert.match(header, /aria-label="工作空间 示例工作空间，专业版"/)
+    assert.doesNotMatch(header, /李华|li@example.invalid/)
+    assert.doesNotMatch(header, /<input|role="combobox"|搜索页面/)
+    assert.match(footer, new RegExp(`aria-label="账户 李华，${label}"`))
+    assert.match(footer, /li@example.invalid/)
+    assert.doesNotMatch(footer, /示例工作空间|data-plan=/)
+    const controls = ["账户 李华", "折叠侧栏", "外观：", "设置"].map((text) => footer.indexOf(text))
+    assert.ok(controls.every((index) => index >= 0))
+    assert.deepEqual(controls, [...controls].sort((a, b) => a - b))
+    assert.match(html, /aria-current="page"/)
+  }
 })
 
 test("AppShell keeps Workspace quota facts out of the sidebar footer", () => {
@@ -303,13 +261,13 @@ test("AppShell keeps Workspace destinations in the Workspace menu, not the accou
   // 用量 is not a rail button; the header wallet badge opens it.
   assert.doesNotMatch(html, /<button[^>]*aria-label="用量"/)
 
-  // Main menu has 数据大屏, 批量上架, 平台货源, 店铺商品 under 工作台. 消息 lives under 运维.
+  // All permitted business groups remain visible, including customer service.
   assert.match(html, /aria-label="数据大屏"/)
   assert.match(html, /aria-label="批量上架"/)
   assert.match(html, /aria-label="平台货源"/)
   assert.doesNotMatch(html, /aria-label="本地图库"/)
   assert.match(html, /aria-label="店铺商品"/)
-  assert.doesNotMatch(html, /aria-label="客服消息"/)
+  assert.match(html, /aria-label="客服消息"/)
 
   // Workspace destinations and diagnostics stay out of the rail; settings is the footer gear.
   assert.doesNotMatch(html, /aria-label="加购"/)
@@ -325,8 +283,8 @@ test("AppShell keeps Workspace destinations in the Workspace menu, not the accou
   // Header has the notification bell
   assert.match(html, /aria-label="通知（共 0 条）"/)
 
-  // Workspace menu trigger exists at footer
-  assert.match(html, /aria-label="账户与 Workspace 示例工作空间，专业版，用户"/)
+  // Workspace context stays in the header; the account has its own footer trigger.
+  assert.match(html, /aria-label="工作空间 示例工作空间，专业版"/)
 
   // Breadcrumb names the current module properly as 店铺
   assert.match(html, />店铺</)
@@ -336,8 +294,8 @@ test("AppShell keeps Workspace destinations in the Workspace menu, not the accou
     "utf8",
   )
   /* The merged menu carries 店铺; 用量 lives on the header wallet badge, and
-     平台 administration lives in the settings sheet. Password, avatar and
-     device preferences live in the settings dialog. */
+     平台 administration lives in the settings page. Password, avatar and
+     device preferences live in the settings page. */
   assert.match(menuSource, /SCREEN_LABELS\.stores/)
   assert.doesNotMatch(menuSource, /onOpenSpace\("usage"\)/)
   assert.doesNotMatch(menuSource, /onOpenPlatform/)
@@ -351,7 +309,7 @@ test("AppShell keeps Workspace destinations in the Workspace menu, not the accou
   assert.doesNotMatch(menuSource, /preloadScreen\("diagnostics"\)|onOpenDiagnostics/)
 
   const settingsSource = readFileSync(
-    new URL("../src/app/settings-dialog.tsx", import.meta.url),
+    new URL("../src/app/settings-page.tsx", import.meta.url),
     "utf8",
   )
   assert.match(settingsSource, />\s*修改密码\s*</)
@@ -366,7 +324,7 @@ test("AppShell keeps Workspace destinations in the Workspace menu, not the accou
   assert.equal("diagnostics" in SCREEN_LABELS, false)
 })
 
-test("AppShell ops mode lists fulfilment items and hides the workspace trio", () => {
+test("AppShell keeps business destinations visible while an order screen is selected", () => {
   const html = renderToStaticMarkup(
     <AppShell
       screen="ops-shipping"
@@ -386,7 +344,7 @@ test("AppShell ops mode lists fulfilment items and hides the workspace trio", ()
   assert.match(html, /aria-label="评价口碑"/)
   assert.ok(html.indexOf('aria-label="入仓供货"') < html.indexOf('aria-label="客服消息"'))
   assert.ok(html.indexOf('aria-label="客服消息"') < html.indexOf('aria-label="评价口碑"'))
-  assert.doesNotMatch(html, /aria-label="数据大屏"/)
-  assert.doesNotMatch(html, /aria-label="批量上架"/)
-  assert.doesNotMatch(html, /aria-label="店铺商品"/)
+  assert.match(html, /aria-label="数据大屏"/)
+  assert.match(html, /aria-label="批量上架"/)
+  assert.match(html, /aria-label="店铺商品"/)
 })

@@ -1,9 +1,9 @@
 /**
- * One vocabulary for the settings sheet's sections.
+ * One vocabulary for the settings page's sections.
  *
  * The rail, the pane resolver, the admin surface's section list, its search and
  * the `/admin?settings=<id>` URL all read this table, so a section is named
- * once. Icons and pane bodies stay with the dialog: this module is the same
+ * once. Icons and pane bodies stay with the settings page: this module is the same
  * kind of authority as [app-screens](./app-screens.ts) — no React, no imports
  * from components.
  *
@@ -21,7 +21,7 @@ export type SettingsSectionMeta = {
   /** Platform administration — only mounted for super_admin sessions. */
   admin?: boolean
   /**
-   * Wide panes keep the sheet's full width — rosters, comparison tables and
+   * Wide panes keep the settings page's full width — rosters, comparison tables and
    * admin surfaces need the room. Default panes center their column at a
    * settings-page reading width with side margins.
    */
@@ -244,7 +244,7 @@ export const ADMIN_SETTINGS_ROWS = SETTINGS_ROWS.filter((row) => row.admin)
  *
  * An `admin` rank runs the main-menu platform screens (货源管理 on `/admin`,
  * gated by `isPlatformStaffRole` and Cloud's `require_platform_staff`), but
- * never these panes — that split is one function so the rail, the sheet's
+ * never these panes — that split is one function so the rail, the settings page's
  * search, the pane resolver and the admin surface's own rail cannot drift
  * apart.
  */
@@ -270,9 +270,9 @@ export type SettingsPaneResolution =
   | { kind: "refused"; section: SettingsSection }
 
 /**
- * Which pane the sheet paints for a requested section.
+ * Which pane the settings page paints for a requested section.
  *
- * The workbench opens the sheet only from controls that already know what the
+ * The workbench opens the settings page only from controls that already know what the
  * actor may see, so an unavailable section there keeps the old 账号 fallback.
  * The admin surface is addressed by URL: a link naming a section this actor may
  * not see must refuse rather than silently paint a different one.

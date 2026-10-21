@@ -133,32 +133,12 @@ export async function deleteSupplierAccount(
   )
 }
 
-export type SupplierWalletView = components["schemas"]["SupplierWalletView"]
-export type SupplierWithdrawalView = components["schemas"]["SupplierWithdrawalView"]
-
-export async function listSupplierWallets(): Promise<SupplierWalletView[]> {
-  const data = await api.get<components["schemas"]["SupplierWalletListData"]>(
-    route("supplierWallet"),
-  )
-  return data.wallets
-}
-
-export async function listSupplierWithdrawals(): Promise<SupplierWithdrawalView[]> {
-  const data = await api.get<components["schemas"]["SupplierWithdrawalListData"]>(
-    route("supplierWithdrawals"),
-  )
-  return data.withdrawals
-}
-
-export async function requestSupplierWithdrawal(
-  body: components["schemas"]["SupplierWithdrawalRequest"],
-): Promise<SupplierWithdrawalView | undefined> {
-  const data = await api.post<components["schemas"]["SupplierWithdrawalListData"]>(
-    route("supplierWithdrawals"),
-    body,
-  )
-  return data.withdrawals[0]
-}
+/**
+ * 平台侧提现单视图。供应商已无资金面（doc §9.1 F1：三条供应商资金路由连同
+ * 界面一起卸载），只剩平台员工的工作表还需要读这张单，所以类型直接指向
+ * admin 的 schema；名字沿用旧名只是为了不动 supplier/admin-supplier-withdrawals.tsx。
+ */
+export type SupplierWithdrawalView = components["schemas"]["AdminFactoryWithdrawalView"]
 
 export async function listFactoryWithdrawals(
   status?: string,
@@ -174,7 +154,7 @@ export async function payFactoryWithdrawal(
   withdrawalId: string,
   reference: string,
 ): Promise<SupplierWithdrawalView | undefined> {
-  const data = await api.post<components["schemas"]["SupplierWithdrawalListData"]>(
+  const data = await api.post<components["schemas"]["AdminFactoryWithdrawalListData"]>(
     route("adminSupplierWithdrawalsByWithdrawalIdPay", { withdrawal_id: withdrawalId }),
     { reference },
   )
@@ -185,7 +165,7 @@ export async function rejectFactoryWithdrawal(
   withdrawalId: string,
   reason: string,
 ): Promise<SupplierWithdrawalView | undefined> {
-  const data = await api.post<components["schemas"]["SupplierWithdrawalListData"]>(
+  const data = await api.post<components["schemas"]["AdminFactoryWithdrawalListData"]>(
     route("adminSupplierWithdrawalsByWithdrawalIdReject", { withdrawal_id: withdrawalId }),
     { reason },
   )

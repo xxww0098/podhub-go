@@ -72,16 +72,16 @@ test("进度条先把 cardId 写进地址，换屏才带进批量上架的那张
   const surface = readFileSync(new URL("../lib/admin-surface.ts", import.meta.url), "utf8")
   assert.match(surface, /from === "listing"\) params\.delete\("cardId"\)/)
 })
-test("platform administration lives behind the settings sheet's super_admin gate", () => {
+test("platform administration lives behind the settings page's super_admin gate", () => {
   const source = readFileSync(
-    new URL("../app/settings-dialog.tsx", import.meta.url),
+    new URL("../app/settings-page.tsx", import.meta.url),
     "utf8",
   )
-  // The sheet consumes the vocabulary's own rank filter; which rows that is
+  // The settings page consumes the vocabulary's own rank filter; which rows that is
   // is pinned behaviourally in settings-sections.test.ts.
   assert.match(source, /settingsRowsFor\(overview\?\.session\.role\)/)
   // The section table itself lives in the React-free vocabulary module now;
-  // the sheet keeps the role filter and the pane bodies.
+  // the settings page keeps the role filter and the pane bodies.
   const sections = readFileSync(
     new URL("./settings-sections.ts", import.meta.url),
     "utf8",

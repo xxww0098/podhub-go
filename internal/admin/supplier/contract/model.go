@@ -143,3 +143,28 @@ type AccountPatch struct {
 	Status   *string
 	Password *string
 }
+
+// Fulfiller is one sc_source_fulfillers row. RevokedAtMs is set once the
+// grant is disabled; a re-grant clears it and reuses the row.
+type Fulfiller struct {
+	FulfillerID string `json:"fulfillerId"`
+	SourceID    string `json:"sourceId"`
+	UserID      int64  `json:"userId"`
+	Email       string `json:"email"`
+	Name        string `json:"name"`
+	Status      string `json:"status"`
+	CreatedAtMs int64  `json:"createdAtMs"`
+	RevokedAtMs *int64 `json:"revokedAtMs,omitempty"`
+}
+
+// CatalogManager is one sc_catalog_managers row.
+type CatalogManager struct {
+	ManagerID   string `json:"managerId"`
+	SourceID    string `json:"sourceId"`
+	UserID      int64  `json:"userId"`
+	Email       string `json:"email"`
+	Name        string `json:"name"`
+	Status      string `json:"status"`
+	CreatedAtMs int64  `json:"createdAtMs"`
+	RevokedAtMs *int64 `json:"revokedAtMs,omitempty"`
+}

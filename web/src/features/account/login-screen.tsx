@@ -102,6 +102,15 @@ type LoginScreenProps = {
    * stacks the new session on this browser instead of replacing it.
    */
   onCancel?: () => void
+  /**
+   * The credentials were accepted but Cloud's deny-by-default gate refuses
+   * every route until this account's password is changed (doc §4.2). The login
+   * write itself succeeded — the Cookie is already in the browser — so the
+   * "check your email and password" toast would be a lie, and no retry on this
+   * card can ever clear the refusal. The host swaps to the forced password
+   * change screen instead.
+   */
+  onPasswordChangeRequired?: () => void
 }
 
 type AccessMode = "login" | "register" | "forgot"
@@ -156,7 +165,11 @@ export function inviteCodeFromSearch(search: string): string {
   return new URLSearchParams(search).get("invite")?.trim().toUpperCase() ?? ""
 }
 
-export function LoginScreen({ onSignedIn, onCancel }: LoginScreenProps) {
+export function LoginScreen({
+  onSignedIn,
+  onCancel,
+  onPasswordChangeRequired,
+}: LoginScreenProps) {
   const [inviteCode, setInviteCode] = useState(() =>
     typeof window === "undefined" ? "" : inviteCodeFromSearch(window.location.search),
   )
@@ -246,6 +259,22 @@ export function LoginScreen({ onSignedIn, onCancel }: LoginScreenProps) {
     } catch (reason) {
       if (mode === "login" && commandErrorCode(reason) === "cloud_totp_required") {
         setTotpNeeded(true)
+      }
+      // Deliberately after the TOTP branch: a second factor still has to be
+      // answered before the password is even looked at. A locked account is not
+      // a failed sign-in either — `accountLogin` already wrote the Cookie and
+      // only the follow-up overview read was refused — so hand it to the forced
+      // password change rather than telling the operator to check credentials
+      // that were in fact correct.
+      if (
+        mode === "login" &&
+        commandErrorCode(reason) === "cloud_password_change_required"
+      ) {
+        // Drop the spinner before the host swaps the tree: otherwise the button
+        // stays busy through the render that unmounts it.
+        setBusy(false)
+        onPasswordChangeRequired?.()
+        return
       }
       const message =
         mode === "login"

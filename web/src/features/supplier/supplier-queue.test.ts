@@ -43,12 +43,9 @@ test("看板计数：已发货不计加急，在制金额不含已发货", () =>
   })
 })
 
-test("排单和钱包在前台轮询，后台失败不弹 toast", () => {
+test("排单在前台轮询，后台失败不弹 toast", () => {
   assert.equal(SUPPLIER_PORTAL_POLL_MS, 15_000)
   const queue = readFileSync(new URL("./supplier-queue.tsx", import.meta.url), "utf8")
-  const wallet = readFileSync(new URL("./supplier-wallet.tsx", import.meta.url), "utf8")
   assert.match(queue, /useVisiblePolling\(\{/)
   assert.match(queue, /quiet: trigger !== "mount"/)
-  assert.match(wallet, /useVisiblePolling\(\{/)
-  assert.match(wallet, /refresh\(trigger !== "mount"\)/)
 })

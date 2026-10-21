@@ -45,9 +45,6 @@ type Actions interface {
 	GetDispatch(ctx context.Context, userID int64, dispatchID string) (contract.DispatchDetail, error)
 	Accept(ctx context.Context, userID int64, dispatchID string) (contract.ActionData, error)
 	Reject(ctx context.Context, userID int64, dispatchID, reason string) (contract.ActionData, error)
-	Wallets(ctx context.Context, userID int64) (contract.WalletListData, error)
-	Withdrawals(ctx context.Context, userID int64) (contract.WithdrawalListData, error)
-	CreateWithdrawal(ctx context.Context, userID int64, in domain.WithdrawalInput, nowMs int64) (contract.WithdrawalListData, error)
 	DownloadAsset(ctx context.Context, userID int64, dispatchID, assetID string, wantJSON bool, nowMs int64) (contract.AssetBytes, error)
 	Catalog(ctx context.Context, nowMs int64) (contract.CatalogData, error)
 	CatalogImage(ctx context.Context, sourceID, file string, edge uint32) (contract.ImageBody, error)
@@ -76,9 +73,6 @@ var routes = []route{
 	{http.MethodGet, "/api/supplier/dispatches/{dispatch_id}/assets/{asset_id}"},
 	{http.MethodPost, "/api/supplier/dispatches/{dispatch_id}/reject"},
 	{http.MethodGet, "/api/supplier/me"},
-	{http.MethodGet, "/api/supplier/wallet"},
-	{http.MethodGet, "/api/supplier/withdrawals"},
-	{http.MethodPost, "/api/supplier/withdrawals"},
 }
 
 // Mount registers the routes.
@@ -89,9 +83,6 @@ func Mount(r chi.Router, d Deps) {
 	r.Post("/api/supplier/dispatches/{dispatch_id}/accept", d.accept)
 	r.Post("/api/supplier/dispatches/{dispatch_id}/reject", d.reject)
 	r.Get("/api/supplier/dispatches/{dispatch_id}/assets/{asset_id}", d.asset)
-	r.Get("/api/supplier/wallet", d.wallets)
-	r.Get("/api/supplier/withdrawals", d.withdrawals)
-	r.Post("/api/supplier/withdrawals", d.createWithdrawal)
 	r.Get("/api/supplier-dbs/catalog", d.catalog)
 	r.Get("/api/supplier-dbs/catalog/images/{source_id}/{file}", d.catalogImage)
 }
@@ -245,61 +236,6 @@ func (d Deps) asset(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Length", strconv.Itoa(len(got.Body)))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(got.Body)
-}
-
-func (d Deps) wallets(w http.ResponseWriter, r *http.Request) {
-	p, ok := supplierUser(w, r, d.Session)
-	if !ok {
-		return
-	}
-	data, err := d.Actions.Wallets(r.Context(), p.UserID)
-	if err != nil {
-		writeFailure(w, err)
-		return
-	}
-	writeData(w, http.StatusOK, data)
-}
-
-func (d Deps) withdrawals(w http.ResponseWriter, r *http.Request) {
-	p, ok := supplierUser(w, r, d.Session)
-	if !ok {
-		return
-	}
-	data, err := d.Actions.Withdrawals(r.Context(), p.UserID)
-	if err != nil {
-		writeFailure(w, err)
-		return
-	}
-	writeData(w, http.StatusOK, data)
-}
-
-func (d Deps) createWithdrawal(w http.ResponseWriter, r *http.Request) {
-	p, ok := supplierUser(w, r, d.Session)
-	if !ok {
-		return
-	}
-	var body struct {
-		SourceID *string `json:"sourceId"`
-		Amount   *int64  `json:"amountCents"`
-		Channel  *string `json:"channel"`
-		Account  *string `json:"account"`
-		RealName *string `json:"realName"`
-	}
-	if err := strictJSON(r, &body); err != nil || body.SourceID == nil || body.Amount == nil || body.Channel == nil || body.Account == nil || body.RealName == nil {
-		writeFailure(w, contract.Fail(400, "validation", "请求格式无效"))
-		return
-	}
-	in, err := domain.CheckWithdrawal(*body.SourceID, *body.Amount, *body.Channel, *body.Account, *body.RealName)
-	if err != nil {
-		writeFailure(w, err)
-		return
-	}
-	data, err := d.Actions.CreateWithdrawal(r.Context(), p.UserID, in, d.now().UnixMilli())
-	if err != nil {
-		writeFailure(w, err)
-		return
-	}
-	writeData(w, http.StatusOK, data)
 }
 
 func (d Deps) catalog(w http.ResponseWriter, r *http.Request) {

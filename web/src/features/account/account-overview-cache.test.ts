@@ -163,7 +163,7 @@ test("shell, 设置 and sign-out share the overview snapshot", () => {
   const queryClientModule = readNearby("../../lib/query-client.ts")
   const app = readNearby("../../app/App.tsx")
   const shell = readNearby("../../app/app-shell.tsx")
-  const settings = readNearby("../../app/settings-dialog.tsx")
+  const settings = readNearby("../../app/settings-page.tsx")
   const workspace = readNearby("../workspace/workspace-screen.tsx")
   const plans = readNearby("../plans/plans-screen.tsx")
 

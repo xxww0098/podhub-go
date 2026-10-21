@@ -4,7 +4,7 @@
  * 三列看板只留缩略图和一行摘要。点开弹窗才看单号、图片、物流和动作。
  * 动作是否可用只看服务端下发的 actions。失败文案只走 toast，不进 DOM。
  */
-import { Image, Wallet } from "lucide-react"
+import { Image } from "lucide-react"
 import { useCallback, useMemo, useRef, useState } from "react"
 import {
   getSupplierDispatch,
@@ -14,14 +14,12 @@ import {
 } from "@/bindings/http-supplier-portal"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Spinner } from "@/components/ui/spinner"
 import { notifyCommandError } from "@/lib/notify"
 import { useVisiblePolling } from "@/lib/visible-polling"
 
 import { queueFacts, SUPPLIER_PORTAL_POLL_MS } from "./supplier-board"
 import { DispatchDetailDialog } from "./supplier-dispatch-dialog"
-import { SupplierWalletCard } from "./supplier-wallet"
 import {
   countdownLabel,
   isUrgent,
@@ -210,18 +208,6 @@ export function SupplierQueue({
               {accountName}
             </span>
           ) : null}
-          <Popover>
-            <PopoverTrigger
-              render={
-                <Button type="button" variant="outline" size="icon-sm" aria-label="钱包">
-                  <Wallet />
-                </Button>
-              }
-            />
-            <PopoverContent align="end">
-              <SupplierWalletCard bare />
-            </PopoverContent>
-          </Popover>
         </div>
       </header>
       <div className="grid min-w-0 items-start gap-3 md:grid-cols-3">

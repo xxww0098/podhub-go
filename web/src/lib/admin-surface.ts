@@ -57,7 +57,7 @@ function searchString(params: URLSearchParams): string {
   return query ? `?${query}` : ""
 }
 
-/** Query keys every surface may keep: the destination, an invite claim, the admin sheet. */
+/** Query keys every surface may keep: the destination, an invite claim, the admin settings page. */
 const SHARED_QUERY_KEYS = ["screen", "invite", "settings"] as const
 
 /**
@@ -112,14 +112,14 @@ export function isAdminScreen(screen: AppScreen): boolean {
     ADMIN_URL_ONLY_SCREENS.some((id) => id === screen)
 }
 
-/** Open the sheet at `section`; every other parameter keeps its place. */
+/** Open the settings page at `section`; every other parameter keeps its place. */
 export function withSettings(search: string, section: SettingsSection): string {
   const params = new URLSearchParams(search)
   params.set("settings", section)
   return searchString(params)
 }
 
-/** Close the sheet without touching the screen the URL names. */
+/** Close the settings page without touching the screen the URL names. */
 export function withoutSettings(search: string): string {
   const params = new URLSearchParams(search)
   params.delete("settings")

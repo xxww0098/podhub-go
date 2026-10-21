@@ -192,6 +192,10 @@ var postRustTables = map[string]bool{
 	"ozon_warehouse_sync":        true,
 	"ozon_warehouse_intents":     true,
 	"ozon_warehouse_fences":      true,
+	// 00361 adds the two authorization tables. They are new schema, not Rust
+	// tables, so they must be listed here or the name-gap check reports them.
+	"sc_source_fulfillers": true,
+	"sc_catalog_managers":  true,
 }
 
 // postRustColumns are columns appended after the Rust head. The columns
@@ -220,6 +224,21 @@ var postRustColumns = map[string][]fpColumn{
 		{Name: "credential_granted_at", Ordinal: 22, SQLType: "timestamp with time zone", Nullable: true},
 		{Name: "revoked_at", Ordinal: 23, SQLType: "timestamp with time zone", Nullable: true},
 	},
+	// 00360 appends the account kind and the forced-password-change flag.
+	"account_users": {
+		{Name: "account_kind", Ordinal: 21, SQLType: "text", Nullable: false, Default: strPtr("'platform'::text")},
+		{Name: "must_change_password", Ordinal: 22, SQLType: "boolean", Nullable: false, Default: strPtr("false")},
+	},
+	// 00362 pins each packet to its fulfiller.
+	"delegate_dispatches": {
+		{Name: "fulfiller_id", Ordinal: 14, SQLType: "uuid", Nullable: true},
+	},
+	"delegate_orders": {
+		{Name: "dispatch_blocked_reason", Ordinal: 13, SQLType: "text", Nullable: true},
+	},
+	"delegate_order_lines": {
+		{Name: "last_rejected_fulfiller_id", Ordinal: 10, SQLType: "uuid", Nullable: true},
+	},
 	// 00330 appends the company-name columns. The earlier columns stay in place.
 	"organization_stores": {
 		{Name: "company_short_name", Ordinal: 23, SQLType: "character varying(255)", Nullable: true},
@@ -241,8 +260,20 @@ func strPtr(s string) *string { return &s }
 // postRustIndexes are indexes appended after the Rust head.
 var postRustIndexes = map[string]map[string]bool{
 	"jobs":                {"jobs_drain_store_idx": true, "jobs_drain_member_idx": true},
+	"delegate_dispatches": {"ix_delegate_dispatches_fulfiller": true},
+	"account_users":       {"ix_account_users_account_kind": true, "uq_account_users_email_lower": true},
 	"payment_orders":      {"payment_orders_deadline_idx": true, "payment_orders_quote_uidx": true},
 	"organization_stores": {"ix_organization_stores_company_legal": true},
+}
+
+// removedIndexes are indexes the Rust head has and this codebase replaces on
+// purpose. Same contract as removedRLSPolicies: a name disappears only when it
+// is listed here, so an accidental drop still fails the fingerprint.
+var removedIndexes = map[string]map[string]bool{
+	// 00360: 00151 added a NON-unique lower(email) index, which lets
+	// A@x.com and a@x.com coexist. Uniqueness is the point, so the index is
+	// rebuilt as uq_account_users_email_lower over the same expression.
+	"account_users": {"ix_account_users_email_lower": true},
 }
 
 // postRustConstraints are constraints appended after the Rust head.
@@ -251,6 +282,11 @@ var postRustConstraints = map[string]map[string]bool{
 	"organizations":           {"organizations_store_limit_check": true},
 	"payment_orders":          {"payment_orders_quote_id_fkey": true, "payment_orders_reconciliation_reason_check": true, "payment_orders_subscription_snapshot_shape": true},
 	"workspace_psd_templates": {"workspace_psd_templates_object_id_fkey": true},
+	"delegate_dispatches":     {"fk_delegate_dispatches_fulfiller": true},
+	"delegate_orders":         {"ck_delegate_orders_blocked_reason": true},
+	"delegate_order_lines":    {"delegate_order_lines_last_rejected_fulfiller_id_fkey": true},
+	"account_users":           {"ck_account_users_kind": true, "ck_account_users_supplier_is_user": true},
+
 	"organization_stores": {
 		"ck_organization_stores_name_source":       true,
 		"ck_organization_stores_seller_key_status": true,
@@ -281,6 +317,18 @@ var intentionalFunctions = map[string]bool{
 	"billing_replay_candidates":            true,
 	"billing_owner_paid_orders":            true,
 	"billing_payment_order_brief":          true,
+	// 00364: replaces delegate_source_active_member_count for the seller-side
+	// "nobody can take this packet" warning. The old name stays at 35 because
+	// the three packet actions were replaced in place, not added.
+	"delegate_source_active_fulfiller_count": true,
+	// 00364: the dispatcher resolves the recipient id through a definer
+	// function too. sc_source_fulfillers is FORCE RLS, so a seller session
+	// cannot read it directly; see the comment on the SQL function.
+	"delegate_source_active_fulfiller_id": true,
+	// 00364: F2 removed the supplier arm from the three money tables, so Ship
+	// can no longer credit the factory wallet from a supplier session. The
+	// definer function does it instead, in the same transaction.
+	"delegate_credit_fulfiller_wallet": true,
 }
 
 // intentionalRLSPolicies are FORCE RLS policies added in migration 00294.
@@ -316,6 +364,50 @@ var intentionalRLSPolicies = map[string]map[string]bool{
 	"sc_order_lines": {
 		"tenant_isolation": true,
 		"worker_claim":     true,
+	},
+	// 00365: the catalog tables had zero policies at the Rust head. Every arm
+	// below is new, and the enabled/forced flip is expected, so listing a table
+	// here also exempts it from the enabled/forced comparison.
+	"sc_sources": {
+		"sc_sources_staff_all":     true,
+		"sc_sources_manager_all":   true,
+		"sc_sources_listed_read":   true,
+		"sc_sources_supplier_read": true,
+		"sc_sources_seller_read":   true,
+	},
+	"sc_source_prop_defs": {
+		"sc_source_prop_defs_staff_all":     true,
+		"sc_source_prop_defs_manager_all":   true,
+		"sc_source_prop_defs_read":          true,
+		"sc_source_prop_defs_supplier_read": true,
+		"sc_source_prop_defs_seller_read":   true,
+	},
+	"sc_products": {
+		"sc_products_staff_all":      true,
+		"sc_products_manager_all":    true,
+		"sc_products_published_read": true,
+		"sc_products_supplier_read":  true,
+		"sc_products_seller_read":    true,
+	},
+	"sc_skus": {
+		"sc_skus_staff_all":      true,
+		"sc_skus_manager_all":    true,
+		"sc_skus_published_read": true,
+		"sc_skus_supplier_read":  true,
+		"sc_skus_seller_read":    true,
+	},
+	"sc_source_offers": {
+		"sc_source_offers_staff_all":       true,
+		"sc_source_offers_manager_all":     true,
+		"sc_source_offers_supplier_read":   true,
+		"sc_source_offers_settlement_read": true,
+	},
+	"sc_price_versions": {
+		"sc_price_versions_staff_all":      true,
+		"sc_price_versions_manager_read":   true,
+		"sc_price_versions_published_read": true,
+		"sc_price_versions_supplier_read":  true,
+		"sc_price_versions_seller_read":    true,
 	},
 }
 
@@ -478,6 +570,9 @@ func diffTable(want, got fpTable) []string {
 	for name := range postRustIndexes[want.Name] {
 		delete(gi, name)
 	}
+	for name := range removedIndexes[want.Name] {
+		delete(wi, name)
+	}
 	if msg := nameGapIndexes(want.Name+" index", wi, gi); msg != "" {
 		diffs = append(diffs, msg)
 	}
@@ -567,10 +662,38 @@ func keysOf(m map[string]fpConstraint) map[string]struct{} {
 	return out
 }
 
+// removedRLSPolicies are policies the Rust head has and this codebase drops on
+// purpose. A dropped policy is not a gap: the point of the migration is that
+// the arm no longer exists. Keeping the name here is what makes the removal
+// auditable -- a policy that disappears without an entry is still a failure.
+var removedRLSPolicies = map[string]map[string]bool{
+	// 00363: a supplier has no funds surface at all, so the self arms go.
+	"supplier_wallets":       {"supplier_source_isolation": true},
+	"supplier_wallet_ledger": {"supplier_source_isolation": true},
+	"supplier_withdrawals":   {"supplier_source_isolation": true},
+	// 00363 also renames the dispatch arm: the isolation key moved from the
+	// source to the fulfiller, so the old name is retired and the new one is
+	// allowed as an addition.
+	"delegate_dispatches":  {"delegate_source_isolation": true},
+	"delegate_settlements": {"delegate_source_isolation": true},
+}
+
+// renamedRLSPolicies records an arm whose name changed but whose intent did
+// not. The old name is expected to be gone and the new one to exist.
+var renamedRLSPolicies = map[string]map[string]string{
+	"delegate_dispatches":  {"delegate_fulfiller_isolation": "delegate_source_isolation"},
+	"delegate_settlements": {"delegate_fulfiller_isolation": "delegate_source_isolation"},
+}
+
 func policyGap(table string, want, got map[string]fpPolicy, allowed map[string]bool) string {
 	var missing, extra []string
+	removed := removedRLSPolicies[table]
+	renamed := renamedRLSPolicies[table]
 	for name := range want {
 		if _, ok := got[name]; !ok {
+			if removed[name] {
+				continue
+			}
 			missing = append(missing, name)
 		}
 	}
@@ -579,6 +702,9 @@ func policyGap(table string, want, got map[string]fpPolicy, allowed map[string]b
 			continue
 		}
 		if allowed[name] {
+			continue
+		}
+		if _, ok := renamed[name]; ok {
 			continue
 		}
 		extra = append(extra, name)

@@ -39,6 +39,7 @@ const (
 	sessGrant
 	sessCatalog
 	sessAppRole
+	sessCatalogManager
 )
 
 // App enters the app role for one org. orgID <= 0 is rejected by InTx
@@ -80,6 +81,13 @@ func Catalog() Session { return Session{kind: sessCatalog} }
 // have no org_id and no tenant RLS (banned_tags, platform_catalog_fetch_config).
 // Do not use it for a tenant read: tenant_isolation needs app.current_org_id.
 func AppRole() Session { return Session{kind: sessAppRole} }
+
+// CatalogManager enters the app role for one catalog manager user with no org
+// and no staff flag. The catalog RLS policies read app.current_org_user_id.
+// userID <= 0 is rejected by InTx before a transaction starts.
+func CatalogManager(userID int64) Session {
+	return Session{kind: sessCatalogManager, userID: userID}
+}
 
 var (
 	errEmptySession = errors.New("db: empty session")
@@ -132,7 +140,7 @@ func (s Session) ready() error {
 		}
 	case sessWorker, sessStaff, sessCatalog, sessAppRole:
 		return nil
-	case sessObserver, sessSupplierOnly:
+	case sessObserver, sessSupplierOnly, sessCatalogManager:
 		if s.userID <= 0 {
 			return tenantx.ErrUserUnset
 		}
@@ -175,6 +183,8 @@ func (s Session) enter(ctx context.Context, tx pgx.Tx) error {
 		return tenantx.EnterCatalog(ctx, tx)
 	case sessAppRole:
 		return tenantx.EnterAppRole(ctx, tx)
+	case sessCatalogManager:
+		return tenantx.EnterCatalogManager(ctx, tx, s.userID)
 	default:
 		return errEmptySession
 	}

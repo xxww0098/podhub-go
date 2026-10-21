@@ -47,12 +47,20 @@ export function SupplierApp({
   overview,
   onSignedIn,
   onSignedOut,
+  onPasswordChangeRequired,
   fallback,
 }: {
   /** `undefined` = anonymous: the embedded factory login card paints. */
   overview?: AccountOverview
   onSignedIn?: (overview: AccountOverview) => void
   onSignedOut?: () => void
+  /**
+   * Passed through to the embedded card: a factory account still holding its
+   * provisioned password is authenticated but locked, and the host has to swap
+   * to the forced password change instead of leaving the operator on a login
+   * form that can never succeed.
+   */
+  onPasswordChangeRequired?: () => void
   /** Painted when signed in but the account holds no active membership. */
   fallback?: ReactNode
 }) {
@@ -93,7 +101,10 @@ export function SupplierApp({
     return (
       <div className="flex min-h-svh items-center justify-center bg-background px-6">
         <div className="flex w-full max-w-sm flex-col items-center gap-6">
-          <SupplierLoginCard onSignedIn={onSignedIn ?? (() => {})} />
+          <SupplierLoginCard
+            onSignedIn={onSignedIn ?? (() => {})}
+            onPasswordChangeRequired={onPasswordChangeRequired}
+          />
           <Button
             variant="ghost"
             size="sm"

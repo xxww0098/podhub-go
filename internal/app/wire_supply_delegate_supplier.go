@@ -14,6 +14,9 @@ import (
 	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
 	sign "github.com/xxww0098/podhub-go/internal/platform/r2/sigv4"
 	supplierhttp "github.com/xxww0098/podhub-go/internal/supplier/http"
+	cataloghttp "github.com/xxww0098/podhub-go/internal/suppliercatalog/http"
+	catalogrepo "github.com/xxww0098/podhub-go/internal/suppliercatalog/repo"
+	catalogsvc "github.com/xxww0098/podhub-go/internal/suppliercatalog/service"
 	supplierrepo "github.com/xxww0098/podhub-go/internal/supplier/repo"
 	suppliersvc "github.com/xxww0098/podhub-go/internal/supplier/service"
 	supplyhttp "github.com/xxww0098/podhub-go/internal/supply/http"
@@ -45,6 +48,12 @@ func mountPR8A(router chi.Router, pool *pgxpool.Pool, sessions access.Resolver, 
 	supplierhttp.Mount(router, supplierhttp.Deps{
 		Session: supplierSession{sessions},
 		Actions: suppliersvc.New(supplierrepo.New(pool, tenant.BeginApp).WithBlobs(blobs, blobs)),
+	})
+	// The catalogue manager surface is mounted separately from the admin one:
+	// it runs on db.CatalogManager, which never sets app.staff_access.
+	cataloghttp.Mount(router, cataloghttp.Deps{
+		Session: catalogSession{sessions},
+		Actions: catalogsvc.New(catalogrepo.Repo{Pool: pool}),
 	})
 }
 
@@ -98,6 +107,24 @@ func (s supplierSession) Resolve(r *http.Request) (*supplierhttp.Principal, *sup
 	var ref *supplierhttp.Refusal
 	if refusal != nil {
 		ref = &supplierhttp.Refusal{Status: refusal.Status, Message: refusal.Message}
+	}
+	return out, ref, err
+}
+
+type catalogSession struct{ inner access.Resolver }
+
+func (s catalogSession) Resolve(r *http.Request) (*cataloghttp.Principal, *cataloghttp.Refusal, error) {
+	p, refusal, err := resolve(s.inner, r)
+	if p == nil && refusal == nil {
+		return nil, nil, err
+	}
+	var out *cataloghttp.Principal
+	if p != nil {
+		out = &cataloghttp.Principal{UserID: p.UserID}
+	}
+	var ref *cataloghttp.Refusal
+	if refusal != nil {
+		ref = &cataloghttp.Refusal{Status: refusal.Status, Message: refusal.Message}
 	}
 	return out, ref, err
 }

@@ -53,7 +53,7 @@ import type {
   SupplierDbUploadKind,
   UpsertSupplierDbRowRequest,
 } from "@/bindings/http-supplier-dbs"
-import { useOpenSettings } from "@/app/settings-dialog"
+import { useOpenSettings } from "@/app/settings-page"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"

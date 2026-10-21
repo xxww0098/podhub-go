@@ -36,6 +36,10 @@ func HandlerFromMux(s *Server, r chi.Router) http.Handler {
 	listinggen.Mount(r, s)
 	cataloggen.Mount(r, s)
 	identitygen.Mount(r, s)
+	r.Get("/api/view/account-overview", s.AccountOverview)
+	r.Get("/api/notifications", s.NotificationList)
+	r.Post("/api/notifications/read-all", s.NotificationReadAll)
+	r.Post("/api/notifications/{uuid}/read", s.NotificationRead)
 	mediagen.Mount(r, s)
 	r.Get("/api/billing/usage-stats", s.BillingUsageStats)
 	return r

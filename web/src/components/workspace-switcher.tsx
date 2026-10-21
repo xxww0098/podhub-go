@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import {
   Check,
-  ChevronsUpDown,
+  ChevronDown,
   CircleArrowUp,
   Ellipsis,
   Gift,
@@ -62,8 +62,8 @@ import { PlanMark, formatPlan, formatRole } from "@/components/workspace-display
 type MenuSide = "top" | "right" | "bottom" | "left"
 
 const TRIGGER =
-  "group/workspace inset-well flex w-full cursor-pointer items-center gap-2.5 rounded-lg p-1.5 text-left transition-colors outline-none group-data-[collapsible=icon]:size-9! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:shadow-none group-data-[collapsible=icon]:p-0 hover:bg-foreground/[0.06] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring data-popup-open:bg-foreground/[0.06]"
-const SHELL = "w-64 border border-border/80 p-1.5 rounded-2xl shadow-overlay"
+  "group/workspace flex w-full cursor-pointer items-center gap-2.5 rounded-lg p-0.5 text-left transition-colors outline-none group-data-[collapsible=icon]:size-9! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:p-0 hover:bg-sidebar-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring data-popup-open:bg-sidebar-accent"
+const SHELL = "w-64 border border-border/80 p-1.5 rounded-2xl"
 const WORKSPACE_ROW = "cursor-pointer items-center gap-2.5 px-2.5 py-2"
 const ACTION =
   "cursor-pointer items-center gap-2.5 px-2.5 py-2 text-compact font-medium tracking-[-0.01em] hover:bg-accent/80 focus:bg-accent focus:text-accent-foreground not-data-[variant=destructive]:focus:[&_svg]:text-accent-foreground not-data-[variant=destructive]:[&_svg]:text-muted-foreground data-[variant=destructive]:text-destructive data-[variant=destructive]:focus:bg-destructive/10"
@@ -127,80 +127,41 @@ export function clearPendingWorkspaceCreate() {
   }
 }
 
-/**
- * The rail's single identity control.
- *
- * The trigger names the active Workspace and the menu keeps that order — the
- * Workspace is the context, the account is secondary. Top-down it reads as:
- * the Workspace card (mark, name, plan · role), the Workspace actions (店铺,
- * 升级, 邀请成员) plus 添加账号, then the signed-in account as one muted
- * email row carrying a
- * Notion-style "…" submenu (创建工作空间, 退出登录), then the Workspaces
- * this account can switch into — the active one checked — plus 创建工作空间,
- * then the other accounts this browser is signed into (compact rows: click
- * switches, each "…" holds 创建工作空间 and 退出该账号), then 退出登录
- * alone at the bottom.
- *
- * Creating a Workspace is offered only when `standing` says Cloud would accept it:
- * the owned-Workspace cap is Cloud's rule (ADR-0098) — every account may
- * self-create up to three Workspaces for free, then upgrade a Plan inside each
- * one. When Cloud would refuse, the entry becomes one muted note
- * (action name plus the rule and next step) — a dead button and an orphaned
- * paragraph say the same thing in two pieces.
- *
- * 邀请成员 carries no directory of its own: it loads one when opened and hands
- * the same invite dialog the 团队协作区 settings pane uses. Avatar, password,
- * device preferences, the rest of 团队协作区, 升级方案 and platform
- * administration live in the settings dialog that 设置 opens; 用量 lives on
- * the header wallet badge. 兑换码 opens its own dialog — a code is an ops
- * grant channel, not part of the plan comparison.
- */
+/** Workspace switching and actions belong to the header; account actions stay in the footer. */
 export function WorkspaceMenu({
   overview,
   standing,
   onOpenSpace,
   spaceScreen,
   onSwitchWorkspace,
-  onSwitchAccount,
-  onLogoutAccount,
-  onAddAccount,
   onWorkspaceCreated,
   onOpenPlans,
   onOverviewChange,
-  onSignedOut,
 }: {
   overview?: AccountOverview
   standing?: WorkspaceStandingView
   onOpenSpace: (screen: WorkspaceSpaceScreen) => void
   spaceScreen?: WorkspaceSpaceScreen
   onSwitchWorkspace?: (workspaceId: number) => void | Promise<void>
-  onSwitchAccount?: (uuid: string) => void | Promise<void>
-  onLogoutAccount?: (uuid: string) => void | Promise<void>
-  onAddAccount?: () => void
   onWorkspaceCreated?: (standing: WorkspaceStandingView) => void
   onOpenPlans?: () => void
   onOverviewChange?: (overview: AccountOverview) => void
-  onSignedOut: () => void
 }) {
   const { state, isMobile } = useSidebar()
   const [open, setOpen] = useState(false)
   const [creating, setCreating] = useState(false)
   const [switchingTo, setSwitchingTo] = useState<number>()
-  const [busyAccount, setBusyAccount] = useState<string>()
-  const [busy, setBusy] = useState(false)
   const [inviteOpen, setInviteOpen] = useState(false)
   const [inviteRoles, setInviteRoles] = useState<string[]>([])
   const [redeemOpen, setRedeemOpen] = useState(false)
   // Lock placement for the open session — collapsing the rail mid-menu must
   // not flip top↔right and make the popup jump.
-  const sideRef = useRef<MenuSide>("top")
+  const sideRef = useRef<MenuSide>("bottom")
   const refusal = standing ? createWorkspaceRefusal(standing) : undefined
   const entitlement = overview?.entitlement
-  const session = overview?.session
   const workspaces = overview?.workspaces ?? []
   const workspaceIds = workspaces.map((workspace) => workspace.id)
   const accounts = overview?.accounts ?? []
-  const otherAccounts = accounts.filter((account) => !account.active)
   const active =
     overview?.active_workspace ??
     workspaces.find((workspace) => workspace.is_owned) ??
@@ -209,53 +170,7 @@ export function WorkspaceMenu({
   const workspaceName = active?.name ?? "未选择 Workspace"
   const plan = active?.plan ?? entitlement?.plan
   const roleLabel = formatRole(active?.role)
-  const name = session?.name?.trim() || undefined
-  const email = session?.email?.trim() || undefined
-  const accountLabel = email ?? name ?? "未登录"
-  const accountRoleLabel = platformRoleLabel(session?.role)
   const canInvite = active?.role === "owner" || active?.role === "manager"
-
-  async function signOut() {
-    setBusy(true)
-    try {
-      await accountHttp.accountLogout()
-      onSignedOut()
-    } catch (reason) {
-      notifyCommandError(reason, "无法退出登录，请稍后重试。")
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function switchAccount(uuid: string) {
-    if (!onSwitchAccount || busyAccount) return
-    setBusyAccount(uuid)
-    try {
-      await onSwitchAccount(uuid)
-    } finally {
-      setBusyAccount(undefined)
-    }
-  }
-
-  async function removeAccount(uuid: string) {
-    if (!onLogoutAccount || busyAccount) return
-    setBusyAccount(uuid)
-    try {
-      await onLogoutAccount(uuid)
-    } finally {
-      setBusyAccount(undefined)
-    }
-  }
-
-  function joinOrCreateWorkspace(account: StackedAccountView) {
-    if (account.active) {
-      setCreating(true)
-      return
-    }
-    if (!onSwitchAccount || busyAccount) return
-    markPendingWorkspaceCreate(account.uuid)
-    void switchAccount(account.uuid)
-  }
 
   async function openInvite() {
     try {
@@ -301,10 +216,10 @@ export function WorkspaceMenu({
         onOpenChange={(next) => {
           if (next) {
             sideRef.current = isMobile
-              ? "top"
+              ? "bottom"
               : state === "collapsed"
                 ? "right"
-                : "top"
+                : "bottom"
           }
           setOpen(next)
         }}
@@ -315,8 +230,8 @@ export function WorkspaceMenu({
               <DropdownMenuTrigger
                 aria-label={
                   formatPlan(plan)
-                    ? `账户与 Workspace ${workspaceName}，${formatPlan(plan)}，${accountRoleLabel}`
-                    : `账户与 Workspace ${workspaceName}，${accountRoleLabel}`
+                    ? `工作空间 ${workspaceName}，${formatPlan(plan)}`
+                    : `工作空间 ${workspaceName}`
                 }
                 /* Collapsed, this is one more cell of the rail's 36px column, so
                    it takes the same square as a nav row rather than sizing itself
@@ -325,32 +240,29 @@ export function WorkspaceMenu({
               />
             }
           >
-            <IdentityMark
-              kind="user"
-              name={name ?? email ?? ""}
-              role={session?.role}
-              imageUrl={session?.avatar_url}
-              className={MARK}
-            />
-            <WorkspaceIdentity
+            <WorkspaceMark
               name={workspaceName}
-              plan={plan}
-              roleLabel={roleLabel}
-              nameClass="text-sm"
-              className="group-data-[collapsible=icon]:hidden"
+              workspaceId={active?.id}
+              workspaceIds={workspaceIds}
+              imageUrl={active?.avatar_url}
+              className="size-10 shrink-0 group-data-[collapsible=icon]:size-8"
             />
-            <ChevronsUpDown
+            <span className="min-w-0 flex-1 truncate text-xl font-medium group-data-[collapsible=icon]:hidden" title={workspaceName}>
+              {workspaceName}
+            </span>
+            <ChevronDown
               aria-hidden
               className={cn(
                 "size-3.5 shrink-0 text-faint-foreground transition-[color,transform] duration-200 ease-settle group-hover/workspace:text-muted-foreground group-data-[collapsible=icon]:hidden",
                 open && "rotate-180 text-muted-foreground",
               )}
             />
+            <span className="shrink-0 group-data-[collapsible=icon]:hidden"><PlanMark plan={plan} /></span>
           </TooltipTrigger>
           {/* Collapsed, the mark is the only thing left of the Workspace's identity —
               without this the rail opens on an unlabelled coloured square. */}
           <TooltipContent side="right" hidden={state !== "collapsed" || isMobile || open}>
-            {[accountRoleLabel, workspaceName, formatPlan(plan), roleLabel].filter(Boolean).join(" · ")}
+            {[workspaceName, formatPlan(plan), roleLabel].filter(Boolean).join(" · ")}
           </TooltipContent>
         </Tooltip>
 
@@ -360,8 +272,6 @@ export function WorkspaceMenu({
           sideOffset={8}
           className={SHELL}
         >
-          {/* The head is the Workspace the trigger already names — the context
-              comes first, the account is the muted row below the actions. */}
           <div className="flex items-center gap-2.5 px-2 py-1.5">
             <WorkspaceMark
               name={workspaceName}
@@ -420,42 +330,10 @@ export function WorkspaceMenu({
                 邀请成员
               </DropdownMenuItem>
             ) : null}
-            {onAddAccount ? (
-              <DropdownMenuItem className={ACTION} onClick={onAddAccount}>
-                <UserPlus aria-hidden />
-                添加账号
-              </DropdownMenuItem>
-            ) : null}
           </DropdownMenuGroup>
 
           <DropdownMenuSeparator className="my-1.5 bg-border/60" />
 
-          {/* The account stays one muted email row — the Workspaces under it
-              are the account's, the way Notion nests a workspace list under
-              its account row. The "…" holds the account-level actions. */}
-          <div className="flex items-center gap-2.5 rounded-md bg-white py-1 pl-2.5 pr-1">
-            <IdentityMark
-              kind="user"
-              name={name ?? email ?? ""}
-              role={session?.role}
-              imageUrl={session?.avatar_url}
-              className={ACCOUNT_MARK}
-            />
-            <span
-              className="min-w-0 flex-1 truncate font-mono text-compact text-muted-foreground"
-              title={name && email ? `${name} · ${email}` : accountLabel}
-            >
-              {accountLabel}
-            </span>
-            <AccountActionsSubmenu
-              email={accountLabel}
-              joinOrCreateDisabled={!standing || Boolean(refusal)}
-              onJoinOrCreate={() => setCreating(true)}
-              onSignOut={() => void signOut()}
-              signOutDisabled={busy}
-              signOutLabel="退出登录"
-            />
-          </div>
 
           <DropdownMenuGroup className="flex flex-col gap-0.5">
             <DropdownMenuLabel className="sr-only">可切换的 Workspace</DropdownMenuLabel>
@@ -565,36 +443,6 @@ export function WorkspaceMenu({
             ) : null}
           </DropdownMenuGroup>
 
-          {otherAccounts.length > 0 ? (
-            <>
-              <DropdownMenuSeparator className="my-1.5 bg-border/60" />
-              <DropdownMenuGroup className="flex flex-col gap-0.5">
-                <DropdownMenuLabel className="sr-only">
-                  其他已登录账号
-                </DropdownMenuLabel>
-                <StackedAccountItems
-                  accounts={otherAccounts}
-                  busyUuid={busyAccount}
-                  onSwitch={onSwitchAccount ? switchAccount : undefined}
-                  onRemove={onLogoutAccount ? removeAccount : undefined}
-                  onJoinOrCreate={joinOrCreateWorkspace}
-                  joinOrCreateDisabled={() => !onSwitchAccount}
-                />
-              </DropdownMenuGroup>
-            </>
-          ) : null}
-
-          <DropdownMenuSeparator className="my-1.5 bg-border/60" />
-
-          <DropdownMenuItem
-            variant="destructive"
-            disabled={busy}
-            className={ACTION}
-            onClick={() => void signOut()}
-          >
-            <LogOut />
-            退出登录
-          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
 
@@ -628,6 +476,152 @@ export function WorkspaceMenu({
         workspaceUuid={active?.uuid}
         onOverviewChange={onOverviewChange}
       />
+    </>
+  )
+}
+
+export function AccountMenu({
+  overview,
+  standing,
+  onSwitchAccount,
+  onLogoutAccount,
+  onAddAccount,
+  onWorkspaceCreated,
+  onSignedOut,
+}: {
+  overview?: AccountOverview
+  standing?: WorkspaceStandingView
+  onSwitchAccount?: (uuid: string) => void | Promise<void>
+  onLogoutAccount?: (uuid: string) => void | Promise<void>
+  onAddAccount?: () => void
+  onWorkspaceCreated?: (standing: WorkspaceStandingView) => void
+  onSignedOut: () => void
+}) {
+  const { state, isMobile } = useSidebar()
+  const [open, setOpen] = useState(false)
+  const [creating, setCreating] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [busyAccount, setBusyAccount] = useState<string>()
+  const sideRef = useRef<MenuSide>("top")
+  const session = overview?.session
+  const name = session?.name?.trim() || undefined
+  const email = session?.email?.trim() || undefined
+  const accountLabel = email ?? name ?? "未登录"
+  const accountName = name ?? email ?? "未登录"
+  const accountRoleLabel = platformRoleLabel(session?.role)
+  const otherAccounts = (overview?.accounts ?? []).filter((account) => !account.active)
+  const refusal = standing ? createWorkspaceRefusal(standing) : undefined
+
+  async function signOut() {
+    setBusy(true)
+    try {
+      await accountHttp.accountLogout()
+      onSignedOut()
+    } catch (reason) {
+      notifyCommandError(reason, "无法退出登录，请稍后重试。")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function switchAccount(uuid: string) {
+    if (!onSwitchAccount || busyAccount) return
+    setBusyAccount(uuid)
+    try {
+      await onSwitchAccount(uuid)
+    } finally {
+      setBusyAccount(undefined)
+    }
+  }
+
+  async function removeAccount(uuid: string) {
+    if (!onLogoutAccount || busyAccount) return
+    setBusyAccount(uuid)
+    try {
+      await onLogoutAccount(uuid)
+    } finally {
+      setBusyAccount(undefined)
+    }
+  }
+
+  function joinOrCreateWorkspace(account: StackedAccountView) {
+    if (account.active) {
+      setCreating(true)
+      return
+    }
+    if (!onSwitchAccount || busyAccount) return
+    markPendingWorkspaceCreate(account.uuid)
+    void switchAccount(account.uuid)
+  }
+
+  return (
+    <>
+      <DropdownMenu
+        open={open}
+        onOpenChange={(next) => {
+          if (next) sideRef.current = !isMobile && state === "collapsed" ? "right" : "top"
+          setOpen(next)
+        }}
+      >
+        <Tooltip>
+          <TooltipTrigger render={<DropdownMenuTrigger aria-label={`账户 ${accountName}，${accountRoleLabel}`} className={cn(TRIGGER, "mb-4 gap-3 px-3.5 py-3 group-data-[collapsible=icon]:mb-0")} />}>
+            <IdentityMark kind="user" name={accountName} role={session?.role} imageUrl={session?.avatar_url} className="size-12 shrink-0 group-data-[collapsible=icon]:size-8" />
+            <span className="flex min-w-0 flex-1 flex-col gap-0.5 group-data-[collapsible=icon]:hidden">
+              <span className="truncate text-xl font-medium">{accountName}</span>
+              <span className="truncate text-xs text-faint-foreground">{email ?? accountRoleLabel}</span>
+            </span>
+            <ChevronDown aria-hidden className="size-3.5 shrink-0 text-muted-foreground group-data-[collapsible=icon]:hidden" />
+          </TooltipTrigger>
+          <TooltipContent side="right" hidden={state !== "collapsed" || isMobile || open}>
+            {[accountName, email, accountRoleLabel].filter(Boolean).join(" · ")}
+          </TooltipContent>
+        </Tooltip>
+        <DropdownMenuContent side={sideRef.current} align="start" sideOffset={8} className={SHELL}>
+          <div className="flex items-center gap-2.5 rounded-md py-1 pl-2.5 pr-1">
+            <IdentityMark kind="user" name={accountName} role={session?.role} imageUrl={session?.avatar_url} className={ACCOUNT_MARK} />
+            <span className="min-w-0 flex-1 truncate text-compact text-muted-foreground" title={accountLabel}>{accountLabel}</span>
+            <AccountActionsSubmenu
+              email={accountLabel}
+              joinOrCreateDisabled={!standing || Boolean(refusal)}
+              onJoinOrCreate={() => setCreating(true)}
+              onSignOut={() => void signOut()}
+              signOutDisabled={busy}
+              signOutLabel="退出登录"
+            />
+          </div>
+          {otherAccounts.length > 0 ? (
+            <>
+              <DropdownMenuSeparator className="my-1.5 bg-border/60" />
+              <DropdownMenuGroup className="flex flex-col gap-0.5">
+                <DropdownMenuLabel className="sr-only">其他已登录账号</DropdownMenuLabel>
+                <StackedAccountItems
+                  accounts={otherAccounts}
+                  busyUuid={busyAccount}
+                  onSwitch={onSwitchAccount ? switchAccount : undefined}
+                  onRemove={onLogoutAccount ? removeAccount : undefined}
+                  onJoinOrCreate={joinOrCreateWorkspace}
+                  joinOrCreateDisabled={() => !onSwitchAccount}
+                />
+              </DropdownMenuGroup>
+            </>
+          ) : null}
+          {onAddAccount ? (
+            <DropdownMenuItem className={ACTION} onClick={onAddAccount}>
+              <UserPlus aria-hidden />添加账号
+            </DropdownMenuItem>
+          ) : null}
+          <DropdownMenuSeparator className="my-1.5 bg-border/60" />
+          <DropdownMenuItem variant="destructive" disabled={busy} className={ACTION} onClick={() => void signOut()}>
+            <LogOut aria-hidden />退出登录
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <Dialog open={creating} onOpenChange={setCreating}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader><DialogTitle>创建工作空间</DialogTitle></DialogHeader>
+          <CreateWorkspaceForm inDialog onCreated={(next) => { setCreating(false); onWorkspaceCreated?.(next) }} onCancel={() => setCreating(false)} />
+        </DialogContent>
+      </Dialog>
     </>
   )
 }

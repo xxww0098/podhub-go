@@ -27,6 +27,8 @@ CREATE TABLE public.account_users (
     agent_attributed_at timestamp with time zone,
     agent_attribution_bps integer,
     agent_attribution_source character varying(16),
+    account_kind text NOT NULL DEFAULT 'platform',
+    must_change_password boolean NOT NULL DEFAULT false,
     CONSTRAINT uq_account_users_email UNIQUE (email)
 );
 

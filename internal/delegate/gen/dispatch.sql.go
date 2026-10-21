@@ -14,17 +14,19 @@ import (
 const acceptDispatch = `-- name: AcceptDispatch :one
 SELECT delegate_supplier_accept(
     $1::uuid,
-    $2::bigint
+    $2::bigint,
+    $3::uuid
 )::text AS state
 `
 
 type AcceptDispatchParams struct {
 	DispatchID     pgtype.UUID
 	SupplierUserID int64
+	FulfillerID    pgtype.UUID
 }
 
 func (q *Queries) AcceptDispatch(ctx context.Context, arg AcceptDispatchParams) (string, error) {
-	row := q.db.QueryRow(ctx, acceptDispatch, arg.DispatchID, arg.SupplierUserID)
+	row := q.db.QueryRow(ctx, acceptDispatch, arg.DispatchID, arg.SupplierUserID, arg.FulfillerID)
 	var state string
 	err := row.Scan(&state)
 	return state, err
@@ -65,7 +67,8 @@ const rejectDispatch = `-- name: RejectDispatch :one
 SELECT delegate_supplier_reject(
     $1::uuid,
     $2::bigint,
-    $3::text
+    $3::text,
+    $4::uuid
 )::text AS state
 `
 
@@ -73,10 +76,16 @@ type RejectDispatchParams struct {
 	DispatchID     pgtype.UUID
 	SupplierUserID int64
 	Reason         string
+	FulfillerID    pgtype.UUID
 }
 
 func (q *Queries) RejectDispatch(ctx context.Context, arg RejectDispatchParams) (string, error) {
-	row := q.db.QueryRow(ctx, rejectDispatch, arg.DispatchID, arg.SupplierUserID, arg.Reason)
+	row := q.db.QueryRow(ctx, rejectDispatch,
+		arg.DispatchID,
+		arg.SupplierUserID,
+		arg.Reason,
+		arg.FulfillerID,
+	)
 	var state string
 	err := row.Scan(&state)
 	return state, err
@@ -88,7 +97,8 @@ SELECT delegate_supplier_ship(
     $2::bigint,
     $3::text,
     $4::text,
-    $5::bigint
+    $5::bigint,
+    $6::uuid
 )::text AS state
 `
 
@@ -98,6 +108,7 @@ type ShipDispatchParams struct {
 	TrackingNo     string
 	Note           string
 	NowMs          int64
+	FulfillerID    pgtype.UUID
 }
 
 func (q *Queries) ShipDispatch(ctx context.Context, arg ShipDispatchParams) (string, error) {
@@ -107,6 +118,7 @@ func (q *Queries) ShipDispatch(ctx context.Context, arg ShipDispatchParams) (str
 		arg.TrackingNo,
 		arg.Note,
 		arg.NowMs,
+		arg.FulfillerID,
 	)
 	var state string
 	err := row.Scan(&state)

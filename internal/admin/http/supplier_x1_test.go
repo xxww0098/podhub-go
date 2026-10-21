@@ -89,7 +89,7 @@ func TestSupplierX1SuccessBytes(t *testing.T) {
 	if rec.Code != http.StatusCreated || rec.Body.String() != `{"data":{"row":`+domain.JSONText(row)+`}}` {
 		t.Fatalf("row %d %s", rec.Code, rec.Body.String())
 	}
-	rec = jsonCall(staff, http.MethodPost, "/api/admin/supplier-dbs/src/rows/scp_1/price", string(mustRead(t, "requests/price.json")))
+	rec = jsonCall(super, http.MethodPost, "/api/admin/supplier-dbs/src/rows/scp_1/price", string(mustRead(t, "requests/price.json")))
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"platformPriceCents":null`) {
 		t.Fatalf("price envelope %d %s", rec.Code, rec.Body.String())
 	}

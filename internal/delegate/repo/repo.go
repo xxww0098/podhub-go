@@ -40,8 +40,12 @@ func (r Repo) Accept(ctx context.Context, orgID, userID int64, dispatchID string
 		if err != nil {
 			return err
 		}
+		fulfiller, err := pinnedFulfiller(ctx, tx, id)
+		if err != nil {
+			return err
+		}
 		state, err = sqlcgen.New(tx).AcceptDispatch(ctx, sqlcgen.AcceptDispatchParams{
-			DispatchID: id, SupplierUserID: userID,
+			DispatchID: id, SupplierUserID: userID, FulfillerID: fulfiller,
 		})
 		return mapDispatch(err)
 	})
@@ -58,8 +62,12 @@ func (r Repo) Reject(ctx context.Context, orgID, userID int64, dispatchID, reaso
 		if err != nil {
 			return err
 		}
+		fulfiller, err := pinnedFulfiller(ctx, tx, id)
+		if err != nil {
+			return err
+		}
 		state, err = sqlcgen.New(tx).RejectDispatch(ctx, sqlcgen.RejectDispatchParams{
-			DispatchID: id, SupplierUserID: userID, Reason: reason,
+			DispatchID: id, SupplierUserID: userID, Reason: reason, FulfillerID: fulfiller,
 		})
 		return mapDispatch(err)
 	})
@@ -76,8 +84,13 @@ func (r Repo) Ship(ctx context.Context, orgID, userID int64, dispatchID, trackin
 		if err != nil {
 			return err
 		}
+		fulfiller, err := pinnedFulfiller(ctx, tx, id)
+		if err != nil {
+			return err
+		}
 		state, err = sqlcgen.New(tx).ShipDispatch(ctx, sqlcgen.ShipDispatchParams{
 			DispatchID: id, SupplierUserID: userID, TrackingNo: trackingNo, Note: note, NowMs: nowMS,
+			FulfillerID: fulfiller,
 		})
 		return mapDispatch(err)
 	})
@@ -115,6 +128,36 @@ func (r Repo) withTx(ctx context.Context, orgID, supplierUserID int64, fn func(p
 		session = db.Supplier(supplierUserID)
 	}
 	return db.InTx(ctx, r.pool, session, fn)
+}
+
+// pinnedFulfiller reads the recipient a packet was dispatched to.
+//
+// The action functions in 00364 gate on the packet's own fulfiller_id, not on
+// the source: a rebind must not let the new factory act on an old packet, and
+// must not lock the original recipient out of a packet they still owe. So the
+// id has to come from the row itself.
+//
+// A packet with no fulfiller predates 00362 and has no legitimate recipient;
+// the definer gate would reject a NULL id anyway, so report it as terminal
+// rather than letting it surface as a not-found from the function call.
+func pinnedFulfiller(ctx context.Context, tx pgx.Tx, id pgtype.UUID) (pgtype.UUID, error) {
+	var raw *string
+	err := tx.QueryRow(ctx,
+		`SELECT fulfiller_id::text FROM delegate_dispatches WHERE dispatch_id = $1::uuid`, id).Scan(&raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return pgtype.UUID{}, contract.ErrNotFound
+	}
+	if err != nil {
+		return pgtype.UUID{}, err
+	}
+	if raw == nil || *raw == "" {
+		return pgtype.UUID{}, contract.ErrTerminal
+	}
+	var out pgtype.UUID
+	if err := out.Scan(*raw); err != nil || !out.Valid {
+		return pgtype.UUID{}, contract.ErrNotFound
+	}
+	return out, nil
 }
 
 func parseUUID(raw string) (pgtype.UUID, error) {

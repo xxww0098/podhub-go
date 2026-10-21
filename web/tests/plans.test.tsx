@@ -23,6 +23,14 @@ test("billing dates use Shanghai even when the browser is in another timezone", 
   assert.equal(subscriptionDate(null), "—")
 })
 
+test("a free workspace does not claim that a paid renewal has been configured", () => {
+  const free = { ...subscriptionFixture, status: "free" as const, plan_key: "free", stores: { used: 0, limit: 1 }, extra_stores: 0, periods: [], current_end: null, term_end: null }
+  const html = renderToStaticMarkup(<PlansScreen overview={subscriptionOverview} subscription={free} />)
+  assert.match(html, /永久免费/)
+  assert.match(html, />购买套餐</)
+  assert.doesNotMatch(html, /下次续费配置|已设置下期续费/)
+})
+
 test("viewing a subscription does not give members purchase controls", () => {
   const overview = { ...subscriptionOverview, active_workspace: { ...subscriptionOverview.active_workspace!, role: "member" } }
   const html = renderToStaticMarkup(<PlansScreen overview={overview} subscription={subscriptionFixture} />)

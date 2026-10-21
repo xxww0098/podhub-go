@@ -73,7 +73,7 @@ func (r Repo) Dispatch(ctx context.Context, cmd domain.AdminCommand, in domain.D
 				kept = append(kept, line)
 			}
 		}
-		written, err := writePackets(ctx, tx, orgID, cmd.OrderID, posting, note, logistics, kept, "admin:"+itoa(cmd.UserID), cmd.NowMS, cmd.NewID)
+		written, err := writePackets(ctx, tx, orgID, cmd.OrderID, posting, note, logistics, kept, "admin:"+itoa(cmd.UserID), in.FulfillerID, cmd.NowMS, cmd.NewID)
 		if err != nil {
 			return err
 		}
@@ -85,7 +85,7 @@ func (r Repo) Dispatch(ctx context.Context, cmd domain.AdminCommand, in domain.D
 			lineIDs = append(lineIDs, id.lines...)
 		}
 		if len(lineIDs) > 0 {
-			if _, err := tx.Exec(ctx, `UPDATE delegate_order_lines SET last_rejected_source_id = NULL WHERE line_id = ANY($1::uuid[])`, lineIDs); err != nil {
+			if _, err := tx.Exec(ctx, `UPDATE delegate_order_lines SET last_rejected_fulfiller_id = NULL WHERE line_id = ANY($1::uuid[])`, lineIDs); err != nil {
 				return mapDB(err)
 			}
 		}
@@ -328,11 +328,18 @@ type dispatchLine struct {
 	Qty     int32
 	Source  string
 	Assets  []byte
+	// FulfillerCount/FulfillerID are resolved per source so writePackets can
+	// pin each packet. 00362 makes fulfiller_id the isolation key, so a packet
+	// written without it would be invisible to the person meant to act on it.
+	FulfillerCount int64
+	FulfillerID    *string
 }
 
 func dispatchableLines(ctx context.Context, tx pgx.Tx, orderID, sourceID string) ([]dispatchLine, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT l.line_id::text, l.offer_id, l.name, l.quantity, s.source_id,
+		       public.delegate_source_active_fulfiller_count(s.source_id),
+		       public.delegate_source_active_fulfiller_id(s.source_id)::text,
 		       COALESCE((SELECT jsonb_agg(jsonb_build_object(
 		                   'asset_id', a.asset_id::text,
 		                   'file_name', a.file_name,
@@ -361,7 +368,8 @@ func dispatchableLines(ctx context.Context, tx pgx.Tx, orderID, sourceID string)
 	var out []dispatchLine
 	for rows.Next() {
 		var line dispatchLine
-		if err := rows.Scan(&line.LineID, &line.OfferID, &line.Name, &line.Qty, &line.Source, &line.Assets); err != nil {
+		if err := rows.Scan(&line.LineID, &line.OfferID, &line.Name, &line.Qty, &line.Source,
+			&line.FulfillerCount, &line.FulfillerID, &line.Assets); err != nil {
 			return nil, mapDB(err)
 		}
 		out = append(out, line)
@@ -371,7 +379,7 @@ func dispatchableLines(ctx context.Context, tx pgx.Tx, orderID, sourceID string)
 
 type writtenPacket struct{ lines []string }
 
-func writePackets(ctx context.Context, tx pgx.Tx, orgID int64, orderID, posting, note string, logistics []byte, lines []dispatchLine, attempted string, now int64, newID func() string) ([]writtenPacket, error) {
+func writePackets(ctx context.Context, tx pgx.Tx, orgID int64, orderID, posting, note string, logistics []byte, lines []dispatchLine, attempted, explicitFulfiller string, now int64, newID func() string) ([]writtenPacket, error) {
 	bySource := map[string][]dispatchLine{}
 	var order []string
 	for _, line := range lines {
@@ -383,6 +391,7 @@ func writePackets(ctx context.Context, tx pgx.Tx, orgID int64, orderID, posting,
 	// Packets are inserted in source id order, not first-seen order.
 	sortStrings(order)
 	var written []writtenPacket
+	var blocked blockReasons
 	for _, source := range order {
 		group := bySource[source]
 		type wireLine struct {
@@ -411,14 +420,45 @@ func writePackets(ctx context.Context, tx pgx.Tx, orgID int64, orderID, posting,
 		if err != nil {
 			return nil, contract.Internal()
 		}
+		// Staff may name the recipient explicitly (plan 7.1). It has to belong
+		// to THIS source, otherwise a typo would hand one factory's packet to
+		// somebody else. The check is a staff-session read, so the staff arm of
+		// sc_source_fulfillers applies.
+		var recipient string
+		if explicitFulfiller != "" {
+			if err := tx.QueryRow(ctx, `
+				SELECT f.fulfiller_id::text FROM public.sc_source_fulfillers f
+				 WHERE f.fulfiller_id = $1::uuid AND f.source_id = $2 AND f.status = 'active'`,
+				explicitFulfiller, source).Scan(&recipient); err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return nil, contract.Validation("指定的履约人不属于该货源库或已停用")
+				}
+				return nil, mapDB(err)
+			}
+		}
+		// Otherwise the same rule as the automatic dispatcher: no unambiguous
+		// recipient means no packet. The reason is accumulated rather than
+		// written here, so a blocked source followed by a dispatched one
+		// cannot erase it.
+		if recipient == "" {
+			if group[0].FulfillerCount != 1 || group[0].FulfillerID == nil || *group[0].FulfillerID == "" {
+				if group[0].FulfillerCount > 1 {
+					blocked.note("ambiguous_fulfiller")
+				} else {
+					blocked.note("no_fulfiller")
+				}
+				continue
+			}
+			recipient = *group[0].FulfillerID
+		}
 		no := "dsp_" + strings.ReplaceAll(newID(), "-", "")
 		var id *string
 		err = tx.QueryRow(ctx, `
 			INSERT INTO delegate_dispatches
-			    (org_id, order_id, source_id, dispatch_no, payload, state, attempted_by, created_at_ms, updated_at_ms)
-			VALUES ($1, $2::uuid, $3, $4, $5::jsonb, 'dispatched', $6, $7, $7)
+			    (org_id, order_id, source_id, dispatch_no, payload, state, attempted_by, fulfiller_id, created_at_ms, updated_at_ms)
+			VALUES ($1, $2::uuid, $3, $4, $5::jsonb, 'dispatched', $6, $8::uuid, $7, $7)
 			ON CONFLICT (order_id, source_id) WHERE state = 'dispatched' DO NOTHING
-			RETURNING dispatch_id::text`, orgID, orderID, source, no, payload, attempted, now).Scan(&id)
+			RETURNING dispatch_id::text`, orgID, orderID, source, no, payload, attempted, now, recipient).Scan(&id)
 		if errors.Is(err, pgx.ErrNoRows) {
 			continue
 		}
@@ -426,6 +466,9 @@ func writePackets(ctx context.Context, tx pgx.Tx, orgID int64, orderID, posting,
 			return nil, mapDB(err)
 		}
 		written = append(written, writtenPacket{lines: ids})
+	}
+	if err := writeDispatchBlocked(ctx, tx, orderID, blocked, now); err != nil {
+		return nil, mapDB(err)
 	}
 	return written, nil
 }

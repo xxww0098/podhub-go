@@ -53,15 +53,6 @@ func (s *spy) Reject(context.Context, int64, string, string) (contract.ActionDat
 func (s *spy) Ship(context.Context, int64, string, string, string, int64) (contract.ActionData, error) {
 	return contract.ActionData{}, nil
 }
-func (s *spy) Wallets(context.Context, int64) (contract.WalletListData, error) {
-	return contract.WalletListData{}, nil
-}
-func (s *spy) Withdrawals(context.Context, int64) (contract.WithdrawalListData, error) {
-	return contract.WithdrawalListData{}, nil
-}
-func (s *spy) CreateWithdrawal(context.Context, int64, domain.WithdrawalInput, int64) (contract.WithdrawalListData, error) {
-	return contract.WithdrawalListData{}, nil
-}
 func (s *spy) DownloadAsset(context.Context, int64, string, string, bool, int64) (contract.AssetBytes, error) {
 	return contract.AssetBytes{Grant: &contract.DownloadGrant{URL: "http://127.0.0.1/x", ExpiresAtMs: 1}}, nil
 }
@@ -110,14 +101,6 @@ func TestSupplierAuthAndValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req = httptest.NewRequest(http.MethodPost, "/api/supplier/withdrawals", strings.NewReader(`{"sourceId":"s","amountCents":99,"channel":"alipay","account":"a","realName":"n"}`))
-	req.Header.Set("Content-Type", "application/json")
-	rec = httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
-	if rec.Code != 400 || !strings.Contains(rec.Body.String(), "提现金额不能少于 1 元") {
-		t.Fatalf("withdraw %d %s", rec.Code, rec.Body.Bytes())
-	}
-
 	anon := chi.NewRouter()
 	Mount(anon, Deps{Outbound: fatalTrip{t}})
 	rec = httptest.NewRecorder()
@@ -164,7 +147,7 @@ func TestSupplierAuthAndValidation(t *testing.T) {
 	broken := chi.NewRouter()
 	Mount(broken, Deps{Session: fixedSession{err: errors.New("db")}, Actions: actions})
 	rec = httptest.NewRecorder()
-	broken.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/supplier/wallet", nil))
+	broken.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/supplier/me", nil))
 	if rec.Code != 500 || !strings.Contains(rec.Body.String(), `"code":"internal"`) {
 		t.Fatalf("resolve %d %s", rec.Code, rec.Body.Bytes())
 	}

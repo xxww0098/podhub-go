@@ -30,14 +30,14 @@ func promote(ctx context.Context, tx pgx.Tx, orgID int64, storeID string, offers
 	rows, err := tx.Query(ctx, `
 		UPDATE delegate_order_lines l
 		   SET binding_id = $4::uuid,
-		       last_rejected_source_id = CASE
-		           WHEN l.last_rejected_source_id IS NOT NULL
-		            AND l.last_rejected_source_id IS DISTINCT FROM (
-		                SELECT b.source_id FROM delegate_bindings b WHERE b.binding_id = $4::uuid
-		            )
-		           THEN NULL
-		           ELSE l.last_rejected_source_id
-		       END
+		       -- Rebind clears the rejection latch unconditionally. The latch is
+		       -- fulfiller-scoped now, so keeping it would require joining
+		       -- sc_source_fulfillers to know whether the new binding routes to
+		       -- the same recipient; guessing wrong pins the line as
+		       -- permanently undispatchable, while clearing at worst dispatches
+		       -- twice (the live-packet NOT EXISTS and ux_delegate_dispatches_live
+		       -- both still guard that).
+		       last_rejected_fulfiller_id = NULL
 		  FROM delegate_orders o
 		 WHERE o.order_id = l.order_id
 		   AND o.org_id = $1 AND o.store_id = $2::uuid
@@ -234,6 +234,8 @@ func dispatchReady(ctx context.Context, tx pgx.Tx, orgID int64, orderID string, 
 	}
 	rows, err := tx.Query(ctx, `
 		SELECT l.line_id::text, l.offer_id, l.name, l.quantity, s.source_id,
+		       public.delegate_source_active_fulfiller_count(s.source_id),
+		       public.delegate_source_active_fulfiller_id(s.source_id)::text,
 		       COALESCE((SELECT jsonb_agg(jsonb_build_object(
 		                   'asset_id', a.asset_id::text,
 		                   'file_name', a.file_name,
@@ -254,7 +256,15 @@ func dispatchReady(ctx context.Context, tx pgx.Tx, orgID int64, orderID string, 
 		          WHERE d.order_id = l.order_id
 		            AND d.state IN ('dispatched', 'accepted', 'shipped')
 		            AND d.payload->'lines' @> to_jsonb(jsonb_build_array(jsonb_build_object('line_id', l.line_id::text))))
-		   AND (l.last_rejected_source_id IS NULL OR l.last_rejected_source_id <> b.source_id)`, orderID)
+		   -- The latch is fulfiller-scoped, but delegate_bindings stores only
+		   -- source_id (00203:21-37) -- there is no b.fulfiller_id to compare
+		   -- against. The plan's 7.2 item 3 assumed one exists. Resolve the
+		   -- binding's current recipient through the definer function instead,
+		   -- so the latch survives an unrelated rebind but releases as soon as
+		   -- the source's active fulfiller actually changes.
+		   AND (l.last_rejected_fulfiller_id IS NULL
+		        OR l.last_rejected_fulfiller_id IS DISTINCT FROM
+		           public.delegate_source_active_fulfiller_id(b.source_id))`, orderID)
 	if err != nil {
 		return err
 	}
@@ -262,12 +272,15 @@ func dispatchReady(ctx context.Context, tx pgx.Tx, orgID int64, orderID string, 
 	type line struct {
 		id, offer, name, source string
 		qty                     int32
+		fulfillerCount          int64
+		fulfillerID             *string
 		assets                  json.RawMessage
 	}
 	grouped := map[string][]line{}
 	for rows.Next() {
 		var row line
-		if err := rows.Scan(&row.id, &row.offer, &row.name, &row.qty, &row.source, &row.assets); err != nil {
+		if err := rows.Scan(&row.id, &row.offer, &row.name, &row.qty, &row.source,
+			&row.fulfillerCount, &row.fulfillerID, &row.assets); err != nil {
 			return err
 		}
 		grouped[row.source] = append(grouped[row.source], row)
@@ -284,6 +297,7 @@ func dispatchReady(ctx context.Context, tx pgx.Tx, orgID int64, orderID string, 
 		sources = append(sources, source)
 	}
 	sort.Strings(sources)
+	var blocked blockReasons
 	for _, source := range sources {
 		lines := grouped[source]
 		payloadLines := make([]any, 0, len(lines))
@@ -318,6 +332,18 @@ func dispatchReady(ctx context.Context, tx pgx.Tx, orgID int64, orderID string, 
 		if err != nil {
 			return err
 		}
+		// A packet with no unambiguous recipient is not dispatched. 00362 gives
+		// the order a reason instead, so the seller sees "ready but unassigned"
+		// rather than a packet that nobody can act on.
+		first := lines[0]
+		if first.fulfillerCount == 0 || first.fulfillerID == nil || *first.fulfillerID == "" {
+			blocked.note("no_fulfiller")
+			continue
+		}
+		if first.fulfillerCount > 1 {
+			blocked.note("ambiguous_fulfiller")
+			continue
+		}
 		dispatchNo, err := domain.NewDispatchNo()
 		if err != nil {
 			return err
@@ -325,10 +351,10 @@ func dispatchReady(ctx context.Context, tx pgx.Tx, orgID int64, orderID string, 
 		var dispatchID string
 		err = tx.QueryRow(ctx, `
 			INSERT INTO delegate_dispatches
-			    (org_id, order_id, source_id, dispatch_no, payload, state, attempted_by, created_at_ms, updated_at_ms)
-			VALUES ($1, $2::uuid, $3, $4, $5::jsonb, 'dispatched', 'auto', $6, $6)
+			    (org_id, order_id, source_id, dispatch_no, payload, state, attempted_by, fulfiller_id, created_at_ms, updated_at_ms)
+			VALUES ($1, $2::uuid, $3, $4, $5::jsonb, 'dispatched', 'auto', $7::uuid, $6, $6)
 			ON CONFLICT (order_id, source_id) WHERE state = 'dispatched' DO NOTHING
-			RETURNING dispatch_id::text`, orgID, orderID, source, dispatchNo, string(payload), nowMS).Scan(&dispatchID)
+			RETURNING dispatch_id::text`, orgID, orderID, source, dispatchNo, string(payload), nowMS, *first.fulfillerID).Scan(&dispatchID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			continue
 		}
@@ -339,7 +365,54 @@ func dispatchReady(ctx context.Context, tx pgx.Tx, orgID int64, orderID string, 
 			return err
 		}
 	}
+	if err := writeDispatchBlocked(ctx, tx, orderID, blocked, nowMS); err != nil {
+		return err
+	}
 	return recompute(ctx, tx, orderID, nowMS)
+}
+
+// blockReasons accumulates per-source dispatch refusals across one pass.
+//
+// dispatch_blocked_reason is a single column on delegate_orders, but dispatch
+// runs a per-source loop. Writing the column inside the loop makes the final
+// value depend on sort.Strings order: a blocked source followed by a
+// dispatched one would clear the reason the seller needs to see. So the loop
+// only records, and writeDispatchBlocked applies one deterministic verdict
+// after it.
+type blockReasons struct{ noFulfiller, ambiguous bool }
+
+// note records one source's refusal.
+func (b *blockReasons) note(reason string) {
+	switch reason {
+	case "no_fulfiller":
+		b.noFulfiller = true
+	case "ambiguous_fulfiller":
+		b.ambiguous = true
+	}
+}
+
+// verdict is the reason to show, or "" when nothing was blocked. Ambiguous
+// outranks no_fulfiller: it is the more specific diagnosis, and O11 could make
+// it reachable.
+func (b blockReasons) verdict() string {
+	if b.ambiguous {
+		return "ambiguous_fulfiller"
+	}
+	if b.noFulfiller {
+		return "no_fulfiller"
+	}
+	return ""
+}
+
+// writeDispatchBlocked applies the verdict once, after the loop.
+func writeDispatchBlocked(ctx context.Context, tx pgx.Tx, orderID string, blocked blockReasons, nowMS int64) error {
+	_, err := tx.Exec(ctx, `
+		UPDATE delegate_orders
+		   SET dispatch_blocked_reason = NULLIF($2, ''), updated_at_ms = $3
+		 WHERE order_id = $1::uuid
+		   AND dispatch_blocked_reason IS DISTINCT FROM NULLIF($2, '')`,
+		orderID, blocked.verdict(), nowMS)
+	return err
 }
 
 func insertDispatchAssets(ctx context.Context, tx pgx.Tx, dispatchID string, assetIDs []string, orgID int64) error {
@@ -436,11 +509,13 @@ type orderHead struct {
 	Cancel                                             bool
 	Snapshot, Logistics                                []byte
 	CreatedAtMS, UpdatedAtMS                           int64
+	// DispatchBlockedReason is why the order is ready but has no packet yet.
+	DispatchBlockedReason *string
 }
 
 func scanHead(row interface{ Scan(...any) error }) (orderHead, error) {
 	var head orderHead
-	err := row.Scan(&head.OrderID, &head.StoreID, &head.PostingNumber, &head.SellerNote, &head.State, &head.Cancel, &head.Snapshot, &head.Logistics, &head.CreatedAtMS, &head.UpdatedAtMS)
+	err := row.Scan(&head.OrderID, &head.StoreID, &head.PostingNumber, &head.SellerNote, &head.State, &head.Cancel, &head.Snapshot, &head.Logistics, &head.CreatedAtMS, &head.UpdatedAtMS, &head.DispatchBlockedReason)
 	return head, err
 }
 
@@ -495,6 +570,9 @@ func hydrate(ctx context.Context, tx pgx.Tx, heads []orderHead) ([]contract.Orde
 		}
 		if len(head.Logistics) > 0 && string(head.Logistics) != "null" {
 			order.Logistics = json.RawMessage(head.Logistics)
+		}
+		if head.DispatchBlockedReason != nil {
+			order.DispatchBlockedReason = *head.DispatchBlockedReason
 		}
 		out = append(out, order)
 	}

@@ -58,6 +58,29 @@ test("the anonymous entry graph never pulls AppShell or production screens", () 
   assert.doesNotMatch(source, /from ["']@\/features\/console\/console-screen["']/)
 })
 
+test("a locked account reaches the forced password change instead of the retry wall", async () => {
+  // Cloud's §4.2 gate refuses the boot probe (/api/view/account-overview is not
+  // on the whitelist) with 403 PASSWORD_CHANGE_REQUIRED. That is a state, not a
+  // transient failure: the probe must answer "locked" after ONE request and
+  // never spend the retry budget on a refusal only a password change can lift.
+  let calls = 0
+  const locked = Object.assign(new Error("请先修改密码"), {
+    code: "cloud_password_change_required",
+    status: 403,
+    serverCode: "PASSWORD_CHANGE_REQUIRED",
+  })
+  assert.deepEqual(
+    await loadAuthState(async () => {
+      calls += 1
+      throw locked
+    }),
+    { phase: "locked" },
+  )
+  assert.equal(calls, 1)
+  // ...but a 401 from the password write still retires the locked phase.
+  assert.equal(refusalRetiresSession("locked"), true)
+})
+
 test("session startup failures stay out of Login and remain retryable", async () => {
   let attempts = 0
   const reason = {
@@ -165,6 +188,43 @@ test("product version label is vX.Y.Z from root VERSION", () => {
   assert.match(identity, /PODHUB_VERSION/)
   assert.doesNotMatch(login, /v0\.0\.\d+/)
   assert.doesNotMatch(identity, /v0\.0\.\d+/)
+})
+
+test("a locked login hands over before the credential toast, after TOTP", () => {
+  // The login write itself succeeds and writes the Cookie; only the follow-up
+  // overview read is refused with 403 PASSWORD_CHANGE_REQUIRED. Telling the
+  // operator to check the password would be false, and no retry on this card can
+  // clear the gate, so the host swaps to the forced password change.
+  const login = readFileSync(
+    new URL("../src/features/account/login-screen.tsx", import.meta.url),
+    "utf8",
+  )
+  const totpAt = login.indexOf('commandErrorCode(reason) === "cloud_totp_required"')
+  const lockedAt = login.indexOf(
+    'commandErrorCode(reason) === "cloud_password_change_required"',
+  )
+  const toastAt = login.indexOf("notifyCommandError(reason, message)")
+  assert.ok(totpAt > 0, "the TOTP branch must still exist")
+  assert.ok(lockedAt > totpAt, "the lock check must not steal TOTP priority")
+  assert.ok(lockedAt < toastAt, "the lock check must run before the credential toast")
+  // Busy must be cleared before the callback: otherwise the locked screen is
+  // painted from a tree whose submit button is still spinning.
+  assert.match(
+    login,
+    /setBusy\(false\)\s*onPasswordChangeRequired\?\.\(\)\s*return/,
+  )
+  // The migration for a refused sign-in must not swallow the lock either.
+  assert.doesNotMatch(login, /onPasswordChangeRequired\?\.\(\)\s*\n\s*notify/)
+
+  const app = readFileSync(new URL("../src/app/App.tsx", import.meta.url), "utf8")
+  assert.match(app, /const lockAccount = \(\) => \{\s*setAddingAccount\(false\)\s*setAuth\(\{ phase: "locked" \}\)/)
+  // Every LoginScreen mount hands over, including the add-account card — the
+  // added account can be locked too, and its login already swapped `sid`.
+  const mounts = app.match(/<LoginScreen[\s\S]*?\/>/g) ?? []
+  assert.ok(mounts.length >= 3, `expected every mount to be checked, got ${mounts.length}`)
+  for (const mount of mounts) {
+    assert.match(mount, /onPasswordChangeRequired=\{lockAccount\}|onPasswordChangeRequired=\{lockAccount\}/)
+  }
 })
 
 test("the authenticator field stays hidden until the server asks for a code", () => {

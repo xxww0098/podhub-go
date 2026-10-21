@@ -23,12 +23,55 @@ import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { emptyAccessCheck } from "@/features/account/login-screen"
+import { commandErrorCode } from "@/lib/error-message"
 import { notifyCommandError, notifyError } from "@/lib/notify"
+
+/**
+ * The one decision every sign-in form has to make after a refused login call.
+ *
+ * `accountHttp.accountLogin` writes the Cookie first and only then reads the
+ * account overview. For an account still holding an administrator-issued
+ * password that read is answered 403 PASSWORD_CHANGE_REQUIRED: the sign-in
+ * itself worked, so reporting "check your email and password" would be a lie,
+ * and no retry can clear it. Returns true when the caller must hand over to
+ * the forced password change, false when it must report an ordinary failure
+ * (which this helper reports itself, so the two branches cannot both fire).
+ */
+export function handOffLockedSignIn(
+  reason: unknown,
+  options: {
+    handover: () => void
+    notify: (reason: unknown, fallback: string) => void
+    fallback?: string
+  },
+): boolean {
+  if (commandErrorCode(reason) !== "cloud_password_change_required") {
+    options.notify(reason, options.fallback ?? "登录失败。请检查邮箱和密码。")
+    return false
+  }
+  options.handover()
+  return true
+}
 
 export function SupplierLoginCard({
   onSignedIn,
+  onPasswordChangeRequired,
 }: {
   onSignedIn: (overview: AccountOverview) => void
+  /**
+   * Optional so the card can still be rendered on its own (tests, embedded
+   * surfaces) and because a host without a forced-password-change screen has
+   * nowhere to send the operator.
+   *
+   * Every supplier account is created by provision with
+   * must_change_password = true (internal/admin/supplier/repo/accounts.go), so
+   * the first sign-in of a fresh factory account always lands here: the login
+   * write succeeds and writes the Cookie, then the follow-up overview read is
+   * refused with 403 PASSWORD_CHANGE_REQUIRED. That is not a bad password, and
+   * no retry on this card can clear it — without this callback the operator is
+   * told to check credentials that were in fact correct, forever.
+   */
+  onPasswordChangeRequired?: () => void
 }) {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
@@ -51,7 +94,20 @@ export function SupplierLoginCard({
       setPassword("")
       onSignedIn(overview)
     } catch (reason) {
-      notifyCommandError(reason, "登录失败。请检查邮箱和密码。")
+      if (
+        handOffLockedSignIn(reason, {
+          // Spinner down BEFORE the host swaps the tree, so the forced password
+          // change is never painted from a card that still looks mid-submit.
+          // The finally below clears it again; the second write is a no-op.
+          handover: () => {
+            setBusy(false)
+            onPasswordChangeRequired?.()
+          },
+          notify: notifyCommandError,
+        })
+      ) {
+        return
+      }
     } finally {
       setBusy(false)
     }

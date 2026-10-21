@@ -7,21 +7,20 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	bill "github.com/xxww0098/podhub-go/internal/billing/contract"
 	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
 	"github.com/xxww0098/podhub-go/internal/platform/writer"
 	"github.com/xxww0098/podhub-go/internal/supplier/contract"
-	"github.com/xxww0098/podhub-go/internal/supplier/domain"
 )
 
 func (r Repo) Accept(ctx context.Context, userID int64, dispatchID string) (contract.ActionData, error) {
-	return r.act(ctx, userID, dispatchID, "接单", func(tx pgx.Tx, orgID int64, source string) (string, error) {
+	return r.act(ctx, userID, dispatchID, "接单", func(tx pgx.Tx, orgID int64, source, fulfillerID string) (string, error) {
 		var state string
-		err := tx.QueryRow(ctx, `SELECT delegate_supplier_accept($1::uuid, $2)::text`, dispatchID, userID).Scan(&state)
+		err := tx.QueryRow(ctx, `SELECT delegate_supplier_accept($1::uuid, $2, $3::uuid)::text`, dispatchID, userID, fulfillerID).Scan(&state)
 		if err != nil {
 			return "", mapDB(err)
 		}
@@ -41,9 +40,9 @@ func (r Repo) Accept(ctx context.Context, userID int64, dispatchID string) (cont
 }
 
 func (r Repo) Reject(ctx context.Context, userID int64, dispatchID, reason string) (contract.ActionData, error) {
-	return r.act(ctx, userID, dispatchID, "", func(tx pgx.Tx, orgID int64, _ string) (string, error) {
+	return r.act(ctx, userID, dispatchID, "", func(tx pgx.Tx, orgID int64, _ string, fulfillerID string) (string, error) {
 		var state string
-		err := tx.QueryRow(ctx, `SELECT delegate_supplier_reject($1::uuid, $2, $3)::text`, dispatchID, userID, reason).Scan(&state)
+		err := tx.QueryRow(ctx, `SELECT delegate_supplier_reject($1::uuid, $2, $3, $4::uuid)::text`, dispatchID, userID, reason, fulfillerID).Scan(&state)
 		if err != nil {
 			return "", mapDB(err)
 		}
@@ -63,10 +62,10 @@ func (r Repo) Reject(ctx context.Context, userID int64, dispatchID, reason strin
 }
 
 func (r Repo) Ship(ctx context.Context, userID int64, dispatchID, tracking, note string, nowMs int64) (contract.ActionData, error) {
-	return r.act(ctx, userID, dispatchID, "发货", func(tx pgx.Tx, orgID int64, _ string) (string, error) {
+	return r.act(ctx, userID, dispatchID, "发货", func(tx pgx.Tx, orgID int64, _ string, fulfillerID string) (string, error) {
 		var state string
-		err := tx.QueryRow(ctx, `SELECT delegate_supplier_ship($1::uuid, $2, $3, $4, $5)::text`,
-			dispatchID, userID, tracking, note, nowMs).Scan(&state)
+		err := tx.QueryRow(ctx, `SELECT delegate_supplier_ship($1::uuid, $2, $3, $4, $5, $6::uuid)::text`,
+			dispatchID, userID, tracking, note, nowMs, fulfillerID).Scan(&state)
 		if err != nil {
 			return "", mapDB(err)
 		}
@@ -92,7 +91,11 @@ func (r Repo) Ship(ctx context.Context, userID int64, dispatchID, tracking, note
 	})
 }
 
-type actFn func(tx pgx.Tx, orgID int64, source string) (string, error)
+// actFn is what a packet action does once act has resolved the packet and
+// entered the tenant. It receives the fulfiller the packet is pinned to: the
+// definer functions in 00364 gate on that id, not on the source, so a caller
+// that cannot name it cannot act.
+type actFn func(tx pgx.Tx, orgID int64, source string, fulfillerID string) (string, error)
 
 func (r Repo) act(ctx context.Context, userID int64, dispatchID, verb string, fn actFn) (contract.ActionData, error) {
 	var out contract.ActionData
@@ -105,14 +108,21 @@ func (r Repo) act(ctx context.Context, userID int64, dispatchID, verb string, fn
 		}
 		var orgID int64
 		var source string
+		// A packet with no fulfiller predates 00362 and cannot be acted on: the
+		// definer gate would reject a NULL id anyway, so say so plainly instead
+		// of letting it surface as a foreign-key or not-found error.
+		var fulfillerID *string
 		err := tx.QueryRow(ctx, `
-			SELECT d.org_id, d.source_id FROM delegate_dispatches d
-			WHERE d.dispatch_id = $1::uuid LIMIT 1`, dispatchID).Scan(&orgID, &source)
+			SELECT d.org_id, d.source_id, d.fulfiller_id::text FROM delegate_dispatches d
+			WHERE d.dispatch_id = $1::uuid LIMIT 1`, dispatchID).Scan(&orgID, &source, &fulfillerID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return fail(404, "not_found", "派发包不存在")
 		}
 		if err != nil {
 			return mapDB(err)
+		}
+		if fulfillerID == nil || *fulfillerID == "" {
+			return fail(409, "conflict", "派发包尚未绑定履约方，请联系平台")
 		}
 		if err := tenant.EnterApp(ctx, tx, orgID); err != nil {
 			return mapDB(err)
@@ -129,7 +139,7 @@ func (r Repo) act(ctx context.Context, userID int64, dispatchID, verb string, fn
 		if err != nil {
 			return mapDB(err)
 		}
-		state, err := fn(tx, orgID, source)
+		state, err := fn(tx, orgID, source, *fulfillerID)
 		if err != nil {
 			if verb != "" {
 				return mapMoney(err, verb)
@@ -243,7 +253,7 @@ func (r Repo) settleDispatch(ctx context.Context, tx pgx.Tx, dispatchID string, 
 		if _, err := bill.SettleTx(ctx, tx, orgID, "delegate:"+dispatchID, nil, micro, micro); err != nil {
 			return err
 		}
-		return creditDispatch(ctx, tx, source, dispatchID, micro, nowMs)
+		return creditDispatch(ctx, tx, dispatchID, nowMs)
 	case err != nil:
 		return err
 	case state == "settled":
@@ -254,7 +264,7 @@ func (r Repo) settleDispatch(ctx context.Context, tx pgx.Tx, dispatchID string, 
 		if _, err := bill.SettleTx(ctx, tx, orgID, "delegate:"+dispatchID, nil, amount, amount); err != nil {
 			return err
 		}
-		if err := creditDispatch(ctx, tx, source, dispatchID, amount, nowMs); err != nil {
+		if err := creditDispatch(ctx, tx, dispatchID, nowMs); err != nil {
 			return err
 		}
 		tag, err := tx.Exec(ctx, `
@@ -272,154 +282,27 @@ func (r Repo) settleDispatch(ctx context.Context, tx pgx.Tx, dispatchID string, 
 	}
 }
 
-func creditDispatch(ctx context.Context, tx pgx.Tx, source, dispatchID string, amount, nowMs int64) error {
-	return moveCash(ctx, tx, source, "credit", "delegate:"+dispatchID, amount, amount, 0, nowMs, true)
-}
-
-func moveCash(ctx context.Context, tx pgx.Tx, source, entryType, key string, amount, balanceDelta, heldDelta, nowMs int64, create bool) error {
-	if create {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO supplier_wallets (source_id, balance_microfen, held_microfen, updated_at_ms)
-			VALUES ($1, 0, 0, $2)
-			ON CONFLICT (source_id) DO NOTHING`, source, nowMs); err != nil {
-			return err
-		}
+// creditDispatch pays the factory. Since 00363 dropped the source arm from
+// the supplier money tables, a supplier session cannot touch them at all,
+// so the write goes through a definer function that takes only the dispatch
+// id. See the comment on delegate_credit_fulfiller_wallet for why it is not
+// a standalone money faucet.
+func creditDispatch(ctx context.Context, tx pgx.Tx, dispatchID string, nowMs int64) error {
+	var id pgtype.UUID
+	if err := id.Scan(dispatchID); err != nil || !id.Valid {
+		return errors.New("派发包不存在")
 	}
-	var balance, held int64
-	err := tx.QueryRow(ctx, `
-		SELECT balance_microfen, held_microfen FROM supplier_wallets
-		WHERE source_id = $1 FOR UPDATE`, source).Scan(&balance, &held)
-	if errors.Is(err, pgx.ErrNoRows) {
-		if create {
-			return errors.New("厂家钱包不可写")
-		}
-		return &bill.Error{Insufficient: true}
-	}
-	if err != nil {
-		return err
-	}
-	var exists bool
-	if err := tx.QueryRow(ctx, `
-		SELECT EXISTS(SELECT 1 FROM supplier_wallet_ledger
-		 WHERE source_id = $1 AND entry_type = $2 AND idempotency_key = $3)`,
-		source, entryType, key).Scan(&exists); err != nil {
-		return err
-	}
-	if exists {
-		return nil
-	}
-	nextBal, ok1 := add(balance, balanceDelta)
-	nextHeld, ok2 := add(held, heldDelta)
-	if !ok1 || !ok2 {
-		return errors.New("结算金额超出范围")
-	}
-	if nextBal < 0 || nextHeld < 0 || nextHeld > nextBal {
-		return &bill.Error{Insufficient: true}
-	}
-	tag, err := tx.Exec(ctx, `
-		UPDATE supplier_wallets
-		SET balance_microfen = $2, held_microfen = $3, updated_at_ms = $4
-		WHERE source_id = $1`, source, nextBal, nextHeld, nowMs)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() != 1 {
-		return errors.New("厂家钱包不可写")
-	}
-	_, err = tx.Exec(ctx, `
-		INSERT INTO supplier_wallet_ledger
-		    (source_id, entry_type, idempotency_key, amount_microfen, held_delta_microfen,
-		     balance_after_microfen, held_after_microfen, created_at_ms)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		source, entryType, key, amount, heldDelta, nextBal, nextHeld, nowMs)
+	_, err := tx.Exec(ctx, `SELECT public.delegate_credit_fulfiller_wallet($1::uuid, $2)`, id, nowMs)
 	return err
 }
 
+// add is checked addition: ok is false when the sum overflows int64.
 func add(a, b int64) (int64, bool) {
 	c := a + b
 	if (b > 0 && c < a) || (b < 0 && c > a) {
 		return 0, false
 	}
 	return c, true
-}
-
-func (r Repo) CreateWithdrawal(ctx context.Context, userID int64, in domain.WithdrawalInput, nowMs int64) (contract.WithdrawalListData, error) {
-	var out contract.WithdrawalListData
-	id := uuid.NewString()
-	err := r.withTx(ctx, 0, userID, func(tx pgx.Tx) error {
-		if _, err := r.loadMembers(ctx, tx, userID); err != nil {
-			return err
-		}
-		if err := assertEntitlement(ctx, tx); err != nil {
-			return err
-		}
-		var one int
-		err := tx.QueryRow(ctx, `
-			SELECT 1 FROM sc_source_members
-			WHERE source_id = $1 AND user_id = $2 AND status = 'active' LIMIT 1`, in.SourceID, userID).Scan(&one)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return fail(404, "not_found", "厂家不存在")
-		}
-		if err != nil {
-			return mapDB(err)
-		}
-		var balance, held int64
-		err = tx.QueryRow(ctx, `
-			SELECT balance_microfen, held_microfen FROM supplier_wallets
-			WHERE source_id = $1 FOR UPDATE`, in.SourceID).Scan(&balance, &held)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return fail(409, "conflict", "可用余额不足")
-		}
-		if err != nil {
-			return mapDB(err)
-		}
-		err = tx.QueryRow(ctx, `
-			SELECT 1 FROM supplier_withdrawals WHERE source_id = $1 AND status = 'requested' LIMIT 1`, in.SourceID).Scan(&one)
-		if err == nil {
-			return fail(409, "conflict", "这家厂家已有一笔待处理的提现")
-		}
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return mapDB(err)
-		}
-		nextHeld, ok := add(held, in.AmountMicrofen)
-		if !ok {
-			return fail(409, "conflict", "结算金额超出范围")
-		}
-		if balance < nextHeld {
-			return fail(409, "conflict", "可用余额不足")
-		}
-		if err := moveCash(ctx, tx, in.SourceID, "withdrawal_hold", "withdrawal:"+id, in.AmountMicrofen, 0, in.AmountMicrofen, nowMs, false); err != nil {
-			return mapMoney(err, "结算")
-		}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO supplier_withdrawals (
-			    withdrawal_id, source_id, amount_cents, amount_microfen, channel,
-			    account, real_name, status, requested_at_ms)
-			VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, 'requested', $8)`,
-			id, in.SourceID, in.AmountCents, in.AmountMicrofen, in.Channel, in.Account, in.RealName, nowMs); err != nil {
-			var pg = mapDB(err)
-			if f, ok := contract.AsFailure(pg); ok {
-				return f
-			}
-			if isUnique(err) {
-				return fail(409, "conflict", "这家厂家已有一笔待处理的提现")
-			}
-			return mapDB(err)
-		}
-		rows, err := loadWithdrawals(ctx, tx, userID, id)
-		if err != nil {
-			return err
-		}
-		out.Withdrawals = rows
-		raw, _ := json.Marshal(struct {
-			SourceID    string `json:"sourceId"`
-			AmountCents int64  `json:"amountCents"`
-			Channel     string `json:"channel"`
-		}{in.SourceID, in.AmountCents, in.Channel})
-		return insertAuditRaw(ctx, tx, 0, userID, "supplier_withdrawal", id, "POST",
-			"/api/supplier/withdrawals", "supplier_withdrawal_requested", raw)
-	})
-	return out, err
 }
 
 func assertEntitlement(ctx context.Context, tx pgx.Tx) error {
