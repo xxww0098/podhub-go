@@ -1,5 +1,8 @@
 use super::*;
 fn queue(state: &mut State, owner: u32, key: &str) -> oneshot::Receiver<Admission> {
+    if owner > state.last_owner {
+        state.register_owner(owner).unwrap();
+    }
     state.acquire(owner, key.into()).unwrap()
 }
 fn granted(state: &mut State, owner: u32, key: &str) -> u32 {
@@ -315,4 +318,85 @@ fn seeded_lifecycle_sequences_preserve_reservations_and_advance_waiters() {
         assert!(state.leases.is_empty() && state.waiters.is_empty());
         assert_eq!(state.reserved_bytes(), Some(0));
     }
+}
+
+#[test]
+fn long_sessions_keep_peaks_with_reusable_templates() {
+    let mut state = State::new(2, 1000);
+    let template = parsed();
+    state.register_owner(1).unwrap();
+    for owner in 2..=1024 {
+        let key = format!("template-{owner}");
+        let lease = granted(&mut state, owner, &key);
+        state
+            .templates
+            .insert(key.clone(), (owner, template.clone()));
+        state.start(lease).unwrap();
+        assert!(state.finish(lease, Some(Peak::new(300, 100))));
+        state.release(lease);
+        state.dispose_owner(owner);
+        assert_eq!(state.templates.len(), 1);
+        assert_eq!(state.peaks.len(), 1);
+        assert_eq!(state.peaks[&key].total, 300);
+        assert_eq!(state.owners.len(), 1);
+        assert!(state.owners.contains(&1));
+        assert_eq!(state.register_owner(owner), Err(RuntimeError::Cancelled));
+        assert_eq!(
+            state.acquire(owner, key).unwrap_err(),
+            RuntimeError::Cancelled
+        );
+    }
+}
+
+#[test]
+fn disposed_or_skipped_owner_ids_cannot_be_registered_late() {
+    let mut state = State::new(1, 1000);
+    state.register_owner(1).unwrap();
+    state.register_owner(3).unwrap();
+    state.dispose_owner(3);
+    state.dispose_owner(4);
+    for owner in [0, 1, 2, 3, 4] {
+        assert_eq!(state.register_owner(owner), Err(RuntimeError::Cancelled));
+    }
+    for owner in [0, 2, 3, 4, 5] {
+        assert_eq!(
+            state.acquire(owner, "A".into()).unwrap_err(),
+            RuntimeError::Cancelled
+        );
+    }
+    let lease = granted(&mut state, 1, "A");
+    assert!(
+        state.acquired(lease, 1),
+        "a long-lived owner remains registered"
+    );
+    state.release(lease);
+    state.register_owner(5).unwrap();
+    assert!(state.acquire(5, "A".into()).is_ok());
+}
+
+#[test]
+fn peak_snapshots_only_change_when_observations_or_cached_templates_change() {
+    let mut state = State::new(2, 1000);
+    known_split(&mut state, "A", 300, 100);
+    let lease = granted(&mut state, 1, "A");
+    let snapshot =
+        |state: &mut State| serde_json::from_str::<serde_json::Value>(&state.measure()).unwrap();
+    assert_eq!(snapshot(&mut state)["peaks"]["A"], 300);
+    assert!(snapshot(&mut state).get("peaks").is_none());
+    state.record_peak("A", Peak::new(200, 100));
+    assert!(snapshot(&mut state).get("peaks").is_none());
+    state.start(lease).unwrap();
+    assert!(state.finish(lease, Some(Peak::new(400, 100))));
+    assert_eq!(snapshot(&mut state)["peaks"]["A"], 400);
+    assert_eq!(state.reserved_bytes(), Some(400));
+    state.release(lease);
+    assert!(
+        snapshot(&mut state).get("peaks").is_none(),
+        "cached observations remain reusable"
+    );
+    let next = granted(&mut state, 2, "unknown");
+    assert_eq!(snapshot(&mut state)["peaks"], serde_json::json!({}));
+    assert!(state.peaks.is_empty());
+    assert_eq!(state.reserved_bytes(), Some(0));
+    state.release(next);
 }

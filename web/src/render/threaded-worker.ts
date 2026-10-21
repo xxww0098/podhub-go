@@ -76,6 +76,7 @@ addEventListener("message", async ({ data }) => {
         await wasm.default()
         await wasm.initThreadPool(data.threads)
         runtime = new wasm.RenderRuntime(data.threads, data.budgetBytes)
+        for (const owner of data.owners) runtime.register_owner(owner)
       })()
       await starting
     } else {
@@ -100,6 +101,7 @@ addEventListener("message", async ({ data }) => {
           break
         }
         case "release": runtime.release(data.leaseId); break
+        case "registerOwner": runtime.register_owner(data.owner); break
         case "disposeOwner": runtime.dispose_owner(data.owner); break
         case "external": runtime.set_external_bytes(data.bytes); return
         case "measure": break

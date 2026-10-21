@@ -50,6 +50,12 @@ impl RenderRuntime {
     pub fn release(&self, id: u32) {
         self.state.borrow_mut().release(id);
     }
+    pub fn register_owner(&self, owner: u32) -> Result<(), JsValue> {
+        self.state
+            .borrow_mut()
+            .register_owner(owner)
+            .map_err(js_error)
+    }
     pub fn dispose_owner(&self, owner: u32) {
         self.state.borrow_mut().dispose_owner(owner);
     }
@@ -138,6 +144,6 @@ impl RenderRuntime {
         .map_err(js_error)
     }
     pub fn measure(&self) -> String {
-        self.state.borrow().measure()
+        self.state.borrow_mut().measure()
     }
 }

@@ -48,6 +48,7 @@ fn complete<T>(
 mod tests {
     use super::*;
     fn active(state: &mut State) -> u32 {
+        state.register_owner(1).unwrap();
         let id = state
             .acquire(1, "A".into())
             .unwrap()
@@ -81,6 +82,7 @@ mod tests {
     fn cancelled_compute_releases_lane_only_on_completion() {
         let mut state = State::new(1, 1000);
         let id = active(&mut state);
+        state.register_owner(2).unwrap();
         let mut waiting = state.acquire(2, "B".into()).unwrap();
         state.dispose_owner(1);
         state.release(id);

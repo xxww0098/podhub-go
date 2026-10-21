@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { createPreparationClient } from "./client"
 import { createRuntimeHost } from "./threaded-client"
 
-type Request = { id: number; op: string; owner?: number; key?: string; leaseId?: number; bytes?: Uint8Array<ArrayBuffer> | number }
+type Request = { id: number; op: string; owner?: number; owners?: number[]; key?: string; leaseId?: number; bytes?: Uint8Array<ArrayBuffer> | number }
 const tick = () => new Promise(resolve => setTimeout(resolve, 0))
 async function until(check: () => boolean) {
   for (let i = 0; i < 50 && !check(); i++) await tick()
@@ -169,6 +169,44 @@ test("cancellation rejects even while lease cleanup is awaiting its Worker reply
     await result
     b.dispose()
   }
+})
+
+test("owner registration is ordered across initialization, disposal and reconstruction", async () => {
+  const workers: RuntimeWorker[] = []
+  const host = createRuntimeHost({ spawn: () => {
+    const worker = new RuntimeWorker(); workers.push(worker); return worker.asWorker()
+  }, maxLanes: 2, budgetBytes: 1000 })
+  const a = host.createBatch(), b = host.createBatch()
+  await b.withLane("T", async () => {})
+  const first = workers[0]
+  assert.deepEqual(first.calls.find(c => c.op === "init")?.owners, [1, 2])
+  const c = host.createBatch()
+  c.dispose()
+  const d = host.createBatch()
+  await d.withLane("T", async () => {})
+  assert.deepEqual(first.calls.filter(c => c.op === "registerOwner" || c.op === "disposeOwner" || (c.op === "acquire" && c.owner === 4))
+    .map(c => [c.op, c.owner]), [["registerOwner", 3], ["disposeOwner", 3], ["registerOwner", 4], ["acquire", 4]])
+  a.dispose()
+  first.emit({ fatal: true })
+  await b.withLane("T", async () => {})
+  assert.deepEqual(workers[1].calls.find(c => c.op === "init")?.owners, [2, 4])
+  b.dispose(); d.dispose()
+})
+
+test("stats replies preserve unchanged peaks and apply an empty eviction snapshot", async () => {
+  const worker = new RuntimeWorker()
+  const host = createRuntimeHost({ spawn: () => worker.asWorker(), maxLanes: 2, budgetBytes: 1000 })
+  const batch = host.createBatch()
+  await batch.withLane("T", async () => {})
+  const stats = { memoryBytes: 100, occupiedBytes: 300, active: 1, queued: 0, templates: 1 }
+  worker.emit({ stats: { ...stats, peaks: { T: 300 } } })
+  worker.emit({ stats: { ...stats, active: 0 } })
+  assert.deepEqual(host.measure().peaks, { T: 300 })
+  assert.equal(host.measure().occupiedBytes, 300)
+  worker.emit({ stats: { ...stats, occupiedBytes: 100, templates: 0, peaks: {} } })
+  assert.deepEqual(host.measure().peaks, {})
+  assert.equal(host.measure().occupiedBytes, 100)
+  batch.dispose()
 })
 
 for (const mode of ["fatal", "error", "messageerror", "send"] as const) {

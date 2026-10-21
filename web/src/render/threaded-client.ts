@@ -12,7 +12,7 @@ export interface RuntimeHostOptions {
   memoryChanged?: () => void
 }
 
-interface Stats { memoryBytes: number; occupiedBytes: number; active: number; queued: number; templates: number; peaks: Record<string, number> }
+interface Stats { memoryBytes: number; occupiedBytes: number; active: number; queued: number; templates: number; peaks?: Record<string, number> }
 interface Reply { id: number; ok: boolean; value?: unknown; code?: string; message?: string; fatal?: boolean; stats?: Stats }
 interface Pending { owner?: number; reject: (error: Error) => void; resolve: (value: unknown) => void; timer?: ReturnType<typeof setTimeout> }
 interface Runtime { worker: Worker; pending: Map<number, Pending>; ready: Promise<unknown>; dead: boolean; stats: Stats }
@@ -81,7 +81,7 @@ export function createRuntimeHost(options: RuntimeHostOptions) {
       if (data.fatal) { destroy(state, failure(data.message ?? "A compute thread trapped", "RENDER_TRAP")); return }
       if (data.stats) {
         const changed = state.stats.occupiedBytes !== data.stats.occupiedBytes
-        state.stats = data.stats
+        state.stats = { ...data.stats, peaks: data.stats.peaks ?? state.stats.peaks }
         if (changed) options.memoryChanged?.()
       }
       const pending = state.pending.get(data.id)
@@ -93,7 +93,7 @@ export function createRuntimeHost(options: RuntimeHostOptions) {
     })
     state.worker.addEventListener("error", () => destroy(state, failure("Render coordinator failed", "RENDER_TRAP")))
     state.worker.addEventListener("messageerror", () => destroy(state, failure("Render coordinator response failed", "RENDER_TRAP")))
-    state.ready = call(state, "init", { threads: options.maxLanes, budgetBytes: options.budgetBytes })
+    state.ready = call(state, "init", { threads: options.maxLanes, budgetBytes: options.budgetBytes, owners: [...owners] })
       .then(() => { dispatch() }, error => { destroy(state, error); throw error })
     return state
   }
@@ -102,8 +102,11 @@ export function createRuntimeHost(options: RuntimeHostOptions) {
     maxLanes: options.maxLanes,
     dispatch,
     createBatch(): Pick<RenderBatch, "withLane" | "prepareAiImage" | "dispose"> {
+      if (nextOwner > 0xffff_ffff) throw failure("Render owner IDs exhausted", "RENDER_IDS_EXHAUSTED")
       const owner = nextOwner++
       owners.add(owner)
+      const state = current
+      if (state) void state.ready.then(() => call(state, "registerOwner", { owner })).catch(() => {})
       const cancellations = new Set<(error: Error) => void>()
       const alive = () => {
         if (!owners.has(owner)) throw failure("The render batch was disposed", "RENDER_CANCELLED")
