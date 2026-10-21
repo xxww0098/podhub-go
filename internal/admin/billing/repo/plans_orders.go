@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	billingcontract "github.com/xxww0098/podhub-go/internal/billing/contract"
 
 	"github.com/xxww0098/podhub-go/internal/admin/billing/domain"
 	corecontract "github.com/xxww0098/podhub-go/internal/admin/core/contract"
@@ -213,7 +214,7 @@ func paymentOrg(ctx context.Context, tx pgx.Tx, publicID string) (int64, error) 
 }
 
 func lockPaymentOrg(ctx context.Context, tx pgx.Tx, publicID string) (int64, error) {
-	return scanBillingOrg(tx.QueryRow(ctx, `SELECT public.billing_lock_payment_order($1)`, publicID))
+	return paymentOrg(ctx, tx, publicID)
 }
 
 // A scalar SQL function returns NULL when the order is missing. That is not a row.
@@ -301,6 +302,9 @@ func (r *Entitlement) ConfirmOrder(ctx context.Context, actor corecontract.Actor
 	if err != nil {
 		return nil, corerepo.MapBill(err, "INTERNAL", true)
 	}
+	if err := lockLiveOrg(ctx, tx, orgID); err != nil {
+		return nil, corerepo.MapBill(err, "INTERNAL", true)
+	}
 	order, err := r.loadOrder(ctx, tx, publicID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, corecontract.NotFound("NOT_FOUND", "订单不存在")
@@ -326,6 +330,18 @@ func (r *Entitlement) ConfirmOrder(ctx context.Context, actor corecontract.Actor
 	}
 	if tag.RowsAffected() == 0 {
 		return nil, corecontract.Conflict("CONFLICT", "订单已处理")
+	}
+	if order.product == "subscription" {
+		if err := billingcontract.FulfillSubscriptionOrder(ctx, tx, publicID, r.now()); err != nil {
+			return nil, corerepo.MapBill(err, "INTERNAL", true)
+		}
+		if err := corerepo.AuditBill(ctx, tx, order.orgID, actor.UserID, "entitlement", "payment_order", publicID, "PUT", "/api/admin/orders/"+publicID+"/confirm", "subscription_payment_settled", fmt.Sprintf(`{"amount_cents":%d}`, order.amount), held); err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return r.GetOrder(ctx, actor, publicID)
 	}
 	switch domain.ConfirmProduct(order.product, order.seats, int64(order.durationDays)) {
 	case domain.EdgeWalletTopup:

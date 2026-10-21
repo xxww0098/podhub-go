@@ -60,6 +60,21 @@ func CreateStore(ctx context.Context, tx pgx.Tx, orgID int64, actor domain.Actor
 		}
 		return domain.Row{}, domain.QuotaChanges{}, err
 	}
+	// Connecting a store can occupy a current vacant slot, never a future reservation.
+	tag, err := tx.Exec(ctx, `UPDATE public.subscription_periods p SET keep_store_ids=
+  ARRAY(SELECT s.uuid FROM public.organization_stores s WHERE s.org_id=$1 AND s.uuid=ANY(p.keep_store_ids) AND s.deleted_at_ms IS NULL) || $2::uuid
+  WHERE p.org_id=$1 AND p.starts_at<=clock_timestamp() AND clock_timestamp()<p.ends_at AND p.keep_store_ids IS NOT NULL
+   AND NOT($2::uuid=ANY(p.keep_store_ids))
+   AND (SELECT count(*) FROM public.organization_stores s WHERE s.org_id=$1 AND s.uuid=ANY(p.keep_store_ids) AND s.deleted_at_ms IS NULL)<p.plan_stores+p.extra_stores`, orgID, uuid)
+	if err != nil {
+		return domain.Row{}, domain.QuotaChanges{}, err
+	}
+	if tag.RowsAffected() > 0 {
+		if _, err = tx.Exec(ctx, `UPDATE subscriptions SET revision=revision+1,updated_at=clock_timestamp() WHERE org_id=$1`, orgID); err != nil {
+			return domain.Row{}, domain.QuotaChanges{}, err
+		}
+	}
+
 	changes, err := reconcileStoreQuota(ctx, tx, orgID)
 	if err != nil {
 		return domain.Row{}, domain.QuotaChanges{}, err

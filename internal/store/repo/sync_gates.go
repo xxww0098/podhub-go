@@ -27,7 +27,7 @@ func loadSyncSnapshot(ctx context.Context, tx pgx.Tx, orgID int64, storeUUID str
 		       p.pass_pages_live, p.pass_pages_archived, p.next_due_at_ms,
 		       p.inflight_until_ms, p.metrics_offset,
 		       s.credential_revision,
-		       (s.deleted_at_ms IS NOT NULL OR s.manual_disabled OR s.quota_suspended),
+		       (s.deleted_at_ms IS NOT NULL OR s.manual_disabled OR NOT public.subscription_store_allowed(s.org_id,s.uuid,clock_timestamp())),
 		       EXISTS (SELECT 1 FROM public.submission_intents i
 		                WHERE i.org_id = p.org_id AND i.store_id = p.store_id
 		                  AND i.state IN ('queued','submitting'))

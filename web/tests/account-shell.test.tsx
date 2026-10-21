@@ -119,7 +119,7 @@ test("AppShell titles the workspace menu with the active Workspace, not Platform
       <div />
     </AppShell>,
   )
-  assert.match(superHtml, /aria-label="账户与 Workspace 示例工作空间，Plus 版，超级管理员"/)
+  assert.match(superHtml, /aria-label="账户与 Workspace 示例工作空间，专业版，超级管理员"/)
   assert.doesNotMatch(superHtml, /aria-label="账户 超级管理员"/)
   assert.doesNotMatch(superHtml, /aria-label="账户 平台管理员"/)
 
@@ -142,7 +142,7 @@ test("AppShell titles the workspace menu with the active Workspace, not Platform
       <div />
     </AppShell>,
   )
-  assert.match(adminHtml, /aria-label="账户与 Workspace 示例工作空间，Plus 版，平台管理员"/)
+  assert.match(adminHtml, /aria-label="账户与 Workspace 示例工作空间，专业版，平台管理员"/)
   assert.doesNotMatch(adminHtml, /aria-label="账户 平台管理员"/)
   // The trigger is the unified account+Workspace cell: it names the Workspace,
   // its plan, and the account's own platform rank — never the menu glyph.
@@ -326,7 +326,7 @@ test("AppShell keeps Workspace destinations in the Workspace menu, not the accou
   assert.match(html, /aria-label="通知（共 0 条）"/)
 
   // Workspace menu trigger exists at footer
-  assert.match(html, /aria-label="账户与 Workspace 示例工作空间，Plus 版，用户"/)
+  assert.match(html, /aria-label="账户与 Workspace 示例工作空间，专业版，用户"/)
 
   // Breadcrumb names the current module properly as 店铺
   assert.match(html, />店铺</)

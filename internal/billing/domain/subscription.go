@@ -2,6 +2,8 @@ package domain
 
 import (
 	"fmt"
+	"math"
+	"math/big"
 	"time"
 )
 
@@ -26,6 +28,8 @@ const (
 	ActionSubscribe = "subscribe"
 	ActionRenew     = "renew"
 	ActionChange    = "change"
+	ActionSchedule  = "schedule"
+	ActionKeep      = "keep"
 )
 
 // Quote refusal codes carried to HTTP.
@@ -99,20 +103,26 @@ func (c Catalog) Base(planKey string, extraStores, extraMembers int) (int64, err
 	if !ok {
 		return 0, invalid("未知套餐 %q", planKey)
 	}
-	if extraStores < 0 || extraMembers < 0 {
+	if extraStores < 0 || extraMembers < 0 || extraStores > math.MaxInt32 || extraMembers > math.MaxInt32 {
 		return 0, invalid("加购数量不能为负")
 	}
 	if !p.Addons && (extraStores > 0 || extraMembers > 0) {
 		return 0, invalid("免费档不能加购")
 	}
-	return p.MonthlyCents + c.StoreMonthlyCents*int64(extraStores) + c.MemberMonthlyCents*int64(extraMembers), nil
+	amount := big.NewInt(p.MonthlyCents)
+	amount.Add(amount, new(big.Int).Mul(big.NewInt(c.StoreMonthlyCents), big.NewInt(int64(extraStores))))
+	amount.Add(amount, new(big.Int).Mul(big.NewInt(c.MemberMonthlyCents), big.NewInt(int64(extraMembers))))
+	if !amount.IsInt64() || amount.Sign() < 0 {
+		return 0, invalid("金额超出可计费范围")
+	}
+	return amount.Int64(), nil
 }
 
 // Target is an absolute capacity, never a delta.
 type Target struct {
-	PlanKey      string
-	ExtraStores  int
-	ExtraMembers int
+	PlanKey      string `json:"plan_key"`
+	ExtraStores  int    `json:"extra_stores"`
+	ExtraMembers int    `json:"extra_members"`
 }
 
 // Snapshot is the subscription state a quote is priced against.
@@ -122,6 +132,8 @@ type Snapshot struct {
 	ExtraStores      int
 	ExtraMembers     int
 	TermEnd          time.Time
+	Anchor           time.Time
+	Periods          []Period
 	NextPlanKey      string
 	NextExtraStores  int
 	NextExtraMembers int
@@ -155,9 +167,9 @@ type Quotation struct {
 	Action       string
 	TermStart    time.Time
 	TermEnd      time.Time
-	PlanKey      string
-	ExtraStores  int
-	ExtraMembers int
+	PlanKey      string `json:"plan_key"`
+	ExtraStores  int    `json:"extra_stores"`
+	ExtraMembers int    `json:"extra_members"`
 	PlanStores   int
 	PlanMembers  int
 	Months       int
@@ -181,26 +193,32 @@ func (q *Quotation) SetPlanCapacity(stores, members int) {
 	q.PlanStores, q.PlanMembers = stores, members
 }
 
-// SubscribeTerm is the term a first purchase or a reopen buys. Pricing and
-// fulfillment both call it so a quote can never disagree with what is booked.
+// SubscribeTerm starts at purchase time and sells whole anniversary months.
 func SubscribeTerm(now time.Time, months int) (start, end time.Time) {
-	now = now.In(Shanghai)
-	stubEnd := NextMonthStart(now)
-	if stubEnd.Sub(now) < 24*time.Hour {
-		return stubEnd, TermEnd(stubEnd, months)
-	}
-	return now, TermEnd(stubEnd, months-1)
+	return now.In(Shanghai), TermEnd(now, months)
 }
 
-// RenewTerm is the term a renewal buys. It appends to the current end when
-// that end is still in the future, and starts fresh otherwise.
 func RenewTerm(currentEnd time.Time, active bool, now time.Time, months int) (start, end time.Time) {
-	start = now
+	start = now.In(Shanghai)
 	if active && currentEnd.After(now) {
 		start = currentEnd
 	}
-	start = MonthStart(start)
 	return start, TermEnd(start, months)
+}
+
+// Period is an already purchased, non-overlapping capacity interval.
+type Period struct {
+	ID    int64     `json:"id"`
+	Start time.Time `json:"starts_at"`
+	End   time.Time `json:"ends_at"`
+	Target
+	PlanStores         int      `json:"plan_stores"`
+	PlanMembers        int      `json:"plan_members"`
+	PlanMonthlyCents   int64    `json:"plan_monthly_cents"`
+	StoreMonthlyCents  int64    `json:"store_monthly_cents"`
+	MemberMonthlyCents int64    `json:"member_monthly_cents"`
+	KeepStores         []string `json:"keep_store_ids"`
+	KeepMembers        []int64  `json:"keep_member_ids"`
 }
 
 // AllowedMonths reports whether months is one of the sold terms.
@@ -242,6 +260,17 @@ func Quote(cat Catalog, in QuoteInput) (Quotation, error) {
 		q, err = quoteSubscribe(cat, in, now)
 	case ActionRenew:
 		q, err = quoteRenew(cat, in, now)
+	case ActionSchedule, ActionKeep:
+		if !in.Snapshot.TermEnd.After(now) {
+			return Quotation{}, &QuoteError{Status: 402, Code: CodeRenewRequired, Message: "订阅已到期，请先续费"}
+		}
+		if err = paidTarget(cat, in.Target); err != nil {
+			return Quotation{}, err
+		}
+		if err = fitsKeep(cat, in.Target, in); err != nil {
+			return Quotation{}, err
+		}
+		q = Quotation{Action: in.Action, PlanKey: in.Target.PlanKey, ExtraStores: in.Target.ExtraStores, ExtraMembers: in.Target.ExtraMembers, Months: in.Months, TermStart: in.Snapshot.TermEnd, TermEnd: in.Snapshot.TermEnd, ScheduleOnly: true, Breakdown: []Line{{Label: "只调整续费配置，已付权益继续用满", Cents: 0}}}
 	case ActionChange:
 		q, err = quoteChange(cat, in, now)
 	default:
@@ -256,11 +285,7 @@ func Quote(cat Catalog, in QuoteInput) (Quotation, error) {
 	return q, nil
 }
 
-// quoteSubscribe prices a first purchase or a reopen of an expired workspace.
-//
-// The first stretch runs to the next month boundary. When less than a day
-// remains it is not prorated at all: the term starts on the 1st and the user
-// pays whole months. Otherwise 10-31 23:59 would buy ten seconds of time.
+// quoteSubscribe sells whole service months from the payment anniversary.
 func quoteSubscribe(cat Catalog, in QuoteInput, now time.Time) (Quotation, error) {
 	if in.Snapshot.Status == StatusActive {
 		return Quotation{}, &QuoteError{Status: 409, Code: CodeQuoteStale,
@@ -281,29 +306,13 @@ func quoteSubscribe(cat Catalog, in QuoteInput, now time.Time) (Quotation, error
 		ExtraMembers: t.ExtraMembers,
 		Months:       in.Months,
 	}
+	if base > math.MaxInt64/int64(in.Months) {
+		return Quotation{}, invalid("金额超出可计费范围")
+	}
 	q.TermStart, q.TermEnd = SubscribeTerm(now, in.Months)
-	if NextMonthStart(now).Sub(now) < 24*time.Hour {
-		q.AmountCents = base * int64(in.Months)
-		q.Breakdown = []Line{{Label: fmt.Sprintf("整月 ×%d（本月剩余不足一天，自下月 1 日起算）", in.Months), Cents: q.AmountCents}}
-		return q, nil
-	}
-	stubEnd := NextMonthStart(now)
-	// Prorate rounds once over this stretch; the whole months after it are
-	// exact. Pricing the two parts with one rounding would need a rational
-	// total with two different denominators, so the stub is rounded on its
-	// own and the whole months are added exactly.
-	stub := Prorate(base, now, stubEnd)
-	whole := base * int64(in.Months-1)
-	q.AmountCents = stub + whole
-	q.Breakdown = []Line{
-		{Label: fmt.Sprintf("本月剩余 %d/%d 天", dateDays(now, stubEnd), daysInMonth(now)), Cents: stub},
-	}
-	if whole > 0 {
-		q.Breakdown = append(q.Breakdown, Line{Label: fmt.Sprintf("整月 ×%d", in.Months-1), Cents: whole})
-	}
-	if q.AmountCents <= 0 {
-		return Quotation{}, invalid("金额不足一分")
-	}
+	q.AmountCents = base * int64(in.Months)
+	q.Breakdown = []Line{{Label: fmt.Sprintf("自购买日起 ×%d 个月", in.Months), Cents: q.AmountCents}}
+
 	return q, nil
 }
 
@@ -320,7 +329,13 @@ func quoteRenew(cat Catalog, in QuoteInput, now time.Time) (Quotation, error) {
 	if err != nil {
 		return Quotation{}, err
 	}
+	if base > math.MaxInt64/int64(in.Months) {
+		return Quotation{}, invalid("金额超出可计费范围")
+	}
 	start, end := RenewTerm(in.Snapshot.TermEnd, true, now, in.Months)
+	if !in.Snapshot.Anchor.IsZero() {
+		end = AnchoredEnd(in.Snapshot.Anchor, start, in.Months)
+	}
 	q := Quotation{
 		Action:       ActionRenew,
 		TermStart:    start,
@@ -359,63 +374,49 @@ func quoteChange(cat Catalog, in QuoteInput, now time.Time) (Quotation, error) {
 	if err := fitsKeep(cat, t, in); err != nil {
 		return Quotation{}, err
 	}
-	cur := Target{
-		PlanKey:      in.Snapshot.PlanKey,
-		ExtraStores:  in.Snapshot.ExtraStores,
-		ExtraMembers: in.Snapshot.ExtraMembers,
+	q := Quotation{Action: ActionChange, PlanKey: t.PlanKey, ExtraStores: t.ExtraStores, ExtraMembers: t.ExtraMembers,
+		TermStart: now, TermEnd: in.Snapshot.TermEnd, Months: in.Months}
+	periods := in.Snapshot.Periods
+	anchor := in.Snapshot.Anchor
+	if anchor.IsZero() {
+		anchor = MonthStart(now)
 	}
-	curPlan, ok := cat.Plans[cur.PlanKey]
-	if !ok {
-		return Quotation{}, invalid("当前套餐 %q 不在目录中", cur.PlanKey)
+	if len(periods) == 0 {
+		cur := cat.Plans[in.Snapshot.PlanKey]
+		periods = []Period{{Start: now, End: in.Snapshot.TermEnd, Target: Target{in.Snapshot.PlanKey, in.Snapshot.ExtraStores, in.Snapshot.ExtraMembers},
+			PlanMonthlyCents: cur.MonthlyCents, StoreMonthlyCents: cat.StoreMonthlyCents, MemberMonthlyCents: cat.MemberMonthlyCents}}
 	}
-	tgtPlan, ok := cat.Plans[t.PlanKey]
-	if !ok {
-		return Quotation{}, invalid("未知套餐 %q", t.PlanKey)
+	total := new(big.Rat)
+	for _, period := range periods {
+		start := period.Start
+		if now.After(start) {
+			start = now
+		}
+		if !period.End.After(start) {
+			continue
+		}
+		unitAmount := big.NewInt(max(int64(0), cat.Plans[t.PlanKey].MonthlyCents-period.PlanMonthlyCents))
+		unitAmount.Add(unitAmount, new(big.Int).Mul(big.NewInt(period.StoreMonthlyCents), big.NewInt(int64(max(0, t.ExtraStores-period.ExtraStores)))))
+		unitAmount.Add(unitAmount, new(big.Int).Mul(big.NewInt(period.MemberMonthlyCents), big.NewInt(int64(max(0, t.ExtraMembers-period.ExtraMembers)))))
+		if !unitAmount.IsInt64() {
+			return Quotation{}, invalid("金额超出可计费范围")
+		}
+		unit := unitAmount.Int64()
+		fraction := PeriodFraction(unit, anchor, start, period.End)
+		total.Add(total, fraction)
+		if unit > 0 {
+			q.Breakdown = append(q.Breakdown, Line{Label: fmt.Sprintf("%s 至 %s 容量补差", start.In(Shanghai).Format("2006-01-02 15:04"), period.End.In(Shanghai).Format("2006-01-02 15:04")), Cents: roundHalfUp(fraction)})
+		}
 	}
-	upgradeUnit := tgtPlan.MonthlyCents - curPlan.MonthlyCents
-	if upgradeUnit < 0 {
-		upgradeUnit = 0
+	if total.Cmp(new(big.Rat).SetInt64(math.MaxInt64)) > 0 {
+		return Quotation{}, invalid("金额超出可计费范围")
 	}
-	storeUnit := cat.StoreMonthlyCents * int64(max(0, t.ExtraStores-cur.ExtraStores))
-	memberUnit := cat.MemberMonthlyCents * int64(max(0, t.ExtraMembers-cur.ExtraMembers))
-
-	q := Quotation{
-		Action:       ActionChange,
-		TermStart:    in.Snapshot.TermEnd,
-		TermEnd:      in.Snapshot.TermEnd,
-		PlanKey:      t.PlanKey,
-		ExtraStores:  t.ExtraStores,
-		ExtraMembers: t.ExtraMembers,
-		Months:       in.Months,
-	}
-	// One rational sum, one rounding.
-	q.AmountCents = prorateSum([]int64{upgradeUnit, storeUnit, memberUnit}, now, in.Snapshot.TermEnd)
-	if upgradeUnit > 0 {
-		q.Breakdown = append(q.Breakdown, Line{
-			Label: fmt.Sprintf("%s→%s", cur.PlanKey, t.PlanKey),
-			Cents: Prorate(upgradeUnit, now, in.Snapshot.TermEnd),
-		})
-	}
-	if storeUnit > 0 {
-		q.Breakdown = append(q.Breakdown, Line{
-			Label: fmt.Sprintf("+%d 店", t.ExtraStores-cur.ExtraStores),
-			Cents: Prorate(storeUnit, now, in.Snapshot.TermEnd),
-		})
-	}
-	if memberUnit > 0 {
-		q.Breakdown = append(q.Breakdown, Line{
-			Label: fmt.Sprintf("+%d 人", t.ExtraMembers-cur.ExtraMembers),
-			Cents: Prorate(memberUnit, now, in.Snapshot.TermEnd),
-		})
-	}
+	q.AmountCents = roundHalfUp(total)
 	if q.AmountCents == 0 {
-		// Zero means there is nothing to charge: the plan fee did not rise and
-		// no add-on grew. That covers a pure reduction and also a sideways move
-		// between plans of equal price. It books a schedule, never an order.
 		q.ScheduleOnly = true
-		q.Breakdown = []Line{{Label: "在到期日生效，不退款", Cents: 0}}
-		return q, nil
+		q.Breakdown = []Line{{Label: "只调整下次续费，已付权益继续用满", Cents: 0}}
 	}
+
 	if q.AmountCents < 0 {
 		return Quotation{}, invalid("金额不能为负")
 	}
@@ -430,7 +431,7 @@ func paidTarget(cat Catalog, t Target) error {
 	if !p.Addons {
 		return invalid("不能订阅免费档")
 	}
-	if t.ExtraStores < 0 || t.ExtraMembers < 0 {
+	if t.ExtraStores < 0 || t.ExtraMembers < 0 || t.ExtraStores > math.MaxInt32 || t.ExtraMembers > math.MaxInt32 {
 		return invalid("加购数量不能为负")
 	}
 	return nil
@@ -455,11 +456,4 @@ func fitsKeep(cat Catalog, t Target, in QuoteInput) error {
 			Message: fmt.Sprintf("保留 %d 名成员超出目标容量 %d", in.KeepMembers, members)}
 	}
 	return nil
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

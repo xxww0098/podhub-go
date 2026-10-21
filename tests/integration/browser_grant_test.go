@@ -387,6 +387,7 @@ type grantShop struct {
 
 func newGrantShop(t *testing.T, ctx context.Context, pool *pgxpool.Pool, org, user int64, ring seal.Ring, disabled bool, expires *int64) *grantShop {
 	t.Helper()
+	seedPaidGrantWorkspace(t, ctx, pool, org, user)
 	storePK, storeID := insertNextStore(t, ctx, pool, org)
 	insertSealedCredential(t, ctx, pool, org, user, storePK, ring, expires)
 	shop := &grantShop{t: t, pool: pool, org: org, user: user, storePK: storePK, storeID: storeID, opens: &atomic.Int32{}}
@@ -579,3 +580,20 @@ func (t *tallyTransport) Read(context.Context, string, []byte) (int, string, err
 func (t *tallyTransport) WritesDisabled() bool { return false }
 
 func (t *tallyTransport) Ready(context.Context) error { return nil }
+
+func seedPaidGrantWorkspace(t *testing.T, ctx context.Context, pool *pgxpool.Pool, org, user int64) {
+	t.Helper()
+	if _, err := pool.Exec(ctx, `INSERT INTO organization_members(org_id,user_id,role,status,display_name,join_order,created_at,updated_at)
+ VALUES($1,$2,'owner','active','Grant owner',1,clock_timestamp(),clock_timestamp()) ON CONFLICT(org_id,user_id) DO NOTHING`, org, user); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO subscriptions(org_id,status,plan_key,term_start,term_end,billing_anchor,extra_stores,updated_at)
+ VALUES($1,'active','lite',clock_timestamp()-interval '1 day',clock_timestamp()+interval '1 month',clock_timestamp()-interval '1 day',100,clock_timestamp()) ON CONFLICT(org_id) DO NOTHING`, org); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO subscription_periods(org_id,starts_at,ends_at,plan_key,plan_stores,plan_members,plan_monthly_cents,store_monthly_cents,member_monthly_cents,extra_stores,extra_members)
+ SELECT org_id,term_start,term_end,'lite',5,1,10000,2000,3000,100,0 FROM subscriptions WHERE org_id=$1 AND NOT EXISTS(SELECT 1 FROM subscription_periods WHERE org_id=$1)`, org); err != nil {
+		t.Fatal(err)
+	}
+
+}

@@ -35,20 +35,7 @@ func FinishDrains(ctx context.Context, pool *pgxpool.Pool, now time.Time) (int, 
 	}
 	var open []due
 	err := db.InTx(ctx, pool, db.AppRole(), func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, "SELECT set_config('role', 'podhub_billing_lookup', true)"); err != nil {
-			return err
-		}
-		rows, err := tx.Query(ctx, `
-			SELECT e.org_id, e.id, e.effective_at + $1::interval
-			  FROM subscription_events e
-			 WHERE e.kind = 'drain'
-			   AND NOT EXISTS (
-			       SELECT 1 FROM subscription_events d
-			        WHERE d.org_id = e.org_id AND d.kind = 'drain_done'
-			          AND (d.breakdown->>'drain_event_id')::bigint = e.id)
-			   AND e.effective_at + $1::interval <= $2
-			 ORDER BY e.id
-			 LIMIT $3`, DrainDeadline, now, DrainBatch)
+		rows, err := tx.Query(ctx, `SELECT org_id,drain_id,deadline_at FROM public.billing_due_drains($1,$2,$3)`, int64(DrainDeadline/time.Second), now, DrainBatch)
 		if err != nil {
 			return err
 		}

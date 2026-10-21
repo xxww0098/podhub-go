@@ -17,6 +17,9 @@ func TestSendStoredKeepsReplayStateAndCardOwnership(t *testing.T) {
 	pool, ctx := draftParityDB(t)
 	orgID, userID := seedDraftOrg(t, ctx, pool, 96212)
 	storeID := uuid.NewString()
+	if _, err := pool.Exec(ctx, `INSERT INTO organization_stores(org_id,uuid,create_order,name) VALUES($1,$2::uuid,1,'Draft')`, orgID, storeID); err != nil {
+		t.Fatal(err)
+	}
 	cards := []string{uuid.NewString(), uuid.NewString()}
 	const category, typeID = 196212, 96212
 	t.Cleanup(func() {

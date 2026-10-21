@@ -3,6 +3,7 @@ package billingrepo
 import (
 	"context"
 	"sort"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -54,23 +55,5 @@ func PlanStoreSuspension(limit int64, rows []StoreSeat) map[int64]bool {
 // the projection uses ReconcileSubscriptionCapacity, which also knows about
 // the drain set.
 func ReconcileStores(ctx context.Context, tx pgx.Tx, orgID int64) error {
-	_, err := tx.Exec(ctx, `
-		WITH lim AS (
-		    SELECT store_limit AS n FROM organizations WHERE id = $1
-		),
-		live AS (
-		    SELECT s.id,
-		           row_number() OVER (ORDER BY s.create_order, s.id) AS rn
-		      FROM organization_stores s
-		     WHERE s.org_id = $1
-		       AND s.deleted_at_ms IS NULL
-		       AND NOT s.manual_disabled
-		)
-		UPDATE organization_stores s
-		   SET quota_suspended = (live.rn > lim.n),
-		       updated_at = clock_timestamp()
-		  FROM live, lim
-		 WHERE s.id = live.id
-		   AND s.quota_suspended IS DISTINCT FROM (live.rn > lim.n)`, orgID)
-	return err
+	return ReconcileSubscriptionCapacity(ctx, tx, orgID, 0, 0, time.Now())
 }

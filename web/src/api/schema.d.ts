@@ -10,6 +10,21 @@ type XOR<T, U> = (T | U) extends object ? (Without<T, U> & U) | (Without<U, T> &
 type OneOf<T extends any[]> = T extends [infer Only] ? Only : T extends [infer A, infer B, ...infer Rest] ? OneOf<[XOR<A, B>, ...Rest]> : never;
 
 export interface paths {
+  "/api/billing/subscription": {
+    get: operations["subscriptionGet"];
+  };
+  "/api/billing/quotes": {
+    post: operations["subscriptionQuote"];
+  };
+  "/api/billing/schedule": {
+    post: operations["subscriptionSchedule"];
+  };
+  "/api/billing/orders": {
+    post: operations["subscriptionOrderCreate"];
+  };
+  "/api/billing/orders/{public_id}": {
+    get: operations["subscriptionOrderGet"];
+  };
   "/mcp": {
     /**
      * MCP endpoint. Only POST carries a request; other methods answer 405 with Allow POST.
@@ -1778,6 +1793,210 @@ export type webhooks = Record<string, never>;
 
 export interface components {
   schemas: {
+    SubscriptionTarget: {
+      plan_key: string;
+      /** Format: int64 */
+      extra_stores: number;
+      /** Format: int64 */
+      extra_members: number;
+    };
+    SubscriptionPeriod: {
+      /** Format: int64 */
+      id: number;
+      /** Format: date-time */
+      starts_at: string;
+      /** Format: date-time */
+      ends_at: string;
+      plan_key: string;
+      /** Format: int64 */
+      extra_stores: number;
+      /** Format: int64 */
+      extra_members: number;
+      /** Format: int64 */
+      stores: number;
+      /** Format: int64 */
+      members: number;
+      keep_store_ids: string[] | null;
+      keep_member_ids: number[] | null;
+    };
+    SubscriptionView: {
+      /** Format: int64 */
+      revision: number;
+      plan_key: string;
+      /** @enum {string} */
+      status: "free" | "active" | "expired";
+      /** Format: int64 */
+      extra_stores: number;
+      /** Format: int64 */
+      extra_members: number;
+      /** Format: date-time */
+      current_end: string | null;
+      /** Format: date-time */
+      term_start: string | null;
+      /** Format: date-time */
+      term_end: string | null;
+      stores: {
+        /** Format: int64 */
+        used: number;
+        /** Format: int64 */
+        limit: number;
+      };
+      members: {
+        /** Format: int64 */
+        used: number;
+        /** Format: int64 */
+        limit: number;
+      };
+      next: {
+        plan_key: string;
+        /** Format: int64 */
+        extra_stores: number;
+        /** Format: int64 */
+        extra_members: number;
+        /** Format: int64 */
+        stores: number;
+        /** Format: int64 */
+        members: number;
+        keep_store_ids: string[] | null;
+        /** Format: date-time */
+        effective_at?: string;
+        keep_member_ids: number[] | null;
+      };
+      next_renewal: {
+        /** Format: int64 */
+        months: number;
+        /** Format: int64 */
+        amount_cents: number;
+        breakdown?: {
+            label: string;
+            /** Format: int64 */
+            cents: number;
+          }[];
+      };
+      periods: components["schemas"]["SubscriptionPeriod"][];
+      store_choices: {
+          id: string;
+          name: string;
+          manual_disabled: boolean;
+          allowed: boolean;
+        }[];
+      plans: {
+          key: string;
+          /** Format: int64 */
+          monthly_cents: number;
+          /** Format: int64 */
+          stores: number;
+          /** Format: int64 */
+          members: number;
+        }[];
+      /** Format: int64 */
+      store_monthly_cents: number;
+      /** Format: int64 */
+      member_monthly_cents: number;
+      draining: boolean;
+      pending_order: boolean;
+      pending_public_id?: string;
+      purchase_agreement: {
+        version: string;
+        title: string;
+        effective_at: string;
+        content: string;
+      };
+      member_choices: {
+          /** Format: int64 */
+          id: number;
+          name: string;
+          owner: boolean;
+        }[];
+    };
+    SubscriptionQuoteRequest: {
+      /** @enum {string} */
+      action: "subscribe" | "renew" | "change" | "schedule" | "keep";
+      target?: components["schemas"]["SubscriptionTarget"];
+      /** @enum {integer} */
+      months?: 1 | 3 | 6 | 12;
+      keep_store_ids?: string[] | null;
+      keep_member_ids?: number[] | null;
+      /** Format: int64 */
+      period_id?: number;
+      renew_with_change?: boolean;
+      /** Format: uuid */
+      expected_workspace_uuid: string;
+    };
+    SubscriptionQuote: {
+      quote_id: string;
+      /** Format: date-time */
+      expires_at: string;
+      /** Format: int64 */
+      revision: number;
+      action: string;
+      /** Format: date-time */
+      effective_at: string | null;
+      /** Format: date-time */
+      term_end: string | null;
+      current: {
+        plan_key: string;
+        /** Format: int64 */
+        stores: number;
+        /** Format: int64 */
+        members: number;
+        /** Format: date-time */
+        term_end: string | null;
+      };
+      target: {
+        plan_key: string;
+        /** Format: int64 */
+        stores: number;
+        /** Format: int64 */
+        members: number;
+      };
+      /** Format: int64 */
+      amount_cents: number;
+      breakdown: {
+          label: string;
+          /** Format: int64 */
+          cents: number;
+        }[];
+      schedule_only: boolean;
+      keep_store_ids: string[] | null;
+      renewal: components["schemas"]["SubscriptionTarget"];
+      /** Format: int64 */
+      renewal_amount_cents: number;
+    };
+    SubscriptionOrderBrief: {
+      /** Format: int64 */
+      order_id: number;
+      public_id: string;
+      /** Format: date-time */
+      payment_deadline_at: string;
+    };
+    SubscriptionOrder: {
+      public_id: string;
+      status: string;
+      /** Format: int64 */
+      amount_cents: number;
+      reconciliation_reason: string | null;
+      purchase_agreement: {
+        version: string;
+        title: string;
+        effective_at: string;
+        content: string;
+        accepted_at: string;
+        accepted_by: string;
+      };
+    };
+    SubscriptionScheduleRequest: {
+      quote_id: string;
+      cancel_pending?: boolean;
+    };
+    SubscriptionOrderRequest: {
+      quote_id: string;
+      accepted_version: string;
+    };
+    SubscriptionError: {
+      error: string;
+      code: string;
+    };
     StoreError: {
       error: string;
       /** @enum {string} */
@@ -8930,6 +9149,286 @@ export type external = Record<string, never>;
 
 export interface operations {
 
+  subscriptionGet: {
+    responses: {
+      /** @description Subscription result */
+      200: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionView"];
+        };
+      };
+      /** @description Request refused */
+      400: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      401: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      403: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      404: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      409: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      500: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      503: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+    };
+  };
+  subscriptionQuote: {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SubscriptionQuoteRequest"];
+      };
+    };
+    responses: {
+      /** @description Subscription result */
+      200: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionQuote"];
+        };
+      };
+      /** @description Request refused */
+      400: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      401: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      403: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      404: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      409: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      500: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      503: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+    };
+  };
+  subscriptionSchedule: {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SubscriptionScheduleRequest"];
+      };
+    };
+    responses: {
+      /** @description Subscription result */
+      200: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionView"];
+        };
+      };
+      /** @description Request refused */
+      400: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      401: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      403: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      404: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      409: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      500: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      503: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+    };
+  };
+  subscriptionOrderCreate: {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SubscriptionOrderRequest"];
+      };
+    };
+    responses: {
+      /** @description Subscription result */
+      201: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionOrderBrief"];
+        };
+      };
+      /** @description Request refused */
+      400: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      401: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      403: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      404: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      409: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      500: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      503: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+    };
+  };
+  subscriptionOrderGet: {
+    parameters: {
+      path: {
+        public_id: string;
+      };
+    };
+    responses: {
+      /** @description Subscription result */
+      200: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionOrder"];
+        };
+      };
+      /** @description Request refused */
+      400: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      401: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      403: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      404: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      409: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      500: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      503: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+    };
+  };
   /**
    * MCP endpoint. Only POST carries a request; other methods answer 405 with Allow POST.
    * @description GET never carries a JSON-RPC request: the router answers 405 with Allow: POST. The method is declared so the contract states the 405 explicitly.

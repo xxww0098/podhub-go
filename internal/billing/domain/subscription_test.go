@@ -47,13 +47,13 @@ func TestDocExamples(t *testing.T) {
 			"10-15 subscribe lite 1 month",
 			QuoteInput{Now: oct, Snapshot: freeSnapshot(), Action: ActionSubscribe,
 				Target: Target{PlanKey: PlanLite}, Months: 1},
-			5484,
+			10000,
 		},
 		{
 			"10-15 subscribe lite 3 months",
 			QuoteInput{Now: oct, Snapshot: freeSnapshot(), Action: ActionSubscribe,
 				Target: Target{PlanKey: PlanLite}, Months: 3},
-			5484 + 10000*2,
+			30000,
 		},
 		{
 			"10-15 one extra store",
@@ -94,7 +94,7 @@ func TestDocExamples(t *testing.T) {
 			"10-30 12:00 subscribe 1 month",
 			QuoteInput{Now: sh(2026, 10, 30, 12, 0, 0), Snapshot: freeSnapshot(), Action: ActionSubscribe,
 				Target: Target{PlanKey: PlanLite}, Months: 1},
-			645,
+			10000,
 		},
 	}
 	for _, c := range cases {
@@ -105,31 +105,29 @@ func TestDocExamples(t *testing.T) {
 }
 
 func TestSubscribeTerms(t *testing.T) {
-	// Mid-month: term starts now, ends at the boundary plus the whole months
-	// after the stub.
+	// Every purchase starts now and buys whole anniversary months.
 	q := quote(t, QuoteInput{Now: sh(2026, 10, 15, 0, 0, 0), Snapshot: freeSnapshot(),
 		Action: ActionSubscribe, Target: Target{PlanKey: PlanLite}, Months: 3})
 	if !q.TermStart.Equal(sh(2026, 10, 15, 0, 0, 0)) {
 		t.Fatalf("term start %s", q.TermStart)
 	}
-	if !q.TermEnd.Equal(sh(2027, 1, 1, 0, 0, 0)) {
+	if !q.TermEnd.Equal(sh(2027, 1, 15, 0, 0, 0)) {
 		t.Fatalf("term end %s", q.TermEnd)
 	}
-	// Under a day left: the term starts on the 1st and buys whole months, so
-	// nobody pays for ten seconds.
+	// A purchase at month end starts immediately and retains its clock time.
 	q = quote(t, QuoteInput{Now: sh(2026, 10, 31, 23, 59, 50), Snapshot: freeSnapshot(),
 		Action: ActionSubscribe, Target: Target{PlanKey: PlanLite}, Months: 3})
-	if !q.TermStart.Equal(sh(2026, 11, 1, 0, 0, 0)) || !q.TermEnd.Equal(sh(2027, 2, 1, 0, 0, 0)) {
+	if !q.TermStart.Equal(sh(2026, 10, 31, 23, 59, 50)) || !q.TermEnd.Equal(sh(2027, 1, 31, 23, 59, 50)) {
 		t.Fatalf("stub-free term %s..%s", q.TermStart, q.TermEnd)
 	}
-	// Every quoted term_end is a Shanghai month boundary.
+	// Every quoted term_end is anchored to the purchase date.
 	for _, now := range []time.Time{
 		sh(2026, 1, 1, 0, 0, 0), sh(2026, 2, 28, 23, 0, 0), sh(2026, 12, 31, 23, 0, 0),
 		sh(2028, 2, 29, 10, 0, 0),
 	} {
 		q := quote(t, QuoteInput{Now: now, Snapshot: freeSnapshot(),
 			Action: ActionSubscribe, Target: Target{PlanKey: PlanPro}, Months: 6})
-		if !OnMonthStart(q.TermEnd) {
+		if !q.TermEnd.Equal(TermEnd(now, 6)) {
 			t.Fatalf("%s: term end %s is not a month start", now, q.TermEnd)
 		}
 	}
@@ -237,7 +235,7 @@ func TestChangeKeepsTerm(t *testing.T) {
 	q := quote(t, QuoteInput{Now: sh(2026, 10, 15, 0, 0, 0),
 		Snapshot: activeSnapshot(PlanLite, 0, 0, end), Action: ActionChange,
 		Target: Target{PlanKey: PlanPro}, Months: 1})
-	if !q.TermStart.Equal(end) || !q.TermEnd.Equal(end) {
+	if !q.TermStart.Equal(sh(2026, 10, 15, 0, 0, 0)) || !q.TermEnd.Equal(end) {
 		t.Fatalf("change moved the term: %s..%s", q.TermStart, q.TermEnd)
 	}
 }

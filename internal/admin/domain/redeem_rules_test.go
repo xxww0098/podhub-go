@@ -8,12 +8,8 @@ import (
 
 func TestValidateRedeemCreate(t *testing.T) {
 	now := time.Date(2026, 10, 17, 1, 2, 3, 0, time.UTC)
-	ok, err := ValidateRedeemCreate(RedeemDraft{Product: "member_seats", MemberSeats: 2, Tier: "pro", Quantity: 1, DurationDays: 30}, now)
-	if err != nil || ok.PlanKey != "pro" || !ok.NeedsPlan || ok.DurationDays != 30 {
-		t.Fatalf("%+v %v", ok, err)
-	}
-	if !ok.ExpiresAt.Equal(now.Add(30 * 24 * time.Hour)) {
-		t.Fatal(ok.ExpiresAt)
+	if _, err := ValidateRedeemCreate(RedeemDraft{Product: "member_seats", MemberSeats: 2, Tier: "pro", Quantity: 1, DurationDays: 30}, now); err == nil {
+		t.Fatal("retired member-seat codes must not be minted")
 	}
 	wallet, err := ValidateRedeemCreate(RedeemDraft{Product: " wallet_credits ", WalletCents: 100, Quantity: 2, DurationDays: 99}, now)
 	if err != nil || wallet.DurationDays != 1 || wallet.PlanKey != "wallet" || wallet.PlanName != "钱包额度" {
@@ -42,17 +38,8 @@ func TestValidateRedeemCreate(t *testing.T) {
 func TestParseRedeemBodyMatchesValidate(t *testing.T) {
 	now := time.Date(2026, 10, 17, 1, 2, 3, 0, time.UTC)
 	body := []byte(`{"product":"member_seats","member_seats":2,"tier":"max","quantity":2,"duration_days":45,"expires_at":"2030-06-01T00:00:00Z","note":"批次"}`)
-	spec, fault := ParseRedeemBody(body, now)
-	if fault != nil {
-		t.Fatal(fault)
-	}
-	note := "批次"
-	want, err := ValidateRedeemCreate(RedeemDraft{
-		Product: "member_seats", MemberSeats: 2, Tier: "max", Quantity: 2, DurationDays: 45,
-		ExpiresAt: strPtr("2030-06-01T00:00:00Z"), Note: &note,
-	}, now)
-	if err != nil || spec.PlanKey != want.PlanKey || spec.Quantity != want.Quantity || spec.DurationDays != want.DurationDays || !spec.ExpiresAt.Equal(want.ExpiresAt) || spec.Tier != want.Tier || spec.MemberSeats != want.MemberSeats {
-		t.Fatalf("spec %+v want %+v err %v", spec, want, err)
+	if _, fault := ParseRedeemBody(body, now); fault == nil {
+		t.Fatal("retired member-seat code accepted")
 	}
 	wallet := []byte(`{"product":"wallet_credits","member_seats":0,"quantity":1,"duration_days":30,"wallet_cents":2500}`)
 	got, fault := ParseRedeemBody(wallet, now)

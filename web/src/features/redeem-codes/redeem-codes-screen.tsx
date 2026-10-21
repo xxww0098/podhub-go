@@ -49,13 +49,14 @@ import { MAX_TOPUP_CENTS, MIN_TOPUP_CENTS, formatYuan, topupCentsFromYuan } from
 import { clearLive, notifyCommandError, notifyLive, notifySuccess } from "@/lib/notify"
 
 const REDEEM_CODES_LIVE = "redeem-codes-load"
+const MAX_MEMBER_SEATS_PER_WORKSPACE = 20
 
-import { MAX_MEMBER_SEATS_PER_WORKSPACE, PLAN_CATALOG, type PlanKey } from "@/features/plans/plan-catalog"
+import { PLAN_CATALOG, type PlanKey } from "@/features/plans/plan-catalog"
 
 /** Cloud admits 1–20 成员席位 per code and requires a paid tier (billing::seats). */
 const PAID_TIERS = PLAN_CATALOG.filter(
-  (plan): plan is (typeof plan & { key: Exclude<PlanKey, "lite"> }) =>
-    plan.key !== "lite",
+  (plan): plan is (typeof plan & { key: Exclude<PlanKey, "free"> }) =>
+    plan.key !== "free",
 )
 
 type CodeStatus = "unused" | "redeemed" | "expired" | "revoked"
@@ -568,7 +569,7 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
     <PlatformAdminEmpty
       icon={KeyRound}
       title="还没有兑换码"
-      description="创建一批兑换码，交付后可兑换成员名额。"
+      description="创建一批兑换码，交付后可兑换钱包额度。"
       action={<Button onClick={onCreate}>创建第一批兑换码</Button>}
     />
   )
@@ -583,9 +584,9 @@ function CreateRedeemCodeSheet({
   onOpenChange: (open: boolean) => void
   onCreated: (created: AdminRedeemCodesCreated) => void
 }) {
-  const [product, setProduct] = useState<"member_seats" | "wallet_credits">("member_seats")
+  const [product, setProduct] = useState<"member_seats" | "wallet_credits">("wallet_credits")
   const [memberSeats, setMemberSeats] = useState("1")
-  const [tier, setTier] = useState<Exclude<PlanKey, "lite">>("pro")
+  const [tier, setTier] = useState<Exclude<PlanKey, "free">>("pro")
   const [walletYuan, setWalletYuan] = useState("100")
   const [quantity, setQuantity] = useState("10")
   const [durationDays, setDurationDays] = useState("30")
@@ -688,8 +689,8 @@ function CreateRedeemCodeSheet({
                 >
                   <TabsList aria-label="兑换内容" className="h-9 w-full">
                     <TabsIndicator />
-                    <TabsTrigger value="member_seats" className="h-8 flex-1 text-sm">
-                      成员名额
+                    <TabsTrigger value="member_seats" disabled className="h-8 flex-1 text-sm">
+                      成员名额（已停用）
                     </TabsTrigger>
                     <TabsTrigger value="wallet_credits" className="h-8 flex-1 text-sm">
                       钱包额度
@@ -736,7 +737,7 @@ function CreateRedeemCodeSheet({
                       <Select
                         value={tier}
                         onValueChange={(next) => {
-                          if (next) setTier(next as Exclude<PlanKey, "lite">)
+                          if (next) setTier(next as Exclude<PlanKey, "free">)
                         }}
                       >
                         <SelectTrigger id="redeem-tier" aria-label="成员名额档位">

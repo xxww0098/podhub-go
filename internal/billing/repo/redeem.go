@@ -99,10 +99,7 @@ func redeemTx(ctx context.Context, tx pgx.Tx, orgID, userID int64, code string, 
 	case "ocr_credits":
 		return RedeemResult{}, redeemErr(400, "VALIDATION", "识别额度兑换码已停用")
 	case "member_seats":
-		if row.MemberSeats < 1 || (row.Tier != "pro" && row.Tier != "max" && row.Tier != "ultra") || row.OcrCredits != 0 || row.WalletCents != 0 {
-			return RedeemResult{}, redeemErr(400, "VALIDATION", "兑换码成员名额无效")
-		}
-		result, err = grantSeats(ctx, tx, orgID, row.Tier, row.MemberSeats, int(row.DurationDays))
+		return RedeemResult{}, redeemErr(400, "VALIDATION", "成员席位批次兑换码已停用，不会消耗该兑换码，请联系运营")
 	case "wallet_credits":
 		if row.WalletCents < 100 || row.WalletCents > 1_000_000 || row.MemberSeats != 0 || row.OcrCredits != 0 {
 			return RedeemResult{}, redeemErr(400, "VALIDATION", "兑换码钱包额度无效")
@@ -131,68 +128,6 @@ func redeemTx(ctx context.Context, tx pgx.Tx, orgID, userID int64, code string, 
 	}
 	result.PlanName = name
 	return result, nil
-}
-
-func grantSeats(ctx context.Context, tx pgx.Tx, orgID int64, tier string, seats int64, days int) (RedeemResult, error) {
-	var now time.Time
-	if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
-		return RedeemResult{}, err
-	}
-	lots, err := tx.Query(ctx, `
-		SELECT id, seats::bigint
-		  FROM member_seat_lots
-		 WHERE org_id = $1 AND expires_at > $2
-		 ORDER BY id`, orgID, now)
-	if err != nil {
-		return RedeemResult{}, err
-	}
-	var ids []int64
-	var replacedSeats int64
-	var replacedLots int64
-	for lots.Next() {
-		var id, count int64
-		if err := lots.Scan(&id, &count); err != nil {
-			lots.Close()
-			return RedeemResult{}, err
-		}
-		ids = append(ids, id)
-		replacedSeats += count
-		replacedLots++
-	}
-	lots.Close()
-	if err := lots.Err(); err != nil {
-		return RedeemResult{}, err
-	}
-	if len(ids) > 0 {
-		if _, err := tx.Exec(ctx, `
-			UPDATE member_seat_lots
-			   SET expires_at = LEAST(expires_at, GREATEST(starts_at, $2))
-			 WHERE org_id = $1 AND id = ANY($3)`, orgID, now, ids); err != nil {
-			return RedeemResult{}, err
-		}
-	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO member_seat_lots
-		    (org_id, tier, seats, starts_at, expires_at, payment_order_id, created_at)
-		VALUES ($1, $2, $3, $4, $4 + ($5 || ' days')::interval, NULL, $4)`,
-		orgID, tier, seats, now, strconvDays(days)); err != nil {
-		return RedeemResult{}, err
-	}
-	projection, err := ProjectOrgSeatState(ctx, tx, orgID)
-	if err != nil {
-		return RedeemResult{}, err
-	}
-	if err := ReconcileSeats(ctx, tx, orgID, projection.EffectiveSeats); err != nil {
-		return RedeemResult{}, err
-	}
-	return RedeemResult{
-		PlanKey: tier, MemberSeats: seats, ReplacedLots: replacedLots, ReplacedSeats: replacedSeats,
-		PlanExpiresAt: projection.ExpiresAt,
-	}, nil
-}
-
-func strconvDays(days int) string {
-	return fmt.Sprintf("%d", days)
 }
 
 func planName(ctx context.Context, tx pgx.Tx, key string) (string, error) {

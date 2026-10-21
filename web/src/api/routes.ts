@@ -23,6 +23,11 @@ import type { paths } from "@/api/schema"
 type ApiPath = keyof paths
 
 export const ROUTES = {
+  billingSubscription: "/api/billing/subscription",
+  billingQuotes: "/api/billing/quotes",
+  billingSchedule: "/api/billing/schedule",
+  billingOrders: "/api/billing/orders",
+  billingOrdersByPublicId: "/api/billing/orders/{public_id}",
   health: "/api/health",
   listingRules: "/api/listing/rules",
   listingValidate: "/api/listing/validate",

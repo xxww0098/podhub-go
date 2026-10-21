@@ -30,7 +30,7 @@ func TestGrantCallerCannotMintCodes(t *testing.T) {
 
 	list := `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`
 	_, listed := svc.Handle(context.Background(), "hash", []byte(list))
-	for _, name := range []string{`"search"`, `"execute"`, `"generateActivationCodes"`, `"generateQuotaCards"`, `"listRedeemCodes"`, "生成激活码", "生成额度卡"} {
+	for _, name := range []string{`"search"`, `"execute"`, `"generateActivationCodes"`, `"generateQuotaCards"`, `"listRedeemCodes"`, "成员席位批次兑换码已停用", "生成额度卡"} {
 		if !strings.Contains(string(listed), name) {
 			t.Fatalf("missing %s in %s", name, listed)
 		}

@@ -39,9 +39,9 @@ func TestCodeAdminMatchesAdminRules(t *testing.T) {
 		wantCreate int
 		wantList   int
 	}{
-		{"super activation", "super_admin", elevated, "activation", goodSeat, "", "", 1, 0},
+		{"retired activation", "super_admin", elevated, "activation", goodSeat, "invalid_arguments", "仅支持创建钱包额度兑换码，成员席位批次已停用", 0, 0},
 		{"super quota", "super_admin", elevated, "quota", goodWallet, "", "", 1, 0},
-		{"super activation omits product", "super_admin", elevated, "activation", omitProduct, "", "", 1, 0},
+		{"retired activation omits product", "super_admin", elevated, "activation", omitProduct, "invalid_arguments", "仅支持创建钱包额度兑换码，成员席位批次已停用", 0, 0},
 		{"super list", "super_admin", elevated, "list", `{}`, "", "", 0, 1},
 		{"member", "user", elevated, "activation", goodSeat, "forbidden", "需要超级管理员权限", 0, 0},
 		{"platform admin", "admin", elevated, "quota", goodWallet, "forbidden", "需要超级管理员权限", 0, 0},
@@ -50,7 +50,7 @@ func TestCodeAdminMatchesAdminRules(t *testing.T) {
 		{"step-up missing", "super_admin", admindomain.Standing{Enrolled: true}, "quota", goodWallet, "forbidden", "管理操作需要重新验证", 0, 0},
 		{"session row missing", "super_admin", admindomain.Standing{Missing: true}, "list", `{}`, "internal", "服务暂不可用", 0, 0},
 		{"quantity", "super_admin", elevated, "quota", `{"product":"wallet_credits","member_seats":0,"wallet_cents":100,"quantity":501,"duration_days":30}`, "invalid_arguments", "兑换码数量需在 1-500 之间", 0, 0},
-		{"bad tier", "super_admin", elevated, "activation", `{"product":"member_seats","member_seats":1,"tier":"lite","quantity":1,"duration_days":30}`, "invalid_arguments", "成员名额档位无效", 0, 0},
+		{"bad tier", "super_admin", elevated, "activation", `{"product":"member_seats","member_seats":1,"tier":"lite","quantity":1,"duration_days":30}`, "invalid_arguments", "仅支持创建钱包额度兑换码，成员席位批次已停用", 0, 0},
 		{"extra field", "super_admin", elevated, "activation", `{"product":"member_seats","member_seats":1,"tier":"pro","quantity":1,"duration_days":30,"extra":1}`, "invalid_arguments", "请求格式无效", 0, 0},
 		{"wrong product", "super_admin", elevated, "activation", goodWallet, "invalid_arguments", "激活码工具只生成成员名额兑换码", 0, 0},
 		{"wallet amount", "super_admin", elevated, "quota", `{"product":"wallet_credits","member_seats":0,"wallet_cents":99,"quantity":1,"duration_days":1}`, "invalid_arguments", "钱包额度需在 ¥1-¥10000 之间", 0, 0},
@@ -150,7 +150,7 @@ func TestMCPHTTPSessionGate(t *testing.T) {
 	if sessionCalls != before || spy.created != 0 || !strings.Contains(again.Body.String(), "管理操作需要超级管理员会话并完成二次验证") {
 		t.Fatalf("calls %d created %d %s", sessionCalls, spy.created, again.Body.String())
 	}
-	ok := postMCP(r, "super", `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"generateActivationCodes","arguments":{"member_seats":1,"tier":"pro","quantity":1,"duration_days":30,"expires_at":"2030-06-01T00:00:00Z"}}}`)
+	ok := postMCP(r, "super", `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"generateQuotaCards","arguments":{"member_seats":0,"wallet_cents":100,"quantity":1,"duration_days":1,"expires_at":"2030-06-01T00:00:00Z"}}}`)
 	if ok.Code != http.StatusOK || spy.created != 1 || !strings.Contains(ok.Body.String(), "POD-PLAN-PLAINTEXT") || strings.Contains(buf.String(), "POD-PLAN-PLAINTEXT") {
 		t.Fatalf("ok %d created %d log %q body %s", ok.Code, spy.created, buf.String(), ok.Body.String())
 	}

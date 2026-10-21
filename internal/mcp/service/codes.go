@@ -109,13 +109,13 @@ func asCode(err error, dest **CodeError) bool {
 	return true
 }
 
-const codeInputSchema = `{"type":"object","properties":{"member_seats":{"type":"integer","description":"成员名额。激活码为 1-20，额度卡传 0"},"tier":{"type":"string","description":"档位：pro、max、ultra。额度卡可省略"},"ocr_credits":{"type":"integer","description":"必须为 0，识别额度已停止发放"},"wallet_cents":{"type":"integer","description":"额度卡面额，单位分"},"quantity":{"type":"integer","description":"数量，1-500"},"duration_days":{"type":"integer","description":"激活码有效天数。额度卡沿用管理端字段，入库时固定为 1"},"expires_at":{"type":"string","description":"兑换截止时间，RFC3339。省略则从当前时间起 30 天"},"note":{"type":"string","description":"备注，最多 200 字"},"product":{"type":"string","description":"可省略。激活码工具只接受 member_seats，额度卡工具只接受 wallet_credits"}},"required":["member_seats","quantity","duration_days"],"additionalProperties":false}`
+const codeInputSchema = `{"type":"object","properties":{"member_seats":{"type":"integer","description":"历史字段，钱包额度卡传 0；成员席位批次已停用"},"tier":{"type":"string","description":"历史字段，钱包额度卡请省略"},"ocr_credits":{"type":"integer","description":"必须为 0，识别额度已停止发放"},"wallet_cents":{"type":"integer","description":"额度卡面额，单位分"},"quantity":{"type":"integer","description":"数量，1-500"},"duration_days":{"type":"integer","description":"钱包额度卡入库时固定为 1"},"expires_at":{"type":"string","description":"兑换截止时间，RFC3339。省略则从当前时间起 30 天"},"note":{"type":"string","description":"备注，最多 200 字"},"product":{"type":"string","description":"钱包额度卡为 wallet_credits，可省略；成员席位批次已停用"}},"required":["member_seats","quantity","duration_days"],"additionalProperties":false}`
 
 func adminToolDefinitions() []map[string]any {
 	return []map[string]any{
 		{
 			"name":         toolActivation,
-			"description":  "生成激活码（成员名额兑换码）。仅超级管理员在完成验证器绑定和二次验证后可调用。数量、档位、有效期与管理端创建接口相同。明文码只出现在本次结果里。",
+			"description":  "成员席位批次兑换码已停用，此工具不再发放激活码。订阅请在账单页面购买，钱包额度请使用 generateQuotaCards。",
 			"inputSchema":  json.RawMessage(codeInputSchema),
 			"outputSchema": json.RawMessage(`{"type":"object"}`),
 			"annotations":  map[string]any{"readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false},

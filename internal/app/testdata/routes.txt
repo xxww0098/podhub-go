@@ -72,6 +72,8 @@ GET /api/automation/asset-sets
 GET /api/automation/grants
 GET /api/automation/runtimes
 GET /api/billing/callback/complete
+GET /api/billing/orders/{public_id}
+GET /api/billing/subscription
 GET /api/billing/usage-stats
 GET /api/billing/webhooks/{provider}
 GET /api/catalog/fetch-config
@@ -215,6 +217,9 @@ POST /api/automation/runtimes
 POST /api/automation/runtimes/{id}/deregister
 POST /api/automation/runtimes/{id}/heartbeat
 POST /api/billing/callback
+POST /api/billing/orders
+POST /api/billing/quotes
+POST /api/billing/schedule
 POST /api/billing/webhooks/{provider}
 POST /api/catalog/fetch-config/run
 POST /api/catalog/schema/dictionary-search

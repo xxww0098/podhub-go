@@ -175,6 +175,9 @@ func newStoredRevisionFixture(t *testing.T, userID int64) storedRevisionFixture 
 	if _, err := pool.Exec(ctx, `INSERT INTO ozon_catalog_schema_cache (description_category_id, type_id, language, payload, fetched_at_ms, byte_size) VALUES ($1, $2, 'default', $3, $4, $5)`, category, userID, compressed.Bytes(), time.Now().UnixMilli(), compressed.Len()); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := pool.Exec(ctx, `INSERT INTO organization_stores(org_id,uuid,create_order,name) VALUES($1,$2::uuid,1,'Draft')`, org, store); err != nil {
+		t.Fatal(err)
+	}
 	return storedRevisionFixture{pool: pool, ctx: ctx, org: org, user: user, store: store, card: card}
 }
 

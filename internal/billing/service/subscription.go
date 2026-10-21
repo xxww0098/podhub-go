@@ -13,6 +13,7 @@ import (
 // Subscription is the repo surface the HTTP layer calls. internal/billing
 // assigns these in init; service does not import repo.
 var (
+	ConfirmSchedule         func(ctx context.Context, pool *pgxpool.Pool, orgID int64, quoteID string, cancelPending bool, now time.Time) error
 	SubscriptionView        func(ctx context.Context, pool *pgxpool.Pool, orgID int64, now time.Time) (contract.View, error)
 	Quote                   func(ctx context.Context, pool *pgxpool.Pool, orgID int64, req contract.QuoteRequest, now time.Time) (contract.Offered, error)
 	CreateSubscriptionOrder func(

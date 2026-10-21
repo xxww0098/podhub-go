@@ -29,6 +29,9 @@ func TestEnqueueDraftsBatchMatchesSequential(t *testing.T) {
 	orgID, userID := seedDraftOrg(t, ctx, pool, 96211)
 	storeID := "11111111-1111-4111-8111-111111111111"
 	cardID := "22222222-2222-4222-8222-222222222222"
+	if _, err := pool.Exec(ctx, `INSERT INTO organization_stores(org_id,uuid,create_order,name) VALUES($1,$2,1,'Draft')`, orgID, storeID); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { purgeDraft(context.Background(), pool, orgID, userID) })
 
 	t.Run("created and replayed", func(t *testing.T) {
@@ -122,7 +125,7 @@ func TestEnqueueDraftsBatchMatchesSequential(t *testing.T) {
 		}
 		tr.sql = nil
 		tr.batches = 0
-		views, err := enqueueDrafts(ctx, tx, orgID, userID, storeID, ready)
+		views, err := enqueueDrafts(ctx, tx, orgID, userID, storeID, ready, time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -140,8 +143,8 @@ func TestEnqueueDraftsBatchMatchesSequential(t *testing.T) {
 		if inserts != 30 || reads != 30 || states != 10 {
 			t.Fatalf("inserts %d reads %d states %d batches %d\n%v", inserts, reads, states, tr.batches, tr.sql)
 		}
-		// 30 insert+read, 10 state reads, worker, head+3 locks, exists+admit+insert+reset, app.
-		if len(tr.sql) != 60+10+1+4+4+1 || tr.batches != 4 {
+		// 30 insert+read, 10 state reads, subscription gate, worker, head+3 locks, exists+admit+insert+reset, app.
+		if len(tr.sql) != 1+60+10+1+4+4+1 || tr.batches != 4 {
 			t.Fatalf("statements %d batches %d\n%v", len(tr.sql), tr.batches, tr.sql)
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -172,12 +175,106 @@ func TestEnqueueDraftsBatchMatchesSequential(t *testing.T) {
 	})
 }
 
+func TestEnqueueDraftsRefusesPausedStore(t *testing.T) {
+	pool, ctx := draftParityDB(t)
+	orgID, userID := seedDraftOrg(t, ctx, pool, 96212)
+	storeA := "33333333-3333-4333-8333-333333333331"
+	storeB := "33333333-3333-4333-8333-333333333332"
+	cardID := "44444444-4444-4444-8444-444444444444"
+	if _, err := pool.Exec(ctx, `
+			INSERT INTO organization_stores(org_id, uuid, create_order, name) VALUES
+			($1, $2, 1, 'Kept'), ($1, $3, 2, 'Paused')`, orgID, storeA, storeB); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { purgeDraft(context.Background(), pool, orgID, userID) })
+	// The paid window covers wall-clock now, so time.Now() would admit store B.
+	// A caller clock outside that window drops it out of the free slot.
+	wall := time.Now().UTC()
+	start, end := wall.Add(-time.Hour), wall.Add(time.Hour)
+
+	t.Run("paused", func(t *testing.T) {
+		seedDraftPeriod(t, ctx, pool, orgID, start, end, nil)
+		refuseDraftEnqueue(t, ctx, pool, orgID, userID, storeB, cardID, start.Add(-time.Minute))
+	})
+	t.Run("not on keep list", func(t *testing.T) {
+		seedDraftPeriod(t, ctx, pool, orgID, start, end, []string{storeA})
+		refuseDraftEnqueue(t, ctx, pool, orgID, userID, storeB, cardID, wall)
+	})
+}
+
+func seedDraftPeriod(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID int64, start, end time.Time, keep []string) {
+	t.Helper()
+	if _, err := pool.Exec(ctx, `DELETE FROM subscription_periods WHERE org_id = $1`, orgID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+			INSERT INTO subscriptions (org_id, status, plan_key, term_start, term_end, updated_at)
+			VALUES ($1, 'active', 'lite', $2, $3, clock_timestamp())
+			ON CONFLICT (org_id) DO UPDATE
+			    SET status = 'active', plan_key = 'lite', term_start = $2, term_end = $3, updated_at = clock_timestamp()`,
+		orgID, start, end); err != nil {
+		t.Fatal(err)
+	}
+	var keepArg any
+	if keep != nil {
+		keepArg = keep
+	}
+	if _, err := pool.Exec(ctx, `
+			INSERT INTO subscription_periods (
+				org_id, starts_at, ends_at, plan_key, plan_stores, plan_members,
+				plan_monthly_cents, store_monthly_cents, member_monthly_cents,
+				extra_stores, extra_members, keep_store_ids
+			) VALUES ($1, $2, $3, 'lite', 5, 1, 10000, 2000, 3000, 0, 0, $4)`,
+		orgID, start, end, keepArg); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func refuseDraftEnqueue(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, storeID, cardID string, now time.Time) {
+	t.Helper()
+	ready := draftRows(t, ctx, pool, orgID, storeID, cardID, 2)
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if err := tenant.EnterApp(ctx, tx, orgID); err != nil {
+		t.Fatal(err)
+	}
+	_, err = enqueueDrafts(ctx, tx, orgID, userID, storeID, ready, now)
+	var st Status
+	if !errors.As(err, &st) || st.Code != 402 || st.Kind != "SUBSCRIPTION_STORE_PAUSED" {
+		t.Fatalf("got code %d kind %s err %v", st.Code, st.Kind, err)
+	}
+	var intents, jobs int
+	if err := tx.QueryRow(ctx, `
+			SELECT count(*) FROM public.submission_intents
+			 WHERE org_id = $1 AND store_id = $2::uuid`, orgID, storeID).Scan(&intents); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.QueryRow(ctx, `
+			SELECT count(*) FROM public.jobs
+			 WHERE org_id = $1 AND kind = 'listing.submit.batch'`, orgID).Scan(&jobs); err != nil {
+		t.Fatal(err)
+	}
+	var queued int
+	if err := tx.QueryRow(ctx, `
+			SELECT count(*) FROM public.listing_rows
+			 WHERE org_id = $1 AND id = ANY($2::uuid[]) AND submission_state = 'queued'`,
+		orgID, []string{ready[0].rowID, ready[1].rowID}).Scan(&queued); err != nil {
+		t.Fatal(err)
+	}
+	if intents != 0 || jobs != 0 || queued != 0 {
+		t.Fatalf("intents %d jobs %d queued rows %d", intents, jobs, queued)
+	}
+}
+
 func compareDrafts(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, storeID, cardID string, ready []frozen) (seq, bat []DraftItem) {
 	t.Helper()
 	// Keep the old single-card sequential oracle unchanged. The production
 	// enqueue now takes each row's card rather than a batch-wide card.
 	batched := func(ctx context.Context, tx pgx.Tx, orgID, userID int64, storeID, _ string, ready []frozen) ([]DraftItem, error) {
-		return enqueueDrafts(ctx, tx, orgID, userID, storeID, ready)
+		return enqueueDrafts(ctx, tx, orgID, userID, storeID, ready, time.Now())
 	}
 	reset := pinDraftIDs(t)
 	seq = runDrafts(t, ctx, pool, orgID, userID, storeID, cardID, ready, enqueueDraftsSequential, reset)
@@ -301,6 +398,10 @@ func runDraftPayloads(t *testing.T, ctx context.Context, pool *pgxpool.Pool, org
 		t.Fatal(err)
 	}
 	return out
+}
+
+func enqueueDraftsNow(ctx context.Context, tx pgx.Tx, orgID, userID int64, storeID, _ string, ready []frozen) ([]DraftItem, error) {
+	return enqueueDrafts(ctx, tx, orgID, userID, storeID, ready, time.Now())
 }
 
 func enqueueDraftsSequential(ctx context.Context, tx pgx.Tx, orgID, userID int64, storeID, cardID string, ready []frozen) ([]DraftItem, error) {
@@ -487,10 +588,13 @@ func seedDraftOrg(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID 
 func purgeDraft(ctx context.Context, pool *pgxpool.Pool, orgID, userID int64) {
 	_, _ = pool.Exec(ctx, `DELETE FROM jobs WHERE org_id = $1`, orgID)
 	_, _ = pool.Exec(ctx, `DELETE FROM submission_intents WHERE org_id = $1`, orgID)
+	_, _ = pool.Exec(ctx, `DELETE FROM subscription_periods WHERE org_id = $1`, orgID)
+	_, _ = pool.Exec(ctx, `DELETE FROM subscriptions WHERE org_id = $1`, orgID)
 	_, _ = pool.Exec(ctx, `DELETE FROM listing_rows WHERE org_id = $1`, orgID)
 	_, _ = pool.Exec(ctx, `DELETE FROM execution_quota WHERE user_id = $1`, userID)
 	_, _ = pool.Exec(ctx, `DELETE FROM account_queue_head WHERE user_id = $1`, userID)
 	_, _ = pool.Exec(ctx, `DELETE FROM organization_members WHERE user_id = $1`, userID)
+	_, _ = pool.Exec(ctx, `DELETE FROM organization_stores WHERE org_id = $1`, orgID)
 	_, _ = pool.Exec(ctx, `DELETE FROM organizations WHERE id = $1`, orgID)
 	_, _ = pool.Exec(ctx, `DELETE FROM account_users WHERE id = $1`, userID)
 }

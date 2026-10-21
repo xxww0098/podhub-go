@@ -157,7 +157,7 @@ test("workspace menu names the active Workspace on the trigger and subtitles the
     </SidebarProvider>
   )
 
-  assert.match(html, /aria-label="账户与 Workspace 演示 Workspace，Plus 版，owner"/)
+  assert.match(html, /aria-label="账户与 Workspace 演示 Workspace，专业版，owner"/)
   assert.match(html, /data-plan="pro"/)
   // The membership role is the only subtitle, owner included — the crown is
   // gone, so ownership reads as measured text, not as an ornament.
