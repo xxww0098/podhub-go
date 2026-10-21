@@ -12,6 +12,8 @@
  * so every read takes a fresh view instead of caching one.
  */
 
+import { instantiateWasm } from "../lib/wasm-loader"
+
 /** `RenderIntent` as the crate serialises it — camelCase, defaults included. */
 export interface RenderIntent {
   fit: "cover" | "contain" | "fill"
@@ -260,17 +262,10 @@ export function createRenderModule(exports: WebAssembly.Exports): RenderModule {
   }
 }
 
-/** Fetches and instantiates the module. Streaming first; bytes when a dev
- * server answers with the wrong MIME type and the streaming compile refuses.
- * The legacy test/benchmark Worker supplies its bundled module URL. */
+/** Fetches and instantiates the module once, using bytes for a non-WASM MIME
+ * type. The legacy test/benchmark Worker supplies its bundled module URL. */
 export async function loadRenderModule(url: string): Promise<RenderModule> {
   const imports = { env: { performance_now: () => performance.now() } }
-  try {
-    const streamed = await WebAssembly.instantiateStreaming(fetch(url), imports)
-    return createRenderModule(streamed.instance.exports)
-  } catch {
-    const bytes = await (await fetch(url)).arrayBuffer()
-    const instantiated = await WebAssembly.instantiate(bytes, imports)
-    return createRenderModule(instantiated.instance.exports)
-  }
+  const { instance } = await instantiateWasm(url, imports)
+  return createRenderModule(instance.exports)
 }
