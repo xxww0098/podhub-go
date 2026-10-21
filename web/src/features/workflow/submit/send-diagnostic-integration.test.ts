@@ -85,6 +85,8 @@ test("actual workbench hook reaches dispatch through workflowSend, native freeze
     const ref = currentWorkbenchDiagnostic(current)
     assert.ok(ref?.diagnosticId)
     const copied = getDiagnosticCopyData(ref.diagnosticId)
+    assert.deepEqual(JSON.parse(submittedBody), { store_id: "store", row_ids: [row.id],
+      expected_revisions: [{ row_id: row.id, revision: 1 }] })
     assert.equal(copied.originalJson, submittedBody)
     assert.equal(copied.provenance, "submitted_http_body")
     assert.equal(copied.detail.event?.code, "result_unknown")
@@ -147,6 +149,8 @@ test("compiled legacy freeze and real HTTP normalization share exact bytes, Clou
   try {
     const sending = context()
     await submitOzonChunk(sending, items)
+    assert.deepEqual(JSON.parse(body), { store_id: "store", row_ids: ["a", "b"],
+      expected_revisions: [{ row_id: "a", revision: 9 }, { row_id: "b", revision: 9 }] })
     const references = ["a", "b"].map((id) => diagnosticReferenceFrom(sending.results.get(id)))
     assert.ok(references[0]?.diagnosticId && references[1]?.diagnosticId)
     assert.notEqual(references[0].diagnosticId, references[1].diagnosticId)

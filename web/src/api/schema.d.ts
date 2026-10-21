@@ -37,7 +37,7 @@ export interface paths {
     post: operations["postListingValidate"];
   };
   "/api/listing/submit": {
-    /** Freeze stored rows or drafts and enqueue listing.submit.batch. The body shape selects the path: row_ids is a stored-row batch send, storeId or items is a Draft send, anything else is a tag check. A stored-row send requires the exact server revisions captured by the click. A tag check needs no principal; a batch or Draft send requires the submit role. It does not dial Ozon. */
+    /** Freeze stored rows or drafts and enqueue listing.submit.batch. The body shape selects the path: row_ids is a stored-row batch send, store_id or items is a Draft send, anything else is a tag check. A stored-row send requires the exact server revisions captured by the click. A tag check needs no principal; a batch or Draft send requires the submit role. It does not dial Ozon. */
     post: operations["postListingSubmit"];
   };
   "/api/me/catalog/banned-tags": {
@@ -2042,10 +2042,10 @@ export interface components {
       ts: number;
       writer_leases: components["schemas"]["WriterLeaseHealth"][];
     };
-    ListingSubmitRequest: components["schemas"]["SubmitListingBatchRequest"] | components["schemas"]["SubmitListingDraftEnvelope"] | components["schemas"]["ListingTagCheckRequest"];
+    ListingSubmitRequest: components["schemas"]["SubmitListingBatchRequest"] | components["schemas"]["SubmitListingDraftsRequest"] | components["schemas"]["ListingTagCheckRequest"];
     /**
      * @description Freeze stored rows at the server revisions the operator selected.
-     * Each row_ids entry must have exactly one expectedRevisions entry;
+     * Each row_ids entry must have exactly one expected_revisions entry;
      * duplicate, missing, extra or invalid pins are refused before freezing.
      * A row that is already at another revision is skipped as revision_mismatch.
      * If a new intent's row changes during freezing, the entire request rolls
@@ -2054,26 +2054,15 @@ export interface components {
      */
     SubmitListingBatchRequest: {
       /** Format: uuid */
-      storeId: string;
+      store_id: string;
       row_ids: string[];
       /** @description Exact listing_rows.revision values, not browser-local edit or queue revisions. */
-      expectedRevisions: {
+      expected_revisions: {
           /** Format: uuid */
-          rowId: string;
+          row_id: string;
           /** Format: int64 */
           revision: number;
         }[];
-    };
-    /** @description The draft-shaped branch of the Go submit handler. Draft contents are interpreted by listing-core, not by this envelope schema. */
-    SubmitListingDraftEnvelope: {
-      /** Format: uuid */
-      storeId: string;
-      /** Format: uuid */
-      cardId: string;
-      items: unknown[];
-      rulesVersion?: string;
-      tags?: string[];
-      text?: string;
     };
     /** @description The tag gate uses message; authenticated batch and draft refusals use error. HTTP 409 with code revision_mismatch proves this request's transaction did not commit. */
     SubmitListingError: OneOf<[components["schemas"]["ListingError"], {
@@ -7620,8 +7609,12 @@ export interface components {
      * (browser-owned-listing slice 07). The server always rebuilds from the
      * Draft — resolve → validate → freeze runs here, never trusting a
      * browser-frozen body or its own validation conclusions (README S2, I7).
+     * The HTTP envelope uses snake_case; opaque listing-core items retain
+     * their domain representation. Supplying tags or text requires the
+     * current rules_version and runs the tag gate before freezing.
      */
     SubmitListingDraftsRequest: {
+      /** Format: uuid */
       card_id: string;
       /**
        * @description `SubmitDraft[]` (`listing_core::ops::SubmitDraft`), 1..=100 items. Kept
@@ -7632,7 +7625,11 @@ export interface components {
        * `SubmitDraft::from_row`) rather than assembling it by hand.
        */
       items: unknown[];
+      /** Format: uuid */
       store_id: string;
+      rules_version?: string;
+      tags?: string[];
+      text?: string;
     };
     /** @description 一个厂家成员（管理面视角）：成员邮箱 / 状态 / 开通时间。 */
     SupplierAccountMemberView: {
@@ -9060,7 +9057,7 @@ export interface operations {
       };
     };
   };
-  /** Freeze stored rows or drafts and enqueue listing.submit.batch. The body shape selects the path: row_ids is a stored-row batch send, storeId or items is a Draft send, anything else is a tag check. A stored-row send requires the exact server revisions captured by the click. A tag check needs no principal; a batch or Draft send requires the submit role. It does not dial Ozon. */
+  /** Freeze stored rows or drafts and enqueue listing.submit.batch. The body shape selects the path: row_ids is a stored-row batch send, store_id or items is a Draft send, anything else is a tag check. A stored-row send requires the exact server revisions captured by the click. A tag check needs no principal; a batch or Draft send requires the submit role. It does not dial Ozon. */
   postListingSubmit: {
     requestBody: {
       content: {

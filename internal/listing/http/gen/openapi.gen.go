@@ -35,7 +35,7 @@ type ListingTagCheckRequest struct {
 }
 
 // SubmitListingBatchRequest Freeze stored rows at the server revisions the operator selected.
-// Each row_ids entry must have exactly one expectedRevisions entry;
+// Each row_ids entry must have exactly one expected_revisions entry;
 // duplicate, missing, extra or invalid pins are refused before freezing.
 // A row that is already at another revision is skipped as revision_mismatch.
 // If a new intent's row changes during freezing, the entire request rolls
@@ -45,18 +45,31 @@ type SubmitListingBatchRequest struct {
 	// ExpectedRevisions Exact listing_rows.revision values, not browser-local edit or queue revisions.
 	ExpectedRevisions []struct {
 		Revision int64              `json:"revision"`
-		RowId    openapi_types.UUID `json:"rowId"`
-	} `json:"expectedRevisions"`
+		RowId    openapi_types.UUID `json:"row_id"`
+	} `json:"expected_revisions"`
 	RowIds  []openapi_types.UUID `json:"row_ids"`
-	StoreId openapi_types.UUID   `json:"storeId"`
+	StoreId openapi_types.UUID   `json:"store_id"`
 }
 
-// SubmitListingDraftEnvelope The draft-shaped branch of the Go submit handler. Draft contents are interpreted by listing-core, not by this envelope schema.
-type SubmitListingDraftEnvelope struct {
-	CardId       openapi_types.UUID `json:"cardId"`
+// SubmitListingDraftsRequest Send 1..=100 browser-owned Drafts to one Store under one Card
+// (browser-owned-listing slice 07). The server always rebuilds from the
+// Draft — resolve → validate → freeze runs here, never trusting a
+// browser-frozen body or its own validation conclusions (README S2, I7).
+// The HTTP envelope uses snake_case; opaque listing-core items retain
+// their domain representation. Supplying tags or text requires the
+// current rules_version and runs the tag gate before freezing.
+type SubmitListingDraftsRequest struct {
+	CardId openapi_types.UUID `json:"card_id"`
+
+	// Items `SubmitDraft[]` (`listing_core::ops::SubmitDraft`), 1..=100 items. Kept
+	// opaque here — same convention as `CreateListingRowRequest.draft` —
+	// because `SubmitDraft` is a listing-core domain type, not a wire type;
+	// the handler decodes each element with `serde_json::from_value`. The
+	// browser obtains each item from the same ABI (`projectSubmitDraft`,
+	// `SubmitDraft::from_row`) rather than assembling it by hand.
 	Items        []interface{}      `json:"items"`
-	RulesVersion *string            `json:"rulesVersion,omitempty"`
-	StoreId      openapi_types.UUID `json:"storeId"`
+	RulesVersion *string            `json:"rules_version,omitempty"`
+	StoreId      openapi_types.UUID `json:"store_id"`
 	Tags         *[]string          `json:"tags,omitempty"`
 	Text         *string            `json:"text,omitempty"`
 }
@@ -101,22 +114,22 @@ func (t *ListingSubmitRequest) MergeSubmitListingBatchRequest(v SubmitListingBat
 	return err
 }
 
-// AsSubmitListingDraftEnvelope returns the union data inside the ListingSubmitRequest as a SubmitListingDraftEnvelope
-func (t ListingSubmitRequest) AsSubmitListingDraftEnvelope() (SubmitListingDraftEnvelope, error) {
-	var body SubmitListingDraftEnvelope
+// AsSubmitListingDraftsRequest returns the union data inside the ListingSubmitRequest as a SubmitListingDraftsRequest
+func (t ListingSubmitRequest) AsSubmitListingDraftsRequest() (SubmitListingDraftsRequest, error) {
+	var body SubmitListingDraftsRequest
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromSubmitListingDraftEnvelope overwrites any union data inside the ListingSubmitRequest as the provided SubmitListingDraftEnvelope
-func (t *ListingSubmitRequest) FromSubmitListingDraftEnvelope(v SubmitListingDraftEnvelope) error {
+// FromSubmitListingDraftsRequest overwrites any union data inside the ListingSubmitRequest as the provided SubmitListingDraftsRequest
+func (t *ListingSubmitRequest) FromSubmitListingDraftsRequest(v SubmitListingDraftsRequest) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeSubmitListingDraftEnvelope performs a merge with any union data inside the ListingSubmitRequest, using the provided SubmitListingDraftEnvelope
-func (t *ListingSubmitRequest) MergeSubmitListingDraftEnvelope(v SubmitListingDraftEnvelope) error {
+// MergeSubmitListingDraftsRequest performs a merge with any union data inside the ListingSubmitRequest, using the provided SubmitListingDraftsRequest
+func (t *ListingSubmitRequest) MergeSubmitListingDraftsRequest(v SubmitListingDraftsRequest) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -233,7 +246,7 @@ type ServerInterface interface {
 	// GetListingRun One preparation job in the active workspace
 	// (GET /api/listing/jobs/{id})
 	GetListingRun(w http.ResponseWriter, r *http.Request, id string)
-	// PostListingSubmit Freeze stored rows or drafts and enqueue listing.submit.batch. The body shape selects the path: row_ids is a stored-row batch send, storeId or items is a Draft send, anything else is a tag check. A stored-row send requires the exact server revisions captured by the click. A tag check needs no principal; a batch or Draft send requires the submit role. It does not dial Ozon.
+	// PostListingSubmit Freeze stored rows or drafts and enqueue listing.submit.batch. The body shape selects the path: row_ids is a stored-row batch send, store_id or items is a Draft send, anything else is a tag check. A stored-row send requires the exact server revisions captured by the click. A tag check needs no principal; a batch or Draft send requires the submit role. It does not dial Ozon.
 	// (POST /api/listing/submit)
 	PostListingSubmit(w http.ResponseWriter, r *http.Request)
 }
@@ -254,7 +267,7 @@ func (_ Unimplemented) GetListingRun(w http.ResponseWriter, r *http.Request, id 
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// PostListingSubmit Freeze stored rows or drafts and enqueue listing.submit.batch. The body shape selects the path: row_ids is a stored-row batch send, storeId or items is a Draft send, anything else is a tag check. A stored-row send requires the exact server revisions captured by the click. A tag check needs no principal; a batch or Draft send requires the submit role. It does not dial Ozon.
+// PostListingSubmit Freeze stored rows or drafts and enqueue listing.submit.batch. The body shape selects the path: row_ids is a stored-row batch send, store_id or items is a Draft send, anything else is a tag check. A stored-row send requires the exact server revisions captured by the click. A tag check needs no principal; a batch or Draft send requires the submit role. It does not dial Ozon.
 // (POST /api/listing/submit)
 func (_ Unimplemented) PostListingSubmit(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)

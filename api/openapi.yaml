@@ -169,7 +169,7 @@ paths:
       operationId: postListingSubmit
       tags:
       - listing
-      summary: 'Freeze stored rows or drafts and enqueue listing.submit.batch. The body shape selects the path: row_ids is a stored-row batch send, storeId or items is a Draft send, anything else is a tag check. A stored-row send requires the exact server revisions captured by the click. A tag check needs no principal; a batch or Draft send requires the submit role. It does not dial Ozon.'
+      summary: 'Freeze stored rows or drafts and enqueue listing.submit.batch. The body shape selects the path: row_ids is a stored-row batch send, store_id or items is a Draft send, anything else is a tag check. A stored-row send requires the exact server revisions captured by the click. A tag check needs no principal; a batch or Draft send requires the submit role. It does not dial Ozon.'
       requestBody:
         required: true
         content:
@@ -18524,25 +18524,25 @@ components:
     ListingSubmitRequest:
       oneOf:
       - "$ref": "#/components/schemas/SubmitListingBatchRequest"
-      - "$ref": "#/components/schemas/SubmitListingDraftEnvelope"
+      - "$ref": "#/components/schemas/SubmitListingDraftsRequest"
       - "$ref": "#/components/schemas/ListingTagCheckRequest"
     SubmitListingBatchRequest:
       type: object
       additionalProperties: false
       description: |-
         Freeze stored rows at the server revisions the operator selected.
-        Each row_ids entry must have exactly one expectedRevisions entry;
+        Each row_ids entry must have exactly one expected_revisions entry;
         duplicate, missing, extra or invalid pins are refused before freezing.
         A row that is already at another revision is skipped as revision_mismatch.
         If a new intent's row changes during freezing, the entire request rolls
         back and returns HTTP 409 revision_mismatch. No new work from that request
         is enqueued. Replaying an existing intent does not update its projection.
       required:
-      - storeId
+      - store_id
       - row_ids
-      - expectedRevisions
+      - expected_revisions
       properties:
-        storeId:
+        store_id:
           type: string
           format: uuid
         row_ids:
@@ -18553,7 +18553,7 @@ components:
           items:
             type: string
             format: uuid
-        expectedRevisions:
+        expected_revisions:
           type: array
           minItems: 1
           maxItems: 100
@@ -18562,44 +18562,16 @@ components:
             type: object
             additionalProperties: false
             required:
-            - rowId
+            - row_id
             - revision
             properties:
-              rowId:
+              row_id:
                 type: string
                 format: uuid
               revision:
                 type: integer
                 format: int64
                 minimum: 0
-    SubmitListingDraftEnvelope:
-      type: object
-      additionalProperties: false
-      description: The draft-shaped branch of the Go submit handler. Draft contents are interpreted by listing-core, not by this envelope schema.
-      required:
-      - storeId
-      - cardId
-      - items
-      properties:
-        storeId:
-          type: string
-          format: uuid
-        cardId:
-          type: string
-          format: uuid
-        items:
-          type: array
-          minItems: 1
-          maxItems: 100
-          items: {}
-        rulesVersion:
-          type: string
-        tags:
-          type: array
-          items:
-            type: string
-        text:
-          type: string
     SubmitListingError:
       description: The tag gate uses message; authenticated batch and draft refusals use error. HTTP 409 with code revision_mismatch proves this request's transaction did not commit.
       oneOf:
@@ -30353,6 +30325,9 @@ components:
         (browser-owned-listing slice 07). The server always rebuilds from the
         Draft — resolve → validate → freeze runs here, never trusting a
         browser-frozen body or its own validation conclusions (README S2, I7).
+        The HTTP envelope uses snake_case; opaque listing-core items retain
+        their domain representation. Supplying tags or text requires the
+        current rules_version and runs the tag gate before freezing.
       required:
       - store_id
       - card_id
@@ -30360,8 +30335,11 @@ components:
       properties:
         card_id:
           type: string
+          format: uuid
         items:
           type: array
+          minItems: 1
+          maxItems: 100
           items: {}
           description: |-
             `SubmitDraft[]` (`listing_core::ops::SubmitDraft`), 1..=100 items. Kept
@@ -30371,6 +30349,15 @@ components:
             browser obtains each item from the same ABI (`projectSubmitDraft`,
             `SubmitDraft::from_row`) rather than assembling it by hand.
         store_id:
+          type: string
+          format: uuid
+        rules_version:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        text:
           type: string
       additionalProperties: false
     SupplierAccountMemberView:

@@ -38,7 +38,7 @@
 
 ## 流程上和 Rust 不同、结果保持一致的地方
 
-- 禁用标签闸仍是已合并的那条：只有 `rulesVersion` + `tags` + `text`、没有 `storeId`/`items` 的正文，命中 400 `banned_tag`，干净则 400 `validation` `请求格式无效`。带 `storeId` 或 `items` 的正文改走草稿入口，先做 `ListingSubmit` 鉴权。
+- 禁用标签闸仍是已合并的那条：只有 `rules_version` + `tags` + `text`、没有 `store_id`/`items` 的正文，命中 400 `banned_tag`，干净则 400 `validation` `请求格式无效`。带 `store_id` 或 `items` 的正文改走草稿入口，先做 `ListingSubmit` 鉴权。
 - 进入 `unknown` 时 `reconcile_after` 用数据库时钟加 30 秒（`import_reconcile` 的首次等待），不用进程时钟。探测退避仍是数据库时钟。
 - `external_task_id` 存十进制文本，和列类型 `text` 一致。
 - 草稿入队把意图和 `listing.submit.batch` 作业放进同一个事务（`EnqueueOn`）。Rust 也是一次提交。中途失败则两边都不出现。
@@ -67,13 +67,13 @@ Go 的做法：
 
 ## stored-row 版本与批次租约的补齐
 
-`POST /api/listing/submit` 的 stored-row 分支现在要求 `expectedRevisions: [{rowId, revision}]` 与 `row_ids` 一一对应。这里是点击时的服务端内容 revision，不是本地队列 revision。缺失或无效 pin 为 400；读取时已变的行逐行返回 `revision_mismatch`；冻结中发生编辑则在新 intent 的投影 CAS 检查处以 409 `revision_mismatch` 回滚整个请求。原来的“接受但忽略 pin”行为不再保留。批次结果用 `row_id` 与前端契约对应，详见 [上架流程优化与回归证据](listing-flow-optimization.md)。
+`POST /api/listing/submit` 的 stored-row 分支现在要求 `store_id` 及 `expected_revisions: [{row_id, revision}]` 与 `row_ids` 一一对应。这里是点击时的服务端内容 revision，不是本地队列 revision。缺失或无效 pin 为 400；读取时已变的行逐行返回 `revision_mismatch`；冻结中发生编辑则在新 intent 的投影 CAS 检查处以 409 `revision_mismatch` 回滚整个请求。原来的“接受但忽略 pin”行为不再保留。批次结果用 `row_id` 与前端契约对应。Draft 外层同样统一为已有前端契约的 `store_id`、`card_id`、`items` 和可选 `rules_version`；其内部 WASM 数据及 IntentView 不变。详见 [上架流程优化与回归证据](listing-flow-optimization.md)。
 
 批次结算也改成一次 `queue.MutateRunning` 事务：intent、写账、占用、行投影和 job 共同受租约限制。原来逐条清空 Lease 并提交、最后才 Finish 的方式会让失效 worker 留下已提交终态。新回归通过真实租约回收复现并验证该差异；已保存的正 `task_id` 继续独立保留，恢复扫描接收该事实且不重复 import。单条与批次共用行结算 SQL，已有终态不重写。
 
 ## 不能证明与 Rust 一致、留给决定的缺口
 
-1. 三条发送路由现在走 listing-core wasm 的 op 9 再 op 11，成功则入队，worker 再拨 loopback。HTTP 返回的是入队回执（意图 `queued`），不是 Rust 在进程内派发之后的意图。列对拍在 worker 跑完之后。没有数据库连接时是 503 `服务暂不可用`，不再是 501 `freeze_not_ported`。没有 `storeId`/`items` 的旧正文仍是标签闸：命中 400 `banned_tag`，干净则 400 `validation` `请求格式无效`。
+1. 三条发送路由现在走 listing-core wasm 的 op 9 再 op 11，成功则入队，worker 再拨 loopback。HTTP 返回的是入队回执（意图 `queued`），不是 Rust 在进程内派发之后的意图。列对拍在 worker 跑完之后。没有数据库连接时是 503 `服务暂不可用`，不再是 501 `freeze_not_ported`。没有 `store_id`/`items` 的旧正文仍是标签闸：命中 400 `banned_tag`，干净则 400 `validation` `请求格式无效`。
 2. 草稿路径的 `request_hash` 是 wasm 冻结返回的 digest。单条 `listing.submit` 任务仍由调用方放入摘要；那条 worker 不自己计算。
 3. 占用释放原因 `relationship_confirmed` / `rejected_no_pending` 是从 CHECK 的四个合法值里选的，没有定位到 Rust 的赋值点。`not_dispatched` 和 `partial_settled` 没有被这条路径使用。
 4. `OZON_SUBMIT_IN_FLIGHT` 的拼写来自变量名 `OzonSubmitInFlight`，源文件里的字符串常量没有打开。

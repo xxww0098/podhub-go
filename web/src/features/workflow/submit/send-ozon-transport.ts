@@ -87,7 +87,7 @@ export function cloudRowResult(item: SubmitItem): OzonRowResult {
 
 export async function submitOzonChunk(context: OzonSendContext, items: readonly FrozenItem<OzonBody>[]): Promise<void> {
   const settle = (rowId: string, result: WorkflowOperationRowResult) => { context.results.set(rowId, result) }
-  const expectedRevisions: { rowId: string; revision: number }[] = []
+  const expectedRevisions: { row_id: string; revision: number }[] = []
   const sending = items.filter((item) => {
     if (context.shouldStop(item.key)) {
       settle(item.key, cancelledResult(item.key))
@@ -98,7 +98,7 @@ export async function submitOzonChunk(context: OzonSendContext, items: readonly 
       settle(item.key, revisionMismatch(item.key))
       return false
     }
-    expectedRevisions.push({ rowId: item.key, revision: pin.revision })
+    expectedRevisions.push({ row_id: item.key, revision: pin.revision })
     return true
   })
   if (sending.length === 0) return
@@ -117,9 +117,9 @@ export async function submitOzonChunk(context: OzonSendContext, items: readonly 
   try {
     // Stop closes later admission, not this request; keep its original body deadline.
     const body = {
-      storeId: context.storeId,
+      store_id: context.storeId,
       row_ids: rowIds,
-      expectedRevisions,
+      expected_revisions: expectedRevisions,
     } satisfies components["schemas"]["SubmitListingBatchRequest"]
     const data = await request<SubmitData>("POST", apiPath, body, {}, 150_000, undefined, { reportOwner: "caller",
       onDispatch: () => { operation.onDispatch(); context.onDispatch?.() },

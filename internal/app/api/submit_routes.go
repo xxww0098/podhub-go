@@ -15,7 +15,7 @@ import (
 
 // The generated POST /api/listing/submit is the one send route: the body
 // shape selects the stored-row batch branch (row_ids), the Draft branch
-// (storeId or items), or the banned-tag check. A well-formed send freezes
+// (store_id or items), or the banned-tag check. A well-formed send freezes
 // through listing-core and enqueues listing.submit.batch. It does not dial
 // Ozon.
 func (s *Server) postBatchSubmit(w http.ResponseWriter, r *http.Request, body []byte) {

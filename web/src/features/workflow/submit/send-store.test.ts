@@ -35,8 +35,8 @@ test("send adopts the Card's current Store for existing unbound and previously b
     const result = await sendRows({ row_ids: ids, expected_revisions: pins }, undefined, { core })
     assert.deepEqual(result.map((row) => row.outcome), ["start", "start"])
     assert.equal(stub.calls.length, 1)
-    assert.deepEqual(stub.calls[0]!.body, { storeId: "store-current", row_ids: ids,
-      expectedRevisions: ids.map((rowId) => ({ rowId, revision: 9 })) })
+    assert.deepEqual(stub.calls[0]!.body, { store_id: "store-current", row_ids: ids,
+      expected_revisions: ids.map((rowId) => ({ row_id: rowId, revision: 9 })) })
     assert.deepEqual(pins.map((pin) => pin.store_id), ["", "store-old"], "the click's original row pins remain unchanged")
   } finally { stub.restore() }
 })
@@ -63,7 +63,7 @@ test("new rows in a multi-Store Card adopt its current allocation during send", 
     assert.deepEqual(result.map((row) => row.outcome), ["start", "start"])
     // 两家 Store 是并发发送的（SEND_STORE_CONCURRENCY），请求到达顺序不定；
     // 用 Map 比较分配本身，不钉并发完成顺序。
-    assert.deepEqual(new Map(stub.calls.map((call) => [call.body.storeId, call.body.row_ids])),
+    assert.deepEqual(new Map(stub.calls.map((call) => [call.body.store_id, call.body.row_ids])),
       new Map([["store-a", ["row-a"]], ["store-b", ["row-b"]]]))
   } finally { stub.restore() }
 })
@@ -75,7 +75,7 @@ test("an accepted attempt keeps its original Store after its Card changes", asyn
   const stub = serve((call) => ({ items: [{ row_id: call.body.row_ids[0], created: false, skipped: "already_accepted" }] }))
   try {
     const [result] = await sendRows({ row_ids: ["accepted"], expected_revisions: sendPins(["accepted"], () => "store-original") }, undefined, { core })
-    assert.equal(stub.calls[0]!.body.storeId, "store-original")
+    assert.equal(stub.calls[0]!.body.store_id, "store-original")
     assert.equal(result!.noop_reason, "already_accepted")
   } finally { stub.restore() }
 })
@@ -90,7 +90,7 @@ test("unassigned rows fill the remaining multi-Store quota without changing assi
   try {
     const result = await sendRows({ row_ids: ids, expected_revisions: sendPins(ids, store) }, undefined, { core })
     assert.ok(result.every((row) => row.outcome === "start"))
-    assert.deepEqual(new Map(stub.calls.map((call) => [call.body.storeId, call.body.row_ids])),
+    assert.deepEqual(new Map(stub.calls.map((call) => [call.body.store_id, call.body.row_ids])),
       new Map([["store-b", ["unbound", "assigned-b"]], ["store-a", ["assigned-a"]]]))
   } finally { stub.restore() }
 })
@@ -104,7 +104,7 @@ test("selecting one unbound row keeps the multi-Store allocation of the whole Ca
   const stub = serve((call) => accepted(call.body))
   try {
     await sendRows({ row_ids: ["row-4"], expected_revisions: sendPins(["row-4"], () => "") }, undefined, { core })
-    assert.equal(stub.calls[0]!.body.storeId, "store-b")
+    assert.equal(stub.calls[0]!.body.store_id, "store-b")
   } finally { stub.restore() }
 })
 

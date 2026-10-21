@@ -57,8 +57,8 @@ test("a thrown post-dispatch hook callback projects both row and product as Unkn
   }
   try {
     await fx.hook.startPublish([fx.row.id])
-    assert.deepEqual(submittedBody, { storeId: "store", row_ids: [fx.row.id],
-      expectedRevisions: [{ rowId: fx.row.id, revision: 1 }] })
+    assert.deepEqual(submittedBody, { store_id: "store", row_ids: [fx.row.id],
+      expected_revisions: [{ row_id: fx.row.id, revision: 1 }] })
     const state = peekListingWorkbench(), result = state.rows[0]!
     assert.equal(sends, 1)
     assert.equal(result.status, "exception")

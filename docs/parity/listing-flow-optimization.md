@@ -46,7 +46,7 @@ bun run check
 PODHUB_ALLOW_SUPERUSER_DB=1 OTEL_TRACES_SAMPLER=always_on \
   go test -race -p 1 -count=1 \
   ./internal/listing/submit/... ./internal/queue/... ./internal/seller/... \
-  ./tests/parity ./tests/archtest
+  ./internal/app/api ./tests/parity ./tests/archtest ./tests/testkit
 
 PODHUB_ALLOW_SUPERUSER_DB=1 OTEL_TRACES_SAMPLER=always_on \
   go test -race -count=1 ./tests/integration \
@@ -90,10 +90,10 @@ stored-row 请求现在要求：
 
 ```json
 {
-  "storeId": "11111111-1111-4111-8111-111111111111",
+  "store_id": "11111111-1111-4111-8111-111111111111",
   "row_ids": ["22222222-2222-4222-8222-222222222222"],
-  "expectedRevisions": [
-    {"rowId": "22222222-2222-4222-8222-222222222222", "revision": 1}
+  "expected_revisions": [
+    {"row_id": "22222222-2222-4222-8222-222222222222", "revision": 1}
   ]
 }
 ```
@@ -107,7 +107,9 @@ stored-row 请求现在要求：
 
 预检查不提前持有行锁。新建 intent 沿用触发器的 store → row 锁顺序，再检查原有投影 UPDATE 的 `RowsAffected`，避免增加 row → store 反序。中途冲突的整批回滚是有意变化：响应明确告知“本批未入队，请刷新后重试”，前端只把精确的 HTTP 409 / `revision_mismatch` 组合当作确定未受理；其他未知 409 继续保持 `unknown`。
 
-批次结果的行键从 `rowId` 对齐为前端已使用的 `row_id`，否则真实拒绝无法对应商品。OpenAPI 补齐三种请求形状、stored-row 必填 pins 和实际 `{error, code}` 错误体，Go 与 TypeScript 产物同步生成。前后端需同步更新；不保留无 pin 的旧 stored-row 调用方式。Draft 发送形状和其它 Intent 字段未在这一轮扩展。
+批次结果的行键从 `rowId` 对齐为前端已使用的 `row_id`，否则真实拒绝无法对应商品。OpenAPI 补齐三种请求形状、stored-row 必填 pins 和实际 `{error, code}` 错误体，Go 与 TypeScript 产物同步生成。前后端需同步更新；不保留无 pin 的旧 stored-row 调用方式。
+
+HTTP 外层统一使用仓库要求的 snake_case：stored-row 使用 `store_id`、`row_ids`、`expected_revisions[].row_id`；Draft 复用既有 `SubmitListingDraftsRequest`，使用 `store_id`、`card_id`、`items`，可选 `rules_version`、`tags`、`text`。Go 的 Draft 解析随现有前端和 OpenAPI 对齐，不增加 camelCase 别名。WASM `items` 内部、前端内存上下文、IntentView 和作业 payload 保留各自既有格式。
 
 正式红测证明：旧 pin 会创建较新内容的 intent；冻结中编辑仍会留下旧 snapshot 的 job；缺 pin 被接受；响应缺少 `row_id`；实际错误体与 OpenAPI 不符。数据库用确定性 freeze fixture 隔离持久化，不能把这组测试称为真实 WASM 或 Seller 端到端验证。
 
@@ -127,9 +129,9 @@ stored-row 请求现在要求：
 
 回归：`TestListingSettlementRejectsReclaimedLease`、`TestListingLateReceiptSurvivesReclaimedLease`、`TestListingBatchSettlementRollsBackOnLaterFailure`、`TestListingBatchSettlementSkipsPastEdges`、`TestListingSettlementKeepsExistingJobSemantics`，以及原有租约行锁、提交列、组织上限、队列循环回归。
 
-### 第二轮最终本地验证
+### 第二轮主体修复的本地验证
 
-以下结果来自最终代码与 `main@032a3a8` 的合并工作树：
+以下结果来自 `bf7c0c8` 与 `main@032a3a8` 的合并工作树；随后的 HTTP 命名修正另见下一节：
 
 | 检查 | 结果 |
 | --- | --- |
@@ -143,6 +145,14 @@ stored-row 请求现在要求：
 12 组数据库测试是上述五组新结算回归，加上 `TestSubmitSellerColumns`、`TestParallelBatchReceiptSurvivesLeaseLock`、`TestOrgBatchCapDoesNotSend`、`TestReconcilerClosesFailedSubmitting`、`TestListingBatchLoopSerializesOneOrgAndMakesProgress`、`TestQueueLoopExecution`、`TestSubmissionOfferFence`。每组使用独立新数据库。
 
 完整 `bun run check` 在最后的 lint 步骤以非零退出；不能把它描述为全部通过。既有 `workflow-wiring` 源码断言同步为联合检查会话和工作台 scope，实际行为由新增 hook 回归覆盖；未降低 lint 阈值或放宽网络保护。远端全量 CI 结果单独记录在 PR 中。
+
+### CI 发现的请求命名修正
+
+`bf7c0c8` 的远端 CI 中，web、lint、rust 三个任务通过，Go 业务包和数据库集成测试也通过，但 `tests/testkit/TestOpenAPIPropertiesUseSnakeCase` 拒绝了新增请求 schema 的 camelCase 字段。本地上一轮漏跑了这个包。修复将真实前端 JSON、Go HTTP 解析及 OpenAPI 一起统一为上述 snake_case，并删除重复的 Draft 外层 schema；命名门禁保持原样，`tests/testkit` 已纳入本地复现命令。
+
+请求断言先在旧实现得到红灯，修正后 `submit/...`、`api`、`testkit` 四个有测试的包启用 `-race -count=1`，145 项含子测试全部通过，0 跳过、0 失败。其中新增 PostgreSQL 草稿入队回归验证 HTTP 外层解析成功，传给测试模块的 WASM item 字节保持原样；旧 camelCase 字段不能替代必填字段，`rules_version` 会进入规则握手。
+
+本次修正与 `main@032a3a8` 的合并版本重新完成前端构建、TypeScript、API 一致性、knip 和全量测试（3,159 通过、2 跳过、0 失败）。lint 再次与纯 main 对照，仍为同样的 819 条告警，新增 0 条。实际发送、诊断记录和浏览器 pipeline mock 的请求字段已同步；没有执行真实浏览器 pipeline，不能据此宣称其既有响应 fixture 或端到端场景全部通过。
 
 ## 收益与边界
 

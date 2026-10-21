@@ -100,8 +100,8 @@ func SendDrafts(ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, bo
 		return DraftData{}, statusErr(503, "服务暂不可用", "internal")
 	}
 	var req struct {
-		StoreID string            `json:"storeId"`
-		CardID  string            `json:"cardId"`
+		StoreID string            `json:"store_id"`
+		CardID  string            `json:"card_id"`
 		Items   []json.RawMessage `json:"items"`
 	}
 	if err := json.Unmarshal(body, &req); err != nil || len(req.Items) == 0 {

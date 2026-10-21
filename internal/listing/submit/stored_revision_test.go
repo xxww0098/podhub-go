@@ -192,9 +192,9 @@ func (f storedRevisionFixture) request(t *testing.T, rows []string, pins map[str
 	t.Helper()
 	expected := make([]map[string]any, 0, len(pins))
 	for _, id := range rows {
-		expected = append(expected, map[string]any{"rowId": id, "revision": pins[id]})
+		expected = append(expected, map[string]any{"row_id": id, "revision": pins[id]})
 	}
-	raw, err := json.Marshal(map[string]any{"storeId": f.store, "row_ids": rows, "expectedRevisions": expected})
+	raw, err := json.Marshal(map[string]any{"store_id": f.store, "row_ids": rows, "expected_revisions": expected})
 	if err != nil {
 		t.Fatal(err)
 	}

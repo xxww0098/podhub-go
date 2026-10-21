@@ -99,7 +99,7 @@ test("production exact release requires explicit inspection, POST receipt, fresh
     if (url === route("listingCardsById", { id: "card" })) return { ...fx.card, payload: method === "PATCH" ? body.payload : fx.card.payload }
     if (url === route("listingSubmit")) {
       order.push("explicit-send")
-      assert.deepEqual(body.storeId, "store")
+      assert.deepEqual(body.store_id, "store")
       assert.deepEqual(body.row_ids, ["row"])
       return { items: [{ row_id: "row", created: true, intent: { ...original, id: "new-intent", state: "accepted",
         client_operation_id: "new-operation", external_task_id: "42" } }] }

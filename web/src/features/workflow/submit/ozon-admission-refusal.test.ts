@@ -75,8 +75,8 @@ for (const phase of ["headers timeout", "body timeout", "body success"] as const
       assert.equal(String(input), route("listingSubmit"))
       assert.ok(init)
       assert.equal(init.method, "POST")
-      assert.equal(init.body, JSON.stringify({ storeId: "s1", row_ids: ["a", "b"],
-        expectedRevisions: [{ rowId: "a", revision: 1 }, { rowId: "b", revision: 2 }] }))
+      assert.equal(init.body, JSON.stringify({ store_id: "s1", row_ids: ["a", "b"],
+        expected_revisions: [{ row_id: "a", revision: 1 }, { row_id: "b", revision: 2 }] }))
       signal = init.signal ?? undefined
       assert.ok(signal)
       signal.addEventListener("abort", () => { aborts++ }, { once: true })

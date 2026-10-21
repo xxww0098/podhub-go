@@ -33,7 +33,7 @@ test("only admitted rows and their original click pins travel together in the ac
   try {
     await submitOzonChunk(sending, items)
     assert.deepEqual(cloud.calls, [{ url: route("listingSubmit"), method: "POST", body: {
-      storeId: "store", row_ids: ["pinned"], expectedRevisions: [{ rowId: "pinned", revision: 17 }],
+      store_id: "store", row_ids: ["pinned"], expected_revisions: [{ row_id: "pinned", revision: 17 }],
     } }])
     assert.deepEqual(sending.results.get("unpinned"), revisionMismatch("unpinned"))
     assert.equal(sending.results.get("stopped")!.noop_reason, "cancelled")
