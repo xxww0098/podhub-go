@@ -140,6 +140,7 @@ export function usePublishQueue({
   async function startPublish(rowIds?: string[]) {
     const scope = listingWorkbenchScope()
     const currentSession = rowCacheScope().current
+    const current = () => currentSession() && listingScopeCurrent(scope)
     // Only `undefined` is the queue's continuation; an explicit empty selection
     // selects nothing and must never widen to the whole queue.
     const selection = rowIds === undefined ? undefined : new Set(rowIds)
@@ -172,7 +173,7 @@ export function usePublishQueue({
     if (diagnosticAction.current?.scope !== scope) {
       diagnosticAction.current?.owner.close()
       diagnosticAction.current = { scope, owner: createPublishDiagnosticAction(crypto.randomUUID(),
-        () => currentSession() && listingScopeCurrent(scope) && diagnosticCurrent()
+        () => current() && diagnosticCurrent()
           && peekListingWorkbench().cardId === clicked.cardId && peekListingWorkbench().mediaEpoch === clicked.mediaEpoch,
         clicked.queueFrozenIds.length > 0) }
     }
@@ -187,11 +188,11 @@ export function usePublishQueue({
       const flushed = selection
         ? await flushAutosavesFor(preflight.draftIds)
         : await flushAutosave()
+      if (!current() || flight.stopped) return
       if (!flushed) {
         notifyError("仍有字段没有保存到云端，请重试保存后再发送。")
         return
       }
-      if (!listingScopeCurrent(scope) || flight.stopped) return
       // A candidate or sign-out landing during the flush is already knowable:
       // refuse it here, before the supplier verification spends a request.
       if (refusePublish(publishPreflight(peekListingWorkbench(), selection, peekAccountOverview()))) return
@@ -199,10 +200,10 @@ export function usePublishQueue({
         try {
           await (await openCardSession(cardTemplateId)).verifySupplierOnce()
         } catch (reason) {
-          notifyCommandError(reason, "发送前无法核验供应商媒体，请检查供应商视频后重试。")
+          if (current()) notifyCommandError(reason, "发送前无法核验供应商媒体，请检查供应商视频后重试。")
           return
         }
-        if (!listingScopeCurrent(scope) || flight.stopped) return
+        if (!current() || flight.stopped) return
       }
       // The verification is a wait too: the account, rows, candidates and
       // offers may change again; dispatch only what the tab still passes.
@@ -252,7 +253,7 @@ export function usePublishQueue({
           next_position: 0,
           frozen_row_ids: draftIds,
         }))
-        if (!listingScopeCurrent(scope)) return
+        if (!current()) return
         if (!flight.stopped) {
           setQueueStopRequested(false)
           patchListingWorkbench({ queuePaused: false, queueHaltReason: null }, scope)
@@ -288,12 +289,12 @@ export function usePublishQueue({
         }
         flight.send = workflowActions.workflowSend(
           workflowRowsActionRequest(frozenRows, workbench.productDrafts),
-          (rowId) => flight.stopped || flight.cancelledRows.has(rowId),
+          (rowId) => !current() || flight.stopped || flight.cancelledRows.has(rowId),
           diagnosticAction.current.owner.context,
         )
         results = await flight.send
         flight.pending = false
-        if (!listingScopeCurrent(scope)) return
+        if (!current()) return
         blockedLogs = new Map(
           results
             .filter((result) => result.outcome === "blocked")
@@ -351,7 +352,7 @@ export function usePublishQueue({
             unconfirmed[0]!, cardTemplateId, unconfirmed.length)
         }
       } catch (reason) {
-        if (!currentSession() || !listingScopeCurrent(scope)) return
+        if (!current()) return
         patchListingWorkbench((current) => {
           const productDrafts = { ...current.productBases }
           const rows = current.rows.map((row) => {
@@ -381,7 +382,7 @@ export function usePublishQueue({
     } finally {
       clearLive(noticeId)
       if (publishInFlight.current === flight) publishInFlight.current = undefined
-      refreshQueueRunning(scope)
+      if (current()) refreshQueueRunning(scope)
     }
   }
 

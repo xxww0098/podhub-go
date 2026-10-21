@@ -28,7 +28,7 @@ func (s *Server) postBatchSubmit(w http.ResponseWriter, r *http.Request, body []
 		writeListing(w, http.StatusBadRequest, err.Error(), "bad_request")
 		return
 	}
-	data, err := submit.SendStored(r.Context(), s.Pool, p.OrgID, p.UserID, parsed.StoreID, parsed.RowIDs, s.now())
+	data, err := submit.SendStored(r.Context(), s.Pool, p.OrgID, p.UserID, parsed, s.now())
 	if writeSubmit(w, err) {
 		return
 	}

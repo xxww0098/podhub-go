@@ -91,42 +91,72 @@ func PeekDraft(body []byte) (DraftPeek, error) {
 }
 
 // BatchBody is the stored-row batch form of POST /api/listing/submit.
-// expectedRevisions is accepted and not applied: freeze is not ported, so a
-// revision pin cannot be checked against a built row.
+// ExpectedRevisions pins server content revisions, not browser-local writes.
 type BatchBody struct {
-	StoreID string
-	RowIDs  []string
+	StoreID           string
+	RowIDs            []string
+	ExpectedRevisions map[string]int64
 }
 
 // ParseBatch checks the merged submit body's stored-row batch envelope.
 func ParseBatch(body []byte) (BatchBody, error) {
 	var raw struct {
-		StoreID string   `json:"storeId"`
-		RowIDs  []string `json:"row_ids"`
+		StoreID           string   `json:"storeId"`
+		RowIDs            []string `json:"row_ids"`
+		ExpectedRevisions []struct {
+			RowID    string `json:"rowId"`
+			Revision *int64 `json:"revision"`
+		} `json:"expectedRevisions"`
 	}
 	if len(body) == 0 || json.Unmarshal(body, &raw) != nil {
 		return BatchBody{}, ErrBadRequest
 	}
-	return checkIDs(raw.StoreID, raw.RowIDs)
-}
-
-func checkIDs(storeID string, rowIDs []string) (BatchBody, error) {
-	if storeID == "" {
-		return BatchBody{}, ErrStoreRequired
-	}
-	if _, err := uuid.Parse(storeID); err != nil {
-		return BatchBody{}, ErrStoreInvalid
-	}
-	if len(rowIDs) == 0 {
-		return BatchBody{}, ErrRowsRequired
-	}
-	if len(rowIDs) > ImportV3MaxItems {
-		return BatchBody{}, ErrBatchTooLarge
-	}
-	for _, id := range rowIDs {
-		if _, err := uuid.Parse(id); err != nil {
+	req := BatchBody{StoreID: raw.StoreID, RowIDs: raw.RowIDs, ExpectedRevisions: make(map[string]int64, len(raw.ExpectedRevisions))}
+	for _, pin := range raw.ExpectedRevisions {
+		if pin.Revision == nil {
 			return BatchBody{}, ErrBadRequest
 		}
+		if _, exists := req.ExpectedRevisions[pin.RowID]; exists {
+			return BatchBody{}, ErrBadRequest
+		}
+		req.ExpectedRevisions[pin.RowID] = *pin.Revision
 	}
-	return BatchBody{StoreID: storeID, RowIDs: rowIDs}, nil
+	if err := req.Validate(); err != nil {
+		return BatchBody{}, err
+	}
+	return req, nil
+}
+
+// Validate also protects direct service calls from silently omitting pins.
+func (b BatchBody) Validate() error {
+	if b.StoreID == "" {
+		return ErrStoreRequired
+	}
+	if _, err := uuid.Parse(b.StoreID); err != nil {
+		return ErrStoreInvalid
+	}
+	if len(b.RowIDs) == 0 {
+		return ErrRowsRequired
+	}
+	if len(b.RowIDs) > ImportV3MaxItems {
+		return ErrBatchTooLarge
+	}
+	if len(b.ExpectedRevisions) != len(b.RowIDs) {
+		return ErrBadRequest
+	}
+	seen := make(map[uuid.UUID]struct{}, len(b.RowIDs))
+	for _, id := range b.RowIDs {
+		parsed, err := uuid.Parse(id)
+		if err != nil {
+			return ErrBadRequest
+		}
+		if _, exists := seen[parsed]; exists {
+			return ErrBadRequest
+		}
+		seen[parsed] = struct{}{}
+		if revision, ok := b.ExpectedRevisions[id]; !ok || revision < 0 {
+			return ErrBadRequest
+		}
+	}
+	return nil
 }

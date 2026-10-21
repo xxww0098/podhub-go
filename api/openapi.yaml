@@ -169,13 +169,13 @@ paths:
       operationId: postListingSubmit
       tags:
       - listing
-      summary: 'Freeze stored rows or drafts and enqueue listing.submit.batch. The body shape selects the path: rowIds is a stored-row batch send, storeId or items is a Draft send, anything else is a tag check. A tag check needs no principal; a batch or Draft send requires the submit role. It does not dial Ozon.'
+      summary: 'Freeze stored rows or drafts and enqueue listing.submit.batch. The body shape selects the path: row_ids is a stored-row batch send, storeId or items is a Draft send, anything else is a tag check. A stored-row send requires the exact server revisions captured by the click. A tag check needs no principal; a batch or Draft send requires the submit role. It does not dial Ozon.'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              "$ref": "#/components/schemas/ListingTagCheckRequest"
+              "$ref": "#/components/schemas/ListingSubmitRequest"
       responses:
         '200':
           description: Batch or Draft send frozen and enqueued; per-row items
@@ -184,41 +184,41 @@ paths:
               schema:
                 type: object
         '400':
-          description: The body is not a tag check, a banned tag refused the gate, or the Draft envelope is invalid
+          description: The body is not a tag check, a banned tag refused the gate, the Draft envelope is invalid, or the stored-row IDs and revision pins are not a one-to-one match
           content:
             application/json:
               schema:
-                "$ref": "#/components/schemas/ListingError"
+                "$ref": "#/components/schemas/SubmitListingError"
         '401':
           description: Not signed in
           content:
             application/json:
               schema:
-                "$ref": "#/components/schemas/ListingError"
+                "$ref": "#/components/schemas/SubmitListingError"
         '403':
           description: Role cannot submit
           content:
             application/json:
               schema:
-                "$ref": "#/components/schemas/ListingError"
+                "$ref": "#/components/schemas/SubmitListingError"
         '404':
           description: The card or row no longer exists
           content:
             application/json:
               schema:
-                "$ref": "#/components/schemas/ListingError"
+                "$ref": "#/components/schemas/SubmitListingError"
         '409':
-          description: rulesVersion is not the version currently served, or the store send slot is held
+          description: Rules or schema must be refreshed, the store send slot is held, or a stored row changed during freeze (code revision_mismatch). A revision_mismatch rolls back this entire request; none of its new intents or jobs are committed. A revision already stale when read is instead returned as an individual skipped item in the 200 response.
           content:
             application/json:
               schema:
-                "$ref": "#/components/schemas/ListingError"
+                "$ref": "#/components/schemas/SubmitListingError"
         '503':
           description: Rules or the matcher could not be evaluated. This is not a pass.
           content:
             application/json:
               schema:
-                "$ref": "#/components/schemas/ListingError"
+                "$ref": "#/components/schemas/SubmitListingError"
   "/api/me/catalog/banned-tags":
     get:
       operationId: bannedTagsEnabled
@@ -18521,6 +18521,99 @@ components:
           type: array
           items:
             "$ref": "#/components/schemas/WriterLeaseHealth"
+    ListingSubmitRequest:
+      oneOf:
+      - "$ref": "#/components/schemas/SubmitListingBatchRequest"
+      - "$ref": "#/components/schemas/SubmitListingDraftEnvelope"
+      - "$ref": "#/components/schemas/ListingTagCheckRequest"
+    SubmitListingBatchRequest:
+      type: object
+      additionalProperties: false
+      description: |-
+        Freeze stored rows at the server revisions the operator selected.
+        Each row_ids entry must have exactly one expectedRevisions entry;
+        duplicate, missing, extra or invalid pins are refused before freezing.
+        A row that is already at another revision is skipped as revision_mismatch.
+        If a new intent's row changes during freezing, the entire request rolls
+        back and returns HTTP 409 revision_mismatch. No new work from that request
+        is enqueued. Replaying an existing intent does not update its projection.
+      required:
+      - storeId
+      - row_ids
+      - expectedRevisions
+      properties:
+        storeId:
+          type: string
+          format: uuid
+        row_ids:
+          type: array
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        expectedRevisions:
+          type: array
+          minItems: 1
+          maxItems: 100
+          description: Exact listing_rows.revision values, not browser-local edit or queue revisions.
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - rowId
+            - revision
+            properties:
+              rowId:
+                type: string
+                format: uuid
+              revision:
+                type: integer
+                format: int64
+                minimum: 0
+    SubmitListingDraftEnvelope:
+      type: object
+      additionalProperties: false
+      description: The draft-shaped branch of the Go submit handler. Draft contents are interpreted by listing-core, not by this envelope schema.
+      required:
+      - storeId
+      - cardId
+      - items
+      properties:
+        storeId:
+          type: string
+          format: uuid
+        cardId:
+          type: string
+          format: uuid
+        items:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: {}
+        rulesVersion:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        text:
+          type: string
+    SubmitListingError:
+      description: The tag gate uses message; authenticated batch and draft refusals use error. HTTP 409 with code revision_mismatch proves this request's transaction did not commit.
+      oneOf:
+      - "$ref": "#/components/schemas/ListingError"
+      - type: object
+        additionalProperties: false
+        required:
+        - error
+        - code
+        properties:
+          error:
+            type: string
+          code:
+            type: string
     ListingTagCheckRequest:
       type: object
       additionalProperties: false
@@ -18536,12 +18629,6 @@ components:
             type: string
         text:
           type: string
-        row_ids:
-          type: array
-          items:
-            type: string
-            format: uuid
-          description: 'Stored-row batch form: freeze exactly these rows. Routed before the Draft check.'
     BannedTagRule:
       type: object
       additionalProperties: false

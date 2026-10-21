@@ -9,6 +9,7 @@ import { afterEach, before, beforeEach, test } from "node:test"
 
 import { route } from "@/api/routes"
 import { readCategorySchema, rememberDictionaryHits, residentCategorySchema } from "@/bindings/listing-material-cache"
+import { cachedListingRow } from "@/bindings/listing-row-cache"
 import { invalidateAllSessionCaches } from "@/lib/session-cache"
 import type { ListingCore } from "@/listing-core/wasm"
 import { sendPins } from "../prepare/executor-test-support"
@@ -89,6 +90,7 @@ test("resident rows and material send one POST with the click's pins and nothing
     assert.equal(gets(stub.calls).length, 0, "a resident send reads nothing")
     assert.deepEqual(submits(stub.calls).map((call) => call.body), [{
       storeId: "store-1", row_ids: ["row-1", "row-2"],
+      expectedRevisions: [{ rowId: "row-1", revision: 9 }, { rowId: "row-2", revision: 9 }],
     }])
     await sendRows({ row_ids: ["row-1"], expected_revisions: sendPins(["row-1"]) }, undefined, { core })
     assert.equal(core.loads, 1, "the schema handle stays resident for its material signature")
@@ -193,6 +195,33 @@ test("an identity switch while the material loads fences it out: blocked, no POS
     assert.deepEqual([result!.outcome, result!.error?.code], ["blocked", "workflow_schema_material_stale"])
     assert.equal(submits(stub.calls).length, 0)
   } finally { stub.restore() }
+})
+
+test("an identity switch after material loading cancels the send before native freeze can dispatch", async () => {
+  await residentSend(["old-workspace-row"])
+  let entered!: () => void, release!: () => void
+  const started = new Promise<void>((resolve) => { entered = resolve })
+  const held = new Promise<void>((resolve) => { release = resolve })
+  const core = {
+    async loadSchema(...args: Parameters<typeof native.loadSchema>) {
+      const handle = native.loadSchema(...args)
+      entered()
+      await held
+      return handle
+    },
+    freezeListing: native.freezeListing.bind(native),
+  }
+  const stub = serve(cloud((body) => ({ items: accepted(body).items.map((item) => ({ ...item, row: nativeRowView(item.row_id) })) })))
+  const running = sendRows({ row_ids: ["old-workspace-row"], expected_revisions: sendPins(["old-workspace-row"]) }, undefined, { core })
+  try {
+    await started
+    invalidateAllSessionCaches()
+    release()
+    const [result] = await running
+    assert.equal(submits(stub.calls).length, 0, "retiring the session closes admission after the native await")
+    assert.equal(result!.noop_reason, "cancelled")
+    assert.equal(cachedListingRow("old-workspace-row"), undefined, "the retired send cannot repopulate the new session")
+  } finally { release(); await running; stub.restore() }
 })
 
 test("different categories in one Store freeze on their own handles and share one POST", async () => {
@@ -403,6 +432,8 @@ for (const count of [100, 101, 201]) {
       const batches = submits(stub.calls)
       assert.deepEqual(batches.map((call) => call.body.row_ids.length), count === 100 ? [100] : count === 101 ? [100, 1] : [100, 100, 1])
       assert.deepEqual(batches.flatMap((call) => call.body.row_ids), rowIds)
+      for (const batch of batches) assert.deepEqual(batch.body.expectedRevisions,
+        batch.body.row_ids.map((rowId: string) => ({ rowId, revision: 9 })))
       assert.ok(results.every((result) => result.outcome === "start" && !result.error))
       assert.equal(gets(stub.calls).length, 0)
     } finally { stub.restore() }

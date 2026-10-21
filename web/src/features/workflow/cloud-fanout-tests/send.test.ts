@@ -224,7 +224,8 @@ test("send network failure resets queueRunning and reverts in-flight row state",
     const url = String(input)
     calls.push(`${init?.method ?? "GET"} ${url}`)
     if (url === route("listingSubmit")) {
-      assert.deepEqual(JSON.parse(String(init?.body)), { storeId: "store", row_ids: ["row-fail"] })
+      assert.deepEqual(JSON.parse(String(init?.body)), { storeId: "store", row_ids: ["row-fail"],
+        expectedRevisions: [{ rowId: "row-fail", revision: 1 }] })
       submitted = true; submissions++; entered()
       await responseGate
       return new Response(JSON.stringify({ message: "Cloud error" }), { status: 500, headers: { "Content-Type": "application/json" } })

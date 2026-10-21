@@ -39,14 +39,14 @@ function fixture() {
 test("a thrown post-dispatch hook callback projects both row and product as Unknown exception, preserves cohort and never resends", async () => {
   const fx = fixture()
   let sends = 0
+  let submittedBody: unknown
   const cloud = serve(({ url, method, body }) => {
     if (url === route("listingCardsById", { id: "card" })) return method === "PATCH"
       ? { ...fx.rawCard, revision: 2, payload: body.payload } : fx.rawCard
     if (url.startsWith(`${route("listingRows")}?`)) return { items: [fx.row], nextCursor: null }
     assert.equal(url, route("listingSubmit"))
     assert.equal(method, "POST")
-    assert.deepEqual(body.rowIds, [fx.row.id])
-    assert.deepEqual(body.expectedRevisions, [{ rowId: fx.row.id, revision: 1 }])
+    submittedBody = body
     throw new TypeError("simulated lost submit response")
   })
   workflowActions.workflowSend = async (...args) => {
@@ -57,6 +57,8 @@ test("a thrown post-dispatch hook callback projects both row and product as Unkn
   }
   try {
     await fx.hook.startPublish([fx.row.id])
+    assert.deepEqual(submittedBody, { storeId: "store", row_ids: [fx.row.id],
+      expectedRevisions: [{ rowId: fx.row.id, revision: 1 }] })
     const state = peekListingWorkbench(), result = state.rows[0]!
     assert.equal(sends, 1)
     assert.equal(result.status, "exception")

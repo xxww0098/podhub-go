@@ -35,7 +35,8 @@ test("send adopts the Card's current Store for existing unbound and previously b
     const result = await sendRows({ row_ids: ids, expected_revisions: pins }, undefined, { core })
     assert.deepEqual(result.map((row) => row.outcome), ["start", "start"])
     assert.equal(stub.calls.length, 1)
-    assert.deepEqual(stub.calls[0]!.body, { storeId: "store-current", row_ids: ids })
+    assert.deepEqual(stub.calls[0]!.body, { storeId: "store-current", row_ids: ids,
+      expectedRevisions: ids.map((rowId) => ({ rowId, revision: 9 })) })
     assert.deepEqual(pins.map((pin) => pin.store_id), ["", "store-old"], "the click's original row pins remain unchanged")
   } finally { stub.restore() }
 })

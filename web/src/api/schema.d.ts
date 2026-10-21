@@ -37,7 +37,7 @@ export interface paths {
     post: operations["postListingValidate"];
   };
   "/api/listing/submit": {
-    /** Freeze stored rows or drafts and enqueue listing.submit.batch. The body shape selects the path: rowIds is a stored-row batch send, storeId or items is a Draft send, anything else is a tag check. A tag check needs no principal; a batch or Draft send requires the submit role. It does not dial Ozon. */
+    /** Freeze stored rows or drafts and enqueue listing.submit.batch. The body shape selects the path: row_ids is a stored-row batch send, storeId or items is a Draft send, anything else is a tag check. A stored-row send requires the exact server revisions captured by the click. A tag check needs no principal; a batch or Draft send requires the submit role. It does not dial Ozon. */
     post: operations["postListingSubmit"];
   };
   "/api/me/catalog/banned-tags": {
@@ -2042,12 +2042,48 @@ export interface components {
       ts: number;
       writer_leases: components["schemas"]["WriterLeaseHealth"][];
     };
+    ListingSubmitRequest: components["schemas"]["SubmitListingBatchRequest"] | components["schemas"]["SubmitListingDraftEnvelope"] | components["schemas"]["ListingTagCheckRequest"];
+    /**
+     * @description Freeze stored rows at the server revisions the operator selected.
+     * Each row_ids entry must have exactly one expectedRevisions entry;
+     * duplicate, missing, extra or invalid pins are refused before freezing.
+     * A row that is already at another revision is skipped as revision_mismatch.
+     * If a new intent's row changes during freezing, the entire request rolls
+     * back and returns HTTP 409 revision_mismatch. No new work from that request
+     * is enqueued. Replaying an existing intent does not update its projection.
+     */
+    SubmitListingBatchRequest: {
+      /** Format: uuid */
+      storeId: string;
+      row_ids: string[];
+      /** @description Exact listing_rows.revision values, not browser-local edit or queue revisions. */
+      expectedRevisions: {
+          /** Format: uuid */
+          rowId: string;
+          /** Format: int64 */
+          revision: number;
+        }[];
+    };
+    /** @description The draft-shaped branch of the Go submit handler. Draft contents are interpreted by listing-core, not by this envelope schema. */
+    SubmitListingDraftEnvelope: {
+      /** Format: uuid */
+      storeId: string;
+      /** Format: uuid */
+      cardId: string;
+      items: unknown[];
+      rulesVersion?: string;
+      tags?: string[];
+      text?: string;
+    };
+    /** @description The tag gate uses message; authenticated batch and draft refusals use error. HTTP 409 with code revision_mismatch proves this request's transaction did not commit. */
+    SubmitListingError: OneOf<[components["schemas"]["ListingError"], {
+      error: string;
+      code: string;
+    }]>;
     ListingTagCheckRequest: {
       rules_version: string;
       tags?: string[];
       text?: string;
-      /** @description Stored-row batch form: freeze exactly these rows. Routed before the Draft check. */
-      row_ids?: string[];
     };
     BannedTagRule: {
       term: string;
@@ -9024,11 +9060,11 @@ export interface operations {
       };
     };
   };
-  /** Freeze stored rows or drafts and enqueue listing.submit.batch. The body shape selects the path: rowIds is a stored-row batch send, storeId or items is a Draft send, anything else is a tag check. A tag check needs no principal; a batch or Draft send requires the submit role. It does not dial Ozon. */
+  /** Freeze stored rows or drafts and enqueue listing.submit.batch. The body shape selects the path: row_ids is a stored-row batch send, storeId or items is a Draft send, anything else is a tag check. A stored-row send requires the exact server revisions captured by the click. A tag check needs no principal; a batch or Draft send requires the submit role. It does not dial Ozon. */
   postListingSubmit: {
     requestBody: {
       content: {
-        "application/json": components["schemas"]["ListingTagCheckRequest"];
+        "application/json": components["schemas"]["ListingSubmitRequest"];
       };
     };
     responses: {
@@ -9038,40 +9074,40 @@ export interface operations {
           "application/json": Record<string, never>;
         };
       };
-      /** @description The body is not a tag check, a banned tag refused the gate, or the Draft envelope is invalid */
+      /** @description The body is not a tag check, a banned tag refused the gate, the Draft envelope is invalid, or the stored-row IDs and revision pins are not a one-to-one match */
       400: {
         content: {
-          "application/json": components["schemas"]["ListingError"];
+          "application/json": components["schemas"]["SubmitListingError"];
         };
       };
       /** @description Not signed in */
       401: {
         content: {
-          "application/json": components["schemas"]["ListingError"];
+          "application/json": components["schemas"]["SubmitListingError"];
         };
       };
       /** @description Role cannot submit */
       403: {
         content: {
-          "application/json": components["schemas"]["ListingError"];
+          "application/json": components["schemas"]["SubmitListingError"];
         };
       };
       /** @description The card or row no longer exists */
       404: {
         content: {
-          "application/json": components["schemas"]["ListingError"];
+          "application/json": components["schemas"]["SubmitListingError"];
         };
       };
-      /** @description rulesVersion is not the version currently served, or the store send slot is held */
+      /** @description Rules or schema must be refreshed, the store send slot is held, or a stored row changed during freeze (code revision_mismatch). A revision_mismatch rolls back this entire request; none of its new intents or jobs are committed. A revision already stale when read is instead returned as an individual skipped item in the 200 response. */
       409: {
         content: {
-          "application/json": components["schemas"]["ListingError"];
+          "application/json": components["schemas"]["SubmitListingError"];
         };
       };
       /** @description Rules or the matcher could not be evaluated. This is not a pass. */
       503: {
         content: {
-          "application/json": components["schemas"]["ListingError"];
+          "application/json": components["schemas"]["SubmitListingError"];
         };
       };
     };

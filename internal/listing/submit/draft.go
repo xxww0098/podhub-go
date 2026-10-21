@@ -84,7 +84,7 @@ type BatchData struct {
 // BatchItem is one stored-row send result. The row projection is omitted:
 // ListingRowView is not produced here.
 type BatchItem struct {
-	RowID   string      `json:"rowId"`
+	RowID   string      `json:"row_id"`
 	Intent  *IntentView `json:"intent,omitempty"`
 	Created bool        `json:"created"`
 	Skipped string      `json:"skipped,omitempty"`
@@ -227,9 +227,12 @@ func SendDrafts(ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, bo
 	return data, nil
 }
 
-// SendStored freezes stored rows and enqueues listing.submit.batch.
-// expectedRevisions is still not applied.
-func SendStored(ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, storeID string, rowIDs []string, now time.Time) (BatchData, error) {
+// SendStored freezes the requested server revisions and enqueues
+// listing.submit.batch. A concurrent edit during admission rolls back the batch.
+func SendStored(ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, req BatchBody, now time.Time) (BatchData, error) {
+	if err := req.Validate(); err != nil {
+		return BatchData{}, statusErr(400, err.Error(), "bad_request")
+	}
 	if pool == nil {
 		return BatchData{}, statusErr(503, "服务暂不可用", "internal")
 	}
@@ -248,8 +251,9 @@ func SendStored(ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, st
 	var items []BatchItem
 	var ready []frozen
 	recordRevision := false
-	for _, rowID := range rowIDs {
-		item, one, recorded, err := freezeStored(ctx, tx, mod, orgID, storeID, rowID, now)
+	storeID := req.StoreID
+	for _, rowID := range req.RowIDs {
+		item, one, recorded, err := freezeStored(ctx, tx, mod, orgID, storeID, rowID, req.ExpectedRevisions[rowID], now)
 		if err != nil {
 			return BatchData{}, err
 		}
@@ -295,12 +299,18 @@ func SendStored(ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, st
 		if item.Outcome != "created" {
 			continue
 		}
-		if _, err := tx.Exec(ctx, `
+		tag, err := tx.Exec(ctx, `
 			UPDATE public.listing_rows
 			   SET submission_state = 'queued', updated_at = clock_timestamp()
 			 WHERE org_id = $1 AND id = $2::uuid AND revision = $3`,
-			orgID, item.Intent.ListingRowID, item.Intent.RowRevision); err != nil {
+			orgID, item.Intent.ListingRowID, item.Intent.RowRevision)
+		if err != nil {
 			return BatchData{}, statusErr(500, "服务暂不可用", "internal")
+		}
+		// The existing intent trigger has already acquired the store and row
+		// locks. Check the content revision here without reversing that order.
+		if tag.RowsAffected() != 1 {
+			return BatchData{}, statusErr(409, "商品已更新，本批未入队，请刷新后重试", "revision_mismatch")
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -513,7 +523,7 @@ func freezeLean(ctx context.Context, mod contract.Module, schema, card, lean []b
 	}, nil, nil
 }
 
-func freezeStored(ctx context.Context, tx pgx.Tx, mod contract.Module, orgID int64, storeID, rowID string, now time.Time) (*BatchItem, frozen, bool, error) {
+func freezeStored(ctx context.Context, tx pgx.Tx, mod contract.Module, orgID int64, storeID, rowID string, expectedRevision int64, now time.Time) (*BatchItem, frozen, bool, error) {
 	var revision int64
 	var rowStore *string
 	var rowPayload, cardPayload []byte
@@ -528,6 +538,9 @@ func freezeStored(ctx context.Context, tx pgx.Tx, mod contract.Module, orgID int
 	}
 	if err != nil {
 		return nil, frozen{}, false, statusErr(500, "服务暂不可用", "internal")
+	}
+	if revision != expectedRevision {
+		return &BatchItem{RowID: rowID, Skipped: "revision_mismatch"}, frozen{}, false, nil
 	}
 	if rowStore == nil || strings.TrimSpace(*rowStore) == "" {
 		return &BatchItem{RowID: rowID, Skipped: "store_unbound"}, frozen{}, false, nil

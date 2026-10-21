@@ -33,7 +33,7 @@ func TestDraftShape(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := "00000000-0000-0000-0000-000000000001"
-	got, err := ParseBatch([]byte(`{"storeId":"` + id + `","row_ids":["` + id + `"]}`))
+	got, err := ParseBatch([]byte(`{"storeId":"` + id + `","row_ids":["` + id + `"],"expectedRevisions":[{"rowId":"` + id + `","revision":1}]}`))
 	if err != nil || len(got.RowIDs) != 1 {
 		t.Fatal(err, got)
 	}

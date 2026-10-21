@@ -82,7 +82,11 @@ func TestSendStoredKeepsReplayStateAndCardOwnership(t *testing.T) {
 		}
 	}
 
-	result, err := SendStored(ctx, pool, orgID, userID, storeID, rowIDs, now)
+	pins := make(map[string]int64, len(rowIDs))
+	for _, id := range rowIDs {
+		pins[id] = 1
+	}
+	result, err := SendStored(ctx, pool, orgID, userID, BatchBody{StoreID: storeID, RowIDs: rowIDs, ExpectedRevisions: pins}, now)
 	if err != nil {
 		t.Fatal(err)
 	}

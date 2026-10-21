@@ -65,6 +65,12 @@ Go 的做法：
 
 回归：`TestParallelBatchReceiptSurvivesLeaseLock` 用 4 个并行批次、同一条租约行、loopback mock。锁住期间每条意图都有 task id 且仍是 `submitting`，mock 的 POST 次数等于批次数；松开之后重试不再 POST，状态到 `accepted`，每条意图只有一行写账、一行 `listing_rows`。`TestOrgBatchCapDoesNotSend` 在上限为 1 且已有一个 running 批次时不拨号。`TestReconcilerClosesFailedSubmitting` 覆盖失败作业上的有 task id / 无 task id。
 
+## stored-row 版本与批次租约的补齐
+
+`POST /api/listing/submit` 的 stored-row 分支现在要求 `expectedRevisions: [{rowId, revision}]` 与 `row_ids` 一一对应。这里是点击时的服务端内容 revision，不是本地队列 revision。缺失或无效 pin 为 400；读取时已变的行逐行返回 `revision_mismatch`；冻结中发生编辑则在新 intent 的投影 CAS 检查处以 409 `revision_mismatch` 回滚整个请求。原来的“接受但忽略 pin”行为不再保留。批次结果用 `row_id` 与前端契约对应，详见 [上架流程优化与回归证据](listing-flow-optimization.md)。
+
+批次结算也改成一次 `queue.MutateRunning` 事务：intent、写账、占用、行投影和 job 共同受租约限制。原来逐条清空 Lease 并提交、最后才 Finish 的方式会让失效 worker 留下已提交终态。新回归通过真实租约回收复现并验证该差异；已保存的正 `task_id` 继续独立保留，恢复扫描接收该事实且不重复 import。单条与批次共用行结算 SQL，已有终态不重写。
+
 ## 不能证明与 Rust 一致、留给决定的缺口
 
 1. 三条发送路由现在走 listing-core wasm 的 op 9 再 op 11，成功则入队，worker 再拨 loopback。HTTP 返回的是入队回执（意图 `queued`），不是 Rust 在进程内派发之后的意图。列对拍在 worker 跑完之后。没有数据库连接时是 503 `服务暂不可用`，不再是 501 `freeze_not_ported`。没有 `storeId`/`items` 的旧正文仍是标签闸：命中 400 `banned_tag`，干净则 400 `validation` `请求格式无效`。
@@ -77,7 +83,7 @@ Go 的做法：
 8. `listing_store_limiter` 的 409 `store_busy`（「该店铺正在发送，本次未发送」）没接。上面的组织批次上限是另一件事，默认 2，不是这个 409。
 9. `scrub_import_tags`、发货门、媒体门、店铺暂停、凭据失败时的 `RejectQueued` 没有接。
 10. 新路由的错误体是已移植列表读的 `{error, code}`。Rust `ListingErrorResponse` 的字段名没有逐字节对过。已合并的标签闸仍是 `{code, message}`。
-11. 超过 100 条时的中文文案不是从 `check_batch_size` 抄的，上限 100 是。`expectedRevisions` 没有参与判定。
+11. 超过 100 条时的中文文案不是从 `check_batch_size` 抄的，上限 100 是。
 12. `/v3/product/info/list` 的请求体是 `{"offer_id":[...]}`。`InfoListV3Request` 的 serde 重命名没有打开。响应用 `items[].id` / `offer_id` / `sources[].sku`，和 `import_reconcile.rs` 的读取字段一致。
 13. 六个 due scan 已有 tick，见 `docs/parity/reconcile-gap-parity.md`。未知写和分组只续租、不改业务状态。商品同步在批量为 0 时不入队。`listing.reconcile` 仍是未移植。
 14. 非 loopback 的 Seller 源本进程拒绝拨号。Rust 会拨 `api-seller.ozon.ru`。

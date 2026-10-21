@@ -28,7 +28,8 @@ function observeSubmit(expectedIds: readonly string[]) {
     receive(init?: RequestInit) {
       // This pre-S17 Cloud-row bridge uses batch/submit, not the Draft items wire.
       const body = JSON.parse(String(init?.body)) as { storeId: string; row_ids: string[] }
-      assert.deepEqual(body, { storeId: "store", row_ids: [...expectedIds] })
+      assert.deepEqual(body, { storeId: "store", row_ids: [...expectedIds],
+        expectedRevisions: expectedIds.map((rowId) => ({ rowId, revision: 1 })) })
       assert.ok(init?.signal, "the original submit request has its own signal")
       signals.push(init.signal)
       init.signal.addEventListener("abort", () => { aborts++ }, { once: true })
