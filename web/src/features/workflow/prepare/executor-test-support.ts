@@ -12,6 +12,7 @@ import type { TestContext } from "node:test"
 import { listingProjection } from "../../../../tests/listing-row-fixture"
 import type { RenderLane } from "@/render/client"
 import {
+  invalidateAccountOverview,
   peekAccountOverview,
   rememberAccountOverview,
 } from "@/features/account/account-overview-cache"
@@ -127,6 +128,8 @@ export function record(
   heartbeat: (call: Call) => unknown = () => true,
 ): { calls: Call[], restore: () => void } {
   const previous = globalThis.fetch
+  const previousOverview = peekAccountOverview()
+  let restored = false
   const calls: Call[] = []
   const jobs = new Map<string, any>()
   /**
@@ -299,7 +302,15 @@ export function record(
       headers: { "Content-Type": "application/json" },
     })
   }) as typeof globalThis.fetch
-  return { calls, restore: () => { globalThis.fetch = previous } }
+  return { calls, restore: () => {
+    if (restored) return
+    restored = true
+    // Keep receipt delivery inside the transport fixture's lifetime. A queued
+    // receipt must not retry through the restored fetch in another test.
+    invalidateAccountOverview()
+    if (previousOverview) rememberAccountOverview(previousOverview)
+    globalThis.fetch = previous
+  } }
 }
 
 /** Capture `console.log` lines for one run; the tests assert on the lines, never on the console. */

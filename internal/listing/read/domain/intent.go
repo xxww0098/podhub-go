@@ -223,26 +223,26 @@ type IntentSource struct {
 
 // IntentView is ListingIntentView. importProbe is omitted: its derivation is not in the spec.
 type IntentView struct {
-	SubmissionIssues         json.RawMessage `json:"submissionIssues"`
-	CurrentIssueStatus       string          `json:"currentIssueStatus"`
-	CurrentIssue             json.RawMessage `json:"currentIssue,omitempty"`
-	CanResume                bool            `json:"canResume"`
+	SubmissionIssues         json.RawMessage `json:"submission_issues"`
+	CurrentIssueStatus       string          `json:"current_issue_status"`
+	CurrentIssue             json.RawMessage `json:"current_issue,omitempty"`
+	CanResume                bool            `json:"can_resume"`
 	ID                       string          `json:"id"`
-	StoreID                  string          `json:"storeId"`
-	ListingRowID             string          `json:"listingRowId"`
-	RowRevision              int64           `json:"rowRevision"`
-	ClientOperationID        string          `json:"clientOperationId"`
+	StoreID                  string          `json:"store_id"`
+	ListingRowID             string          `json:"listing_row_id"`
+	RowRevision              int64           `json:"row_revision"`
+	ClientOperationID        string          `json:"client_operation_id"`
 	State                    string          `json:"state"`
-	ExternalTaskID           *string         `json:"externalTaskId,omitempty"`
-	LastErrorCode            *string         `json:"lastErrorCode,omitempty"`
-	KnownErrorCode           *string         `json:"knownErrorCode,omitempty"`
-	ReconciliationOutcome    json.RawMessage `json:"reconciliationOutcome,omitempty"`
-	SubmissionReceipt        json.RawMessage `json:"submissionReceipt,omitempty"`
-	SubmissionReceiptStatus  string          `json:"submissionReceiptStatus"`
-	CancelRequestedAtMs      *int64          `json:"cancelRequestedAtMs,omitempty"`
-	UpdatedAtMs              int64           `json:"updatedAtMs"`
-	HasLiveReconcileClaim    *bool           `json:"hasLiveReconcileClaim,omitempty"`
-	HasUnfinishedDispatchJob *bool           `json:"hasUnfinishedDispatchJob,omitempty"`
+	ExternalTaskID           *string         `json:"external_task_id,omitempty"`
+	LastErrorCode            *string         `json:"last_error_code,omitempty"`
+	KnownErrorCode           *string         `json:"known_error_code,omitempty"`
+	ReconciliationOutcome    json.RawMessage `json:"reconciliation_outcome,omitempty"`
+	SubmissionReceipt        json.RawMessage `json:"submission_receipt,omitempty"`
+	SubmissionReceiptStatus  string          `json:"submission_receipt_status"`
+	CancelRequestedAtMs      *int64          `json:"cancel_requested_at_ms,omitempty"`
+	UpdatedAtMs              int64           `json:"updated_at_ms"`
+	HasLiveReconcileClaim    *bool           `json:"has_live_reconcile_claim,omitempty"`
+	HasUnfinishedDispatchJob *bool           `json:"has_unfinished_dispatch_job,omitempty"`
 }
 
 // ProjectIntent builds the wire view. Facts are copied only when the pointers are set.
@@ -266,7 +266,7 @@ func ProjectIntent(src IntentSource) IntentView {
 		cancel = &ms
 	}
 	return IntentView{
-		SubmissionIssues: issues, CurrentIssueStatus: status, CurrentIssue: current, CanResume: resume,
+		SubmissionIssues: issueHistoryWire(issues), CurrentIssueStatus: status, CurrentIssue: issueWire(current), CanResume: resume,
 		ID: src.ID, StoreID: src.StoreID, ListingRowID: src.ListingRowID, RowRevision: src.RowRevision,
 		ClientOperationID: src.ClientOperationID, State: src.State,
 		ExternalTaskID: src.ExternalTaskID, LastErrorCode: src.LastErrorCode, KnownErrorCode: known,
@@ -315,7 +315,7 @@ func currentIssue(state string, last *string, issues json.RawMessage) (string, j
 	if matched == nil {
 		return IssueAbsent, nil, false
 	}
-	return IssuePresent, matched, allowsResume(matched)
+	return IssuePresent, matched, state == "rejected" && allowsResume(matched)
 }
 
 func allowsResume(raw json.RawMessage) bool {
@@ -338,10 +338,39 @@ func receiptOf(raw json.RawMessage) (string, json.RawMessage) {
 	if len(trimmed) == 0 || string(trimmed) == "null" {
 		return ReceiptAbsent, nil
 	}
-	if trimmed[0] == '{' {
-		return ReceiptValid, json.RawMessage(trimmed)
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(trimmed, &fields) != nil || fields == nil {
+		return ReceiptUnreadable, nil
 	}
-	return ReceiptUnreadable, nil
+	for _, key := range []string{"batch_id", "item_count"} {
+		value, present := fields[key]
+		if !present || string(bytesTrim(value)) == "null" {
+			return ReceiptUnreadable, nil
+		}
+	}
+	for _, key := range []string{"batch_id", "response_body", "transport_error"} {
+		if value, present := fields[key]; present && !receiptValue[string](value) {
+			return ReceiptUnreadable, nil
+		}
+	}
+	for _, key := range []string{"item_count", "http_status"} {
+		if value, present := fields[key]; present && !receiptValue[int32](value) {
+			return ReceiptUnreadable, nil
+		}
+	}
+	for _, key := range []string{"received_at_ms", "task_id"} {
+		if value, present := fields[key]; present && !receiptValue[int64](value) {
+			return ReceiptUnreadable, nil
+		}
+	}
+	// A newer writer may add fields. Keep its bytes after checking only the
+	// declared required fields and types; a receipt never grants an action.
+	return ReceiptValid, json.RawMessage(trimmed)
+}
+
+func receiptValue[T any](raw json.RawMessage) bool {
+	var value *T // Optional declared fields may be null; required fields are checked above.
+	return json.Unmarshal(raw, &value) == nil
 }
 
 // CancelMovesToCancelled is the HTTP CASE: only queued with a null external task id.

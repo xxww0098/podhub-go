@@ -38,7 +38,7 @@
 
 ## 流程上和 Rust 不同、结果保持一致的地方
 
-- 禁用标签闸仍是已合并的那条：只有 `rulesVersion` + `tags` + `text`、没有 `storeId`/`items` 的正文，命中 400 `banned_tag`，干净则 400 `validation` `请求格式无效`。带 `storeId` 或 `items` 的正文改走草稿入口，先做 `ListingSubmit` 鉴权。
+- 禁用标签闸仍是已合并的那条：只有 `rules_version` + `tags` + `text`、没有 `store_id`/`items` 的正文，命中 400 `banned_tag`，干净则 400 `validation` `请求格式无效`。带 `store_id` 或 `items` 的正文改走草稿入口，先做 `ListingSubmit` 鉴权。
 - 进入 `unknown` 时 `reconcile_after` 用数据库时钟加 30 秒（`import_reconcile` 的首次等待），不用进程时钟。探测退避仍是数据库时钟。
 - `external_task_id` 存十进制文本，和列类型 `text` 一致。
 - 草稿入队把意图和 `listing.submit.batch` 作业放进同一个事务（`EnqueueOn`）。Rust 也是一次提交。中途失败则两边都不出现。
@@ -65,9 +65,17 @@ Go 的做法：
 
 回归：`TestParallelBatchReceiptSurvivesLeaseLock` 用 4 个并行批次、同一条租约行、loopback mock。锁住期间每条意图都有 task id 且仍是 `submitting`，mock 的 POST 次数等于批次数；松开之后重试不再 POST，状态到 `accepted`，每条意图只有一行写账、一行 `listing_rows`。`TestOrgBatchCapDoesNotSend` 在上限为 1 且已有一个 running 批次时不拨号。`TestReconcilerClosesFailedSubmitting` 覆盖失败作业上的有 task id / 无 task id。
 
+## stored-row 版本与批次租约的补齐
+
+`POST /api/listing/submit` 的 stored-row 分支现在要求 `store_id` 及 `expected_revisions: [{row_id, revision}]` 与 `row_ids` 一一对应。这里是点击时的服务端内容 revision，不是本地队列 revision。缺失或无效 pin 为 400；读取时已变的行逐行返回 `revision_mismatch`；冻结中发生编辑则在新 intent 的投影 CAS 检查处以 409 `revision_mismatch` 回滚整个请求。原来的“接受但忽略 pin”行为不再保留。批次结果用 `row_id` 与前端契约对应。Draft 外层同样统一为已有前端契约的 `store_id`、`card_id`、`items` 和可选 `rules_version`；其内部 WASM 数据及 IntentView 不变。详见 [上架流程优化与回归证据](listing-flow-optimization.md)。
+
+批次结算也改成一次 `queue.MutateRunning` 事务：intent、写账、占用、行投影和 job 共同受租约限制。原来逐条清空 Lease 并提交、最后才 Finish 的方式会让失效 worker 留下已提交终态。新回归通过真实租约回收复现并验证该差异；已保存的正 `task_id` 继续独立保留，恢复扫描接收该事实且不重复 import。单条与批次共用行结算 SQL，已有终态不重写。
+
+随后补齐成功响应契约：DraftData、DraftItem 与提交 IntentView 的 HTTP 字段统一为已有前端/OpenAPI 的 snake_case，200 响应改为严格的 `data: DraftData | BatchData`，补充已有的 `accepted_schema_revisions`、`fields`。这修复了成功入队后被浏览器判为合同不符的问题。旧字段不再作为别名；WASM 项、状态、SQL 和提交中的轻量重放投影不变。真实 PostgreSQL mixed Draft 回归与实际序列化校验覆盖新建、重放、跳过及空列表；详细红绿证据见同一验证记录。
+
 ## 不能证明与 Rust 一致、留给决定的缺口
 
-1. 三条发送路由现在走 listing-core wasm 的 op 9 再 op 11，成功则入队，worker 再拨 loopback。HTTP 返回的是入队回执（意图 `queued`），不是 Rust 在进程内派发之后的意图。列对拍在 worker 跑完之后。没有数据库连接时是 503 `服务暂不可用`，不再是 501 `freeze_not_ported`。没有 `storeId`/`items` 的旧正文仍是标签闸：命中 400 `banned_tag`，干净则 400 `validation` `请求格式无效`。
+1. 三条发送路由现在走 listing-core wasm 的 op 9 再 op 11，成功则入队，worker 再拨 loopback。HTTP 返回的是入队回执（意图 `queued`），不是 Rust 在进程内派发之后的意图。列对拍在 worker 跑完之后。没有数据库连接时是 503 `服务暂不可用`，不再是 501 `freeze_not_ported`。没有 `store_id`/`items` 的旧正文仍是标签闸：命中 400 `banned_tag`，干净则 400 `validation` `请求格式无效`。
 2. 草稿路径的 `request_hash` 是 wasm 冻结返回的 digest。单条 `listing.submit` 任务仍由调用方放入摘要；那条 worker 不自己计算。
 3. 占用释放原因 `relationship_confirmed` / `rejected_no_pending` 是从 CHECK 的四个合法值里选的，没有定位到 Rust 的赋值点。`not_dispatched` 和 `partial_settled` 没有被这条路径使用。
 4. `OZON_SUBMIT_IN_FLIGHT` 的拼写来自变量名 `OzonSubmitInFlight`，源文件里的字符串常量没有打开。
@@ -77,7 +85,7 @@ Go 的做法：
 8. `listing_store_limiter` 的 409 `store_busy`（「该店铺正在发送，本次未发送」）没接。上面的组织批次上限是另一件事，默认 2，不是这个 409。
 9. `scrub_import_tags`、发货门、媒体门、店铺暂停、凭据失败时的 `RejectQueued` 没有接。
 10. 新路由的错误体是已移植列表读的 `{error, code}`。Rust `ListingErrorResponse` 的字段名没有逐字节对过。已合并的标签闸仍是 `{code, message}`。
-11. 超过 100 条时的中文文案不是从 `check_batch_size` 抄的，上限 100 是。`expectedRevisions` 没有参与判定。
+11. 超过 100 条时的中文文案不是从 `check_batch_size` 抄的，上限 100 是。
 12. `/v3/product/info/list` 的请求体是 `{"offer_id":[...]}`。`InfoListV3Request` 的 serde 重命名没有打开。响应用 `items[].id` / `offer_id` / `sources[].sku`，和 `import_reconcile.rs` 的读取字段一致。
 13. 六个 due scan 已有 tick，见 `docs/parity/reconcile-gap-parity.md`。未知写和分组只续租、不改业务状态。商品同步在批量为 0 时不入队。`listing.reconcile` 仍是未移植。
 14. 非 loopback 的 Seller 源本进程拒绝拨号。Rust 会拨 `api-seller.ozon.ru`。

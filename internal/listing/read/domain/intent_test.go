@@ -126,7 +126,7 @@ func TestIntentView(t *testing.T) {
 	src := IntentSource{
 		ID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", StoreID: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
 		ListingRowID: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", RowRevision: 3, ClientOperationID: "op",
-		State: "queued", LastErrorCode: strPtr("OZON_WRITES_DISABLED"),
+		State: "rejected", LastErrorCode: strPtr("OZON_WRITES_DISABLED"),
 		SubmissionIssues:  json.RawMessage(`[` + string(issue) + `]`),
 		SubmissionReceipt: json.RawMessage(`{"batch_id":"b","item_count":1}`),
 		UpdatedAt:         when,
@@ -135,14 +135,15 @@ func TestIntentView(t *testing.T) {
 	if view.CurrentIssueStatus != IssuePresent || !view.CanResume || view.KnownErrorCode == nil || *view.KnownErrorCode != "OZON_WRITES_DISABLED" {
 		t.Fatalf("%+v", view)
 	}
-	if view.SubmissionReceiptStatus != ReceiptValid || string(view.CurrentIssue) != string(issue) {
-		t.Fatal("raw issue and receipt")
+	if view.SubmissionReceiptStatus != ReceiptValid {
+		t.Fatal("valid receipt")
 	}
+	assertIntentJSONEqual(t, view.CurrentIssue, json.RawMessage(`{"code":"OZON_WRITES_DISABLED","resolved_at_ms":null,"allowed_actions":["resume"],"summary":"保持原文"}`))
 	raw, err := jsonwire.Marshal(view)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !json.Valid(raw) || !contains(string(raw), `"submissionIssues":[`) || contains(string(raw), "importProbe") {
+	if !json.Valid(raw) || !contains(string(raw), `"submission_issues":[`) || contains(string(raw), "import_probe") {
 		t.Fatal(string(raw))
 	}
 	src.State = "accepted"

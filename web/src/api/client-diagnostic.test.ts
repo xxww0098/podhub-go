@@ -75,7 +75,8 @@ test("an explicit Ozon context stays local; normalized v4 uses the refusal trace
     code: "OZON_DOWN", error: "upstream said token=abc", ocrRecovery: { requestId: "ocr-business-123" },
   }, { "x-request-id": "Cloud-Trace_123", "Retry-After": "2" }))
   const item = { offer_id: "ART-001", name: "Картина", images: ["https://cdn.invalid/1.jpg"], api_key: "k" }
-  const failure = await api.post(route("listingSubmit"), { storeId: "store-secret", rowIds: ["row-secret"] }, undefined, {
+  const failure = await api.post(route("listingSubmit"), { store_id: "store-secret", row_ids: ["row-secret"],
+    expected_revisions: [{ row_id: "row-secret", revision: 1 }] }, undefined, {
     platform: "ozon", stage: "submit", rawPayload: { kind: "ozon_fields", data: item },
   }).catch((reason: unknown) => reason) as CloudRefusal & { requestId?: string }
   assert.ok(failure instanceof Error)
@@ -90,7 +91,8 @@ test("an explicit Ozon context stays local; normalized v4 uses the refusal trace
   assert.equal(requests[0]!.credentials, "include")
   assert.equal(new Headers(requests[0]!.headers).get("Content-Type"), "application/json")
   const submitted = String(requests[0]!.body)
-  assert.equal(submitted, JSON.stringify({ storeId: "store-secret", rowIds: ["row-secret"] }))
+  assert.equal(submitted, JSON.stringify({ store_id: "store-secret", row_ids: ["row-secret"],
+    expected_revisions: [{ row_id: "row-secret", revision: 1 }] }))
   reportError("[listing-send]", failure, {}, { platform: "ozon", stage: "submit", rawPayload: null })
   await flushed()
   await publish("local-api-report")

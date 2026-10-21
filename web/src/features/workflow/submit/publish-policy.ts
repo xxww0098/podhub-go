@@ -154,7 +154,7 @@ export function publishPreflight(
   // The common Store of a same-design association, before any Seller call: a
   // spec that would be re-homed is refused here and re-assigned explicitly,
   // never quietly moved. Cloud re-checks the same rule on its own side.
-  const movedSpecs = publishAssociationStoreConflicts(workbench)
+  const movedSpecs = publishAssociationStoreConflicts(workbench).filter((id) => wanted.has(id))
   if (movedSpecs.length) {
     const moved = rows.find((row) => movedSpecs.includes(row.draftId))
     return {

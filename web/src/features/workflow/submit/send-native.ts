@@ -5,7 +5,8 @@
  * the material signature → native op 11 freeze via the Ozon adapter → one persistent-intent batch POST for the whole chunk.
  *
  * TypeScript never composes, serializes or hashes a Seller body: the native
- * core does, and Cloud rebuilds the canonical body itself under row locks.
+ * core does, and Cloud freezes the canonical snapshot optimistically, then
+ * checks its revision with CAS before committing the intent and job.
  * Anything refused before the POST is `blocked` (nothing was dispatched);
  * only the POST itself can end `unknown`.
  */

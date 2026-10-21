@@ -11,6 +11,7 @@
  */
 import { refuse } from "@/bindings/refusal"
 import { cardPayload } from "@/bindings/listing-projection"
+import { rowCacheScope } from "@/bindings/listing-row-cache"
 import type { WorkflowOperationRowResult, WorkflowRowsActionRequest } from "@/bindings/commands"
 import { bindListingRows, flushListingLogs, listingLog, releaseListingBatch } from "@/lib/listing-log"
 import { openCardSession } from "../card/card-session"
@@ -50,12 +51,13 @@ export async function sendRows(
   if (request.row_ids.length === 0) {
     throw refuse("workflow_send_empty", "没有可发送的商品", "先在表格中选择要发送的商品")
   }
+  const session = rowCacheScope()
   const listingBatchId = crypto.randomUUID()
   const listingStarted = performance.now()
   bindListingRows(listingBatchId, request.row_ids)
   listingLog({ module: "submit", event: "batch.start", correlation: { batchId: listingBatchId }, fields: { rows: request.row_ids.length } })
   try {
-    return await sendRowsBody(request, shouldStop, deps, listingBatchId, listingStarted)
+    return await sendRowsBody(request, (rowId) => !session.current() || shouldStop(rowId), deps, listingBatchId, listingStarted)
   } finally {
     flushListingLogs("batch")
     releaseListingBatch(listingBatchId)

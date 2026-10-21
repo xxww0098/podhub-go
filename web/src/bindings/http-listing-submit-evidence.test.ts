@@ -93,7 +93,7 @@ test("Draft evidence adds no serialization beyond the existing byte check and ac
   let serializations = 0, calls = 0, actual: string | undefined
   const input = Object.assign({ ...body }, { toJSON() {
     serializations++
-    return { ...body, cardId: `fixture-card-${serializations}` }
+    return { ...body, card_id: `fixture-card-${serializations}` }
   } })
   globalThis.fetch = async (url, init) => {
     calls++
@@ -104,7 +104,7 @@ test("Draft evidence adds no serialization beyond the existing byte check and ac
   try {
     await submitListingDrafts(input, Date.now() + 150_000, (evidence) => observed.push(evidence))
     assert.equal(serializations, 2, "one existing admission byte check, one API serialization, zero observer copies")
-    assert.equal(JSON.parse(actual!).cardId, "fixture-card-2", "the byte-check snapshot is not submitted evidence")
+    assert.equal(JSON.parse(actual!).card_id, "fixture-card-2", "the byte-check snapshot is not submitted evidence")
     assert.deepEqual(observed, [{ jsonText: actual, traceId: "actual-body-trace" }])
     assert.equal(calls, 1)
   } finally { globalThis.fetch = original }

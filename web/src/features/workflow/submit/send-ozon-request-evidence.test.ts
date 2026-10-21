@@ -55,7 +55,8 @@ for (const observerThrows of [false, true]) {
     }
     try {
       await submitOzonChunk(sending, items)
-      assert.equal(actual, JSON.stringify({ storeId: "fixture-store", row_ids: ids }))
+      assert.equal(actual, JSON.stringify({ store_id: "fixture-store", row_ids: ids,
+        expected_revisions: ids.map((rowId, i) => ({ row_id: rowId, revision: i + 1 })) }))
       assert.deepEqual(observed, [{ jsonText: actual, traceId: "batch-http-trace" }])
       assert.deepEqual(sizesAtObservation, [0], "HTTP evidence precedes row projection")
       assert.doesNotMatch(observed[0]!.jsonText!, /preview|private receipt|server-intent/)
@@ -155,7 +156,8 @@ test("legacy schema-sync replay observes each actual request independently with 
     assert.deepEqual(observed, [{ jsonText: actual[0], traceId: "first-trace" }, { jsonText: actual[1], traceId: "replay-trace" }])
     assert.notEqual(observed[0], observed[1])
     assert.notEqual(actual[0], actual[1])
-    assert.deepEqual(JSON.parse(actual[1]!), { storeId: "fixture-store", row_ids: [ids[1]] })
+    assert.deepEqual(JSON.parse(actual[1]!), { store_id: "fixture-store", row_ids: [ids[1]],
+      expected_revisions: [{ row_id: ids[1], revision: 2 }] })
     assert.equal(sending.results.get(ids[1]!)!.outcome, "blocked")
     assert.equal(calls, 2, "only the explicit caller replay sends again")
   } finally { globalThis.fetch = original }

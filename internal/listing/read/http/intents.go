@@ -140,11 +140,11 @@ func (h Host) intents(w http.ResponseWriter, r *http.Request) {
 	jsonwire.Write(w, http.StatusOK, struct {
 		Data struct {
 			Items      []domain.IntentView `json:"items"`
-			NextCursor *string             `json:"nextCursor,omitempty"`
+			NextCursor *string             `json:"next_cursor,omitempty"`
 		} `json:"data"`
 	}{Data: struct {
 		Items      []domain.IntentView `json:"items"`
-		NextCursor *string             `json:"nextCursor,omitempty"`
+		NextCursor *string             `json:"next_cursor,omitempty"`
 	}{Items: page, NextCursor: next}})
 }
 
@@ -434,11 +434,11 @@ func (h Host) releaseUnknown(w http.ResponseWriter, r *http.Request) {
 	}
 	jsonwire.Write(w, http.StatusOK, struct {
 		Data struct {
-			ReleasedIntentIDs []string            `json:"releasedIntentIds"`
+			ReleasedIntentIDs []string            `json:"released_intent_ids"`
 			Intents           []domain.IntentView `json:"intents"`
 		} `json:"data"`
 	}{Data: struct {
-		ReleasedIntentIDs []string            `json:"releasedIntentIds"`
+		ReleasedIntentIDs []string            `json:"released_intent_ids"`
 		Intents           []domain.IntentView `json:"intents"`
 	}{ReleasedIntentIDs: released, Intents: views}})
 }

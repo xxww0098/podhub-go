@@ -9,6 +9,7 @@ import { afterEach, before, beforeEach, test } from "node:test"
 
 import { route } from "@/api/routes"
 import { readCategorySchema, rememberDictionaryHits, residentCategorySchema } from "@/bindings/listing-material-cache"
+import { cachedListingRow } from "@/bindings/listing-row-cache"
 import { invalidateAllSessionCaches } from "@/lib/session-cache"
 import type { ListingCore } from "@/listing-core/wasm"
 import { sendPins } from "../prepare/executor-test-support"
@@ -40,7 +41,7 @@ async function residentSend(rowIds: readonly string[], store: (rowId: string) =>
   warm.restore()
 }
 
-const cloud = (reply: (body: { storeId: string, row_ids: string[] }, call: SendCall) => unknown) => (call: SendCall) => {
+const cloud = (reply: (body: { store_id: string, row_ids: string[] }, call: SendCall) => unknown) => (call: SendCall) => {
   if (call.url === SUBMIT) return reply(call.body, call)
   if (isSchema(call)) return schemaData()
   if (isRowRead(call)) return nativeRowView(call.url.split("/").at(-1)!)
@@ -88,7 +89,8 @@ test("resident rows and material send one POST with the click's pins and nothing
     assert.deepEqual(results.map((result) => [result.outcome, result.job_id]), [["start", "intent-row-1"], ["start", "intent-row-2"]])
     assert.equal(gets(stub.calls).length, 0, "a resident send reads nothing")
     assert.deepEqual(submits(stub.calls).map((call) => call.body), [{
-      storeId: "store-1", row_ids: ["row-1", "row-2"],
+      store_id: "store-1", row_ids: ["row-1", "row-2"],
+      expected_revisions: [{ row_id: "row-1", revision: 9 }, { row_id: "row-2", revision: 9 }],
     }])
     await sendRows({ row_ids: ["row-1"], expected_revisions: sendPins(["row-1"]) }, undefined, { core })
     assert.equal(core.loads, 1, "the schema handle stays resident for its material signature")
@@ -195,6 +197,33 @@ test("an identity switch while the material loads fences it out: blocked, no POS
   } finally { stub.restore() }
 })
 
+test("an identity switch after material loading cancels the send before native freeze can dispatch", async () => {
+  await residentSend(["old-workspace-row"])
+  let entered!: () => void, release!: () => void
+  const started = new Promise<void>((resolve) => { entered = resolve })
+  const held = new Promise<void>((resolve) => { release = resolve })
+  const core = {
+    async loadSchema(...args: Parameters<typeof native.loadSchema>) {
+      const handle = native.loadSchema(...args)
+      entered()
+      await held
+      return handle
+    },
+    freezeListing: native.freezeListing.bind(native),
+  }
+  const stub = serve(cloud((body) => ({ items: accepted(body).items.map((item) => ({ ...item, row: nativeRowView(item.row_id) })) })))
+  const running = sendRows({ row_ids: ["old-workspace-row"], expected_revisions: sendPins(["old-workspace-row"]) }, undefined, { core })
+  try {
+    await started
+    invalidateAllSessionCaches()
+    release()
+    const [result] = await running
+    assert.equal(submits(stub.calls).length, 0, "retiring the session closes admission after the native await")
+    assert.equal(result!.noop_reason, "cancelled")
+    assert.equal(cachedListingRow("old-workspace-row"), undefined, "the retired send cannot repopulate the new session")
+  } finally { release(); await running; stub.restore() }
+})
+
 test("different categories in one Store freeze on their own handles and share one POST", async () => {
   residentRows([nativeRowView("a"), nativeRowView("b", { cardId: "card-2", typeId: TYPE + 1 })])
   openCard()
@@ -292,7 +321,7 @@ test("submit refusals are blocked, while waiting and accepted rows remain noops"
 
 test("one Store's failed submit is unconfirmed; another Store still sends", async () => {
   await residentSend(["row-a", "row-b"], (id) => id === "row-a" ? "store-a" : "store-b")
-  const stub = serve(cloud((body) => body.storeId === "store-a" ? refusal(502, "OZON_PRODUCTS_FAILED", "store-a down") : accepted(body)))
+  const stub = serve(cloud((body) => body.store_id === "store-a" ? refusal(502, "OZON_PRODUCTS_FAILED", "store-a down") : accepted(body)))
   try {
     const results = await sendRows({ row_ids: ["row-a", "row-b"], expected_revisions: sendPins(["row-a", "row-b"], (id) => id === "row-a" ? "store-a" : "store-b") }, undefined, { core: native })
     assert.deepEqual([results[0]!.outcome, results[0]!.noop_reason, results[0]!.error?.message], ["unknown", "result_unconfirmed", "本次提交结果未确认，请核对原店铺的发送记录"])
@@ -307,7 +336,7 @@ test("one Store's failed submit is unconfirmed; another Store still sends", asyn
 test("a transport failure and a generic 409 are Unknown and never resent", async () => {
   await residentSend(["lost", "refused"], (id) => `store-${id}`)
   const stub = serve(cloud((body) => {
-    if (body.storeId === "store-lost") throw new TypeError("network down")
+    if (body.store_id === "store-lost") throw new TypeError("network down")
     return refusal(409, "conflict", "该店铺正在发送，本次未发送")
   }))
   try {
@@ -375,7 +404,7 @@ test("stop after two Stores start keeps both in-flight chunks and skips both fol
   await residentSend(rowIds, store)
   const releases: Array<() => void> = []
   let stop = false
-  const bodies: Array<{ storeId: string, row_ids: string[] }> = []
+  const bodies: Array<{ store_id: string, row_ids: string[] }> = []
   const stub = serve(cloud(async (body) => {
     bodies.push(body)
     await new Promise<void>((resolve) => releases.push(resolve))
@@ -388,7 +417,7 @@ test("stop after two Stores start keeps both in-flight chunks and skips both fol
     stop = true
     releases.splice(0).forEach((release) => release())
     const results = await running
-    assert.deepEqual(bodies.map(({ storeId, row_ids: ids }) => [storeId, ids.length]).sort(), [["store-a", 100], ["store-b", 100]])
+    assert.deepEqual(bodies.map(({ store_id, row_ids: ids }) => [store_id, ids.length]).sort(), [["store-a", 100], ["store-b", 100]])
     assert.equal(results.filter((result) => result.noop_reason === "cancelled").length, 2)
   } finally { releases.splice(0).forEach((release) => release()); stub.restore() }
 })
@@ -403,6 +432,8 @@ for (const count of [100, 101, 201]) {
       const batches = submits(stub.calls)
       assert.deepEqual(batches.map((call) => call.body.row_ids.length), count === 100 ? [100] : count === 101 ? [100, 1] : [100, 100, 1])
       assert.deepEqual(batches.flatMap((call) => call.body.row_ids), rowIds)
+      for (const batch of batches) assert.deepEqual(batch.body.expected_revisions,
+        batch.body.row_ids.map((rowId: string) => ({ row_id: rowId, revision: 9 })))
       assert.ok(results.every((result) => result.outcome === "start" && !result.error))
       assert.equal(gets(stub.calls).length, 0)
     } finally { stub.restore() }
@@ -415,11 +446,11 @@ for (const providerStatus of [200, 403, 429]) test(`250 rows keep batch receipts
   await residentSend(ids, store)
   const batches: { store: string, ids: string[] }[] = []
   const stub = serve(cloud((body) => {
-    batches.push({ store: body.storeId, ids: body.row_ids })
-    const status = body.storeId === "store-a" ? providerStatus : 200
-    const receipt = { batch_id: `${body.storeId}-${batches.length}`, item_count: body.row_ids.length, http_status: status, response_body: `provider response ${status}`, received_at_ms: 1 }
+    batches.push({ store: body.store_id, ids: body.row_ids })
+    const status = body.store_id === "store-a" ? providerStatus : 200
+    const receipt = { batch_id: `${body.store_id}-${batches.length}`, item_count: body.row_ids.length, http_status: status, response_body: `provider response ${status}`, received_at_ms: 1 }
     return { items: body.row_ids.map((id) => {
-      const row = nativeRowView(id, { storeId: body.storeId, viewRevision: 2 })
+      const row = nativeRowView(id, { storeId: body.store_id, viewRevision: 2 })
       return {
         row_id: id, created: true,
         intent: { id: `intent-${id}`, external_task_id: status === 200 ? "42" : undefined, submission_receipt: receipt },

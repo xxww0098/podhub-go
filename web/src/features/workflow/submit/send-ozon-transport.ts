@@ -1,9 +1,9 @@
 /**
  * The authorized Ozon send channel: the existing persistent-intent
  * `POST /api/listing/submit` (one Store per call). Only row ids and the
- * click's revision pins travel; Cloud re-authenticates, re-checks the pins
- * under row locks, rebuilds the canonical Seller body itself and records the
- * intent before any Seller call. The locally frozen body stays a local preview;
+ * click's revision pins travel; Cloud re-authenticates, checks the pins,
+ * freezes the canonical Seller body optimistically and checks its revision
+ * with CAS before committing the intent and job. The locally frozen body stays a local preview;
  * request failures leave reporting to the caller's normalization boundary.
  *
  * Every Cloud answer is kept as the row result the workbench already renders
@@ -23,7 +23,7 @@ import type { FrozenItem } from "../platforms/core"
 import type { OzonBody } from "../platforms/ozon"
 import { rowStatusView } from "../model/row-state"
 import { ozonAdmissionFailure, projectOzonListingIssue, type OzonSubmissionError } from "./ozon-admission-refusal"
-import { cancelledResult } from "./send-local"
+import { cancelledResult, revisionMismatch } from "./send-local"
 import { createPublishDiagnosticOperation } from "./queue/diagnostics"
 import type { PublishDiagnosticDispatch, PublishDiagnosticReference } from "../model/publish-diagnostic"
 
@@ -68,7 +68,8 @@ export function cloudRowResult(item: SubmitItem): OzonRowResult {
   const intent = item.intent
   const receipt = intent?.submission_receipt ?? undefined
   const listingIssue = projectOzonListingIssue(intent?.current_issue)
-  const error: OzonSubmissionError | undefined = listingIssue
+  const error: OzonSubmissionError | undefined = item.skipped === "revision_mismatch"
+    ? revisionMismatch(item.row_id).error : listingIssue
     ? { code: listingIssue.code, message: listingIssue.summary, remediation: listingIssue.remediation, listingIssue }
     : item.detail ? { code: "workflow_compose_failed", message: "该商品在云端拼接时被拒绝，请重新校验商品字段", remediation: "查看字段校验结果并修正；仍失败请联系管理员核对该商品。" } : undefined
   return {
@@ -86,10 +87,19 @@ export function cloudRowResult(item: SubmitItem): OzonRowResult {
 
 export async function submitOzonChunk(context: OzonSendContext, items: readonly FrozenItem<OzonBody>[]): Promise<void> {
   const settle = (rowId: string, result: WorkflowOperationRowResult) => { context.results.set(rowId, result) }
+  const expectedRevisions: { row_id: string; revision: number }[] = []
   const sending = items.filter((item) => {
-    if (!context.shouldStop(item.key)) return true
-    settle(item.key, cancelledResult(item.key))
-    return false
+    if (context.shouldStop(item.key)) {
+      settle(item.key, cancelledResult(item.key))
+      return false
+    }
+    const pin = context.pins.get(item.key)
+    if (!pin || !Number.isSafeInteger(pin.revision) || pin.revision < 0) {
+      settle(item.key, revisionMismatch(item.key))
+      return false
+    }
+    expectedRevisions.push({ row_id: item.key, revision: pin.revision })
+    return true
   })
   if (sending.length === 0) return
   const rowIds = sending.map((item) => item.key)
@@ -106,10 +116,12 @@ export async function submitOzonChunk(context: OzonSendContext, items: readonly 
   }
   try {
     // Stop closes later admission, not this request; keep its original body deadline.
-    const data = await request<SubmitData>("POST", apiPath, {
-      storeId: context.storeId,
+    const body = {
+      store_id: context.storeId,
       row_ids: rowIds,
-    }, {}, 150_000, undefined, { reportOwner: "caller",
+      expected_revisions: expectedRevisions,
+    } satisfies components["schemas"]["SubmitListingBatchRequest"]
+    const data = await request<SubmitData>("POST", apiPath, body, {}, 150_000, undefined, { reportOwner: "caller",
       onDispatch: () => { operation.onDispatch(); context.onDispatch?.() },
       onEvidence: (value) => {
         requestId = safeTraceId(value.traceId) ?? requestId
@@ -140,10 +152,11 @@ export async function submitOzonChunk(context: OzonSendContext, items: readonly 
     const unconfirmed = error.requestCause?.kind === "result_unconfirmed"
     const status = (reason as { status?: unknown }).status
     const apiStatus = typeof status === "number" && Number.isInteger(status) ? status : undefined
+    const changed = apiStatus === 409 && (reason as { serverCode?: unknown }).serverCode === "revision_mismatch"
     if (!requestId) requestId = safeTraceId(error.traceId)
     for (const rowId of rowIds) {
       if (context.results.has(rowId)) continue
-      const result = {
+      const result = changed ? revisionMismatch(rowId) : {
         row_id: rowId,
         outcome: (unconfirmed ? "unknown" : "blocked") as WorkflowOperationOutcome,
         blockers: [],

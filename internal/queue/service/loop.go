@@ -23,7 +23,9 @@ type Options struct {
 	// lock before it claims or scans. A missed seat waits until ctx ends.
 	Seat bool
 	// Work owns one claimed job, including its jobs-row settlement. Nil
-	// keeps Execute, which does not dial. Listing submit sets this.
+	// keeps Execute, which does not dial. Listing submit sets this. Calls
+	// may overlap up to Limit; listing.submit.batch stays serial per org.
+	// Callbacks must stop when their context is cancelled.
 	Work func(context.Context, *pgxpool.Pool, Claimed) error
 	// PrepareScans replaces idle ticks on the seven due scans. Nil leaves
 	// every tick idle. The reconciler sets this.
@@ -98,13 +100,73 @@ func runLoop(ctx context.Context, pool *pgxpool.Pool, opts Options) error {
 	defer poll.Stop()
 	defer sweep.Stop()
 	defer heart.Stop()
+	// A callback can still be cleaning up after it settles its jobs row.
+	// Bound both live callbacks and the DB's running rows, and keep all
+	// claims on this goroutine so the existing fairness cursor stays serial.
+	active := 0
+	type completion struct {
+		org  int64
+		tail chan struct{}
+	}
+	done := make(chan completion, opts.Limit)
+	// The batch admission guard counts other running rows. Keep each
+	// organization's batches in claim order so a simultaneously claimed
+	// group cannot all reject one another at that guard. Other orgs and
+	// other job kinds can execute concurrently.
+	batchTails := make(map[int64]chan struct{})
+	complete := func(finished completion) {
+		active--
+		if finished.tail != nil && batchTails[finished.org] == finished.tail {
+			delete(batchTails, finished.org)
+		}
+	}
+	defer func() {
+		for active > 0 {
+			complete(<-done)
+		}
+	}()
+	start := func(job Claimed) {
+		finished := completion{org: job.OrgID}
+		var previous <-chan struct{}
+		if job.Kind == "listing.submit.batch" {
+			previous = batchTails[job.OrgID]
+			finished.tail = make(chan struct{})
+			batchTails[job.OrgID] = finished.tail
+		}
+		active++
+		go func() {
+			defer func() {
+				if finished.tail != nil {
+					close(finished.tail)
+				}
+				done <- finished
+			}()
+			if previous != nil {
+				select {
+				case <-previous:
+				case <-ctx.Done():
+					return
+				}
+			}
+			if ctx.Err() != nil {
+				return
+			}
+			finishClaimed(ctx, pool, opts, job)
+		}()
+	}
 	poke(wake)
 	for {
+		if ctx.Err() != nil {
+			return nil
+		}
 		select {
 		case <-ctx.Done():
 			return nil
+		case finished := <-done:
+			complete(finished)
+			poke(wake)
 		case <-wake:
-			claimReady(ctx, pool, opts)
+			claimReady(ctx, pool, opts, opts.Limit-active, start)
 		case <-poll.C:
 			poke(wake)
 		case <-sweep.C:
@@ -151,7 +213,10 @@ func listenWake(ctx context.Context, pool *pgxpool.Pool, wake chan struct{}) {
 	}
 }
 
-func claimReady(ctx context.Context, pool *pgxpool.Pool, opts Options) {
+func claimReady(ctx context.Context, pool *pgxpool.Pool, opts Options, available int, start func(Claimed)) {
+	if available <= 0 || ctx.Err() != nil {
+		return
+	}
 	running, err := RunningOwned(ctx, pool, opts.Owner, opts.Kinds)
 	if err != nil {
 		if ctx.Err() == nil {
@@ -160,8 +225,11 @@ func claimReady(ctx context.Context, pool *pgxpool.Pool, opts Options) {
 		return
 	}
 	space := opts.Limit - running
+	if space > available {
+		space = available
+	}
 	for _, kind := range opts.Kinds {
-		if space <= 0 {
+		if space <= 0 || ctx.Err() != nil {
 			return
 		}
 		claimed, err := Claim(ctx, pool, kind, opts.Owner, space)
@@ -172,7 +240,12 @@ func claimReady(ctx context.Context, pool *pgxpool.Pool, opts Options) {
 			return
 		}
 		for _, job := range claimed {
-			finishClaimed(ctx, pool, opts, job)
+			// Cancellation after a committed claim leaves its lease for the
+			// normal recovery path; it must not start another side effect.
+			if ctx.Err() != nil {
+				return
+			}
+			start(job)
 		}
 		space -= len(claimed)
 	}
