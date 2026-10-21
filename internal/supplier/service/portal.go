@@ -17,7 +17,7 @@ type Portal interface {
 	Reject(ctx context.Context, userID int64, dispatchID, reason string) (contract.ActionData, error)
 	Ship(ctx context.Context, userID int64, dispatchID, tracking, note string, nowMs int64) (contract.ActionData, error)
 	DownloadAsset(ctx context.Context, userID int64, dispatchID, assetID string, wantJSON bool, nowMs int64) (contract.AssetBytes, error)
-	Catalog(ctx context.Context, nowMs int64) (contract.CatalogData, error)
+	Catalog(ctx context.Context, userID, nowMs int64) (contract.CatalogData, error)
 	CatalogImage(ctx context.Context, sourceID, file string, edge uint32) (contract.ImageBody, error)
 }
 
@@ -70,11 +70,11 @@ func (s Service) DownloadAsset(ctx context.Context, userID int64, dispatchID, as
 	return s.portal.DownloadAsset(ctx, userID, dispatchID, assetID, wantJSON, nowMs)
 }
 
-func (s Service) Catalog(ctx context.Context, nowMs int64) (contract.CatalogData, error) {
+func (s Service) Catalog(ctx context.Context, userID, nowMs int64) (contract.CatalogData, error) {
 	if s.portal == nil {
 		return contract.CatalogData{}, contract.ErrNotPorted
 	}
-	return s.portal.Catalog(ctx, nowMs)
+	return s.portal.Catalog(ctx, userID, nowMs)
 }
 
 func (s Service) CatalogImage(ctx context.Context, sourceID, file string, edge uint32) (contract.ImageBody, error) {

@@ -75,11 +75,6 @@ func WithRead(ctx context.Context, pool *pgxpool.Pool, begin Begin, orgID int64,
 	return Gate(ctx, pool, begin, orgID, true, false, fn)
 }
 
-// WithWrite is a supplier write transaction.
-func WithWrite(ctx context.Context, pool *pgxpool.Pool, begin Begin, orgID int64, fn func(pgx.Tx) error) error {
-	return Gate(ctx, pool, begin, orgID, false, true, fn)
-}
-
 // WithTx is a staff transaction that does not take the writer lease.
 func WithTx(ctx context.Context, pool *pgxpool.Pool, begin Begin, orgID int64, fn func(pgx.Tx) error) error {
 	if pool == nil || begin == nil {

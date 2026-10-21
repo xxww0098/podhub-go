@@ -58,7 +58,7 @@ func TestBindSKUsBatchParity(t *testing.T) {
 		shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
 	}
 	const now = int64(5000)
-	oracleTx, err := corerepo.BeginAdmin(ctx, pool)
+	oracleTx, err := corerepo.BeginStaff(ctx, pool)
 	if err != nil {
 		t.Fatal(err)
 	}

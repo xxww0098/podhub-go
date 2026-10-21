@@ -124,18 +124,6 @@ func open(key, nonce, ciphertext []byte) ([]byte, error) {
 	return corerepo.Open(key, nonce, ciphertext)
 }
 
-func (r Repo) withRead(ctx context.Context, orgID int64, fn func(pgx.Tx) error) error {
-	return corerepo.WithRead(ctx, r.pool, r.beginCore(), orgID, fn)
-}
-
-func (r Repo) withWrite(ctx context.Context, orgID int64, fn func(pgx.Tx) error) error {
-	return corerepo.WithWrite(ctx, r.pool, r.beginCore(), orgID, fn)
-}
-
-func (r Repo) gate(ctx context.Context, orgID int64, staff, write bool, fn func(pgx.Tx) error) error {
-	return corerepo.Gate(ctx, r.pool, r.beginCore(), orgID, staff, write, fn)
-}
-
 func (r Repo) withTx(ctx context.Context, orgID int64, fn func(pgx.Tx) error) error {
 	return corerepo.WithTx(ctx, r.pool, r.beginCore(), orgID, fn)
 }

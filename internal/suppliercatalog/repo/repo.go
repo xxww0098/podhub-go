@@ -15,7 +15,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/xxww0098/podhub-go/internal/platform/db"
-	"github.com/xxww0098/podhub-go/internal/platform/writer"
 	"github.com/xxww0098/podhub-go/internal/suppliercatalog/contract"
 )
 
@@ -76,16 +75,6 @@ func (r Repo) read(ctx context.Context, userID int64, fn func(pgx.Tx) error) err
 		return contract.Internal()
 	}
 	return db.InTx(ctx, r.Pool, db.CatalogManager(userID), fn)
-}
-
-func (r Repo) write(ctx context.Context, userID int64, fn func(pgx.Tx) error) error {
-	if r.Pool == nil {
-		return contract.Internal()
-	}
-	return db.InTx(ctx, r.Pool, db.CatalogManager(userID), func(tx pgx.Tx) error {
-		defer writer.Forget(tx)
-		return fn(tx)
-	})
 }
 
 func mapDB(err error) error {

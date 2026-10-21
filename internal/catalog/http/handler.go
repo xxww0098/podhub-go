@@ -2,6 +2,7 @@ package cataloghttp
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
+	"github.com/xxww0098/podhub-go/internal/platform/db"
 	"github.com/xxww0098/podhub-go/internal/platform/httpx/jsonwire"
 	"github.com/xxww0098/podhub-go/internal/platform/seal"
 )
@@ -28,6 +30,73 @@ type Host struct {
 	Seller SellerRead
 	Seals  seal.Ring
 }
+
+// readIn runs one read inside an application session.
+//
+// h.Pool on its own holds podhub_login_api connections, and that role is
+// NOINHERIT with zero table grants (00083): the GRANT podhub_app TO
+// podhub_login_api only takes effect after SET ROLE. A bare h.Pool.Query
+// therefore fails with "permission denied for table sc_*" rather than
+// returning no rows. Every catalog read that touches a table must go through
+// here.
+//
+// The catalog tables are platform-wide reference data, so this is AppRole
+// with org 0: the policies that matter for them are the published/listed
+// arms, not an org arm.
+func (h Host) readIn(ctx context.Context, fn func(pgx.Tx) error) error {
+	if h.Pool == nil {
+		return errNoPool
+	}
+	return db.InTx(ctx, h.Pool, db.AppRole(), fn)
+}
+
+// queryRow, query and exec are the session-wrapped forms of the pgxpool
+// methods, so a handler never has to remember to open an app session. Each
+// call is its own short transaction; the catalog reads are single-statement
+// lookups, not multi-statement units of work.
+// queryOne scans one row inside a single app session. It cannot return a
+// pgx.Row: the row is bound to the transaction that produced it, and readIn
+// closes that transaction before the caller could Scan it. So the scan
+// happens here, and a missing row surfaces as pgx.ErrNoRows exactly as a bare
+// QueryRow would.
+func (h Host) queryOne(ctx context.Context, sql string, argsAndDest ...any) error {
+	if h.Pool == nil {
+		return errNoPool
+	}
+	// The last argument is always the []any of scan targets; everything before
+	// it is a query parameter. Keeping one variadic list lets the call sites
+	// read like the pgxpool ones they replaced.
+	n := len(argsAndDest)
+	if n == 0 {
+		return errNoPool
+	}
+	dest, ok := argsAndDest[n-1].([]any)
+	if !ok {
+		return errNoPool
+	}
+	args := argsAndDest[:n-1]
+	return h.readIn(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, sql, args...).Scan(dest...)
+	})
+}
+
+func (h Host) exec(ctx context.Context, sql string, args ...any) (int64, error) {
+	var n int64
+	err := h.readIn(ctx, func(tx pgx.Tx) error {
+		tag, e := tx.Exec(ctx, sql, args...)
+		n = tag.RowsAffected()
+		return e
+	})
+	return n, err
+}
+
+// errRow makes a nil-pool Host behave like a failed query instead of panicking.
+type errRow struct{ err error }
+
+func (r errRow) Scan(dest ...any) error { return r.err }
+
+// errNoPool keeps the old nil-pool 500 path distinct from a query error.
+var errNoPool = errors.New("catalog: no database pool")
 
 // Mount registers catalog reads.
 func Mount(r chi.Router, h Host) {

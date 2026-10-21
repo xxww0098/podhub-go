@@ -16,6 +16,7 @@ import (
 
 	"github.com/xxww0098/podhub-go/internal/admin/contract"
 	"github.com/xxww0098/podhub-go/internal/admin/domain"
+	x1contract "github.com/xxww0098/podhub-go/internal/admin/x1/contract"
 	"github.com/xxww0098/podhub-go/internal/platform/config"
 	"github.com/xxww0098/podhub-go/internal/platform/db"
 	"github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
@@ -137,6 +138,27 @@ func TestSupplierX1RevisionsRLSAndLease(t *testing.T) {
 		t.Fatalf("prompt publish %+v", published)
 	}
 
+	// The row surface lists drafts and shows the factory's cost, so Detail must
+	// see scp_x1_brief and sc_source_offers.cost_cents through the staff read
+	// arm; a plain supplier read sees neither (00365 gives sc_source_offers no
+	// generic read policy at all).
+	detail, err := rows.Detail(ctx, actorA, src, 80)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed *x1contract.RowData
+	for i := range detail.Rows {
+		if detail.Rows[i].ProductID == "scp_x1_brief" {
+			listed = &detail.Rows[i]
+		}
+	}
+	if listed == nil {
+		t.Fatalf("draft row missing from detail: %d rows", len(detail.Rows))
+	}
+	if listed.CostCents == nil || *listed.CostCents != 1500 || listed.ShippingCostCents == nil || *listed.ShippingCostCents != 200 {
+		t.Fatalf("cost %v %v", listed.CostCents, listed.ShippingCostCents)
+	}
+
 	if _, err := rows.Detail(ctx, actorB, src, 80); err == nil || err.Error() != "记录不存在或已删除" {
 		t.Fatalf("cross owner %v", err)
 	}
@@ -154,9 +176,19 @@ func TestSupplierX1RevisionsRLSAndLease(t *testing.T) {
 	if err := tenantx.EnterApp(ctx, tx, 99); err != nil {
 		t.Fatal(err)
 	}
+	// 00365 puts sc_products under FORCE RLS. A plain tenant session with no
+	// supplier/manager/seller GUC must see nothing, and the staff flag is the
+	// only arm that opens the row: the /api/admin/supplier-dbs row surface runs
+	// as staff, so that is the transaction X1 now opens.
 	var seen int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM public.sc_products WHERE product_id = 'scp_x1_brief'`).Scan(&seen); err != nil || seen != 0 {
+		t.Fatalf("rls leak %d %v", seen, err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.staff_access', '1', true)`); err != nil {
+		t.Fatal(err)
+	}
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM public.sc_products WHERE product_id = 'scp_x1_brief'`).Scan(&seen); err != nil || seen != 1 {
-		t.Fatalf("no rls %d %v", seen, err)
+		t.Fatalf("staff read %d %v", seen, err)
 	}
 	_ = tx.Rollback(ctx)
 

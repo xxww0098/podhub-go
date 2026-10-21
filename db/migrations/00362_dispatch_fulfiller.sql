@@ -7,11 +7,14 @@
 -- holding an order nobody else could ship. Dispatch now names a person.
 -- +goose StatementBegin
 
--- Nullable on purpose. Every packet that exists today has no fulfiller, and a
--- NOT NULL column would fail the migration on a non-empty database. NULL also
--- *means* something: a legacy packet (see 00363's transitional read-only arm).
--- MATCH SIMPLE (the default) skips the FK check when any referencing column is
--- NULL, so a NULL fulfiller_id needs no matching row.
+-- Nullable on purpose. Every packet that exists at this point has no
+-- fulfiller, and a NOT NULL column would fail the migration on a non-empty
+-- database. NULL also *means* something: a residue packet, in flight to a
+-- factory whose active fulfiller set is empty (see the backfill note below).
+-- There is NO transitional compatibility arm: 00363 rewrites the supplier arm
+-- to be strictly fulfiller-scoped from the first packet on, so a NULL packet
+-- is visible to staff only. MATCH SIMPLE (the default) skips the FK check when
+-- any referencing column is NULL, so a NULL fulfiller_id needs no matching row.
 ALTER TABLE public.delegate_dispatches
     ADD COLUMN IF NOT EXISTS fulfiller_id uuid;
 
@@ -54,11 +57,14 @@ CREATE INDEX IF NOT EXISTS ix_delegate_dispatches_fulfiller
 -- source-wide rule. So no packet needs a transitional NULL: after this UPDATE
 -- the only NULLs belong to sources that have no active member at all.
 --
--- Those packets stay NULL and become invisible to suppliers (the staff arm
--- still sees them). They are the genuine residue: a packet in flight to a
--- factory that no longer has anyone able to take it. An operator resolves each
--- by hand. Making them invisible is correct -- handing them to a member who was
--- added after dispatch is the bug this batch exists to remove.
+-- Those packets stay NULL. They are the genuine residue: a packet in flight to
+-- a factory that no longer has anyone able to take it. An operator resolves
+-- each by hand. 00363's supplier arm is fulfiller-scoped (write-strict), so a
+-- NULL packet is not claimable by anyone, while the read-wide arm keeps it
+-- visible to whoever could previously read it, so an existing holder is not
+-- locked out of a packet already in their queue. Leaving them unassigned is
+-- correct -- handing them to a member who was added after dispatch is the bug
+-- this batch exists to remove.
 -- =======================================================================
 UPDATE public.delegate_dispatches d
    SET fulfiller_id = f.fulfiller_id

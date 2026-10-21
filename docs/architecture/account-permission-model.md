@@ -320,12 +320,12 @@ v2 要补三件事：
 
 「写」列指 `WITH CHECK` 的谓词，与 `USING` 相同，除非另注。
 
-> **实现期发现（O16，已登记 `docs/decisions.md`）**：本节「今天零策略」的六张表（`sc_sources`/`sc_source_prop_defs`/`sc_products`/`sc_skus`/`sc_source_offers`/`sc_price_versions`）**不能只加上面两臂就上线**。前置审计（§10.2 要求的「确认所有既有 `podhub_app` 读路径都带 `staff_access`」）**不成立**：
+> **实现期发现（O16，已登记 `docs/decisions.md`）**：本节所述的六张表（`sc_sources`/`sc_source_prop_defs`/`sc_products`/`sc_skus`/`sc_source_offers`/`sc_price_versions`）在 00365 之前**没有任何 RLS 策略**，因此**不能只加上面两臂就上线**。前置审计（§10.2 要求的「确认所有既有 `podhub_app` 读路径都带 `staff_access`」）**不成立**：
 >
 > | 既有读路径 | 会话 | 是否带 `staff_access` |
 > | --- | --- | --- |
-> | `admin/catalog/repo/catalog.go:42` `read()` | `corerepo.BeginAdmin` | ❌（`admin/core/repo/staff.go:15-25` 只设 role） |
-> | `admin/shipping/repo/shipping.go:82,98` | `corerepo.BeginAdmin` | ❌ |
+> | `admin/catalog/repo/catalog.go` `read()` | `corerepo.BeginAdmin` → **已改** `BeginStaff` | ❌ → ✅（`admin/core/repo/staff.go:15-25` 只设 role，故必须换） |
+> | `admin/shipping/repo/shipping.go` | `corerepo.BeginAdmin` → **已改** `BeginStaff` | ❌ → ✅ |
 > | `supply/repo/catalog.go:33` `PublicCatalog`（公开路由 `/api/public/platform-catalog`） | `BeginApp(..., 0)` | ❌ |
 > | `supplier/repo/catalog.go` `Catalog()` | `BeginApp(..., 0)` | ❌ |
 > | `listing/read/http/*`（`http.go:138`） | `BeginApp(orgID)` | ❌ |
@@ -339,7 +339,7 @@ v2 要补三件事：
 >
 > 改为**按上表七条读路径各自的真实语义给臂**，一次到位：
 >
-> - `staff_access='1'` —— 全权读写（admin 屏幕）。这要求把 `admin/catalog/repo/catalog.go:46,62` 与 `admin/shipping/repo/shipping.go:82,98` 的 `BeginAdmin` 换成 `BeginStaff`：`BeginAdmin` 只设 `role=podhub_app`，**不设** `staff_access`，所以不换的话后台目录页自己读不到数据（这正是实现期 `catalog_whitelist_test.go` 报 500 的原因）。
+> - `staff_access='1'` —— 全权读写（admin 屏幕）。这要求把 `admin/catalog/repo/catalog.go` 与 `admin/shipping/repo/shipping.go` 的 `BeginAdmin` 换成 `BeginStaff`（**已落地**）：`BeginAdmin` 只设 `role=podhub_app`，**不设** `staff_access`，所以不换的话后台目录页自己读不到数据（这正是实现期 `catalog_whitelist_test.go` 报 500 的原因）。
 > - **`published` 的目录是平台共享参考数据，对任意 app 会话可读。** 这条是本节 v2 论断里最需要修正的一点：v2 曾把商品目录当租户数据，按「只读自己绑定的 source」收口，实测直接打挂了卖家建 listing 卡片（`listing_hot_test.go` 要读**别的** source 的 `sc_products`/`sc_skus`）与公共目录页。目录不是租户数据——卖家挑商品时看的是平台货盘。
 > - 供应商经 `sc_source_members` 读**自己** source 的全部商品（含未发布草稿，供应商门户要列草稿）。
 > - 卖家经 `delegate_bindings` 读自己绑定的 source。
@@ -350,12 +350,12 @@ v2 要补三件事：
 
 | 表 | staff 臂 | org 臂 | supplier/fulfiller 臂（v2） | 备注 |
 | --- | --- | --- | --- | --- |
-| `sc_sources` | 新：`app.staff_access='1'` | — | 新：active `sc_catalog_managers` 命中 `source_id` | 今天**零策略** |
-| `sc_source_prop_defs` | 同上 | — | 同上（继承 `sc_sources.listed` 仍由查询过滤） | |
-| `sc_products` | 同上 | — | 同上 | |
-| `sc_skus` | 同上 | — | 同上（`sku → product → source`） | |
-| `sc_source_offers` | 同上 | — | 同上 | 含 `cost_cents` / `shipping_cost_cents` |
-| `sc_price_versions` | 同上 | — | **只读**（写只允许 staff） | 价格历史不可被商品负责人改写 |
+| `sc_sources` | 新：`app.staff_access='1'` | — | 新：active `sc_catalog_managers` 命中 `source_id`（`FOR ALL`，但 `listed`/`accepts_delegate` 由 `trg_sc_sources_manager_pin_flags` 钉住） | 00365 前**零策略** |
+| `sc_source_prop_defs` | 同上 | — | 同上（继承 `sc_sources.listed` 仍由查询过滤） | 00365 前零策略 |
+| `sc_products` | 同上 | — | 同上 | 00365 前零策略 |
+| `sc_skus` | 同上 | — | 同上（`sku → product → source`） | 00365 前零策略 |
+| `sc_source_offers` | 同上 | — | **manager 臂是 `SELECT` + `UPDATE` 两条，不是 `FOR ALL`**：§8.2 只给「改 `cost_cents`」，不给建/删工厂供给行。**settlement 读臂已删除**（按 `source_id` 关联会让卖家经一单读到全厂成本表） | 含 `cost_cents` / `shipping_cost_cents`；00365 前零策略 |
+| `sc_price_versions` | 同上 | — | **只读**（写只允许 staff） | 价格历史不可被商品负责人改写；00365 前零策略 |
 | `sc_source_members` | 保留（`00203:155-159`） | — | 保留 self 臂（`00203:150-153`） | |
 | `sc_source_fulfillers` | 新增 staff 臂 | — | 新增 self 臂（`user_id = app.current_supplier_user_id`） | 只读自己的授权行 |
 | `sc_catalog_managers` | 新增 staff 臂 | — | 新增 self 臂（`user_id = app.current_org_user_id`，见 6.2） | |

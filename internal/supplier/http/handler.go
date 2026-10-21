@@ -46,7 +46,7 @@ type Actions interface {
 	Accept(ctx context.Context, userID int64, dispatchID string) (contract.ActionData, error)
 	Reject(ctx context.Context, userID int64, dispatchID, reason string) (contract.ActionData, error)
 	DownloadAsset(ctx context.Context, userID int64, dispatchID, assetID string, wantJSON bool, nowMs int64) (contract.AssetBytes, error)
-	Catalog(ctx context.Context, nowMs int64) (contract.CatalogData, error)
+	Catalog(ctx context.Context, userID, nowMs int64) (contract.CatalogData, error)
 	CatalogImage(ctx context.Context, sourceID, file string, edge uint32) (contract.ImageBody, error)
 }
 
@@ -239,10 +239,11 @@ func (d Deps) asset(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d Deps) catalog(w http.ResponseWriter, r *http.Request) {
-	if _, ok := dbUser(w, r, d.Session); !ok {
+	p, ok := dbUser(w, r, d.Session)
+	if !ok {
 		return
 	}
-	data, err := d.Actions.Catalog(r.Context(), d.now().UnixMilli())
+	data, err := d.Actions.Catalog(r.Context(), p.UserID, d.now().UnixMilli())
 	if err != nil {
 		writeCatalog(w, err)
 		return

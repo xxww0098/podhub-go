@@ -65,9 +65,6 @@ func TestMapDBMatchesLegacy(t *testing.T) {
 	if err := corerepo.WithRead(nil, nil, nil, 1, nil); err == nil || err.Error() != "服务暂不可用" {
 		t.Fatalf("nil read %v", err)
 	}
-	if err := corerepo.WithWrite(nil, nil, nil, 1, nil); err == nil || err.Error() != "服务暂不可用" {
-		t.Fatalf("nil write %v", err)
-	}
 	if err := corerepo.WithTx(nil, nil, nil, 1, nil); err == nil || err.Error() != "服务暂不可用" {
 		t.Fatalf("nil tx %v", err)
 	}

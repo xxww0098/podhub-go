@@ -28,13 +28,14 @@ func (h Host) visibleStore(w http.ResponseWriter, r *http.Request, p access.Prin
 	var assignee *int64
 	var membershipID *int64
 	var role *string
-	err := h.Pool.QueryRow(r.Context(), `
+	err := h.queryOne(r.Context(), `
 		SELECT s.assignee_membership_id, m.id, m.role
 		FROM organization_stores s
 		LEFT JOIN organization_members m
 		  ON m.org_id = s.org_id AND m.user_id = $3 AND m.status = 'active' AND NOT m.manual_disabled AND NOT m.quota_suspended
 		WHERE s.org_id = $1 AND s.uuid = $2::uuid AND s.deleted_at_ms IS NULL
-		LIMIT 1`, p.OrgID, storeID, p.UserID).Scan(&assignee, &membershipID, &role)
+		LIMIT 1`, p.OrgID, storeID, p.UserID,
+		[]any{&assignee, &membershipID, &role})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeErr(w, http.StatusNotFound, "Store 不存在", "not_found")
 		return false
@@ -98,10 +99,11 @@ func (h Host) schema(w http.ResponseWriter, r *http.Request) {
 	}
 	var payload []byte
 	var fetched int64
-	err := h.Pool.QueryRow(r.Context(), `
+	err := h.queryOne(r.Context(), `
 		SELECT payload, fetched_at_ms FROM public.ozon_catalog_schema_cache
 		WHERE description_category_id = $1 AND type_id = $2 AND language = $3`,
-		category, typeID, language).Scan(&payload, &fetched)
+		category, typeID, language,
+		[]any{&payload, &fetched})
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		slog.Error("catalog schema", "err", err)
 		writeErr(w, http.StatusInternalServerError, access.MsgUnavailable, "internal")
@@ -117,7 +119,7 @@ func (h Host) schema(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err == nil {
-		if _, delErr := h.Pool.Exec(r.Context(), `
+		if _, delErr := h.exec(r.Context(), `
 			DELETE FROM public.ozon_catalog_schema_cache
 			WHERE description_category_id = $1 AND type_id = $2 AND language = $3 AND fetched_at_ms = $4`,
 			category, typeID, language, fetched); delErr != nil {
@@ -127,11 +129,11 @@ func (h Host) schema(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var usable bool
-	if err := h.Pool.QueryRow(r.Context(), `
+	if err := h.queryOne(r.Context(), `
 		SELECT EXISTS (
 			SELECT 1 FROM public.platform_catalog_fetch_keys
 			WHERE api_key_nonce IS NOT NULL AND api_key_ciphertext IS NOT NULL AND disabled_at_ms IS NULL
-		)`).Scan(&usable); err != nil {
+		)`, []any{&usable}); err != nil {
 		slog.Error("catalog schema keys", "err", err)
 		writeErr(w, http.StatusInternalServerError, access.MsgUnavailable, "internal")
 		return
@@ -234,17 +236,17 @@ func (h Host) loadFetchConfig(r *http.Request) (fetchView, error) {
 		Keys: []fetchKey{}, WBCredential: fetchWB{}, LastError: "",
 	}
 	var lease *int64
-	err := h.Pool.QueryRow(r.Context(), `
+	err := h.queryOne(r.Context(), `
 		SELECT enabled, schedule_mode, at_minute, window_start_minute, window_end_minute, utc_offset_minutes,
 		       language, next_run_at_ms, last_run_at_ms, last_status, last_error, last_duration_ms, last_root_nodes,
 		       last_key_client_id, last_key_attempts, failure_streak, updated_at_ms, lease_until_ms,
 		       (wb_token_nonce IS NOT NULL AND wb_token_ciphertext IS NOT NULL), wb_credential_revision, wb_last_verified_at_ms
-		FROM public.platform_catalog_fetch_config WHERE singleton = true`).Scan(
+		FROM public.platform_catalog_fetch_config WHERE singleton = true`, []any{
 		&view.Enabled, &view.ScheduleMode, &view.AtMinute, &view.WindowStartMinute, &view.WindowEndMinute,
 		&view.UTCOffsetMinutes, &view.Language, &view.NextRunAtMs, &view.LastRunAtMs, &view.LastStatus,
 		&view.LastError, &view.LastDurationMs, &view.LastRootNodes, &view.LastKeyClientID, &view.LastKeyAttempts,
 		&view.FailureStreak, &view.UpdatedAtMs, &lease, &view.WBCredential.Configured, &view.WBCredential.CredentialRevision,
-		&view.WBCredential.LastVerifiedAtMs)
+		&view.WBCredential.LastVerifiedAtMs})
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = nil
 	}
@@ -252,65 +254,77 @@ func (h Host) loadFetchConfig(r *http.Request) (fetchView, error) {
 		return fetchView{}, err
 	}
 	view.Running = domain.FetchRunning(lease, h.Now())
-	rows, err := h.Pool.Query(r.Context(), `
-		SELECT client_id,
-		       (api_key_nonce IS NOT NULL AND api_key_ciphertext IS NOT NULL),
-		       disabled_at_ms IS NOT NULL
-		FROM public.platform_catalog_fetch_keys
-		ORDER BY position`)
-	if err != nil {
-		return fetchView{}, err
-	}
-	defer rows.Close()
-	view.Keys = []fetchKey{}
-	for rows.Next() {
-		var key fetchKey
-		if err := rows.Scan(&key.ClientID, &key.APIKeyConfigured, &key.Disabled); err != nil {
-			return fetchView{}, err
+	// platform_catalog_fetch_keys is a platform table: on a bare login
+	// connection this is permission denied, so it must run in an app session.
+	err = h.readIn(r.Context(), func(tx pgx.Tx) error {
+		rows, qErr := tx.Query(r.Context(), `
+			SELECT client_id,
+			       (api_key_nonce IS NOT NULL AND api_key_ciphertext IS NOT NULL),
+			       disabled_at_ms IS NOT NULL
+			FROM public.platform_catalog_fetch_keys
+			ORDER BY position`)
+		if qErr != nil {
+			return qErr
 		}
-		view.Keys = append(view.Keys, key)
-	}
-	if err := rows.Err(); err != nil {
+		defer rows.Close()
+		for rows.Next() {
+			var key fetchKey
+			if err := rows.Scan(&key.ClientID, &key.APIKeyConfigured, &key.Disabled); err != nil {
+				return err
+			}
+			view.Keys = append(view.Keys, key)
+		}
+		return rows.Err()
+	})
+	if err != nil {
 		return fetchView{}, err
 	}
 	language := view.Language
 	if language == "" {
 		language = domain.FetchLanguage
 	}
-	freshRows, err := h.Pool.Query(r.Context(), `
-		SELECT cat.fetched_at_ms
-		FROM (SELECT DISTINCT description_category_id, type_id
-		      FROM public.sc_products
-		      WHERE NOT archived AND description_category_id > 0 AND type_id > 0
-		      ORDER BY description_category_id, type_id
-		      LIMIT $1) AS refs
-		LEFT JOIN public.ozon_category_current cat
-		  ON cat.description_category_id = refs.description_category_id
-		 AND cat.type_id = refs.type_id
-		 AND cat.language = $2`, domain.FreshnessSample, language)
+	// sc_products is under FORCE RLS (00365) and has no grant on a bare
+	// login connection, so the sample must also run in an app session.
+	now := h.Now().UnixMilli()
+	err = h.readIn(r.Context(), func(tx pgx.Tx) error {
+		freshRows, qErr := tx.Query(r.Context(), `
+			SELECT cat.fetched_at_ms
+			FROM (SELECT DISTINCT description_category_id, type_id
+			      FROM public.sc_products
+			      WHERE NOT archived AND description_category_id > 0 AND type_id > 0
+			      ORDER BY description_category_id, type_id
+			      LIMIT $1) AS refs
+			LEFT JOIN public.ozon_category_current cat
+			  ON cat.description_category_id = refs.description_category_id
+			 AND cat.type_id = refs.type_id
+			 AND cat.language = $2`, domain.FreshnessSample, language)
+		if qErr != nil {
+			return qErr
+		}
+		defer freshRows.Close()
+		for freshRows.Next() {
+			var fetched *int64
+			if err := freshRows.Scan(&fetched); err != nil {
+				return err
+			}
+			view.CoordinateFreshness.Total++
+			switch domain.FreshnessBand(fetched, now) {
+			case "fresh":
+				view.CoordinateFreshness.Fresh++
+			case "stale":
+				view.CoordinateFreshness.Stale++
+			case "expired":
+				view.CoordinateFreshness.Expired++
+			default:
+				view.CoordinateFreshness.Missing++
+			}
+		}
+		return freshRows.Err()
+	})
 	if err != nil {
 		return fetchView{}, err
 	}
-	defer freshRows.Close()
-	now := h.Now().UnixMilli()
-	for freshRows.Next() {
-		var fetched *int64
-		if err := freshRows.Scan(&fetched); err != nil {
-			return fetchView{}, err
-		}
-		view.CoordinateFreshness.Total++
-		switch domain.FreshnessBand(fetched, now) {
-		case "fresh":
-			view.CoordinateFreshness.Fresh++
-		case "stale":
-			view.CoordinateFreshness.Stale++
-		case "expired":
-			view.CoordinateFreshness.Expired++
-		default:
-			view.CoordinateFreshness.Missing++
-		}
-	}
-	return view, freshRows.Err()
+	return view, nil
 }
 
 func (h Host) wbSubject(w http.ResponseWriter, r *http.Request) {
@@ -346,14 +360,14 @@ func (h Host) wbSubject(w http.ResponseWriter, r *http.Request) {
 	var characteristics json.RawMessage
 	var revision *int64
 	var validated *string
-	err := h.Pool.QueryRow(r.Context(), `
+	err := h.queryOne(r.Context(), `
 		SELECT c.parent_id, c.subject_name, c.parent_name, c.fields, c.content_digest, c.fetched_at_ms,
 		       d.characteristics, d.revision, d.validated_catalog_digest
 		FROM public.wb_category_current AS c
 		LEFT JOIN public.wb_category_field_defaults AS d USING (subject_id, language)
 		WHERE c.subject_id = $1 AND c.language = $2
-		LIMIT 1`, subject, lang).Scan(
-		&parentID, &subjectName, &parentName, &fields, &digest, &fetched, &characteristics, &revision, &validated)
+		LIMIT 1`, subject, lang, []any{
+		&parentID, &subjectName, &parentName, &fields, &digest, &fetched, &characteristics, &revision, &validated})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeWB(w, subject, lang, nil, nil, domain.WBIssues(false, false, false, false))
 		return

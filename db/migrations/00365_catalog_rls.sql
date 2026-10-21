@@ -269,9 +269,24 @@ CREATE POLICY sc_source_offers_staff_all ON public.sc_source_offers
     USING (current_setting('app.staff_access', true) = '1')
     WITH CHECK (current_setting('app.staff_access', true) = '1');
 
+-- Plan 8.2 grants the manager "change cost_cents / shipping_cost_cents".
+-- Creation and deletion of an offer are not in that table: an offer is the
+-- factory's own supply record and only the platform (or the factory) opens
+-- and closes one. So the manager arm is SELECT + UPDATE, not FOR ALL.
 DROP POLICY IF EXISTS sc_source_offers_manager_all ON public.sc_source_offers;
-CREATE POLICY sc_source_offers_manager_all ON public.sc_source_offers
-    FOR ALL TO podhub_app
+DROP POLICY IF EXISTS sc_source_offers_manager_read ON public.sc_source_offers;
+CREATE POLICY sc_source_offers_manager_read ON public.sc_source_offers
+    FOR SELECT TO podhub_app
+    USING (EXISTS (
+        SELECT 1 FROM public.sc_catalog_managers m
+        WHERE m.source_id = sc_source_offers.source_id
+          AND m.user_id = NULLIF(current_setting('app.current_org_user_id', true), '')::bigint
+          AND m.status = 'active'
+    ));
+
+DROP POLICY IF EXISTS sc_source_offers_manager_update ON public.sc_source_offers;
+CREATE POLICY sc_source_offers_manager_update ON public.sc_source_offers
+    FOR UPDATE TO podhub_app
     USING (EXISTS (
         SELECT 1 FROM public.sc_catalog_managers m
         WHERE m.source_id = sc_source_offers.source_id
@@ -295,18 +310,17 @@ CREATE POLICY sc_source_offers_supplier_read ON public.sc_source_offers
           AND sm.status = 'active'
     ));
 
--- The seller settles a delegate order against the cost it was quoted. That
--- read is scoped to a dispatch of the seller's own order, not to a source, so
--- it cannot be used to scan another factory's costs.
-DROP POLICY IF EXISTS sc_source_offers_settlement_read ON public.sc_source_offers;
-CREATE POLICY sc_source_offers_settlement_read ON public.sc_source_offers
-    FOR SELECT TO podhub_app
-    USING (EXISTS (
-        SELECT 1 FROM public.delegate_dispatches d
-        JOIN public.delegate_orders o ON o.order_id = d.order_id
-        WHERE d.source_id = sc_source_offers.source_id
-          AND o.org_id = NULLIF(current_setting('app.current_org_id', true), '')::bigint
-    ));
+-- There is deliberately NO seller-settlement read arm here.
+--
+-- An arm keyed on "the seller has a dispatch from this source" is not a
+-- settlement read: it exposes EVERY offer of that source, because the join
+-- can only reach source_id, not the offer_ids inside the dispatch payload.
+-- One dispatch would therefore hand the seller the factory's whole cost
+-- sheet and let it reconstruct the platform's margin.
+--
+-- The settlement path does not need the arm: delegate/settle runs inside
+-- lockedOrgWrite / Receipt, which both set app.staff_access = '1' before
+-- reading, so the staff_all arm above serves it.
 
 -- =======================================================================
 -- sc_price_versions: the platform SELLING price.
@@ -368,6 +382,55 @@ CREATE POLICY sc_price_versions_seller_read ON public.sc_price_versions
         WHERE k.sku_id = sc_price_versions.sku_id
           AND b.org_id = NULLIF(current_setting('app.current_org_id', true), '')::bigint
     ));
+
+-- =======================================================================
+-- Manager column guard on sc_sources.
+--
+-- Plan 8.2 lets a catalog manager edit its own source row but reserves two
+-- flags to the platform: `listed` (is this factory on the storefront) and
+-- `accepts_delegate` (does it take delegate work). A RLS WITH CHECK cannot
+-- express "this column may not change" because it only sees the NEW row --
+-- referencing OLD there is rejected by PostgreSQL. So the restriction is a
+-- trigger: it runs for every UPDATE, and it compares OLD/NEW only when the
+-- session is a manager session (staff passes, because staff_all is the
+-- platform's own arm).
+-- =======================================================================
+CREATE OR REPLACE FUNCTION public.sc_sources_manager_pin_flags()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public
+AS $pin$
+BEGIN
+    -- Staff bypass the pin; the staff_all policy is the platform's own arm.
+    IF COALESCE(current_setting('app.staff_access', true) = '1', false) THEN
+        RETURN NEW;
+    END IF;
+    -- Only a manager session can reach an UPDATE at all (that is the only
+    -- write arm for podhub_app outside staff), but guard the check anyway:
+    -- an unknown session must not inherit the bypass by accident.
+    IF NOT EXISTS (
+        SELECT 1 FROM public.sc_catalog_managers m
+        WHERE m.source_id = OLD.source_id
+          AND m.user_id = NULLIF(current_setting('app.current_org_user_id', true), '')::bigint
+          AND m.status = 'active'
+    ) THEN
+        RETURN NEW;
+    END IF;
+    IF NEW.listed IS DISTINCT FROM OLD.listed
+       OR NEW.accepts_delegate IS DISTINCT FROM OLD.accepts_delegate THEN
+        RAISE EXCEPTION 'CATALOG_MANAGER_FLAG_FORBIDDEN'
+            USING DETAIL = 'listed and accepts_delegate are platform-only'
+                  ', a catalog manager may not change them';
+    END IF;
+    RETURN NEW;
+END
+$pin$;
+
+DROP TRIGGER IF EXISTS trg_sc_sources_manager_pin_flags ON public.sc_sources;
+CREATE TRIGGER trg_sc_sources_manager_pin_flags
+    BEFORE UPDATE ON public.sc_sources
+    FOR EACH ROW
+    EXECUTE FUNCTION public.sc_sources_manager_pin_flags();
 
 -- =======================================================================
 -- Assert the flags rather than trusting the statements above.

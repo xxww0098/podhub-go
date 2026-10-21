@@ -56,7 +56,7 @@ func (s *spy) Ship(context.Context, int64, string, string, string, int64) (contr
 func (s *spy) DownloadAsset(context.Context, int64, string, string, bool, int64) (contract.AssetBytes, error) {
 	return contract.AssetBytes{Grant: &contract.DownloadGrant{URL: "http://127.0.0.1/x", ExpiresAtMs: 1}}, nil
 }
-func (s *spy) Catalog(context.Context, int64) (contract.CatalogData, error) {
+func (s *spy) Catalog(context.Context, int64, int64) (contract.CatalogData, error) {
 	return contract.CatalogData{DBs: []contract.SourceCard{}, PropDefs: []contract.PropDef{}, Rows: []contract.CatalogRow{}}, nil
 }
 func (s *spy) CatalogImage(context.Context, string, string, uint32) (contract.ImageBody, error) {

@@ -10,35 +10,43 @@ import (
 	"github.com/xxww0098/podhub-go/internal/supplier/domain"
 )
 
-func (r Repo) Catalog(ctx context.Context, nowMs int64) (contract.CatalogData, error) {
+func (r Repo) Catalog(ctx context.Context, userID, nowMs int64) (contract.CatalogData, error) {
 	var out contract.CatalogData
 	if r.pool == nil || r.begin == nil {
 		return out, contract.ErrUnavailable
 	}
-	tx, err := r.begin(ctx, r.pool.Begin, 0)
-	if err != nil {
-		return out, mapDB(err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	dbs, err := r.listedSources(ctx, tx)
+	// The catalogue joins sc_source_offers for shipping cost, and 00365 gives
+	// that table NO generic read arm (cost_cents would leak the margin). The
+	// supplier arm needs app.current_supplier_user_id, so this cannot run on a
+	// bare app session: it must open a supplier session for THIS user.
+	err := r.withTx(ctx, 0, userID, func(tx pgx.Tx) error {
+		return r.catalogIn(ctx, tx, nowMs, &out)
+	})
 	if err != nil {
 		return out, err
+	}
+	return out, nil
+}
+
+// catalogIn runs inside the supplier session opened by Catalog. withTx owns
+// the commit, so this must not commit.
+func (r Repo) catalogIn(ctx context.Context, tx pgx.Tx, nowMs int64, out *contract.CatalogData) error {
+	dbs, err := r.listedSources(ctx, tx)
+	if err != nil {
+		return err
 	}
 	props, visible, err := r.propDefs(ctx, tx)
 	if err != nil {
-		return out, err
+		return err
 	}
 	rows, err := r.sellerRows(ctx, tx, visible, nowMs)
 	if err != nil {
-		return out, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return out, mapDB(err)
+		return err
 	}
 	out.DBs = dbs
 	out.PropDefs = props
 	out.Rows = rows
-	return out, nil
+	return nil
 }
 
 func (r Repo) listedSources(ctx context.Context, tx pgx.Tx) ([]contract.SourceCard, error) {

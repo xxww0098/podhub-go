@@ -330,6 +330,10 @@ var intentionalFunctions = map[string]bool{
 	// can no longer credit the factory wallet from a supplier session. The
 	// definer function does it instead, in the same transaction.
 	"delegate_credit_fulfiller_wallet": true,
+	// 00365: pins sc_sources.listed / accepts_delegate against a catalogue
+	// manager. A RLS WITH CHECK cannot compare OLD and NEW (PostgreSQL rejects
+	// OLD there), so the column-level restriction is a BEFORE UPDATE trigger.
+	"sc_sources_manager_pin_flags": true,
 }
 
 // intentionalRLSPolicies are FORCE RLS policies added in migration 00294.
@@ -397,11 +401,15 @@ var intentionalRLSPolicies = map[string]map[string]bool{
 		"sc_skus_supplier_read":  true,
 		"sc_skus_seller_read":    true,
 	},
+	// 00365: the manager arm is split SELECT/UPDATE (plan 8.2 grants it
+	// "change cost_cents", not "create or delete a factory supply row"), and
+	// the settlement arm was removed: keyed on source_id it exposed the whole
+	// factory cost sheet to any seller holding one dispatch.
 	"sc_source_offers": {
-		"sc_source_offers_staff_all":       true,
-		"sc_source_offers_manager_all":     true,
-		"sc_source_offers_supplier_read":   true,
-		"sc_source_offers_settlement_read": true,
+		"sc_source_offers_staff_all":      true,
+		"sc_source_offers_manager_read":   true,
+		"sc_source_offers_manager_update": true,
+		"sc_source_offers_supplier_read":  true,
 	},
 	"sc_price_versions": {
 		"sc_price_versions_staff_all":      true,
@@ -874,7 +882,10 @@ func compareRoutineBodies(t failer, ctx context.Context, pool *pgxpool.Pool) {
 		}
 	}
 	// 00350 removes the month-start constraint trigger.
-	if triggers != 27 {
-		t.Fatalf("triggers %d, want 27", triggers)
+	// 00365 adds trg_sc_sources_manager_pin_flags: the catalogue-manager
+	// column guard that keeps sc_sources.listed / accepts_delegate platform-
+	// only (a WITH CHECK cannot compare OLD and NEW, so it must be a trigger).
+	if triggers != 28 {
+		t.Fatalf("triggers %d, want 28", triggers)
 	}
 }
