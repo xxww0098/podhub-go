@@ -29,6 +29,7 @@ type quotePayload struct {
 	Period        domain.Period    `json:"period"`
 	Renewal       domain.Target    `json:"renewal"`
 	UpdateRenewal bool             `json:"update_renewal"`
+	ChangePeriods []domain.Period  `json:"change_periods,omitempty"`
 }
 
 // Quote persists a preview only. ConfirmSchedule or CreateSubscriptionOrder consumes it.
@@ -141,6 +142,9 @@ func Quote(ctx context.Context, pool *pgxpool.Pool, orgID int64, req QuoteReques
 		payload := quotePayload{Revision: sub.Revision, Request: req, Quote: q, Renewal: renewal, UpdateRenewal: update, Period: domain.Period{
 			Target: domain.Target{PlanKey: q.PlanKey, ExtraStores: q.ExtraStores, ExtraMembers: q.ExtraMembers}, PlanStores: plan.Stores, PlanMembers: plan.Members,
 			PlanMonthlyCents: plan.MonthlyCents, StoreMonthlyCents: cat.StoreMonthlyCents, MemberMonthlyCents: cat.MemberMonthlyCents, KeepStores: req.KeepStores, KeepMembers: req.KeepMembers}}
+		if q.Action == domain.ActionChange && !q.ScheduleOnly {
+			payload.ChangePeriods = sub.Periods
+		}
 		var id string
 		if err = tx.QueryRow(ctx, `INSERT INTO subscription_quotes
    (id,org_id,revision,action,months,term_start,term_end,plan_key,extra_stores,extra_members,keep_store_ids,keep_member_ids,amount_cents,breakdown,expires_at,created_at,payload)
@@ -148,15 +152,9 @@ func Quote(ctx context.Context, pool *pgxpool.Pool, orgID int64, req QuoteReques
 			orgID, sub.Revision, q.Action, q.Months, q.TermStart, q.TermEnd, q.PlanKey, q.ExtraStores, q.ExtraMembers, req.KeepStores, req.KeepMembers, q.AmountCents, mustJSON(q.Breakdown), now.Add(QuoteTTL), now, mustJSON(payload)).Scan(&id); err != nil {
 			return err
 		}
-		currentStores, currentMembers := 1, 1
-		if sub.Active(now) {
-			for _, p := range sub.Periods {
-				if !p.Start.After(now) {
-					currentStores = p.PlanStores + p.ExtraStores
-					currentMembers = p.PlanMembers + p.ExtraMembers
-					break
-				}
-			}
+		var currentStores, currentMembers int
+		if err = tx.QueryRow(ctx, `SELECT stores,members FROM public.subscription_capacity($1,$2)`, orgID, now).Scan(&currentStores, &currentMembers); err != nil {
+			return err
 		}
 		base, err := cat.Base(renewal.PlanKey, renewal.ExtraStores, renewal.ExtraMembers)
 		if err != nil {

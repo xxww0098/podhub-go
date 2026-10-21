@@ -74,6 +74,18 @@ WHERE org_id = $1 AND expires_at > clock.now`, orgID).Scan(&expires); err != nil
 		return userscontract.SeatLoad{}, err
 	}
 	st.Expires = expires
+	// Subscription workspaces follow paid periods when an override is cleared.
+	var purchasedStores, purchasedMembers int64
+	err = tx.QueryRow(ctx, `SELECT c.plan_key,c.purchased_stores,c.purchased_members,p.keep_store_ids,p.keep_member_ids,
+ CASE WHEN c.plan_key<>'free' THEN s.term_end END
+ FROM public.subscription_capacity($1,$2) c JOIN subscriptions s ON s.org_id=$1
+ LEFT JOIN subscription_periods p ON p.org_id=$1 AND p.starts_at<=$2 AND $2<p.ends_at`, orgID, s.Now()).Scan(&st.Plan, &purchasedStores, &purchasedMembers, &st.KeepStores, &st.KeepMembers, &st.Expires)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return userscontract.SeatLoad{}, err
+	}
+	if err == nil {
+		st.PurchasedStores, st.PurchasedMembers = &purchasedStores, &purchasedMembers
+	}
 	members, err := s.listMembers(ctx, tx, orgID)
 	if err != nil {
 		return userscontract.SeatLoad{}, err
@@ -89,8 +101,8 @@ func (s *Users) listMembers(ctx context.Context, tx pgx.Tx, orgID int64) ([]user
 	rows, err := tx.Query(ctx, `
 SELECT id, user_id, role, join_order, manual_disabled, quota_suspended
 FROM organization_members
-WHERE org_id = $1
-ORDER BY join_order ASC, id ASC`, orgID)
+WHERE org_id = $1 AND (status='active' OR NOT EXISTS(SELECT 1 FROM subscriptions WHERE org_id=$1))
+ORDER BY (role='owner') DESC, join_order ASC, id ASC`, orgID)
 	if err != nil {
 		return nil, err
 	}
@@ -204,12 +216,12 @@ func (s *Users) ApplySeats(ctx context.Context, actor corecontract.Actor, public
 		tag, err := tx.Exec(ctx, `
 UPDATE organizations
    SET member_seat_limit_override = $1, store_limit_override = $2,
-       plan = $3, seat_limit = $4, plan_expires_at = $5,
+       plan = $3, seat_limit = $4, plan_expires_at = $5, store_limit = $8,
        quota_revision = quota_revision + 1,
        updated_at = clock_timestamp()
  WHERE id = $6 AND quota_revision = $7`,
 			target.MemberOverride, target.StoreOverride, target.Plan, target.SeatLimit, target.Expires,
-			load.State.OrgID, load.State.Revision)
+			load.State.OrgID, load.State.Revision, target.StoreLimit)
 		if err != nil {
 			return err
 		}
@@ -217,7 +229,7 @@ UPDATE organizations
 			return contract.Conflict("配额状态已变化，请重新预览")
 		}
 		next = load.State.Revision + 1
-		stores, err = s.reconcileStores(ctx, tx, load.State.OrgID, target.StoreLimit, true)
+		stores, err = s.reconcileStores(ctx, tx, load.State.OrgID, target, true)
 		if err != nil {
 			return err
 		}
@@ -225,7 +237,7 @@ UPDATE organizations
 		if err != nil {
 			return err
 		}
-		members = userscontract.PlanMembers(target.SeatLimit, fresh)
+		members = target.PlanMembers(fresh)
 		if err := s.applyMemberFlags(ctx, tx, members); err != nil {
 			return err
 		}
@@ -262,6 +274,9 @@ UPDATE organizations
 			memberNow = *target.MemberOverride
 		}
 		planDefault := userscontract.StoreQuotaFor(userscontract.TierKey(load.State.Plan), load.State.SeatLimit)
+		if load.State.PurchasedStores != nil {
+			planDefault = *load.State.PurchasedStores
+		}
 		shownFrom := planDefault
 		if load.State.StoreOverride != nil {
 			shownFrom = *load.State.StoreOverride
@@ -319,15 +334,12 @@ UPDATE organization_members
 	return nil
 }
 
-func (s *Users) reconcileStores(ctx context.Context, tx pgx.Tx, orgID, limit int64, lock bool) (userscontract.StorePlan, error) {
-	if limit < 1 {
-		limit = 1
-	}
+func (s *Users) reconcileStores(ctx context.Context, tx pgx.Tx, orgID int64, target userscontract.SeatTarget, lock bool) (userscontract.StorePlan, error) {
 	rows, err := s.listStores(ctx, tx, orgID, lock)
 	if err != nil {
 		return userscontract.StorePlan{}, err
 	}
-	plan := userscontract.PlanStores(limit, rows)
+	plan := target.PlanStores(rows)
 	if err := s.applyStoreFlags(ctx, tx, rows, plan); err != nil {
 		return userscontract.StorePlan{}, err
 	}
@@ -370,6 +382,13 @@ UPDATE organization_stores
 }
 
 func (s *Users) reconcileStoresAgain(ctx context.Context, tx pgx.Tx, orgID int64, tier string) (userscontract.StorePlan, error) {
+	var subscribed bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM subscriptions WHERE org_id=$1)`, orgID).Scan(&subscribed); err != nil {
+		return userscontract.StorePlan{}, err
+	}
+	if subscribed {
+		return userscontract.StorePlan{}, nil // The target already reconciled paid capacity and retention.
+	}
 	var seat int64
 	var override *int64
 	err := tx.QueryRow(ctx, `SELECT seat_limit, store_limit_override FROM organizations WHERE id = $1`, orgID).Scan(&seat, &override)
@@ -391,7 +410,7 @@ func (s *Users) reconcileStoresAgain(ctx context.Context, tx pgx.Tx, orgID int64
 	if override != nil && *override >= 1 {
 		limit = *override
 	}
-	return s.reconcileStores(ctx, tx, orgID, limit, true)
+	return s.reconcileStores(ctx, tx, orgID, userscontract.SeatTarget{StoreLimit: limit}, true)
 }
 
 // EnsureOwner returns the account's first live owner org, bootstrapping one
@@ -439,26 +458,26 @@ func (s *Users) SetSeats(ctx context.Context, actor corecontract.Actor, publicID
 		tag, err := tx.Exec(ctx, `
 UPDATE organizations
    SET member_seat_limit_override = $1, store_limit_override = $2,
-       plan = $3, seat_limit = $4, plan_expires_at = $5,
+       plan = $3, seat_limit = $4, plan_expires_at = $5, store_limit = $8,
        quota_revision = quota_revision + 1,
        updated_at = clock_timestamp()
  WHERE id = $6 AND quota_revision = $7`,
 			target.MemberOverride, target.StoreOverride, target.Plan, target.SeatLimit, target.Expires,
-			load.State.OrgID, load.State.Revision)
+			load.State.OrgID, load.State.Revision, target.StoreLimit)
 		if err != nil {
 			return err
 		}
 		if tag.RowsAffected() != 1 {
 			return contract.Conflict("配额状态已变化，请重新预览")
 		}
-		if _, err := s.reconcileStores(ctx, tx, load.State.OrgID, target.StoreLimit, true); err != nil {
+		if _, err := s.reconcileStores(ctx, tx, load.State.OrgID, target, true); err != nil {
 			return err
 		}
 		fresh, err := s.listMembers(ctx, tx, load.State.OrgID)
 		if err != nil {
 			return err
 		}
-		plan := userscontract.PlanMembers(target.SeatLimit, fresh)
+		plan := target.PlanMembers(fresh)
 		if err := s.applyMemberFlags(ctx, tx, plan); err != nil {
 			return err
 		}
@@ -483,6 +502,9 @@ UPDATE organizations
 		}
 		next := load.State.Revision + 1
 		shownFrom := userscontract.StoreQuotaFor(userscontract.TierKey(load.State.Plan), load.State.SeatLimit)
+		if load.State.PurchasedStores != nil {
+			shownFrom = *load.State.PurchasedStores
+		}
 		if load.State.StoreOverride != nil {
 			shownFrom = *load.State.StoreOverride
 		}

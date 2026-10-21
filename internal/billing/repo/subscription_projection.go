@@ -170,30 +170,14 @@ func ProjectSubscription(ctx context.Context, tx pgx.Tx, orgID int64, now time.T
 	if err := s.loadPeriods(ctx, tx, now); err != nil {
 		return Projection{}, err
 	}
-	cat, err := Catalog(ctx, tx)
-	if err != nil {
+	active := s.Active(now)
+	var planKey string
+	var seats, stores int64
+	if err := tx.QueryRow(ctx, `SELECT plan_key,members,stores FROM public.subscription_capacity($1,$2)`, orgID, now).Scan(&planKey, &seats, &stores); err != nil {
 		return Projection{}, err
 	}
-	active := s.Active(now)
-	planKey := domain.PlanFree
-	if active {
-		planKey = s.PlanKey
-	}
-	plan, ok := cat.Plans[planKey]
-	if !ok {
-		return Projection{}, errors.New("plan missing from catalogue: " + planKey)
-	}
-	seats := int64(plan.Members)
-	stores := int64(plan.Stores)
 	var expires *time.Time
 	if active {
-		for _, p := range s.Periods {
-			if !p.Start.After(now) && p.End.After(now) {
-				seats = int64(p.PlanMembers + p.ExtraMembers)
-				stores = int64(p.PlanStores + p.ExtraStores)
-				break
-			}
-		}
 		expires = s.TermEnd
 	}
 	if active {

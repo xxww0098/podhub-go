@@ -162,8 +162,8 @@ func (a *API) PreviewSeats(ctx context.Context, actor domain.Actor, publicID str
 	if msg != "" {
 		return nil, contract.Validation(msg)
 	}
-	members := domain.PlanMembers(target.SeatLimit, load.Members)
-	stores := domain.PlanStores(target.StoreLimit, load.Stores)
+	members := target.PlanMembers(load.Members)
+	stores := target.PlanStores(load.Stores)
 	return previewBody(load.State, target, members, stores), nil
 }
 
