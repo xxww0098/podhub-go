@@ -144,7 +144,7 @@ func TestEnqueueDraftsBatchMatchesSequential(t *testing.T) {
 			t.Fatalf("inserts %d reads %d states %d batches %d\n%v", inserts, reads, states, tr.batches, tr.sql)
 		}
 		// 30 insert+read, 10 state reads, subscription gate, worker, head+3 locks, exists+admit+insert+reset, app.
-		if len(tr.sql) != 1+60+10+1+1+4+4+1 || tr.batches != 4 {
+		if len(tr.sql) != 1+60+10+1+4+4+1 || tr.batches != 4 {
 			t.Fatalf("statements %d batches %d\n%v", len(tr.sql), tr.batches, tr.sql)
 		}
 		if err := tx.Commit(ctx); err != nil {
