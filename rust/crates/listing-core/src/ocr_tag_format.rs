@@ -1,18 +1,10 @@
-//! Search-tag text, rewritten into the required form before the contract sees it.
+//! Search-tag text, rewritten into the required form before the contract accepts it.
 //!
 //! The model intermittently separates tags with commas or periods, uses a
 //! hyphen where the contract wants `_`, wraps a tag in quotes, or omits `#`.
 //! Those are format, not a different set of words. This module rewrites only
 //! that punctuation. It does not drop extra tags, truncate a long tag, or
-//! invent a missing word. Fewer or more than five tags stay as they are;
-//! `ocr_contract::check` still refuses the count.
-//!
-//! [`decode_tags`] is a pure function of the `tags` value. `raw_fields` is its
-//! only caller (`ocr_contract.rs`), and that helper has two callers:
-//! `result_from_object` (what `parse_completion` and WASM Op 17 accept) and
-//! `answer_fields` (the folded fields the corrective retry reads, including an
-//! answer `check` refuses). The same punctuation therefore reaches the retry
-//! planner. `source_fields` still quotes the tags text as the model wrote it.
+//! invent a missing word. `ocr_contract::check` still refuses what remains.
 
 use serde_json::Value;
 

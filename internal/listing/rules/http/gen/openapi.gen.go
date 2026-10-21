@@ -9,7 +9,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/oapi-codegen/runtime"
-	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
 // Defines values for BannedTagRuleMatchMode.
@@ -81,11 +80,9 @@ type ListingSubmitVerdict struct {
 
 // ListingTagCheckRequest defines model for ListingTagCheckRequest.
 type ListingTagCheckRequest struct {
-	// RowIds Stored-row batch form: freeze exactly these rows. Routed before the Draft check.
-	RowIds       *[]openapi_types.UUID `json:"row_ids,omitempty"`
-	RulesVersion string                `json:"rules_version"`
-	Tags         *[]string             `json:"tags,omitempty"`
-	Text         *string               `json:"text,omitempty"`
+	RulesVersion string    `json:"rules_version"`
+	Tags         *[]string `json:"tags,omitempty"`
+	Text         *string   `json:"text,omitempty"`
 }
 
 // ListingValidateResponse defines model for ListingValidateResponse.

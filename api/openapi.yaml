@@ -453,56 +453,56 @@ paths:
       operationId: postListingSubmit
       tags:
       - listing
-      summary: 'Freeze stored rows or drafts and enqueue listing.submit.batch. The body shape selects the path: rowIds is a stored-row batch send, storeId or items is a Draft send, anything else is a tag check. A tag check needs no principal; a batch or Draft send requires the submit role. It does not dial Ozon.'
+      summary: 'Freeze stored rows or drafts and enqueue listing.submit.batch. The body shape selects the path: row_ids is a stored-row batch send, store_id or items is a Draft send, anything else is a tag check. A stored-row send requires the exact server revisions captured by the click. A tag check needs no principal; a batch or Draft send requires the submit role. It does not dial Ozon.'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              "$ref": "#/components/schemas/ListingTagCheckRequest"
+              "$ref": "#/components/schemas/ListingSubmitRequest"
       responses:
         '200':
           description: Batch or Draft send frozen and enqueued; per-row items
           content:
             application/json:
               schema:
-                type: object
+                "$ref": "#/components/schemas/ListingSubmitResponse"
         '400':
-          description: The body is not a tag check, a banned tag refused the gate, or the Draft envelope is invalid
+          description: The body is not a tag check, a banned tag refused the gate, the Draft envelope is invalid, or the stored-row IDs and revision pins are not a one-to-one match
           content:
             application/json:
               schema:
-                "$ref": "#/components/schemas/ListingError"
+                "$ref": "#/components/schemas/SubmitListingError"
         '401':
           description: Not signed in
           content:
             application/json:
               schema:
-                "$ref": "#/components/schemas/ListingError"
+                "$ref": "#/components/schemas/SubmitListingError"
         '403':
           description: Role cannot submit
           content:
             application/json:
               schema:
-                "$ref": "#/components/schemas/ListingError"
+                "$ref": "#/components/schemas/SubmitListingError"
         '404':
           description: The card or row no longer exists
           content:
             application/json:
               schema:
-                "$ref": "#/components/schemas/ListingError"
+                "$ref": "#/components/schemas/SubmitListingError"
         '409':
-          description: rulesVersion is not the version currently served, or the store send slot is held
+          description: Rules or schema must be refreshed, the store send slot is held, or a stored row changed during freeze (code revision_mismatch). A revision_mismatch rolls back this entire request; none of its new intents or jobs are committed. A revision already stale when read is instead returned as an individual skipped item in the 200 response.
           content:
             application/json:
               schema:
-                "$ref": "#/components/schemas/ListingError"
+                "$ref": "#/components/schemas/SubmitListingError"
         '503':
           description: Rules or the matcher could not be evaluated. This is not a pass.
           content:
             application/json:
               schema:
-                "$ref": "#/components/schemas/ListingError"
+                "$ref": "#/components/schemas/SubmitListingError"
   "/api/me/catalog/banned-tags":
     get:
       operationId: bannedTagsEnabled
@@ -1339,7 +1339,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                "$ref": "#/components/schemas/ListingIntentsResponse"
         '400':
           description: limit or cursor rejected
           content:
@@ -1382,7 +1382,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                "$ref": "#/components/schemas/ListingReleaseUnknownResponse"
         '400':
           description: Body refused
           content:
@@ -1431,7 +1431,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                "$ref": "#/components/schemas/ListingIntentResponse"
         '401':
           description: Not signed in
           content:
@@ -1468,7 +1468,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                "$ref": "#/components/schemas/ListingIntentResponse"
         '401':
           description: Not signed in
           content:
@@ -1511,7 +1511,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                "$ref": "#/components/schemas/ListingIntentResponse"
         '401':
           description: Not signed in
           content:
@@ -19226,6 +19226,105 @@ components:
           type: array
           items:
             "$ref": "#/components/schemas/WriterLeaseHealth"
+    ListingSubmitRequest:
+      oneOf:
+      - "$ref": "#/components/schemas/SubmitListingBatchRequest"
+      - "$ref": "#/components/schemas/SubmitListingDraftsRequest"
+      - "$ref": "#/components/schemas/ListingTagCheckRequest"
+    ListingSubmitResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      properties:
+        data:
+          oneOf:
+          - "$ref": "#/components/schemas/SubmitListingBatchData"
+          - "$ref": "#/components/schemas/SubmitListingDraftsData"
+    ListingIntentResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      properties:
+        data:
+          "$ref": "#/components/schemas/ListingIntentView"
+    ListingIntentsResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      properties:
+        data:
+          "$ref": "#/components/schemas/ListingIntentsPage"
+    ListingReleaseUnknownResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      properties:
+        data:
+          "$ref": "#/components/schemas/ReleaseUnknownListingIntentsData"
+    SubmitListingBatchRequest:
+      type: object
+      additionalProperties: false
+      description: |-
+        Freeze stored rows at the server revisions the operator selected.
+        Each row_ids entry must have exactly one expected_revisions entry;
+        duplicate, missing, extra or invalid pins are refused before freezing.
+        A row that is already at another revision is skipped as revision_mismatch.
+        If a new intent's row changes during freezing, the entire request rolls
+        back and returns HTTP 409 revision_mismatch. No new work from that request
+        is enqueued. Replaying an existing intent does not update its projection.
+      required:
+      - store_id
+      - row_ids
+      - expected_revisions
+      properties:
+        store_id:
+          type: string
+          format: uuid
+        row_ids:
+          type: array
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        expected_revisions:
+          type: array
+          minItems: 1
+          maxItems: 100
+          description: Exact listing_rows.revision values, not browser-local edit or queue revisions.
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - row_id
+            - revision
+            properties:
+              row_id:
+                type: string
+                format: uuid
+              revision:
+                type: integer
+                format: int64
+                minimum: 0
+    SubmitListingError:
+      description: The tag gate uses message; authenticated batch and draft refusals use error. HTTP 409 with code revision_mismatch proves this request's transaction did not commit.
+      oneOf:
+      - "$ref": "#/components/schemas/ListingError"
+      - type: object
+        additionalProperties: false
+        required:
+        - error
+        - code
+        properties:
+          error:
+            type: string
+          code:
+            type: string
     ListingTagCheckRequest:
       type: object
       additionalProperties: false
@@ -19241,12 +19340,6 @@ components:
             type: string
         text:
           type: string
-        row_ids:
-          type: array
-          items:
-            type: string
-            format: uuid
-          description: 'Stored-row batch form: freeze exactly these rows. Routed before the Draft check.'
     BannedTagRule:
       type: object
       additionalProperties: false
@@ -30893,6 +30986,11 @@ components:
           type: string
           description: Free-text detail for `compose_failed`; empty otherwise.
           nullable: true
+        fields:
+          type: array
+          items:
+            type: string
+          description: Human-readable names of required fields that need attention after a schema change.
         intent:
           oneOf:
           - type: 'null'
@@ -30921,11 +31019,16 @@ components:
             "$ref": "#/components/schemas/DraftBlocker"
           description: |-
             Non-field refusals (supplier video snapshot, shipping readiness),
-            present only when `skipReason` is `blocked` for such a reason.
+            present only when `skip_reason` is `blocked` for such a reason.
         detail:
           type: string
           description: Free-text detail for `compose_failed`; empty otherwise.
           nullable: true
+        fields:
+          type: array
+          items:
+            type: string
+          description: Human-readable names of required fields that need attention after a schema change.
         intent:
           oneOf:
           - type: 'null'
@@ -30936,7 +31039,7 @@ components:
             "$ref": "#/components/schemas/DraftFieldIssue"
           description: |-
             Field findings of the server's `build → validate`, present only when
-            `skipReason` is `blocked` for a field reason. Every one is a
+            `skip_reason` is `blocked` for a field reason. Every one is a
             validate-stage finding (`KnownIssueKey` with `stage: validate` when
             its code is declared): this endpoint has no other field producer.
         outcome:
@@ -30954,6 +31057,11 @@ components:
       - server_schema_revision
       - items
       properties:
+        accepted_schema_revisions:
+          type: array
+          items:
+            type: string
+          description: Current and accepted legacy schema revisions for this snapshot. Advisory only; the server decides whether a submitted revision can be accepted.
         items:
           type: array
           items:
@@ -30971,6 +31079,9 @@ components:
         (browser-owned-listing slice 07). The server always rebuilds from the
         Draft — resolve → validate → freeze runs here, never trusting a
         browser-frozen body or its own validation conclusions (README S2, I7).
+        The HTTP envelope uses snake_case; opaque listing-core items retain
+        their domain representation. Supplying tags or text requires the
+        current rules_version and runs the tag gate before freezing.
       required:
       - store_id
       - card_id
@@ -30978,8 +31089,11 @@ components:
       properties:
         card_id:
           type: string
+          format: uuid
         items:
           type: array
+          minItems: 1
+          maxItems: 100
           items: {}
           description: |-
             `SubmitDraft[]` (`listing_core::ops::SubmitDraft`), 1..=100 items. Kept
@@ -30989,6 +31103,15 @@ components:
             browser obtains each item from the same ABI (`projectSubmitDraft`,
             `SubmitDraft::from_row`) rather than assembling it by hand.
         store_id:
+          type: string
+          format: uuid
+        rules_version:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        text:
           type: string
       additionalProperties: false
     SupplierAccountMemberView:

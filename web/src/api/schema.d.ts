@@ -52,7 +52,7 @@ export interface paths {
     post: operations["postListingValidate"];
   };
   "/api/listing/submit": {
-    /** Freeze stored rows or drafts and enqueue listing.submit.batch. The body shape selects the path: rowIds is a stored-row batch send, storeId or items is a Draft send, anything else is a tag check. A tag check needs no principal; a batch or Draft send requires the submit role. It does not dial Ozon. */
+    /** Freeze stored rows or drafts and enqueue listing.submit.batch. The body shape selects the path: row_ids is a stored-row batch send, store_id or items is a Draft send, anything else is a tag check. A stored-row send requires the exact server revisions captured by the click. A tag check needs no principal; a batch or Draft send requires the submit role. It does not dial Ozon. */
     post: operations["postListingSubmit"];
   };
   "/api/me/catalog/banned-tags": {
@@ -2261,12 +2261,49 @@ export interface components {
       ts: number;
       writer_leases: components["schemas"]["WriterLeaseHealth"][];
     };
+    ListingSubmitRequest: components["schemas"]["SubmitListingBatchRequest"] | components["schemas"]["SubmitListingDraftsRequest"] | components["schemas"]["ListingTagCheckRequest"];
+    ListingSubmitResponse: {
+      data: components["schemas"]["SubmitListingBatchData"] | components["schemas"]["SubmitListingDraftsData"];
+    };
+    ListingIntentResponse: {
+      data: components["schemas"]["ListingIntentView"];
+    };
+    ListingIntentsResponse: {
+      data: components["schemas"]["ListingIntentsPage"];
+    };
+    ListingReleaseUnknownResponse: {
+      data: components["schemas"]["ReleaseUnknownListingIntentsData"];
+    };
+    /**
+     * @description Freeze stored rows at the server revisions the operator selected.
+     * Each row_ids entry must have exactly one expected_revisions entry;
+     * duplicate, missing, extra or invalid pins are refused before freezing.
+     * A row that is already at another revision is skipped as revision_mismatch.
+     * If a new intent's row changes during freezing, the entire request rolls
+     * back and returns HTTP 409 revision_mismatch. No new work from that request
+     * is enqueued. Replaying an existing intent does not update its projection.
+     */
+    SubmitListingBatchRequest: {
+      /** Format: uuid */
+      store_id: string;
+      row_ids: string[];
+      /** @description Exact listing_rows.revision values, not browser-local edit or queue revisions. */
+      expected_revisions: {
+          /** Format: uuid */
+          row_id: string;
+          /** Format: int64 */
+          revision: number;
+        }[];
+    };
+    /** @description The tag gate uses message; authenticated batch and draft refusals use error. HTTP 409 with code revision_mismatch proves this request's transaction did not commit. */
+    SubmitListingError: OneOf<[components["schemas"]["ListingError"], {
+      error: string;
+      code: string;
+    }]>;
     ListingTagCheckRequest: {
       rules_version: string;
       tags?: string[];
       text?: string;
-      /** @description Stored-row batch form: freeze exactly these rows. Routed before the Draft check. */
-      row_ids?: string[];
     };
     BannedTagRule: {
       term: string;
@@ -7765,6 +7802,8 @@ export interface components {
       created: boolean;
       /** @description Free-text detail for `compose_failed`; empty otherwise. */
       detail?: string | null;
+      /** @description Human-readable names of required fields that need attention after a schema change. */
+      fields?: string[];
       intent?: null | components["schemas"]["ListingIntentView"];
       row?: null | components["schemas"]["ListingRowView"];
       row_id: string;
@@ -7773,15 +7812,17 @@ export interface components {
     SubmitListingDraftItemResult: {
       /**
        * @description Non-field refusals (supplier video snapshot, shipping readiness),
-       * present only when `skipReason` is `blocked` for such a reason.
+       * present only when `skip_reason` is `blocked` for such a reason.
        */
       blockers?: components["schemas"]["DraftBlocker"][];
       /** @description Free-text detail for `compose_failed`; empty otherwise. */
       detail?: string | null;
+      /** @description Human-readable names of required fields that need attention after a schema change. */
+      fields?: string[];
       intent?: null | components["schemas"]["ListingIntentView"];
       /**
        * @description Field findings of the server's `build → validate`, present only when
-       * `skipReason` is `blocked` for a field reason. Every one is a
+       * `skip_reason` is `blocked` for a field reason. Every one is a
        * validate-stage finding (`KnownIssueKey` with `stage: validate` when
        * its code is declared): this endpoint has no other field producer.
        */
@@ -7791,6 +7832,8 @@ export interface components {
       skip_reason?: null | components["schemas"]["SubmitDraftSkipReason"];
     };
     SubmitListingDraftsData: {
+      /** @description Current and accepted legacy schema revisions for this snapshot. Advisory only; the server decides whether a submitted revision can be accepted. */
+      accepted_schema_revisions?: string[];
       items: components["schemas"]["SubmitListingDraftItemResult"][];
       /**
        * @description The Category Schema revision every item was checked against —
@@ -7803,8 +7846,12 @@ export interface components {
      * (browser-owned-listing slice 07). The server always rebuilds from the
      * Draft — resolve → validate → freeze runs here, never trusting a
      * browser-frozen body or its own validation conclusions (README S2, I7).
+     * The HTTP envelope uses snake_case; opaque listing-core items retain
+     * their domain representation. Supplying tags or text requires the
+     * current rules_version and runs the tag gate before freezing.
      */
     SubmitListingDraftsRequest: {
+      /** Format: uuid */
       card_id: string;
       /**
        * @description `SubmitDraft[]` (`listing_core::ops::SubmitDraft`), 1..=100 items. Kept
@@ -7815,7 +7862,11 @@ export interface components {
        * `SubmitDraft::from_row`) rather than assembling it by hand.
        */
       items: unknown[];
+      /** Format: uuid */
       store_id: string;
+      rules_version?: string;
+      tags?: string[];
+      text?: string;
     };
     /** @description 一个厂家成员（管理面视角）：成员邮箱 / 状态 / 开通时间。 */
     SupplierAccountMemberView: {
@@ -9523,54 +9574,54 @@ export interface operations {
       };
     };
   };
-  /** Freeze stored rows or drafts and enqueue listing.submit.batch. The body shape selects the path: rowIds is a stored-row batch send, storeId or items is a Draft send, anything else is a tag check. A tag check needs no principal; a batch or Draft send requires the submit role. It does not dial Ozon. */
+  /** Freeze stored rows or drafts and enqueue listing.submit.batch. The body shape selects the path: row_ids is a stored-row batch send, store_id or items is a Draft send, anything else is a tag check. A stored-row send requires the exact server revisions captured by the click. A tag check needs no principal; a batch or Draft send requires the submit role. It does not dial Ozon. */
   postListingSubmit: {
     requestBody: {
       content: {
-        "application/json": components["schemas"]["ListingTagCheckRequest"];
+        "application/json": components["schemas"]["ListingSubmitRequest"];
       };
     };
     responses: {
       /** @description Batch or Draft send frozen and enqueued; per-row items */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["ListingSubmitResponse"];
         };
       };
-      /** @description The body is not a tag check, a banned tag refused the gate, or the Draft envelope is invalid */
+      /** @description The body is not a tag check, a banned tag refused the gate, the Draft envelope is invalid, or the stored-row IDs and revision pins are not a one-to-one match */
       400: {
         content: {
-          "application/json": components["schemas"]["ListingError"];
+          "application/json": components["schemas"]["SubmitListingError"];
         };
       };
       /** @description Not signed in */
       401: {
         content: {
-          "application/json": components["schemas"]["ListingError"];
+          "application/json": components["schemas"]["SubmitListingError"];
         };
       };
       /** @description Role cannot submit */
       403: {
         content: {
-          "application/json": components["schemas"]["ListingError"];
+          "application/json": components["schemas"]["SubmitListingError"];
         };
       };
       /** @description The card or row no longer exists */
       404: {
         content: {
-          "application/json": components["schemas"]["ListingError"];
+          "application/json": components["schemas"]["SubmitListingError"];
         };
       };
-      /** @description rulesVersion is not the version currently served, or the store send slot is held */
+      /** @description Rules or schema must be refreshed, the store send slot is held, or a stored row changed during freeze (code revision_mismatch). A revision_mismatch rolls back this entire request; none of its new intents or jobs are committed. A revision already stale when read is instead returned as an individual skipped item in the 200 response. */
       409: {
         content: {
-          "application/json": components["schemas"]["ListingError"];
+          "application/json": components["schemas"]["SubmitListingError"];
         };
       };
       /** @description Rules or the matcher could not be evaluated. This is not a pass. */
       503: {
         content: {
-          "application/json": components["schemas"]["ListingError"];
+          "application/json": components["schemas"]["SubmitListingError"];
         };
       };
     };
@@ -10381,7 +10432,7 @@ export interface operations {
       /** @description Intents */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["ListingIntentsResponse"];
         };
       };
       /** @description limit or cursor rejected */
@@ -10421,7 +10472,7 @@ export interface operations {
       /** @description Released intents */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["ListingReleaseUnknownResponse"];
         };
       };
       /** @description Body refused */
@@ -10467,7 +10518,7 @@ export interface operations {
       /** @description The intent */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["ListingIntentResponse"];
         };
       };
       /** @description Not signed in */
@@ -10501,7 +10552,7 @@ export interface operations {
       /** @description Cancelled */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["ListingIntentResponse"];
         };
       };
       /** @description Not signed in */
@@ -10541,7 +10592,7 @@ export interface operations {
       /** @description Probe result */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["ListingIntentResponse"];
         };
       };
       /** @description Not signed in */

@@ -19,34 +19,37 @@ func TestDraftShape(t *testing.T) {
 	if IsDraft([]byte(`{"rules_version":"v","tags":[],"text":""}`)) {
 		t.Fatal("tag gate is not a draft")
 	}
-	if !IsDraft([]byte(`{"storeId":"s","cardId":"c","items":[{}]}`)) {
+	if !IsDraft([]byte(`{"store_id":"s","card_id":"c","items":[{}]}`)) {
 		t.Fatal("draft")
 	}
-	peek, err := PeekDraft([]byte(`{"storeId":"s","cardId":"c","items":[{},{}]}`))
-	if err != nil || peek.Items != 2 || peek.CardID != "c" {
+	if !IsDraft([]byte(`{"store_id":"s"}`)) || IsDraft([]byte(`{"storeId":"s"}`)) {
+		t.Fatal("only the snake_case store field selects the draft branch")
+	}
+	peek, err := PeekDraft([]byte(`{"store_id":"s","card_id":"c","rules_version":"v","items":[{},{}]}`))
+	if err != nil || peek.Items != 2 || peek.StoreID != "s" || peek.CardID != "c" || peek.RulesVersion != "v" {
 		t.Fatalf("%+v %v", peek, err)
 	}
-	if _, err := ParseBatch([]byte(`{"storeId":"","row_ids":[]}`)); err != ErrStoreRequired {
+	if _, err := ParseBatch([]byte(`{"store_id":"","row_ids":[]}`)); err != ErrStoreRequired {
 		t.Fatal(err)
 	}
-	if _, err := ParseBatch([]byte(`{"storeId":"nope","row_ids":["00000000-0000-0000-0000-000000000001"]}`)); err != ErrStoreInvalid {
+	if _, err := ParseBatch([]byte(`{"store_id":"nope","row_ids":["00000000-0000-0000-0000-000000000001"]}`)); err != ErrStoreInvalid {
 		t.Fatal(err)
 	}
 	id := "00000000-0000-0000-0000-000000000001"
-	got, err := ParseBatch([]byte(`{"storeId":"` + id + `","row_ids":["` + id + `"]}`))
+	got, err := ParseBatch([]byte(`{"store_id":"` + id + `","row_ids":["` + id + `"],"expected_revisions":[{"row_id":"` + id + `","revision":1}]}`))
 	if err != nil || len(got.RowIDs) != 1 {
 		t.Fatal(err, got)
 	}
-	if _, err := ParseBatch([]byte(`{"storeId":"` + id + `","row_ids":["nope"]}`)); err != ErrBadRequest {
+	if _, err := ParseBatch([]byte(`{"store_id":"` + id + `","row_ids":["nope"]}`)); err != ErrBadRequest {
 		t.Fatal(err)
 	}
 }
 
 func TestIsBatchRoutesBeforeDraft(t *testing.T) {
-	if !IsBatch([]byte(`{"storeId":"s","row_ids":["00000000-0000-0000-0000-000000000001"]}`)) {
+	if !IsBatch([]byte(`{"store_id":"s","row_ids":["00000000-0000-0000-0000-000000000001"]}`)) {
 		t.Fatal("row_ids is the batch form")
 	}
-	if IsBatch([]byte(`{"storeId":"s","cardId":"c","items":[{}]}`)) {
+	if IsBatch([]byte(`{"store_id":"s","card_id":"c","items":[{}]}`)) {
 		t.Fatal("a draft is not the batch form")
 	}
 	if IsBatch([]byte(`{"rules_version":"v"}`)) {

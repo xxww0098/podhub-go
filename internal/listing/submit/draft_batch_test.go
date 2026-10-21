@@ -125,7 +125,7 @@ func TestEnqueueDraftsBatchMatchesSequential(t *testing.T) {
 		}
 		tr.sql = nil
 		tr.batches = 0
-		views, err := enqueueDrafts(ctx, tx, orgID, userID, storeID, cardID, ready, time.Now())
+		views, err := enqueueDrafts(ctx, tx, orgID, userID, storeID, ready, time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -143,8 +143,8 @@ func TestEnqueueDraftsBatchMatchesSequential(t *testing.T) {
 		if inserts != 30 || reads != 30 || states != 10 {
 			t.Fatalf("inserts %d reads %d states %d batches %d\n%v", inserts, reads, states, tr.batches, tr.sql)
 		}
-		// 30 insert+read, 10 state reads, worker, head+3 locks, exists+admit+insert+reset, app.
-		if len(tr.sql) != 1+60+10+1+4+4+1 || tr.batches != 4 {
+		// 30 insert+read, 10 state reads, subscription gate, worker, head+3 locks, exists+admit+insert+reset, app.
+		if len(tr.sql) != 1+60+10+1+1+4+4+1 || tr.batches != 4 {
 			t.Fatalf("statements %d batches %d\n%v", len(tr.sql), tr.batches, tr.sql)
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -241,7 +241,7 @@ func refuseDraftEnqueue(t *testing.T, ctx context.Context, pool *pgxpool.Pool, o
 	if err := tenant.EnterApp(ctx, tx, orgID); err != nil {
 		t.Fatal(err)
 	}
-	_, err = enqueueDrafts(ctx, tx, orgID, userID, storeID, cardID, ready, now)
+	_, err = enqueueDrafts(ctx, tx, orgID, userID, storeID, ready, now)
 	var st Status
 	if !errors.As(err, &st) || st.Code != 402 || st.Kind != "SUBSCRIPTION_STORE_PAUSED" {
 		t.Fatalf("got code %d kind %s err %v", st.Code, st.Kind, err)
@@ -271,9 +271,14 @@ func refuseDraftEnqueue(t *testing.T, ctx context.Context, pool *pgxpool.Pool, o
 
 func compareDrafts(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, storeID, cardID string, ready []frozen) (seq, bat []DraftItem) {
 	t.Helper()
+	// Keep the old single-card sequential oracle unchanged. The production
+	// enqueue now takes each row's card rather than a batch-wide card.
+	batched := func(ctx context.Context, tx pgx.Tx, orgID, userID int64, storeID, _ string, ready []frozen) ([]DraftItem, error) {
+		return enqueueDrafts(ctx, tx, orgID, userID, storeID, ready, time.Now())
+	}
 	reset := pinDraftIDs(t)
 	seq = runDrafts(t, ctx, pool, orgID, userID, storeID, cardID, ready, enqueueDraftsSequential, reset)
-	bat = runDrafts(t, ctx, pool, orgID, userID, storeID, cardID, ready, enqueueDraftsNow, reset)
+	bat = runDrafts(t, ctx, pool, orgID, userID, storeID, cardID, ready, batched, reset)
 	if len(seq) != len(bat) {
 		t.Fatalf("len %d %d", len(seq), len(bat))
 	}
@@ -307,7 +312,7 @@ func compareDrafts(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID,
 		}
 	}
 	seqJobs := runDraftPayloads(t, ctx, pool, orgID, userID, storeID, cardID, ready, enqueueDraftsSequential, reset)
-	batJobs := runDraftPayloads(t, ctx, pool, orgID, userID, storeID, cardID, ready, enqueueDraftsNow, reset)
+	batJobs := runDraftPayloads(t, ctx, pool, orgID, userID, storeID, cardID, ready, batched, reset)
 	if len(seqJobs) != len(batJobs) {
 		t.Fatalf("jobs %d %d", len(seqJobs), len(batJobs))
 	}
@@ -395,8 +400,8 @@ func runDraftPayloads(t *testing.T, ctx context.Context, pool *pgxpool.Pool, org
 	return out
 }
 
-func enqueueDraftsNow(ctx context.Context, tx pgx.Tx, orgID, userID int64, storeID, cardID string, ready []frozen) ([]DraftItem, error) {
-	return enqueueDrafts(ctx, tx, orgID, userID, storeID, cardID, ready, time.Now())
+func enqueueDraftsNow(ctx context.Context, tx pgx.Tx, orgID, userID int64, storeID, _ string, ready []frozen) ([]DraftItem, error) {
+	return enqueueDrafts(ctx, tx, orgID, userID, storeID, ready, time.Now())
 }
 
 func enqueueDraftsSequential(ctx context.Context, tx pgx.Tx, orgID, userID int64, storeID, cardID string, ready []frozen) ([]DraftItem, error) {
@@ -508,7 +513,7 @@ func draftRows(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID int6
 			t.Fatal(err)
 		}
 		out[i] = frozen{
-			rowID: rowID, revision: 1, clientOp: "op-" + rowID, digest: "hash-" + rowID,
+			rowID: rowID, revision: 1, cardID: cardID, clientOp: "op-" + rowID, digest: "hash-" + rowID,
 			offerID: "offer-" + rowID, importBody: json.RawMessage(fmt.Sprintf(`{"i":%d}`, i)),
 		}
 	}

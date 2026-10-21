@@ -64,7 +64,7 @@ func TestListingIntentsCatalog(t *testing.T) {
 	if list.Code != http.StatusOK || !strings.Contains(list.Body.String(), queued) || strings.Contains(list.Body.String(), otherI) {
 		t.Fatalf("list %d %s", list.Code, list.Body.String())
 	}
-	if !strings.Contains(list.Body.String(), `"hasLiveReconcileClaim":false`) || !strings.Contains(list.Body.String(), `"submissionIssues":[]`) {
+	if !strings.Contains(list.Body.String(), `"has_live_reconcile_claim":false`) || !strings.Contains(list.Body.String(), `"submission_issues":[]`) {
 		t.Fatalf("facts %s", list.Body.String())
 	}
 	hidden := callJSON(ownerH, http.MethodGet, "/api/listing/intents/"+otherI, "")
@@ -80,7 +80,7 @@ func TestListingIntentsCatalog(t *testing.T) {
 	if cancelled.Code != http.StatusOK || !strings.Contains(cancelled.Body.String(), `"state":"cancelled"`) {
 		t.Fatalf("cancel %d %s", cancelled.Code, cancelled.Body.String())
 	}
-	if strings.Contains(cancelled.Body.String(), "hasLiveReconcileClaim") {
+	if strings.Contains(cancelled.Body.String(), "has_live_reconcile_claim") {
 		t.Fatalf("cancel must omit release facts %s", cancelled.Body.String())
 	}
 	var rowState string
@@ -123,7 +123,7 @@ func TestListingIntentsCatalog(t *testing.T) {
 		t.Fatalf("released state %s %v", state, err)
 	}
 	repeat := callJSON(ownerH, http.MethodPost, "/api/listing/intents/release-unknown", `{"intentIds":["`+held+`"]}`)
-	if repeat.Code != http.StatusOK || !strings.Contains(repeat.Body.String(), `"releasedIntentIds":[]`) {
+	if repeat.Code != http.StatusOK || !strings.Contains(repeat.Body.String(), `"released_intent_ids":[]`) {
 		t.Fatalf("repeat release %d %s", repeat.Code, repeat.Body.String())
 	}
 
