@@ -71,13 +71,7 @@ func TestRestrictedBaselineConcurrentConns(t *testing.T) {
 	var proto string
 	var tlsN int64
 	for waveN := 0; waveN < 2; waveN++ {
-		if waveN > 0 {
-			// Let the first wave's idle put finish so the per-host
-			// idle limit closes the extra connections before the
-			// next wave queues dials.
-			time.Sleep(30 * time.Millisecond)
-		}
-		got, err := wave(ctx, client, srv.URL, shops)
+		got, err := wave(ctx, client, srv, shops)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -121,7 +115,7 @@ func benchWave(b *testing.B, shops int, delay time.Duration) {
 	}
 	client := sellerShapedClient(srv, ozonTransport())
 	ctx := context.Background()
-	if _, err := wave(ctx, client, srv.URL, shops); err != nil {
+	if _, err := wave(ctx, client, srv, shops); err != nil {
 		b.Fatal(err)
 	}
 	srv.accepts.Store(0)
@@ -131,7 +125,7 @@ func benchWave(b *testing.B, shops int, delay time.Duration) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		start := time.Now()
-		got, err := wave(ctx, client, srv.URL, shops)
+		got, err := wave(ctx, client, srv, shops)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -151,11 +145,57 @@ func benchWave(b *testing.B, shops int, delay time.Duration) {
 type sellerServer struct {
 	*httptest.Server
 	accepts atomic.Int64
+
+	mu    sync.Mutex
+	need  int
+	got   int
+	ready chan struct{}
+}
+
+// arm holds each request until all shops in this wave have reached the
+// handler. A fast handler otherwise finishes before every goroutine dials,
+// so the wave never occupies one HTTP/1.1 connection per shop and the next
+// wave reuses more than the idle limit. The 30ms sleep cannot wait that out.
+func (s *sellerServer) arm(n int) {
+	s.mu.Lock()
+	s.need = n
+	s.got = 0
+	s.ready = make(chan struct{})
+	s.mu.Unlock()
+}
+
+func (s *sellerServer) disarm() {
+	s.mu.Lock()
+	s.need = 0
+	s.mu.Unlock()
+}
+
+func (s *sellerServer) arrive(ctx context.Context) {
+	s.mu.Lock()
+	if s.need == 0 {
+		s.mu.Unlock()
+		return
+	}
+	s.got++
+	ch := s.ready
+	release := s.got >= s.need
+	s.mu.Unlock()
+	if release {
+		close(ch)
+	}
+	select {
+	case <-ch:
+	case <-ctx.Done():
+	}
 }
 
 func newSellerTLS(delay time.Duration) *sellerServer {
 	out := &sellerServer{}
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		out.arrive(r.Context())
+		if r.Context().Err() != nil {
+			return
+		}
 		if delay > 0 {
 			time.Sleep(delay)
 		}
@@ -227,7 +267,11 @@ func sequential(ctx context.Context, client *http.Client, rawURL string, n int) 
 	return got, nil
 }
 
-func wave(ctx context.Context, client *http.Client, rawURL string, shops int) (connStat, error) {
+func wave(ctx context.Context, client *http.Client, srv *sellerServer, shops int) (connStat, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	srv.arm(shops)
+	defer srv.disarm()
 	var tlsN atomic.Int64
 	var proto atomic.Value
 	var wg sync.WaitGroup
@@ -236,7 +280,8 @@ func wave(ctx context.Context, client *http.Client, rawURL string, shops int) (c
 		wg.Add(1)
 		go func(shop int) {
 			defer wg.Done()
-			if err := one(ctx, client, rawURL, shop, &tlsN, &proto); err != nil {
+			if err := one(ctx, client, srv.URL, shop, &tlsN, &proto); err != nil {
+				cancel()
 				errCh <- err
 			}
 		}(i)

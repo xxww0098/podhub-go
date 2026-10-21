@@ -26,9 +26,10 @@ type PG struct {
 
 // claimSQL takes the run for the current Shanghai date. There is no window:
 // the boundary is the only gate. A `partial` row is retried at once; a
-// `completed` row is not re-run.
+// `completed` row is not re-run. $3 is an explicit instant for tests; NULL
+// uses the database clock so a skewed app clock cannot open the gate.
 const claimSQL = `
-WITH observed AS MATERIALIZED (SELECT clock_timestamp() AS at),
+WITH observed AS MATERIALIZED (SELECT COALESCE($3::timestamptz, clock_timestamp()) AS at),
 day AS MATERIALIZED (
     SELECT at, (at AT TIME ZONE 'Asia/Shanghai')::date AS d FROM observed
 ), span AS MATERIALIZED (
@@ -57,6 +58,19 @@ const liveSQL = `bucket_identity = $1 AND run_day = $2 AND lease_token = $3::uui
 // TryClaim takes today's receipt once the 04:00 Shanghai boundary has passed.
 // Before the boundary, or after a completed run, it returns nil.
 func TryClaim(ctx context.Context, pool *pgxpool.Pool, fingerprint string) (*PG, error) {
+	return claimAt(ctx, pool, fingerprint, nil)
+}
+
+// TryClaimAt is TryClaim at an explicit instant. Production uses TryClaim,
+// which lets the database clock decide. The instant is what the claim SQL
+// compares with that Shanghai date's 04:00; LastClearBoundary is the previous
+// gate and is not this predicate.
+func TryClaimAt(ctx context.Context, pool *pgxpool.Pool, fingerprint string, now time.Time) (*PG, error) {
+	utc := now.UTC()
+	return claimAt(ctx, pool, fingerprint, &utc)
+}
+
+func claimAt(ctx context.Context, pool *pgxpool.Pool, fingerprint string, now *time.Time) (*PG, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -70,7 +84,7 @@ func TryClaim(ctx context.Context, pool *pgxpool.Pool, fingerprint string) (*PG,
 	}
 	token := uuid.NewString()
 	var claim Claim
-	err = tx.QueryRow(ctx, claimSQL, fingerprint, token).Scan(&claim.Fingerprint, &claim.RunDay, &claim.Token, &claim.Epoch)
+	err = tx.QueryRow(ctx, claimSQL, fingerprint, token, now).Scan(&claim.Fingerprint, &claim.RunDay, &claim.Token, &claim.Epoch)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if err := tx.Commit(ctx); err != nil {
 			return nil, err

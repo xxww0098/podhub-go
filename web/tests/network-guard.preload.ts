@@ -25,6 +25,11 @@
  * hook fail the run for attempts made at module load or by late tasks. Messages
  * carry only method, protocol, host and path (no query, body or headers).
  *
+ * bun test runs every file in one process. A timer scheduled by one test keeps
+ * running into the next file, and a POST it makes is then recorded against
+ * whichever test is current. afterEach drops timers that test started and
+ * releases the shared error-delivery singleton so the later file is not blamed.
+ *
  * `fetch` stays a plain writable global so the existing per-test stubs keep
  * working; whatever they save and restore is this guard, never native HTTP.
  * `WebSocket` / `EventSource` constructors are refused the same way when the
@@ -35,6 +40,8 @@
  * type-only import of `NetworkGuard` — never a value import, which would
  * install the guard itself and hide a test script that stopped preloading it.
  */
+
+import { releaseErrorDelivery } from "@/lib/error-telemetry"
 
 type Violation = { label: string; testSeq: number; expected: boolean; reported: boolean }
 type Registration = { origin: string; testSeq: number }
@@ -249,10 +256,69 @@ function failUnreported(violations: Violation[], where: string): void {
   throw new Error(`${MARKER} FAIL: ${violations.length} unregistered network attempt(s) ${where}, caught or not: ${summarize(violations)}`)
 }
 
+const nativeSetTimeout = globalThis.setTimeout.bind(globalThis)
+const nativeClearTimeout = globalThis.clearTimeout.bind(globalThis)
+const nativeSetInterval = globalThis.setInterval.bind(globalThis)
+const nativeClearInterval = globalThis.clearInterval.bind(globalThis)
+type Timer = ReturnType<typeof setTimeout>
+const timersBySeq = new Map<number, Set<Timer>>()
+const intervalsBySeq = new Map<number, Set<Timer>>()
+
+function track(bucket: Map<number, Set<Timer>>, seq: number, id: Timer) {
+  let set = bucket.get(seq)
+  if (!set) {
+    set = new Set()
+    bucket.set(seq, set)
+  }
+  set.add(id)
+}
+
+function untrack(id: Timer) {
+  for (const bucket of [timersBySeq, intervalsBySeq]) {
+    for (const set of bucket.values()) set.delete(id)
+  }
+}
+
+function clearOwned(seq: number) {
+  for (const id of timersBySeq.get(seq) ?? []) nativeClearTimeout(id)
+  for (const id of intervalsBySeq.get(seq) ?? []) nativeClearInterval(id)
+  timersBySeq.delete(seq)
+  intervalsBySeq.delete(seq)
+}
+
+function installTimerFence(guard: GuardState) {
+  const seqNow = () => (guard.inTest ? guard.testSeq : 0)
+  globalThis.setTimeout = ((fn: TimerHandler, ms?: number, ...args: unknown[]) => {
+    const seq = seqNow()
+    let id!: Timer
+    id = nativeSetTimeout(() => {
+      timersBySeq.get(seq)?.delete(id)
+      if (typeof fn === "function") Reflect.apply(fn, globalThis, args)
+    }, ms)
+    track(timersBySeq, seq, id)
+    return id
+  }) as unknown as typeof setTimeout
+  globalThis.clearTimeout = ((id) => {
+    untrack(id as Timer)
+    nativeClearTimeout(id)
+  }) as typeof clearTimeout
+  globalThis.setInterval = ((fn: TimerHandler, ms?: number, ...args: unknown[]) => {
+    const seq = seqNow()
+    const id = nativeSetInterval(fn, ms, ...args)
+    track(intervalsBySeq, seq, id as unknown as Timer)
+    return id
+  }) as typeof setInterval
+  globalThis.clearInterval = ((id) => {
+    untrack(id as Timer)
+    nativeClearInterval(id)
+  }) as typeof clearInterval
+}
+
 const existing = globals[GUARD_KEY] as GuardState | undefined
 if (!existing) {
   const guard = install()
   globals[GUARD_KEY] = guard
+  installTimerFence(guard)
   await registerHooks(guard)
 }
 
@@ -276,6 +342,9 @@ async function registerHooks(guard: GuardState) {
   })
 
   hooks.afterEach(() => {
+    // Drop the shared inbox timer before the next file's test is current.
+    releaseErrorDelivery()
+    clearOwned(guard.testSeq)
     guard.inTest = false
     const leaked = guard.registrations.filter((registration) => registration.testSeq === guard.testSeq)
     guard.registrations = guard.registrations.filter((registration) => registration.testSeq !== guard.testSeq)

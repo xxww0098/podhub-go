@@ -11,7 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	mediacontract "github.com/xxww0098/podhub-go/internal/media/contract"
 	"github.com/xxww0098/podhub-go/internal/media/domain/fence"
 	"github.com/xxww0098/podhub-go/internal/media/jobs/slicepurge"
 	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
@@ -178,19 +177,33 @@ func testMediaBlobRLS(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 func testCleanupReceipt(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
 	fingerprint := slicepurge.FakeFingerprint("podhub-transit")
-	now := time.Now()
-	claim, err := slicepurge.TryClaim(ctx, pool, fingerprint)
+	// 2026-10-15T20:00Z is 2026-10-16 04:00 Asia/Shanghai. LastClearBoundary is
+	// the previous gate, so now.After(LastClearBoundary) is true all night and
+	// does not describe this claim. The SQL claims the Shanghai calendar date
+	// only at or after that date's 04:00, including the instant itself.
+	before := time.Date(2026, 10, 15, 19, 59, 59, 999_000_000, time.UTC)
+	boundary := time.Date(2026, 10, 15, 20, 0, 0, 0, time.UTC)
+	night := time.Date(2026, 10, 16, 18, 0, 0, 0, time.UTC) // 2026-10-17 02:00 Shanghai
+	claim, err := slicepurge.TryClaimAt(ctx, pool, fingerprint, before)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The clear has a fixed daily boundary at 04:00 Asia/Shanghai and no
-	// closing window: a fresh day's receipt is claimable from the boundary on.
-	if now.After(mediacontract.LastClearBoundary(now)) {
-		if claim == nil {
-			t.Fatal("after the 04:00 Shanghai boundary the claim SQL must take a receipt")
-		}
-	} else if claim != nil {
-		t.Fatal("before the 04:00 Shanghai boundary the claim SQL must not take a receipt")
+	if claim != nil {
+		t.Fatal("before that Shanghai date's 04:00 the claim SQL must not take a receipt")
+	}
+	claim, err = slicepurge.TryClaimAt(ctx, pool, fingerprint, boundary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claim == nil {
+		t.Fatal("at 04:00 Shanghai the claim SQL must take a receipt")
+	}
+	claim, err = slicepurge.TryClaimAt(ctx, pool, fingerprint, night)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claim != nil {
+		t.Fatal("after midnight and before the next 04:00 the claim SQL must not take a receipt")
 	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {

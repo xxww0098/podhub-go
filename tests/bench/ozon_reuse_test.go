@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/xxww0098/podhub-go/internal/platform/httpx"
 	"github.com/xxww0098/podhub-go/internal/platform/loadmode"
@@ -28,7 +27,11 @@ func TestOzonReusesFewerConnectionsThanRestricted(t *testing.T) {
 	if restricted.proto != "HTTP/1.1" || restricted.accepts <= int64(benchShops) || restricted.accepts > int64(benchShops*2) {
 		t.Fatalf("restricted baseline %+v", restricted)
 	}
-	if ozon.proto != "HTTP/2.0" || ozon.accepts > 1 || ozon.accepts*4 >= restricted.accepts {
+	// Accepts can include a connection the transport dialed and then discarded
+	// before the handshake. TLSHandshakeStart is only recorded for a request
+	// that actually negotiated, so a reused warm-up session stays at zero
+	// handshakes even when that discarded dial is counted.
+	if ozon.proto != "HTTP/2.0" || ozon.tls != 0 || ozon.accepts*4 >= restricted.accepts {
 		t.Fatalf("ozon did not reuse %+v restricted %+v", ozon, restricted)
 	}
 }
@@ -48,18 +51,14 @@ func countWaveAccepts(t *testing.T, tr *http.Transport) acceptStat {
 	}
 	client := sellerShapedClient(srv, tr)
 	ctx := context.Background()
-	if _, err := wave(ctx, client, srv.URL, benchShops); err != nil {
+	if _, err := wave(ctx, client, srv, benchShops); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(30 * time.Millisecond)
 	var proto string
 	var tlsN int64
 	before := srv.accepts.Load()
 	for waveN := 0; waveN < 2; waveN++ {
-		if waveN > 0 {
-			time.Sleep(30 * time.Millisecond)
-		}
-		got, err := wave(ctx, client, srv.URL, benchShops)
+		got, err := wave(ctx, client, srv, benchShops)
 		if err != nil {
 			t.Fatal(err)
 		}

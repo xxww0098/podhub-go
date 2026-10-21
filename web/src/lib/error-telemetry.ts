@@ -261,3 +261,10 @@ export const createDiagnosticPublishAction = telemetry.createPublishAction
 export const openDiagnosticPublishWindow = telemetry.openPublishWindow
 export const closeDiagnosticPublishWindow = telemetry.closePublishWindow
 export const resumeErrorTelemetry = telemetry.resume
+
+// releaseErrorDelivery drops a session, aborts an in-flight inbox post, and
+// clears its retry timer. bun test runs every file in one process, so a timer
+// left by one file otherwise POSTs /api/events/inbox during a later file.
+export function releaseErrorDelivery(): void {
+	setErrorTelemetryContext({ sessionKey: null })
+}
