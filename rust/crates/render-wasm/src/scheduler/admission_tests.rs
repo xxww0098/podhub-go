@@ -78,7 +78,7 @@ fn cancelling_busy_owner_keeps_lease_until_compute_finishes() {
     );
     assert!(waiting.try_recv().unwrap().is_none());
     assert_eq!(state.leases.len(), 1);
-    assert!(!state.finish(id));
+    assert!(!state.finish(id, None));
     assert!(waiting.try_recv().unwrap().is_some());
     assert_eq!(state.leases.len(), 1);
     assert_eq!(
@@ -110,7 +110,7 @@ fn parsed_template_can_render_on_the_same_lease() {
     let key = template.fingerprint().to_string();
     let lease = granted(&mut state, 1, &key);
     assert_eq!(state.start(lease).unwrap(), key);
-    assert!(state.finish(lease));
+    assert!(state.finish(lease, None));
     let id = state.retain_template(key.clone(), template).unwrap();
     assert!(matches!(
         state.begin_render(lease, id + 1),
@@ -119,7 +119,7 @@ fn parsed_template_can_render_on_the_same_lease() {
     let (render_key, _, unknown) = state.begin_render(lease, id).unwrap();
     assert_eq!(render_key, key);
     assert!(unknown);
-    assert!(state.finish(lease));
+    assert!(state.finish(lease, None));
     state.release(lease);
     assert!(state.leases.is_empty());
 }
@@ -154,7 +154,7 @@ fn queue_is_bounded_and_busy_leases_cannot_be_started_twice() {
     assert_eq!(state.waiters.len(), MAX_WAITERS);
     drop(waiting);
     state.release(id);
-    assert!(!state.finish(id));
+    assert!(!state.finish(id, None));
     assert_eq!(state.start(id), Err(RuntimeError::LeaseExpired));
 }
 #[test]
@@ -254,4 +254,65 @@ fn measurement_reports_one_plain_number_per_template() {
     // The measurement exposes one byte count per template, not the split.
     assert!(measured.contains("\"peaks\":{\"A\":300}"), "{measured}");
     assert!(measured.contains("\"occupiedBytes\":300"), "{measured}");
+}
+
+#[test]
+fn seeded_lifecycle_sequences_preserve_reservations_and_advance_waiters() {
+    let mut seed = 0x5eed_u64;
+    for _ in 0..256 {
+        let mut state = State::new(1, 1000);
+        known_split(&mut state, "A", 300, 100);
+        let id = granted(&mut state, 1, "A");
+        let mut waiting = queue(&mut state, 2, "A");
+        let mut events = [0, 0, 1, 1, 2, 2, 3, 3];
+        for i in (1..events.len()).rev() {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            events.swap(i, (seed >> 32) as usize % (i + 1));
+        }
+        let mut running = false;
+        let mut abandoned = false;
+        let mut starts = 0;
+        let mut deliveries = 0;
+        for event in events {
+            match event {
+                0 => {
+                    if state.start(id).is_ok() {
+                        assert!(!running && !abandoned);
+                        running = true;
+                        starts += 1;
+                    }
+                }
+                1 => {
+                    state.release(id);
+                    abandoned = true;
+                }
+                2 => {
+                    state.dispose_owner(1);
+                    abandoned = true;
+                }
+                3 => {
+                    let delivered = state.finish(id, Some(Peak::new(300, 100)));
+                    assert_eq!(delivered, running && !abandoned);
+                    deliveries += usize::from(delivered);
+                    running = false;
+                }
+                _ => unreachable!(),
+            }
+            assert!(deliveries <= starts);
+            assert_eq!(state.leases.len(), 1);
+            assert_eq!(state.reserved_bytes(), Some(300));
+            if running {
+                assert!(state.leases.contains_key(&id));
+                assert!(waiting.try_recv().unwrap().is_none());
+            }
+        }
+        state.release(id);
+        assert!(!state.finish(id, None));
+        let next = waiting.try_recv().unwrap().unwrap().unwrap();
+        assert!(state.acquired(next, 2));
+        assert!(!state.acquired(id, 1));
+        state.release(next);
+        assert!(state.leases.is_empty() && state.waiters.is_empty());
+        assert_eq!(state.reserved_bytes(), Some(0));
+    }
 }
