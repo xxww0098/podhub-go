@@ -482,9 +482,8 @@ func TestAIBillingParity(t *testing.T) {
 	})
 
 	t.Run("entitlement sweep", func(t *testing.T) {
-		if _, err := pool.Exec(ctx, `
-			INSERT INTO member_seat_lots (org_id, tier, seats, starts_at, expires_at, created_at)
-			VALUES ($1, 'pro', 3, clock_timestamp() - interval '10 days', clock_timestamp() - interval '1 day', clock_timestamp())`, org); err != nil {
+		if _, err := pool.Exec(ctx, `INSERT INTO subscriptions(org_id,status,plan_key,term_start,term_end,billing_anchor,extra_members,updated_at)
+ VALUES($1,'active','pro',clock_timestamp()-interval '1 month',clock_timestamp()-interval '1 day',clock_timestamp()-interval '1 month',2,clock_timestamp())`, org); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := pool.Exec(ctx, `UPDATE organizations SET plan = 'pro', seat_limit = 3 WHERE id = $1`, org); err != nil {
@@ -499,7 +498,7 @@ func TestAIBillingParity(t *testing.T) {
 		if err := pool.QueryRow(ctx, `SELECT plan, seat_limit FROM organizations WHERE id = $1`, org).Scan(&plan, &seats); err != nil {
 			t.Fatal(err)
 		}
-		if plan != "lite" || seats != 1 {
+		if plan != "free" || seats != 1 {
 			t.Fatalf("plan %s seats %d", plan, seats)
 		}
 	})

@@ -107,7 +107,7 @@ func SyncNowTx(ctx context.Context, tx pgx.Tx, orgID int64, storeUUID string, no
 	var manualDisabled, quotaSuspended bool
 	var keyExpires *int64
 	err := tx.QueryRow(ctx, `
-		SELECT s.id, s.manual_disabled, s.quota_suspended,
+		SELECT s.id, s.manual_disabled, (NOT public.subscription_store_allowed(s.org_id,s.uuid,clock_timestamp())),
 		       (SELECT c.key_expires_at_ms FROM public.store_seller_credentials c
 		         WHERE c.store_id = s.id AND c.credential_revision = s.credential_revision)
 		  FROM public.organization_stores s
@@ -195,7 +195,7 @@ func ClaimVerifyTx(ctx context.Context, tx pgx.Tx, orgID int64, storeUUID, diges
 	var manualDisabled, quotaSuspended bool
 	var credentialRevision int64
 	err := tx.QueryRow(ctx, `
-		SELECT id, manual_disabled, quota_suspended, credential_revision
+		SELECT id, manual_disabled, (NOT public.subscription_store_allowed(org_id,uuid,clock_timestamp())), credential_revision
 		  FROM public.organization_stores
 		 WHERE uuid = $1::uuid AND org_id = $2 AND deleted_at_ms IS NULL`,
 		storeUUID, orgID).Scan(&storePK, &manualDisabled, &quotaSuspended, &credentialRevision)

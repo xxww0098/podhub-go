@@ -1,1541 +1,252 @@
-import { useEffect, useId, useRef, useState, type FormEvent } from "react"
-import {
-  Minus,
-  Plus,
-  RefreshCcw,
-} from "lucide-react"
+import { useEffect, useState } from "react"
+import { CalendarClock, RefreshCcw, Store, Users } from "lucide-react"
 
-import type {
-  AccountOverview,
-  MemberSeatLotView,
-  PaymentMethodsData,
-  PaymentOrderView,
-  SeatCatalogData,
-  SeatUpgradeCreditView,
-  WorkspaceBillingOverviewData,
-} from "@/bindings/commands"
+import type { AccountOverview } from "@/bindings/commands"
 import { accountHttp } from "@/bindings/http-account"
-import { StateChip } from "@/components/state-chip"
+import {
+  subscriptionHttp,
+  type SubscriptionOrder,
+  type SubscriptionPeriod,
+  type SubscriptionQuote,
+  type SubscriptionRequest,
+  type SubscriptionView,
+} from "@/bindings/http-subscription"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
-import { ConfirmDialog } from "@/components/ui/confirm-dialog"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
 import { Spinner } from "@/components/ui/spinner"
 import { useAccountOverview } from "@/features/account/account-overview-cache"
-import {
-  commandErrorCode,
-  errorMessage,
-  WORKSPACE_MISMATCH_CODE,
-} from "@/lib/error-message"
-import { clearLive, notifyCommandError, notifyLive, notifySuccess } from "@/lib/notify"
-import { useVisiblePolling } from "@/lib/visible-polling"
-import { cn } from "@/lib/utils"
-import { AlipayQr } from "./alipay-qr"
-import {
-  PaymentChannelList,
-  paymentMethodKeys,
-  paymentOrderPresentation,
-  paymentProviderLabel,
-} from "./payment-channels"
-import { PlanCompare } from "./plan-compare"
-import { RedeemCodeDialog } from "./redeem-code-dialog"
-import { PurchaseAgreementHistory } from "./purchase-agreement-history"
+import { errorMessage } from "@/lib/error-message"
+import { notifyCommandError, notifySuccess } from "@/lib/notify"
+import { planDisplayName as planName, yuanLabel } from "./plan-catalog"
 
 export { redeemSuccessNotice } from "./redeem-code-dialog"
 export { paymentOrderPresentation } from "./payment-channels"
-import {
-  DEFAULT_BADGE,
-  MAX_MEMBER_SEATS_PER_WORKSPACE,
-  SEAT_QUICK_QUANTITIES,
-  normalizePlanKey,
-  planByKey,
-  planDisplayName,
-  planRank,
-  seatCatalogTerm,
-  seatCatalogTier,
-  seatTermLabel,
-  seatUnitMonthCents,
-  yuanLabel,
-  type PaidTier,
-  type PlanKey,
-} from "./plan-catalog"
 
-const PLANS_CATALOG_LIVE = "plans-seat-catalog-load"
-const PLANS_BILLING_LIVE = "plans-billing-overview-load"
-
-/** A lot's `expires_at`/`starts_at` wire timestamp → `YYYY-MM-DD`. */
-function lotDay(value: string): string {
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString()
+export function subscriptionDate(value: string | null | undefined): string {
+  if (!value) return "—"
+  return new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  }).format(new Date(value))
 }
 
-/** Purchased member seats the billing overview reports; falls back to the
- * entitlement limit's approximation while the projection loads. */
-function purchasedSeats(
-  billing: WorkspaceBillingOverviewData | undefined,
-  current: PlanKey,
-  fallbackSeats: number,
-): number {
-  if (billing) return billing.purchased_seats
-  return current === "lite" ? 0 : fallbackSeats
-}
+type Editor = { action: SubscriptionRequest["action"]; period?: SubscriptionPeriod; restore?: boolean }
 
 export function PlansScreen({
   overview: overviewProp,
   onOverviewChange,
-  catalog: catalogPreset,
-  billingOverview: billingPreset,
+  subscription: preset,
 }: {
   overview?: AccountOverview
   onOverviewChange?: (overview: AccountOverview) => void
-  /** Test/SSR injection — when set, the catalog is not fetched. */
-  catalog?: SeatCatalogData
-  /** Test/SSR injection — when set, the billing overview is not fetched. */
-  billingOverview?: WorkspaceBillingOverviewData
+  subscription?: SubscriptionView
 }) {
   const overview = useAccountOverview() ?? overviewProp
-  const current =
-    normalizePlanKey(overview?.active_workspace?.plan) ??
-    normalizePlanKey(overview?.entitlement?.plan) ??
-    DEFAULT_BADGE
-  const seats = overview?.entitlement?.limits.seats ?? 1
-  const workspaceRole = overview?.active_workspace?.role
-  const workspaceUuid = overview?.active_workspace?.uuid
-  const canRedeem = workspaceRole === "owner"
-  const canPurchase =
-    workspaceRole === "owner" && overview?.active_workspace?.is_owned === true
-
-  // The purchasable catalog and the per-lot billing overview are Cloud reads —
-  // nothing on this page keeps its own price book (B6).
-  const [catalogFetch, setCatalogFetch] = useState<SeatCatalogData>()
-  const [billingFetch, setBillingFetch] = useState<WorkspaceBillingOverviewData>()
-  const [billingReload, setBillingReload] = useState(0)
-  const catalog = catalogPreset ?? catalogFetch
-  const billing = billingPreset ?? billingFetch
-  useEffect(() => {
-    if (catalogPreset) return
-    let cancelled = false
-    const load = () =>
-      accountHttp.accountGetSeatCatalog().then(
-        (next) => {
-          if (cancelled) return
-          setCatalogFetch(next)
-          clearLive(PLANS_CATALOG_LIVE)
-        },
-        (reason) => {
-          if (cancelled) return
-          notifyLive({
-            id: PLANS_CATALOG_LIVE,
-            type: "error",
-            reason,
-            title: "套餐目录读取失败",
-            description: errorMessage(reason, "价格与档位信息来自云端目录，请重试。"),
-            action: { label: "重试", onClick: () => void load() },
-          })
-        },
-      )
-    void load()
-    return () => {
-      cancelled = true
-    }
-  }, [catalogPreset])
+  const workspace = overview?.active_workspace
+  const canManage = ["owner", "manager", "admin"].includes(workspace?.role ?? "")
+  const [view, setView] = useState<SubscriptionView | undefined>(preset)
+  const [loadError, setLoadError] = useState<string>()
+  const [reload, setReload] = useState(0)
+  const [editor, setEditor] = useState<Editor>()
+  const [order, setOrder] = useState<SubscriptionOrder>()
 
   useEffect(() => {
-    if (billingPreset || !workspaceUuid) return
-    let cancelled = false
-    accountHttp.accountGetBillingOverview().then(
-      (next) => {
-        if (cancelled) return
-        setBillingFetch(next)
-        clearLive(PLANS_BILLING_LIVE)
-      },
-      (reason) => {
-        if (cancelled) return
-        notifyLive({
-          id: PLANS_BILLING_LIVE,
-          type: "error",
-          reason,
-          title: "权益概览读取失败",
-          description: errorMessage(reason, "席位批次与下次变化暂不可读，请重试。"),
-          action: {
-            label: "重试",
-            onClick: () => setBillingReload((value) => value + 1),
-          },
-        })
-      },
-    )
-    return () => {
-      cancelled = true
-    }
-  }, [billingPreset, billingReload, workspaceUuid])
-
-  const handleOverviewChange = (next: AccountOverview) => {
-    onOverviewChange?.(next)
-    setBillingReload((value) => value + 1)
-  }
-
-  // Headroom approximates purchased lots; the billing overview's
-  // `purchased_seats` is exact once loaded, and the server remains
-  // authoritative — it rechecks `max_seats_in_window` at write time.
-  const heldSeats = purchasedSeats(billing, current, seats)
-  const maxSeats = catalog?.max_seats_per_workspace ?? MAX_MEMBER_SEATS_PER_WORKSPACE
-  const remainingSeats = Math.max(0, maxSeats - heldSeats)
-  const workspaceFull = remainingSeats < (catalog?.min_seats_per_purchase ?? 1)
-  const [upgrade, setUpgrade] = useState<{ tier: PaidTier; renewal?: MemberSeatLotView }>()
-  const [pendingOrder, setPendingOrder] = useState<PaymentOrderView>()
-  const [redeemOpen, setRedeemOpen] = useState(false)
-
-  const purchaseBlockedReason = !canPurchase
-    ? "只有自有 Workspace 的所有者可以加购。"
-    : workspaceFull
-      ? `该工作空间已有 ${heldSeats} 个成员名额，上限 ${maxSeats} 个。`
-      : undefined
-
-  /** A renewal targets one lot's frozen tier/seats; pick it from the catalog. */
-  function openRenewal(lot: MemberSeatLotView) {
-    const tier = normalizePlanKey(lot.tier)
-    if (!tier || tier === "lite") return
-    setUpgrade({ tier, renewal: lot })
-  }
-
-  return (
-    <div className="flex w-full flex-col gap-6">
-      <h1 className="sr-only">升级方案</h1>
-      {/* Plan page: current-plan strip, then the comparison columns. Picking
-          a tier opens the upgrade dialog. */}
-      <PlanCompare
-        action={
-          canPurchase && workspaceUuid ? (
-            <PurchaseAgreementHistory key={workspaceUuid} workspaceUuid={workspaceUuid} />
-          ) : undefined
-        }
-        current={current}
-        catalog={catalog}
-        disabledReason={purchaseBlockedReason}
-        pendingOrder={pendingOrder}
-        onPick={(picked) => setUpgrade({ tier: picked })}
-      />
-
-      {/* 权益概览: per-lot truth — what was bought, what applies, and when it
-          flips. Every unexpired lot carries its own 续费 action. */}
-      {billing ? (
-        <section className="flex flex-col gap-2 border-t border-border pt-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="text-compact font-semibold text-foreground">成员席位批次</h3>
-            <p className="text-xs text-muted-foreground">
-              已购 {billing.purchased_seats} 席
-              {billing.member_seats.override_value != null
-                ? ` · 管理员覆盖 ${billing.member_seats.override_value}`
-                : ""}
-              {" · 有效 "}
-              {billing.member_seats.effective} · 已用 {billing.member_seats.used}
-              {billing.member_seats.suspended > 0
-                ? ` · 暂停 ${billing.member_seats.suspended}`
-                : ""}
-              {" · 店铺 "}
-              {billing.store_slots.used}/{billing.store_slots.effective}
-              {billing.store_slots.suspended > 0
-                ? ` · 暂停 ${billing.store_slots.suspended}`
-                : ""}
-            </p>
-          </div>
-
-          {billing.lots.length > 0 ? (
-            <ul className="flex flex-col divide-y divide-border/60">
-              {billing.lots.map((lot) => (
-                <li
-                  key={lot.id}
-                  className="flex flex-wrap items-center justify-between gap-2 py-2.5 text-xs"
-                >
-                  <div className="flex min-w-0 items-center gap-2">
-                    <StateChip
-                      status={lot.active ? "active" : "scheduled"}
-                      label={lot.active ? "生效中" : "待生效"}
-                      tone={lot.active ? "good" : "flight"}
-                    />
-                    <span className="font-medium text-foreground">
-                      {planDisplayName(lot.tier)} · {lot.seats} 席
-                    </span>
-                    <span className="text-muted-foreground">
-                      {lotDay(lot.starts_at)} – {lotDay(lot.expires_at)}
-                    </span>
-                    {lot.upgrade_credit_cents > 0 ? (
-                      <span className="text-muted-foreground">
-                        可折 {yuanLabel(lot.upgrade_credit_cents)}
-                      </span>
-                    ) : null}
-                  </div>
-                  {canPurchase && lot.renewable ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-7 shrink-0 text-xs"
-                      onClick={() => openRenewal(lot)}
-                    >
-                      <RefreshCcw className="size-3" data-icon="inline-start" />
-                      续费
-                    </Button>
-                  ) : lot.renewable ? null : (
-                    <span className="shrink-0 text-muted-foreground">已续期</span>
-                  )}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-xs text-muted-foreground">
-              暂无付费席位批次；免费版含 1 名成员 · 1 家店铺。
-            </p>
-          )}
-
-          {billing.next_change ? (
-            <p className="text-xs leading-5 text-muted-foreground">
-              下次变化 {lotDay(billing.next_change.at)}：届时{" "}
-              {planDisplayName(billing.next_change.plan)} ·{" "}
-              {billing.next_change.effective_seats} 名成员 ·{" "}
-              {billing.next_change.effective_stores} 家店铺
-              {billing.next_change.suspended_members > 0 ||
-              billing.next_change.suspended_stores > 0
-                ? `，届时 ${billing.next_change.suspended_members} 名成员 / ${billing.next_change.suspended_stores} 家店铺将暂停`
-                : ""}
-              。
-              {billing.plan_expires_at
-                ? ` 最晚到期 ${lotDay(billing.plan_expires_at)}（未过期批次的最后到期时间）。`
-                : ""}
-            </p>
-          ) : null}
-        </section>
-      ) : null}
-
-      {/* 计费说明 — a footnote list under a hairline, not a third card.
-          兑换码 lives on the Workspace menu's 兑换码 dialog. */}
-      {catalog ? (
-        <section className="flex flex-col gap-2 border-t border-border pt-4 text-xs leading-relaxed text-muted-foreground">
-          <h3 className="text-compact font-semibold text-foreground">计费说明</h3>
-          <ul className="flex list-disc flex-col gap-1.5 pl-4">
-                <li>
-                  每名成员含 {catalog.stores_per_seat} 个店铺位，随时可加购到{" "}
-                  {catalog.max_seats_per_workspace} 名成员（
-                  {catalog.max_stores_per_workspace} 家店铺）。每一批按购买时间独立计时（
-                  {catalog.terms.map((term) => `${term.days} 天`).join(" / ")}，非按月份大小计算），到期后该批名额失效。
-                </li>
-                <li>
-                  {catalog.terms
-                    .map((term) =>
-                      term.discount_percent < 100
-                        ? `${seatTermLabel(term.key)} ${term.discount_percent / 10} 折`
-                        : `${seatTermLabel(term.key)}按标价计费`,
-                    )
-                    .join("，")}
-                  ；按购买时间计时，非按月份大小计算。每次至少购买{" "}
-                  {catalog.min_seats_per_purchase} 个成员名额，一个工作空间最多{" "}
-                  {catalog.max_seats_per_workspace} 个。实付以下单后订单回显为准。
-                </li>
-                <li>识图按钱包扣费，不限次数。本月计数只作用量展示，用尽钱包才会拒绝下一次识图。</li>
-          </ul>
-        </section>
-      ) : null}
-
-      <UpgradePlanDialog
-        key={overview?.active_workspace?.uuid ?? "no-workspace"}
-        open={upgrade !== undefined}
-        onOpenChange={(next) => {
-          if (!next) setUpgrade(undefined)
-        }}
-        tier={upgrade?.tier ?? "pro"}
-        renewal={upgrade?.renewal}
-        catalog={catalog}
-        canPurchase={canPurchase}
-        heldSeats={heldSeats}
-        seatOverride={billing?.member_seats.override_value ?? null}
-        upgradeCredits={billing?.upgrade_credits}
-        lots={billing?.lots ?? []}
-        workspaceName={overview?.active_workspace?.name}
-        workspaceUuid={workspaceUuid}
-        onOverviewChange={handleOverviewChange}
-        onOrderChange={setPendingOrder}
-        onOpenRedeem={() => setRedeemOpen(true)}
-      />
-      <RedeemCodeDialog
-        open={redeemOpen}
-        onOpenChange={setRedeemOpen}
-        canRedeem={canRedeem}
-        workspaceUuid={workspaceUuid}
-        onOverviewChange={handleOverviewChange}
-      />
-    </div>
-  )
-}
-
-/**
- * "Plus ¥100 / 商业 ¥150 / 企业 ¥200 / 成员 / 月；年付 8 折" — read off the
- * seat catalog, not a local price table.
- */
-export function seatTierSummary(catalog: SeatCatalogData | undefined): string {
-  const priced = (catalog?.tiers ?? [])
-    .map(
-      (tier) =>
-        `${planDisplayName(tier.key)} ${yuanLabel(tier.list_unit_month_cents)} / 成员 / 月`,
-    )
-    .join("；")
-  const yearly = catalog?.terms.find((term) => term.key === "year")
-  const discount =
-    yearly && yearly.discount_percent < 100
-      ? `；年付 ${yearly.discount_percent / 10} 折`
-      : ""
-  return `${priced}${discount}`
-}
-
-export function pendingPaymentOrder(orders: PaymentOrderView[]) {
-  return orders.find((order) => order.status === "pending")
-}
-
-const PLANS_PAYMENT_METHODS_LIVE = "plans-payment-methods-load"
-const PLANS_ORDERS_LIVE = "plans-orders-load"
-const PLANS_OVERVIEW_LIVE = "plans-overview-sync"
-const PLANS_WORKSPACE_SWITCHED_LIVE = "plans-workspace-switched"
-const PLANS_ENTRY_CONFIRMING_LIVE = "plans-entry-confirming"
-
-/** Cloud's 409 code for a pending member-seat order. */
-const PENDING_ORDER_EXISTS_CODE = "cloud_pending_order_exists"
-
-/**
- * A provider-create refusal names the pending order it already committed
- * (`pendingOrderId` in the client's refusal shape) so the attempt can resume
- * that order instead of minting a second one.
- */
-function refusedPendingOrderId(reason: unknown): string | undefined {
-  if (typeof reason === "object" && reason !== null && "pendingOrderId" in reason) {
-    const value = (reason as { pendingOrderId?: unknown }).pendingOrderId
-    return typeof value === "string" && value.length > 0 ? value : undefined
-  }
-  return undefined
-}
-
-/**
- * Notion's 升级到商业版 checkout, mapped onto member seats: a wide two-column
- * dialog — seat count and payment channel on the left, billing-term radio
- * cards and the 确认升级 summary (price, fine print, one primary CTA) on the
- * right. With `renewal` set the same flow extends one lot instead — tier and
- * seats are frozen by the lot and the intent posts `renews_lot_id` (B7).
- * Once an order exists the body swaps to the QR / status view.
- * Stays mounted while closed so a pending order is detected and reported via
- * `onOrderChange` (the compare cards then read 继续支付).
- */
-function UpgradePlanDialog({
-  open,
-  onOpenChange,
-  tier,
-  renewal,
-  catalog,
-  canPurchase,
-  heldSeats,
-  seatOverride,
-  upgradeCredits,
-  lots = [],
-  workspaceUuid,
-  workspaceName,
-  onOverviewChange,
-  onOrderChange,
-  onOpenRedeem,
-}: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  tier: PaidTier
-  /** Set to extend this lot instead of minting a fresh purchase. */
-  renewal?: MemberSeatLotView
-  catalog?: SeatCatalogData
-  canPurchase: boolean
-  /** Purchased seats — the additive base of the 购买后总席位 equation. */
-  heldSeats: number
-  /** The admin's persisted `member_seat_limit_override`, when one applies. */
-  seatOverride?: number | null
-  /** Per-tier upgrade credit preview from the billing overview (server money). */
-  upgradeCredits?: SeatUpgradeCreditView[]
-  /** The Workspace's unexpired lots — for the "will be terminated" note only. */
-  lots?: MemberSeatLotView[]
-  workspaceUuid?: string
-  workspaceName?: string
-  onOverviewChange?: (overview: AccountOverview) => void
-  onOrderChange?: (order?: PaymentOrderView) => void
-  onOpenRedeem?: () => void
-}) {
-  const plan = planByKey(tier)
-  const catalogTier = seatCatalogTier(catalog, tier)
-  const listUnitMonthCents = catalogTier?.list_unit_month_cents
-  const maxSeats = catalog?.max_seats_per_workspace ?? MAX_MEMBER_SEATS_PER_WORKSPACE
-  const remainingSeats = Math.max(0, maxSeats - heldSeats)
-  const purchaseMax = Math.min(
-    catalog?.max_seats_per_purchase ?? maxSeats,
-    remainingSeats,
-  )
-  const minSeats = catalog?.min_seats_per_purchase ?? 1
-  const workspaceFull = remainingSeats < minSeats
-
-  const [quantity, setQuantity] = useState(minSeats)
-  const [term, setTerm] = useState("year")
-  const [provider, setProvider] = useState("")
-  const [methods, setMethods] = useState<PaymentMethodsData>()
-  const [methodsError, setMethodsError] = useState(false)
-  const [methodsLoading, setMethodsLoading] = useState(false)
-  const [methodsReload, setMethodsReload] = useState(0)
-  const [busy, setBusy] = useState(false)
-  const [order, setOrder] = useState<PaymentOrderView>()
-  const orderRef = useRef<PaymentOrderView | undefined>(undefined)
-  const [lockedWorkspace, setLockedWorkspace] = useState<{ uuid: string; name: string }>()
-  const [ordersLoading, setOrdersLoading] = useState(canPurchase)
-  const [ordersError, setOrdersError] = useState(false)
-  const [ordersReason, setOrdersReason] = useState<unknown>()
-  const [ordersReload, setOrdersReload] = useState(0)
-  const [autoRefreshFailed, setAutoRefreshFailed] = useState(false)
-  const [overviewError, setOverviewError] = useState(false)
-  const [overviewReason, setOverviewReason] = useState<unknown>()
-  const [overviewSyncing, setOverviewSyncing] = useState(false)
-  const overviewSyncingRef = useRef(false)
-  const [cancelOpen, setCancelOpen] = useState(false)
-  const refreshInFlight = useRef(false)
-  // One attempt's operation_id. A transient failure keeps it so the retry
-  // resumes the pending order this attempt already committed; changing the
-  // chosen content or provider rotates it, and a successful create rotates it.
-  const [operationId, setOperationId] = useState(() => crypto.randomUUID())
-  const agreementId = useId()
-  const agreementLinkRef = useRef<HTMLButtonElement>(null)
-  const agreementContentRef = useRef<HTMLDivElement>(null)
-  const [readingAgreement, setReadingAgreement] =
-    useState<NonNullable<PaymentMethodsData["purchase_agreement"]>>()
-  const [readAgreementVersion, setReadAgreementVersion] = useState<string>()
-  const [acceptedPurchase, setAcceptedPurchase] = useState<string>()
-  const workspaceSwitched = Boolean(
-    lockedWorkspace && workspaceUuid && lockedWorkspace.uuid !== workspaceUuid,
-  )
-
-  function clampQuantity(value: number) {
-    if (!Number.isFinite(value) || purchaseMax < minSeats) {
-      return minSeats
-    }
-    return Math.min(purchaseMax, Math.max(minSeats, Math.round(value)))
-  }
-
-  // A renewal keeps the lot's seats; a purchase adds to the purchased count.
-  const quantityClamped = renewal ? renewal.seats : clampQuantity(quantity)
-  const seatCount = quantityClamped
-  const nextSeats = heldSeats + quantityClamped
-  const storesPerSeat = catalog?.stores_per_seat ?? 0
-  const nextStores = Math.min(
-    catalog?.max_stores_per_workspace ?? 0,
-    nextSeats * storesPerSeat,
-  )
-  const activeTerm = seatCatalogTerm(catalog, term)
-  const unitMonthCents = seatUnitMonthCents(catalog, tier, term)
-  const amountCents =
-    unitMonthCents !== undefined && activeTerm
-      ? unitMonthCents * seatCount * activeTerm.months
-      : undefined
-  const listAmountCents =
-    listUnitMonthCents !== undefined && activeTerm
-      ? listUnitMonthCents * seatCount * activeTerm.months
-      : undefined
-  const hasDiscount =
-    amountCents !== undefined && listAmountCents !== undefined
-      ? amountCents < listAmountCents
-      : false
-  const discountPercent = activeTerm?.discount_percent ?? 100
-  const discountLabel =
-    discountPercent < 100 ? `${discountPercent / 10} 折` : undefined
-
-  // Upgrade credit preview: per-tier totals from the overview, never recomputed
-  // here. A renewal extends one lot and is never credited.
-  const creditCents = renewal
-    ? 0
-    : (upgradeCredits?.find((row) => row.tier === tier)?.credit_cents ?? 0)
-  const payableCents =
-    amountCents === undefined ? undefined : Math.max(0, amountCents - creditCents)
-  const forfeitedCents =
-    amountCents === undefined ? 0 : Math.max(0, creditCents - amountCents)
-  const fullyCredited =
-    amountCents !== undefined && amountCents > 0 && payableCents === 0
-  const appliedCreditCents = Math.min(creditCents, amountCents ?? 0)
-  const supersededLots = renewal
-    ? []
-    : lots.filter((lot) => planRank(lot.tier) < planRank(tier))
-  const supersededSeats = supersededLots.reduce((sum, lot) => sum + lot.seats, 0)
-  const agreement = methods?.purchase_agreement
-  const agreementAvailable = Boolean(agreement?.version && agreement.content.trim())
-  const purchaseKey = JSON.stringify([
-    workspaceUuid, tier, renewal?.id, quantityClamped, term, agreement?.version,
-  ])
-  const agreementAccepted = agreementAvailable && acceptedPurchase === purchaseKey
-
-  useEffect(() => {
-    setAcceptedPurchase(undefined)
-  }, [open, purchaseKey])
-
-  useEffect(() => {
-    setReadingAgreement(undefined)
-    setReadAgreementVersion(undefined)
-  }, [open, workspaceUuid])
-
-  useEffect(() => {
-    if (readingAgreement) agreementContentRef.current?.focus()
-  }, [readingAgreement])
-
-  useEffect(() => {
-    const id = "plans-purchase-agreement-load"
-    if (open && methods && !agreementAvailable && !order) {
-      notifyLive({
-        id,
-        type: "error",
-        title: "采购同意书暂不可用，请重新读取。",
-        action: { label: "重试", onClick: () => setMethodsReload((value) => value + 1) },
-      })
-    } else {
-      clearLive(id)
-    }
-    return () => clearLive(id)
-  }, [open, methods, agreementAvailable, order])
-
-  // Changing the chosen content or provider starts a new attempt: the old
-  // operation_id must not resurrect an order for different seats/term/channel.
-  useEffect(() => {
-    setOperationId(crypto.randomUUID())
-  }, [renewal?.id, tier, quantityClamped, term, provider])
-
-  // Payment methods load lazily on open; failures ride the live toast.
-  useEffect(() => {
-    if (!open) return
-    let cancelled = false
-    setMethods(undefined)
-    setMethodsError(false)
-    setMethodsLoading(true)
-    clearLive(PLANS_PAYMENT_METHODS_LIVE)
-    accountHttp
-      .accountGetPaymentMethods()
-      .then(
-        (next) => {
-          if (cancelled) return
-          setMethods(next)
-          const keys = paymentMethodKeys(next)
-          setProvider(
-            (prev) =>
-              prev || (keys.find((k) => k.includes("alipay")) ?? keys[0] ?? ""),
-          )
-        },
-        (reason) => {
-          if (cancelled) return
-          setMethodsError(true)
-          notifyLive({
-            id: PLANS_PAYMENT_METHODS_LIVE,
-            type: "error",
-            reason,
-            title: errorMessage(reason, "支付方式读取失败，请重新读取。"),
-            action: {
-              label: "重试",
-              onClick: () => setMethodsReload((value) => value + 1),
-            },
-          })
-        },
-      )
-      .finally(() => {
-        if (!cancelled) setMethodsLoading(false)
-      })
-    return () => {
-      cancelled = true
-      clearLive(PLANS_PAYMENT_METHODS_LIVE)
-    }
-  }, [open, methodsReload])
-
-  // Surface a resumable pending order to the compare cards.
-  useEffect(() => {
-    onOrderChange?.(order?.status === "pending" ? order : undefined)
-  }, [order, onOrderChange])
-
-  useEffect(() => {
-    if (!ordersError) {
-      clearLive(PLANS_ORDERS_LIVE)
-      return
-    }
-    notifyLive({
-      id: PLANS_ORDERS_LIVE,
-      type: "error",
-      reason: ordersReason,
-      title: "无法确认是否已有待支付订单。",
-      action: { label: "重试", onClick: () => setOrdersReload((value) => value + 1) },
-    })
-    return () => clearLive(PLANS_ORDERS_LIVE)
-  }, [ordersError, ordersReason])
-
-  useEffect(() => {
-    if (!overviewError) {
-      clearLive(PLANS_OVERVIEW_LIVE)
-      return
-    }
-    notifyLive({
-      id: PLANS_OVERVIEW_LIVE,
-      type: "error",
-      reason: overviewReason,
-      title: "成员名额已到账，但套餐概览尚未更新。",
-      action: { label: "重试", onClick: () => void syncPaidOverview() },
-    })
-    return () => clearLive(PLANS_OVERVIEW_LIVE)
-  }, [overviewError, overviewReason])
-
-  useEffect(() => {
-    if (!workspaceSwitched) {
-      clearLive(PLANS_WORKSPACE_SWITCHED_LIVE)
-      return
-    }
-    notifyLive({
-      id: PLANS_WORKSPACE_SWITCHED_LIVE,
-      type: "error",
-      title: "当前 Workspace 已切换，请关闭后重新打开订单。",
-    })
-    return () => clearLive(PLANS_WORKSPACE_SWITCHED_LIVE)
-  }, [workspaceSwitched])
-
-  // entry_confirming is a persistent state, not a one-off failure: the toast
-  // stays with a retry action while the order holds its seat reservation.
-  useEffect(() => {
-    if (order?.status !== "pending" || order.entry_state !== "entry_confirming") {
-      clearLive(PLANS_ENTRY_CONFIRMING_LIVE)
-      return
-    }
-    notifyLive({
-      id: PLANS_ENTRY_CONFIRMING_LIVE,
-      type: "error",
-      title: "支付渠道已受理该订单，但未返回可再次展示的付款入口。",
-      description: "订单仍保留成员名额；请稍后重试找回，或等渠道确认后自动到账。",
-      action: { label: "重试找回", onClick: () => void recoverOrder() },
-    })
-    return () => clearLive(PLANS_ENTRY_CONFIRMING_LIVE)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [order?.status, order?.entry_state, order?.public_id])
-
-  useEffect(() => {
-    let cancelled = false
-    orderRef.current = undefined
+    setEditor(undefined)
     setOrder(undefined)
-    setOrdersError(false)
-    setOrdersReason(undefined)
-    setAutoRefreshFailed(false)
-    setOverviewError(false)
-    setOverviewReason(undefined)
-    if (!canPurchase || !workspaceUuid) {
-      setOrdersLoading(false)
-      return
-    }
-    setOrdersLoading(true)
-    void (async () => {
-      try {
-        const orders = await accountHttp.accountListPaymentOrders({ status: "pending" })
-        if (cancelled) return
-        const pending = pendingPaymentOrder(orders)
-        if (!pending) return
-        orderRef.current = pending
-        setOrder(pending)
-        try {
-          const detail = await accountHttp.accountGetPaymentOrder(pending.public_id)
-          if (cancelled) return
-          orderRef.current = detail
-          setOrder(detail)
-          if (detail.status !== "pending") setCancelOpen(false)
-          if (detail.status === "paid") {
-            notifySuccess("成员名额已到账")
-            await syncPaidOverview()
-          }
-        } catch (reason) {
-          if (!cancelled) notifyCommandError(reason, "订单详情更新失败，请手动刷新。")
-        }
-      } catch (reason) {
-        if (!cancelled) {
-          setOrdersReason(() => reason)
-          setOrdersError(true)
-        }
-      } finally {
-        if (!cancelled) setOrdersLoading(false)
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [canPurchase, ordersReload, workspaceUuid])
+    setView(preset)
+  }, [workspace?.uuid, preset])
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (submitBlocked || !lockedWorkspace || !agreement) return
-    setBusy(true)
-    try {
-      // An empty channel is only legal when the frozen credit covers the whole
-      // price; `fullyCredited` is that preview, the server re-checks at create.
-      if (!provider && !fullyCredited) return
-      const created = renewal
-        ? await accountHttp.accountCreateRenewalIntent({
-            renews_lot_id: renewal.id,
-            term,
-            provider,
-            operation_id: operationId,
-            purchase_agreement: { version: agreement.version, accepted: true },
-            // B2: the server re-resolves the active Workspace and refuses when
-            // the one this dialog locked no longer matches.
-            expected_workspace_uuid: lockedWorkspace.uuid,
-          })
-        : await accountHttp.accountCreatePaymentIntent({
-            seats: quantityClamped,
-            term,
-            tier,
-            provider,
-            operation_id: operationId,
-            purchase_agreement: { version: agreement.version, accepted: true },
-            // B2: the server re-resolves the active Workspace and refuses when the
-            // one this dialog locked no longer matches — the order would otherwise
-            // be charged to a Workspace the operator never confirmed.
-            expected_workspace_uuid: lockedWorkspace.uuid,
-          })
-      orderRef.current = created
-      setOrder(created)
-      // A successful create closes this attempt; the next one starts fresh and
-      // must not resume an order that has already been answered.
-      setOperationId(crypto.randomUUID())
-      if (created.status === "paid") {
-        // A fully credited order settles inside the create transaction: there is
-        // no entry to pay and nothing to wait for.
-        notifySuccess(renewal ? "续费已完成" : "升级已完成", {
-          description: "本单应付全部由原套餐折算抵扣，成员名额已到账。",
-        })
-        await syncPaidOverview()
-      } else {
-        notifySuccess(renewal ? "续费订单已创建" : "加购订单已创建", {
-          description: created.pay_url
-            ? "请打开托管收银台完成付款。"
-            : created.qr_code
-              ? "请扫码完成付款。"
-              : created.remittance ?? "请把单号发给运营，确认收款后成员名额到账。",
-        })
-      }
-    } catch (reason) {
-      // The provider-create refusal names the order it already committed:
-      // recover that entry instead of minting a second purchase intent.
-      const refusedPending = refusedPendingOrderId(reason)
-      if (refusedPending) {
-        try {
-          const recovered = await accountHttp.accountRecoverPaymentOrder(refusedPending)
-          orderRef.current = recovered
-          setOrder(recovered)
-          notifySuccess("待支付订单已找回", {
-            description: "该订单已锁定名额，继续完成付款即可。",
-          })
-          return
-        } catch (recoverReason) {
-          notifyCommandError(recoverReason, "找回付款入口失败，请稍后刷新订单列表。")
-          return
-        }
-      }
-      // The order may already exist when the create response was lost: the
-      // pending order is the reservation — recover its entry before painting it
-      // instead of letting the user mint a second purchase intent.
-      if (commandErrorCode(reason) === PENDING_ORDER_EXISTS_CODE) {
-        try {
-          const orders = await accountHttp.accountListPaymentOrders({ status: "pending" })
-          const pending = pendingPaymentOrder(orders)
-          if (pending) {
-            let resolved = pending
-            try {
-              resolved = await accountHttp.accountRecoverPaymentOrder(pending.public_id)
-            } catch (recoverReason) {
-              notifyCommandError(recoverReason, "找回付款入口失败，已保留待支付订单。")
-            }
-            orderRef.current = resolved
-            setOrder(resolved)
-            notifySuccess("已找回待支付订单", {
-              description: "该订单已锁定名额，继续完成付款即可。",
-            })
-            return
-          }
-        } catch (listReason) {
-          notifyCommandError(listReason, "找回待支付订单失败，请稍后刷新。")
-          return
-        }
-      }
-      if (commandErrorCode(reason) === WORKSPACE_MISMATCH_CODE) {
-        // The switch landed server-side in another tab/device: repaint the
-        // shell's standing so the local workspaceSwitched guard can engage.
-        try {
-          onOverviewChange?.(await accountHttp.accountListWorkspaces())
-        } catch {
-          // A failed repaint keeps the refusal toast as the only notice.
-        }
-      }
-      notifyCommandError(reason, "下单失败，请稍后重试。")
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function refreshOrder(options?: { quiet?: boolean }) {
-    const current = orderRef.current
-    if (!current || current.status !== "pending" || refreshInFlight.current) return
-    refreshInFlight.current = true
-    if (!options?.quiet) setBusy(true)
-    try {
-      const next = await accountHttp.accountGetPaymentOrder(current.public_id)
-      const latest = orderRef.current
-      if (latest?.public_id !== current.public_id || latest.status !== "pending") return
-      orderRef.current = next
-      setOrder(next)
-      if (next.status !== "pending") setCancelOpen(false)
-      setAutoRefreshFailed(false)
-      if (next.status === "paid") {
-        notifySuccess("成员名额已到账")
-        await syncPaidOverview()
-      }
-    } catch (reason) {
-      if (options?.quiet) {
-        setAutoRefreshFailed(true)
-      } else {
-        notifyCommandError(reason, "查询订单失败。")
-      }
-    } finally {
-      refreshInFlight.current = false
-      if (!options?.quiet) setBusy(false)
-    }
-  }
-
-  /**
-   * Explicit payment-entry recovery: Cloud asks the provider by merchant order
-   * id before anything is re-created, then returns the row with its new
-   * entry_state. A paid answer lands through the same settle path as polling.
-   */
-  async function recoverOrder() {
-    const current = orderRef.current
-    if (!current || current.status !== "pending") return
-    setBusy(true)
-    try {
-      const next = await accountHttp.accountRecoverPaymentOrder(current.public_id)
-      orderRef.current = next
-      setOrder(next)
-      if (next.status === "paid") {
-        notifySuccess("成员名额已到账")
-        await syncPaidOverview()
-      } else if (next.entry_state === "ready") {
-        notifySuccess("付款入口已找回", { description: "请继续完成付款。" })
-      }
-    } catch (reason) {
-      notifyCommandError(reason, "找回付款入口失败。")
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function syncPaidOverview() {
-    if (overviewSyncingRef.current) return
-    overviewSyncingRef.current = true
-    setOverviewSyncing(true)
-    try {
-      const overview = await accountHttp.accountListWorkspaces()
-      if (overview.active_workspace?.uuid !== workspaceUuid) return
-      setOverviewError(false)
-      setOverviewReason(undefined)
-      onOverviewChange?.(overview)
-    } catch (reason) {
-      setOverviewReason(() => reason)
-      setOverviewError(true)
-    } finally {
-      overviewSyncingRef.current = false
-      setOverviewSyncing(false)
-    }
-  }
-
-  useVisiblePolling({
-    enabled: order?.status === "pending",
-    intervalMs: 3000,
-    restartKey: order?.public_id ?? "",
-    onPoll: () => {
-      void refreshOrder({ quiet: true })
-    },
-  })
-
-  async function cancelOrder() {
-    const current = orderRef.current
-    if (!current || current.status !== "pending") return
-    setBusy(true)
-    try {
-      const next = await accountHttp.accountCancelPaymentOrder(current.public_id)
-      orderRef.current = next
-      setOrder(next)
-      setCancelOpen(false)
-      if (next.status === "paid") {
-        notifySuccess("订单已付款，成员名额已到账")
-        await syncPaidOverview()
-      } else {
-        notifySuccess("已取消待确认订单")
-      }
-    } catch (reason) {
-      notifyCommandError(reason, "取消失败。")
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function openCheckout() {
-    const current = orderRef.current
-    if (!current || current.status !== "pending") return
-    setBusy(true)
-    try {
-      await accountHttp.accountOpenPaymentOrder(current.public_id)
-    } catch (reason) {
-      notifyCommandError(reason, "无法打开托管收银台。")
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  // The lock is taken when the dialog opens, not in onOpenChange: the parent
-  // owns `open`, so a controlled transition never fires the callback.
   useEffect(() => {
-    if (!open || !workspaceUuid) return
-    setLockedWorkspace((current) =>
-      current ?? { uuid: workspaceUuid, name: workspaceName ?? workspaceUuid },
-    )
-    setQuantity(minSeats)
-    setTerm("year")
-    setProvider("")
-    if (orderRef.current?.status === "pending") void refreshOrder()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, workspaceUuid, workspaceName])
+    if (preset) return
+    let canceled = false
+    subscriptionHttp.view().then((next) => {
+      if (canceled) return
+      setView(next)
+      setLoadError(undefined)
+    }, (reason) => { if (!canceled) setLoadError(errorMessage(reason, "订阅读取失败")) })
+    return () => { canceled = true }
+  }, [workspace?.uuid, reload, preset])
 
-  function changeOpen(next: boolean) {
-    if (!next && overviewSyncingRef.current) return
-    onOpenChange(next)
-    if (!next) {
-      setAcceptedPurchase(undefined)
-      setReadingAgreement(undefined)
-      setReadAgreementVersion(undefined)
-      setLockedWorkspace(undefined)
-      setProvider("")
-      setCancelOpen(false)
-      if (
-        !overviewError &&
-        orderRef.current &&
-        orderRef.current.status !== "pending"
-      ) {
-        orderRef.current = undefined
-        setOrder(undefined)
-        setOrdersReload((value) => value + 1)
+  const pendingID = view?.pending_public_id
+  useEffect(() => {
+    if (!pendingID || !canManage) return
+    let canceled = false
+    const load = () => subscriptionHttp.getOrder(pendingID).then(async (next) => {
+      if (canceled) return
+      setOrder(next)
+      if (next.status !== "pending") {
+        setReload((value) => value + 1)
+        if (next.status === "paid") {
+          try {
+            const nextOverview = await accountHttp.accountGetOverview()
+            if (!canceled) onOverviewChange?.(nextOverview)
+          } catch (reason) { if (!canceled) notifyCommandError(reason, "付款已记录，工作区概览刷新失败") }
+        }
       }
-    }
+    }, (reason) => { if (!canceled) notifyCommandError(reason, "支付状态读取失败") })
+    void load()
+    const timer = window.setInterval(() => { void load() }, 15_000)
+    return () => { canceled = true; window.clearInterval(timer) }
+  }, [pendingID, canManage, onOverviewChange])
+
+  if (!view) return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground">
+    {loadError ? <><span>{loadError}</span><Button variant="outline" onClick={() => setReload((n) => n + 1)}>重试</Button></> : <><Spinner /> 正在读取订阅</>}
+  </div>
+
+  const next = view.next
+  const future = view.periods.filter((p) => new Date(p.starts_at).getTime() > Date.now())
+  const reduction = next.stores < view.stores.limit || next.members < view.members.limit || next.plan_key !== view.plan_key
+  const hasPaidReduction = future.some((p) => p.stores < view.stores.limit)
+
+  return <div className="flex w-full flex-col gap-6">
+    <section className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div><h2 className="text-lg font-semibold">工作区订阅</h2><p className="text-xs text-muted-foreground">按购买日每月续费 · 所有时间均为北京时间</p></div>
+        <Button variant="ghost" size="sm" onClick={() => setReload((n) => n + 1)}><RefreshCcw className="size-4" /> 刷新</Button>
+      </div>
+      <div className="grid gap-4 rounded-xl border border-border p-5 sm:grid-cols-3">
+        <div><p className="text-xs text-muted-foreground">当前套餐</p><p className="mt-2 font-semibold">{planName(view.plan_key)}</p><p className="mt-1 text-xs text-muted-foreground">{view.status === "active" ? "已付期间生效中" : view.status === "expired" ? "付费服务已到期" : "永久免费"}</p></div>
+        <div><p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Store className="size-3.5" /> 当前可用店铺</p><p className="mt-2 font-semibold">{view.stores.limit} 家 <span className="text-xs font-normal text-muted-foreground">已连接 {view.stores.used} 家</span></p><p className="mt-1 text-xs text-muted-foreground">套餐自带 {view.stores.limit - view.extra_stores} 家 · 加购 {view.extra_stores} 家</p></div>
+        <div><p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Users className="size-3.5" /> 当前成员</p><p className="mt-2 font-semibold">{view.members.used} / {view.members.limit} 人</p><p className="mt-1 text-xs text-muted-foreground">当前额度可用至 {subscriptionDate(view.current_end)}</p></div>
+      </div>
+      {view.status === "active" && <p className="text-sm text-muted-foreground">全部已付服务至 {subscriptionDate(view.term_end)}。提前付款会延长已付时间，容量按各服务期间切换。</p>}
+      {canManage ? <div className="flex flex-wrap gap-2">
+        <Button onClick={() => setEditor({ action: view.status === "active" ? "renew" : "subscribe" })}>{view.status === "active" ? "续费套餐与加购" : "购买套餐"}</Button>
+        {view.status === "active" && <><Button variant="outline" onClick={() => setEditor({ action: "change" })}>本期加购 / 升级</Button><Button variant="outline" onClick={() => setEditor({ action: "schedule" })}>调整下期店铺数量</Button></>}
+      </div> : <p className="text-sm text-muted-foreground">只有工作区所有者或管理员可以管理订阅。</p>}
+    </section>
+
+    <section className="flex flex-col gap-3 border-t border-border pt-5">
+      <h3 className="font-semibold">下次续费配置</h3>
+      <p>{planName(next.plan_key)} · {next.stores} 家店铺 · {next.members} 名成员 <strong className="ml-2">{yuanLabel(view.next_renewal.amount_cents)}/月</strong></p>
+      <p className="text-sm text-muted-foreground">{subscriptionDate(next.effective_at)} 起，下一段尚未购买的服务按此配置计费。保存配置不代表已经付款。</p>
+      {view.stores.used > next.stores && !next.keep_store_ids?.length && <p className="text-sm">实际连接数量超过下期容量，请修改下期配置，选择到期后保留的店铺。</p>}
+      {reduction && <p className="text-sm">已设置下期续费 {next.stores} 家。当前 {view.stores.limit} 家可使用至 {subscriptionDate(view.current_end)}。</p>}
+      {canManage && view.status === "active" && <div className="flex flex-wrap gap-2">
+        <Button size="sm" variant="outline" onClick={() => setEditor({ action: "schedule" })}>修改下期配置</Button>
+        {(reduction || hasPaidReduction) && <Button size="sm" variant="outline" onClick={() => setEditor({ action: "change", restore: true })}>恢复为 {view.stores.limit} 家，预览补差</Button>}
+      </div>}
+    </section>
+
+    {future.length > 0 && <section className="flex flex-col gap-3 border-t border-border pt-5">
+      <h3 className="flex items-center gap-2 font-semibold"><CalendarClock className="size-4" /> 已付款的未来服务</h3>
+      {future.map((period) => <div key={period.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-3 text-sm">
+        <div><p>{period.stores} 家店铺 · {period.members} 名成员</p><p className="text-xs text-muted-foreground">{subscriptionDate(period.starts_at)} 至 {subscriptionDate(period.ends_at)}</p></div>
+        {canManage && <Button size="sm" variant="outline" onClick={() => setEditor({ action: "keep", period })}>修改保留名单</Button>}
+      </div>)}
+    </section>}
+
+    {(view.pending_order || order?.status === "paid") && <section className="rounded-lg border border-border p-4 text-sm">
+      <p className="font-medium">{order?.status === "paid" ? "收款已记录" : "待付款订阅订单"}</p>
+      <p className="mt-1 break-all text-muted-foreground">单号 {order?.public_id ?? view.pending_public_id} {order ? `· ${yuanLabel(order.amount_cents)}` : ""}</p>
+      <p className="mt-1 text-muted-foreground">{order?.reconciliation_reason ? "收款记录已保留，正在核对服务期间，请联系运营处理。" : order?.status === "paid" ? "已按订单约定记录服务期间。" : "请将单号交给运营核对付款，确认收款后服务生效。页面会自动刷新支付状态。"}</p>
+    </section>}
+
+    <section className="border-t border-border pt-5 text-xs leading-6 text-muted-foreground">
+      <p>套餐从购买日起按月计算，店铺加购 {yuanLabel(view.store_monthly_cents)}/家/月，成员加购 {yuanLabel(view.member_monthly_cents)}/人/月，与套餐统一续费。</p>
+      <p>已付名额继续用满；减少续费不自动退款。手动暂停、解绑、删除店铺不改变已订阅名额。到期暂停新操作，保留配置及历史数据，已受理业务继续收尾。</p>
+      {view.store_choices.some((store) => !store.manual_disabled && next.keep_store_ids?.length && !next.keep_store_ids.includes(store.id)) && <p>未列入下期保留名单的店铺仅可使用至本期结束。删除保留店铺后，对应名额保持空闲。</p>}
+    </section>
+    {editor && <SubscriptionEditor key={`${workspace?.uuid}-${editor.action}-${editor.period?.id ?? ""}-${editor.restore ?? false}`} view={view} editor={editor} workspaceUuid={workspace?.uuid ?? ""} onClose={() => setEditor(undefined)} onSaved={(nextView) => { setView(nextView); setReload((n) => n + 1); setEditor(undefined) }} />}
+  </div>
+}
+
+function SubscriptionEditor({ view, editor, workspaceUuid, onClose, onSaved }: {
+  view: SubscriptionView; editor: Editor; workspaceUuid: string; onClose: () => void; onSaved: (view: SubscriptionView) => void
+}) {
+  const renewal = editor.action === "schedule" || editor.action === "renew"
+  const initial = editor.period ?? (renewal ? view.next : { plan_key: view.plan_key === "free" ? "lite" : view.plan_key, extra_stores: view.extra_stores, extra_members: view.extra_members })
+  const [plan, setPlan] = useState(initial.plan_key)
+  const [stores, setStores] = useState(initial.extra_stores)
+  const [members, setMembers] = useState(initial.extra_members)
+  const [months, setMonths] = useState(1)
+  const [renewAlso, setRenewAlso] = useState(editor.restore || (view.next.stores >= view.stores.limit && view.next.members >= view.members.limit && view.next.plan_key === view.plan_key))
+  const currentPeriod = view.periods.find((p) => new Date(p.starts_at).getTime() <= Date.now())
+  const initialKeep = editor.period?.keep_store_ids ?? (renewal ? view.next.keep_store_ids : currentPeriod?.keep_store_ids ?? null)
+  const [keep, setKeep] = useState<string[] | null>(initialKeep?.length ? initialKeep.filter((id) => view.store_choices.some((s) => s.id === id && !s.manual_disabled)) : null)
+  const [keepMembers, setKeepMembers] = useState<number[] | null>(editor.period?.keep_member_ids ?? (renewal ? view.next.keep_member_ids : null))
+  const [quote, setQuote] = useState<SubscriptionQuote>()
+  const [busy, setBusy] = useState(false)
+  const [accepted, setAccepted] = useState(false)
+  const [reading, setReading] = useState(false)
+  const [read, setRead] = useState(false)
+  const [cancelPending, setCancelPending] = useState(false)
+  const [failure, setFailure] = useState<string>()
+  const planRow = view.plans.find((p) => p.key === plan)!
+  const limit = planRow.stores + stores
+  const choices = view.store_choices.filter((s) => !s.manual_disabled)
+  const needsKeep = ["schedule", "keep", "change"].includes(editor.action) && choices.length > limit
+  const memberLimit = planRow.members + members
+  const needsMembers = ["schedule", "keep", "change"].includes(editor.action) && view.member_choices.length > memberLimit
+  const selectedMembers = keepMembers ?? view.member_choices.slice(0, memberLimit).map((m) => m.id)
+  const selected = keep ?? choices.slice(0, limit).map((s) => s.id)
+  const paused = quote?.keep_store_ids ? choices.filter((s) => !quote.keep_store_ids!.includes(s.id)) : []
+  const title = editor.action === "schedule" ? "调整下期店铺数量" : editor.action === "keep" ? "修改到期保留名单" : editor.restore ? "恢复店铺容量" : editor.action === "renew" ? "续费套餐与加购" : editor.action === "subscribe" ? "购买套餐" : "本期加购 / 升级"
+  function edit(change: () => void) { change(); setQuote(undefined); setAccepted(false); setRead(false); setFailure(undefined) }
+  async function preview() {
+    setBusy(true); setFailure(undefined)
+    try {
+      const request: SubscriptionRequest = {
+        action: editor.action, expected_workspace_uuid: workspaceUuid,
+        target: { plan_key: plan, extra_stores: stores, extra_members: members }, months: months as 1 | 3 | 6 | 12,
+        keep_store_ids: needsKeep ? selected : keep,
+        keep_member_ids: needsMembers ? selectedMembers : keepMembers,
+        period_id: editor.period?.id,
+        renew_with_change: editor.action === "change" ? renewAlso : undefined,
+      }
+      setQuote(await subscriptionHttp.quote(request))
+    } catch (reason) { setFailure(errorMessage(reason, "预览失败，请刷新订阅后重试")) }
+    finally { setBusy(false) }
   }
-
-  const pending = order?.status === "pending"
-  const orderState = order
-    ? paymentOrderPresentation(order.status, order.entry_state)
-    : undefined
-  const submitBlocked =
-    !agreementAccepted ||
-    !canPurchase ||
-    busy ||
-    ordersLoading ||
-    ordersError ||
-    workspaceSwitched ||
-    !lockedWorkspace ||
-    (!provider && !fullyCredited) ||
-    (!renewal && workspaceFull) ||
-    methodsLoading ||
-    methodsError ||
-    catalog === undefined ||
-    amountCents === undefined
-
-  return (
-    <>
-      <Dialog open={open} onOpenChange={changeOpen}>
-        <DialogContent
-          layout="panel"
-          className="sm:max-w-3xl"
-          showCloseButton={!overviewSyncing}
-        >
-          <div className="px-5 py-4">
-            <DialogHeader>
-              <DialogTitle className="text-md font-semibold">
-                {readingAgreement ? readingAgreement.title : renewal ? `续费 ${plan.name}` : `升级为 ${plan.name}`}
-              </DialogTitle>
-              <DialogDescription>
-                {readingAgreement
-                  ? `版本 ${readingAgreement.version} · 生效日期 ${readingAgreement.effective_at}`
-                  : renewal
-                  ? `为${lockedWorkspace ? `「${lockedWorkspace.name}」` : "当前 Workspace"}续期 ${renewal.seats} 名成员席位，当前到期 ${lotDay(renewal.expires_at)}，续期从到期日顺延。`
-                  : `为${lockedWorkspace ? `「${lockedWorkspace.name}」` : "当前 Workspace"}加购成员名额，每名成员含 ${storesPerSeat} 家店铺位。`}
-              </DialogDescription>
-            </DialogHeader>
-          </div>
-
-          {readingAgreement ? (
-            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden border-t border-border px-5 py-4">
-              <div
-                tabIndex={-1}
-                ref={agreementContentRef}
-                aria-label="采购同意书正文"
-                className="min-h-0 overflow-y-auto whitespace-pre-wrap text-sm leading-7 outline-none"
-              >
-                {readingAgreement.content}
-              </div>
-              {order?.purchase_agreement ? (
-                <p className="text-xs text-muted-foreground">
-                  本单同意时间：{order.purchase_agreement.accepted_at} · 操作者：{order.purchase_agreement.accepted_by}
-                </p>
-              ) : null}
-              <div className="flex justify-end">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    setReadingAgreement(undefined)
-                    requestAnimationFrame(() => agreementLinkRef.current?.focus())
-                  }}
-                >
-                  {order ? "返回订单" : "返回购买"}
-                </Button>
-              </div>
-            </div>
-          ) : order ? (
-            <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto border-t border-border px-5 py-4">
-              <div
-                className="flex flex-wrap items-center justify-between gap-2"
-                role="status"
-                aria-live="polite"
-              >
-                <p className="font-mono text-sm">{order.public_id}</p>
-                <StateChip
-                  status={order.status}
-                  label={orderState?.label}
-                  tone={orderState?.tone}
-                />
-              </div>
-              <p className="text-sm text-muted-foreground">
-                {order.member_seats} 名成员 · {yuanLabel(order.unit_month_cents)} / 成员 / 月 ×{" "}
-                {order.months} 个月
-                {order.credit_cents > 0 ? (
-                  <>
-                    {" "}
-                    = 原价 {yuanLabel(order.amount_cents + order.credit_cents)} · 原套餐折算抵扣 −
-                    {yuanLabel(order.credit_cents)} · 应付 {yuanLabel(order.amount_cents)}
-                  </>
-                ) : (
-                  <> = {yuanLabel(order.amount_cents)}</>
-                )}{" "}
-                · {paymentProviderLabel(order.provider)}
-              </p>
-              {order.purchase_agreement ? (
-                <Button
-                  ref={agreementLinkRef}
-                  type="button"
-                  variant="link"
-                  onClick={() => setReadingAgreement(order.purchase_agreement ?? undefined)}
-                >
-                  查看本单采购同意书
-                </Button>
-              ) : null}
-              {order.qr_code ? (
-                <>
-                  <AlipayQr value={order.qr_code} />
-                  <p className="text-sm text-muted-foreground">
-                    请扫码完成付款。到账后此页会自动更新。
-                  </p>
-                </>
-              ) : order.remittance ? (
-                <p className="text-sm text-muted-foreground">{order.remittance}</p>
-              ) : pending && !order.pay_url ? (
-                <div className="flex flex-col items-start gap-2">
-                  <p className="text-sm text-muted-foreground">
-                    {order.entry_state === "entry_confirming"
-                      ? "该订单待渠道确认，成员名额已被保留。"
-                      : "付款入口尚未确认，名额已被此订单保留。"}
-                  </p>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={busy || workspaceSwitched}
-                    onClick={() => void recoverOrder()}
-                  >
-                    找回付款入口
-                  </Button>
-                </div>
-              ) : null}
-              {pending && order.pay_url ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={busy || workspaceSwitched}
-                  onClick={() => void openCheckout()}
-                >
-                  在浏览器中继续支付
-                </Button>
-              ) : null}
-              {autoRefreshFailed ? (
-                <p className="text-sm text-muted-foreground" role="status">
-                  订单状态尚未更新，可点「刷新状态」。
-                </p>
-              ) : null}
-              <div className="mt-auto flex flex-col-reverse gap-2 border-t border-border pt-4 sm:flex-row sm:justify-end">
-                {pending ? (
-                  <>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      disabled={busy || workspaceSwitched}
-                      onClick={() => setCancelOpen(true)}
-                    >
-                      取消此订单
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="default"
-                      disabled={busy || workspaceSwitched}
-                      aria-busy={busy}
-                      onClick={() => void refreshOrder()}
-                    >
-                      {busy ? <Spinner data-icon="inline-start" /> : null}
-                      刷新状态
-                    </Button>
-                  </>
-                ) : (
-                  <Button
-                    type="button"
-                    variant="default"
-                    disabled={overviewSyncing}
-                    aria-busy={overviewSyncing}
-                    onClick={() => changeOpen(false)}
-                  >
-                    {overviewSyncing ? <Spinner data-icon="inline-start" /> : null}
-                    {overviewSyncing ? "正在同步套餐" : "完成"}
-                  </Button>
-                )}
-              </div>
-            </div>
-          ) : (
-            <form
-              onSubmit={submit}
-              className="grid min-h-0 flex-1 gap-x-6 gap-y-5 overflow-y-auto border-t border-border px-5 py-4 sm:grid-cols-2"
-            >
-              {/* Left column: seat count + payment channel. A renewal keeps
-                  the lot's seats — the count is fixed, not picked. */}
-              <div className="flex flex-col gap-5">
-                <div className="flex flex-col gap-2">
-                  <span className="text-xs font-medium text-muted-foreground">
-                    成员数量
-                  </span>
-                  {renewal ? (
-                    <div className="rounded-lg border border-border/80 bg-muted/40 px-3.5 py-2.5 text-sm">
-                      <span className="font-semibold tabular-nums">{renewal.seats}</span>{" "}
-                      名成员 · {plan.name} · 续期不新增当前席位
-                    </div>
-                  ) : (
-                    <>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="shrink-0"
-                          aria-label="减少一名成员"
-                          disabled={quantityClamped <= minSeats}
-                          onClick={() =>
-                            setQuantity((value) => clampQuantity(value - 1))
-                          }
-                        >
-                          <Minus className="size-3.5" />
-                        </Button>
-                        <Input
-                          type="number"
-                          min={minSeats}
-                          max={Math.max(minSeats, purchaseMax)}
-                          value={quantityClamped}
-                          onChange={(event) =>
-                            setQuantity(clampQuantity(Number(event.target.value)))
-                          }
-                          className="min-w-0 flex-1 text-center font-mono tabular-nums"
-                          aria-label="成员数量"
-                        />
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="shrink-0"
-                          aria-label="增加一名成员"
-                          disabled={quantityClamped >= purchaseMax}
-                          onClick={() =>
-                            setQuantity((value) => clampQuantity(value + 1))
-                          }
-                        >
-                          <Plus className="size-3.5" />
-                        </Button>
-                      </div>
-                      {SEAT_QUICK_QUANTITIES.some((pick) => pick <= purchaseMax) ? (
-                        <div
-                          className="grid grid-cols-4 gap-1.5"
-                          role="group"
-                          aria-label="快捷数量"
-                        >
-                          {SEAT_QUICK_QUANTITIES.filter(
-                            (pick) => pick <= purchaseMax,
-                          ).map((pick) => {
-                            const isSelected = quantityClamped === pick
-                            return (
-                              <button
-                                key={pick}
-                                type="button"
-                                aria-pressed={isSelected ? "true" : "false"}
-                                onClick={() => setQuantity(pick)}
-                                className={cn(
-                                  "h-7 rounded-md text-xs font-medium transition-colors cursor-pointer",
-                                  isSelected
-                                    ? "bg-brand text-brand-foreground hover:bg-brand/90"
-                                    : "bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground",
-                                )}
-                              >
-                                {pick} 名成员
-                              </button>
-                            )
-                          })}
-                        </div>
-                      ) : null}
-                      <p className="text-xs leading-5 text-muted-foreground">
-                        当前已购 {heldSeats} 名 · 上限 {maxSeats} 名
-                        {workspaceFull ? "，名额已满。" : ""}
-                      </p>
-                    </>
-                  )}
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  <span className="text-xs font-medium text-muted-foreground">
-                    支付渠道
-                  </span>
-                  <PaymentChannelList
-                    methods={methods}
-                    loading={methodsLoading}
-                    error={methodsError}
-                    value={provider}
-                    onChange={setProvider}
-                    onRetry={() => setMethodsReload((v) => v + 1)}
-                    emptyHint="管理员尚未开通支付渠道，可先用兑换码兑换名额。"
-                  />
-                </div>
-              </div>
-
-              {/* Right column: 账单选项 radio cards + 确认升级 summary. */}
-              <div className="flex flex-col gap-5">
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-medium text-muted-foreground">
-                      账单选项
-                    </span>
-                    <span className="text-meta text-muted-foreground">
-                      按购买时间计时 · 非自然月
-                    </span>
-                  </div>
-                  <div
-                    className="flex flex-col gap-2"
-                    role="radiogroup"
-                    aria-label="账期"
-                  >
-                    {(catalog?.terms ?? []).map((option) => {
-                      const isSelected = term === option.key
-                      const termUnit = seatUnitMonthCents(catalog, tier, option.key)
-                      const termDiscount =
-                        option.discount_percent < 100
-                          ? `${option.discount_percent / 10} 折`
-                          : undefined
-                      return (
-                        <button
-                          key={option.key}
-                          type="button"
-                          role="radio"
-                          aria-checked={isSelected}
-                          onClick={() => setTerm(option.key)}
-                          className={cn(
-                            "flex items-center gap-3 rounded-lg border px-3.5 py-2.5 text-left transition-all cursor-pointer",
-                            isSelected
-                              ? "border-brand/70 bg-brand-soft/40 ring-1 ring-brand/40 dark:border-brand/60 dark:bg-brand-soft/25 dark:ring-brand/30"
-                              : "border-border/80 bg-background hover:bg-muted/40",
-                          )}
-                        >
-                          <span
-                            className={cn(
-                              "flex size-4 shrink-0 items-center justify-center rounded-full border transition-all",
-                              isSelected
-                                ? "border-brand bg-brand text-brand-foreground"
-                                : "border-muted-foreground/40",
-                            )}
-                          >
-                            {isSelected ? (
-                              <span className="size-1.5 rounded-full bg-brand-foreground" />
-                            ) : null}
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <span className="block text-sm font-medium text-foreground">
-                              {seatTermLabel(option.key)}
-                              <span className="ml-1.5 text-xs font-normal text-muted-foreground">
-                                （{option.days} 天）
-                              </span>
-                            </span>
-                            <span className="block text-xs text-muted-foreground">
-                              {termDiscount !== undefined &&
-                              listUnitMonthCents !== undefined ? (
-                                <span className="mr-1 line-through opacity-70">
-                                  {yuanLabel(listUnitMonthCents)}
-                                </span>
-                              ) : null}
-                              {termUnit !== undefined
-                                ? `${yuanLabel(termUnit)} / 成员 / 月 · `
-                                : ""}
-                              按购买时间计 {option.days} 天
-                            </span>
-                          </span>
-                          {termDiscount !== undefined ? (
-                            <span className="shrink-0 rounded-md bg-brand-soft px-1.5 py-0.5 text-meta font-semibold text-brand-ink">
-                              {termDiscount}
-                            </span>
-                          ) : null}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  <span className="text-xs font-medium text-muted-foreground">
-                    {renewal ? "确认续费" : "确认升级"}
-                  </span>
-                  <div className="flex flex-col gap-3 rounded-lg border border-border p-4">
-                    <div className="flex items-baseline gap-2">
-                      {hasDiscount && listAmountCents !== undefined ? (
-                        <span className="font-mono text-base text-muted-foreground line-through tabular-nums">
-                          {yuanLabel(listAmountCents)}
-                        </span>
-                      ) : null}
-                      <span className="font-mono text-2xl font-bold tabular-nums tracking-tight">
-                        {payableCents !== undefined ? yuanLabel(payableCents) : "—"}
-                      </span>
-                      {discountLabel ? (
-                        <span className="rounded-md bg-brand-soft px-1.5 py-0.5 text-meta font-semibold text-brand-ink">
-                          {discountLabel}
-                        </span>
-                      ) : null}
-                    </div>
-                    {creditCents > 0 ? (
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-muted-foreground">
-                          原套餐折算抵扣
-                          {forfeitedCents > 0
-                            ? `（剩余价值 ${yuanLabel(creditCents)}，超出部分作废）`
-                            : ""}
-                        </span>
-                        <span className="font-mono tabular-nums text-brand-ink">
-                          −{yuanLabel(appliedCreditCents)}
-                        </span>
-                      </div>
-                    ) : null}
-                    <p className="text-xs leading-5 text-muted-foreground">
-                      {unitMonthCents !== undefined && activeTerm
-                        ? `${yuanLabel(unitMonthCents)} / 成员 / 月 × ${seatCount} 名成员 × ${activeTerm.months} 个月（${activeTerm.days} 天）`
-                        : "套餐目录读取中…"}
-                      {renewal
-                        ? ` · 续期后到期日从 ${lotDay(renewal.expires_at)} 顺延 ${activeTerm?.days ?? 0} 天`
-                        : ` · 加购后 ${nextSeats} 名成员 · ${nextStores} 家店铺`}
-                      {creditCents > 0 && amountCents !== undefined
-                        ? ` · 原价 ${yuanLabel(amountCents)}`
-                        : ""}
-                    </p>
-                    <p className="border-t border-border/60 pt-3 text-meta leading-5 text-muted-foreground">
-                      {renewal
-                        ? "续期批次在该批次到期日开始生效，按购买时间独立计时；支付成功后立即追加，不占用当前席位上限。"
-                        : supersededLots.length > 0
-                          ? `升级后总席位 = 本次 ${seatCount} 席；${supersededLots.length} 个更低档批次（${supersededSeats} 席）将在结算时折算终止。`
-                          : `购买后总席位 = 现有已购 ${heldSeats} 席 + 本次 ${seatCount} 席 = ${nextSeats} 席。免费版 1 席为默认兜底，付费批次生效后不与免费席叠加。`}
-                      {seatOverride != null && !renewal
-                        ? ` 当前管理员覆盖为 ${seatOverride} 席，实际可用席位以覆盖值为准。`
-                        : ""}
-                      {fullyCredited
-                        ? " 抵扣已覆盖本单原价，提交后立即到账，无需支付。"
-                        : " 提交后生成待支付订单，支付成功后实时到账；实付以订单回显为准。"}
-                    </p>
-                    <div className="flex flex-col gap-2">
-                      <div className="flex items-center gap-2 text-sm">
-                        <Checkbox
-                          id={agreementId}
-                          checked={agreementAccepted}
-                          disabled={busy || !agreementAvailable || readAgreementVersion !== agreement?.version}
-                          aria-label="我已阅读并同意采购同意书"
-                          aria-describedby={`${agreementId}-hint`}
-                          onCheckedChange={(checked) => setAcceptedPurchase(checked ? purchaseKey : undefined)}
-                        />
-                        <div>
-                          <label htmlFor={agreementId}>我已阅读并同意</label>
-                          <Button
-                            ref={agreementLinkRef}
-                            type="button"
-                            variant="link"
-                            size="sm"
-                            disabled={busy || !agreementAvailable}
-                            onClick={() => {
-                              if (!agreement) return
-                              setReadingAgreement(agreement)
-                              setReadAgreementVersion(agreement.version)
-                            }}
-                          >
-                            《采购同意书》
-                          </Button>
-                        </div>
-                      </div>
-                      <p id={`${agreementId}-hint`} className="text-xs text-muted-foreground">
-                        {agreementAccepted ? "已同意本次采购" : "请先阅读并同意采购同意书"}
-                      </p>
-                    </div>
-                    <Button
-                      type="submit"
-                      variant="default"
-                      disabled={submitBlocked}
-                      aria-busy={busy}
-                      className="h-10 w-full font-semibold"
-                    >
-                      {busy ? <Spinner data-icon="inline-start" /> : null}
-                      {fullyCredited
-                        ? "0 元升级 · 无需支付"
-                        : renewal
-                          ? `续费 ${plan.name}`
-                          : `升级为 ${plan.name}`}
-                    </Button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        changeOpen(false)
-                        onOpenRedeem?.()
-                      }}
-                      className="mx-auto text-xs font-medium text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline"
-                    >
-                      有兑换码？点此兑换
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </form>
-          )}
-        </DialogContent>
-      </Dialog>
-      <ConfirmDialog
-        open={cancelOpen}
-        onOpenChange={setCancelOpen}
-        title="取消这笔待支付订单？"
-        description="在线支付会先核对收款状态，渠道确认关闭后才能取消；EasyPay 需在渠道侧关闭交易。"
-        confirmText="取消订单"
-        busy={busy}
-        onConfirm={() => void cancelOrder()}
-      />
-    </>
-  )
+  async function confirm() {
+    if (!quote || (!quote.schedule_only && !accepted)) return
+    setBusy(true); setFailure(undefined)
+    try {
+      if (quote.schedule_only) {
+        onSaved(await subscriptionHttp.confirm(quote.quote_id, cancelPending))
+        notifySuccess("下期配置已保存，已付期间继续使用")
+      } else {
+        await subscriptionHttp.order(quote.quote_id, view.purchase_agreement.version)
+        onSaved(await subscriptionHttp.view())
+        notifySuccess("订单已创建，请按单号核对付款")
+      }
+    } catch (reason) { setFailure(errorMessage(reason, "确认失败，请刷新后重新预览")); setQuote(undefined) }
+    finally { setBusy(false) }
+  }
+  return <Dialog open onOpenChange={(open) => { if (!open && !busy) onClose() }}>
+    <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-xl" showCloseButton={!busy}>
+      <DialogHeader><DialogTitle>{reading ? view.purchase_agreement.title : title}</DialogTitle><DialogDescription>当前可用 {view.stores.limit} 家，可使用至 {subscriptionDate(view.current_end)}。</DialogDescription></DialogHeader>
+      {reading ? <><p className="whitespace-pre-wrap text-sm leading-7">{view.purchase_agreement.content}</p><Button variant="outline" onClick={() => { setReading(false); setRead(true) }}>返回购买</Button></> : <>
+        {!quote ? <div className="flex flex-col gap-4">
+          {["subscribe", "change"].includes(editor.action) && !editor.restore && <label className="flex flex-col gap-2 text-sm">套餐<select className="h-9 rounded-md border border-input bg-background px-3" value={plan} onChange={(e) => edit(() => setPlan(e.target.value))}>{view.plans.filter((p) => p.key !== "free").map((p) => <option key={p.key} value={p.key}>{planName(p.key)} · {yuanLabel(p.monthly_cents)}/月 · 自带 {p.stores} 家店铺</option>)}</select></label>}
+          {editor.action !== "renew" && <label className="flex flex-col gap-2 text-sm">{editor.action === "schedule" ? "下期加购店铺名额" : "加购店铺名额"}<Input type="number" min={0} step={1} value={stores} disabled={editor.action === "keep" || editor.restore} onChange={(e) => edit(() => setStores(Math.max(0, Math.floor(Number(e.target.value) || 0))))} /><span className="text-xs text-muted-foreground">套餐自带 {planRow.stores} 家，合计 {limit} 家。少于套餐自带数量请变更套餐。</span></label>}
+          {editor.action === "schedule" && stores > 0 && <Button variant="outline" onClick={() => edit(() => setStores(0))}>取消全部店铺加购</Button>}
+          {["subscribe", "change"].includes(editor.action) && !editor.restore && <label className="flex flex-col gap-2 text-sm">加购成员名额<Input type="number" min={view.extra_members} step={1} value={members} onChange={(e) => edit(() => setMembers(Math.max(view.extra_members, Math.floor(Number(e.target.value) || 0))))} /></label>}
+          {["subscribe", "renew"].includes(editor.action) && <label className="flex flex-col gap-2 text-sm">购买月数<select className="h-9 rounded-md border border-input bg-background px-3" value={months} onChange={(e) => edit(() => setMonths(Number(e.target.value)))}>{[1, 3, 6, 12].map((m) => <option key={m} value={m}>{m} 个月</option>)}</select></label>}
+          {needsKeep && <fieldset className="flex flex-col gap-2"><legend className="mb-2 text-sm font-medium">选择到期保留的店铺，最多 {limit} 家（{selected.length}/{limit}）</legend><p className="mb-2 text-xs text-muted-foreground">实际连接 {choices.length} 家，只需暂停 {choices.length - limit} 家。</p>{choices.map((s) => <label key={s.id} className="flex items-center gap-2 text-sm"><Checkbox checked={selected.includes(s.id)} onCheckedChange={(checked) => edit(() => setKeep(checked ? [...selected, s.id] : selected.filter((id) => id !== s.id)))} />{s.name || s.id}</label>)}</fieldset>}
+          {needsMembers && <fieldset className="flex flex-col gap-2"><legend className="mb-2 text-sm font-medium">到期保留的成员（{selectedMembers.length}/{memberLimit}）</legend>{view.member_choices.map((m) => <label key={m.id} className="flex items-center gap-2 text-sm"><Checkbox checked={selectedMembers.includes(m.id)} disabled={m.owner} onCheckedChange={(checked) => edit(() => setKeepMembers(checked ? [...selectedMembers, m.id] : selectedMembers.filter((id) => id !== m.id)))} />{m.name || `成员 ${m.id}`}{m.owner ? "（所有者）" : ""}</label>)}</fieldset>}
+          {editor.action === "change" && !editor.restore && <label className="flex items-center gap-2 text-sm"><Checkbox checked={renewAlso} onCheckedChange={(value) => edit(() => setRenewAlso(Boolean(value)))} />下次也续费本次数量</label>}
+          {editor.action === "change" && <p className="text-xs text-muted-foreground">已设置的下期目标默认保留。已经付款的未来期间按缺少的名额分别补差。</p>}
+          <Button disabled={busy || (needsKeep && (selected.length > limit || selected.length === 0)) || (needsMembers && (selectedMembers.length > memberLimit || selectedMembers.length === 0))} onClick={() => void preview()}>{busy && <Spinner />}预览费用与生效日期</Button>
+        </div> : <div className="flex flex-col gap-4">
+          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
+            <dt className="text-muted-foreground">当前可用</dt><dd>{quote.current.stores} 家，至 {subscriptionDate(quote.current.term_end)}</dd>
+            <dt className="text-muted-foreground">{quote.schedule_only ? "下期配置" : "购买容量"}</dt><dd>{quote.target.stores} 家 · {quote.target.members} 人</dd>
+            <dt className="text-muted-foreground">{quote.schedule_only ? "适用日期" : "服务期间"}</dt><dd>{subscriptionDate(quote.effective_at)}{!quote.schedule_only && ` 至 ${subscriptionDate(quote.term_end)}`}</dd>
+            <dt className="text-muted-foreground">下次续费</dt><dd>{planName(quote.renewal.plan_key)} · 加购 {quote.renewal.extra_stores} 家 · {yuanLabel(quote.renewal_amount_cents)}/月</dd>
+            <dt className="text-muted-foreground">到期暂停</dt><dd>{paused.length ? paused.map((s) => s.name || s.id).join("、") : "无"}</dd>
+            <dt className="text-muted-foreground">本次应付</dt><dd className="text-lg font-semibold">{yuanLabel(quote.amount_cents)}</dd>
+          </dl>
+          {quote.breakdown.map((line, i) => <p key={i} className="text-xs text-muted-foreground">{line.label} · {yuanLabel(line.cents)}</p>)}
+          <p className="text-xs leading-6 text-muted-foreground">已付期间继续使用，本次调整不自动退款。暂停后配置及历史数据保留；新业务暂停，已受理业务继续收尾。</p>
+          {quote.schedule_only && view.pending_order && <label className="flex items-center gap-2 text-sm"><Checkbox checked={cancelPending} onCheckedChange={(v) => setCancelPending(Boolean(v))} />取消待付款订单并修改配置（支付结果不确定时等待渠道确认）</label>}
+          {!quote.schedule_only && <><Button variant="link" className="justify-start" onClick={() => setReading(true)}>阅读《{view.purchase_agreement.title}》</Button><label className="flex items-center gap-2 text-sm"><Checkbox aria-label="我已阅读并同意购买确认" disabled={!read} checked={accepted} onCheckedChange={(v) => setAccepted(Boolean(v))} />我已阅读并同意购买确认</label></>}
+          <div className="flex justify-end gap-2"><Button variant="outline" disabled={busy} onClick={() => setQuote(undefined)}>返回修改</Button><Button disabled={busy || (!quote.schedule_only && !accepted) || (quote.schedule_only && view.pending_order && !cancelPending)} onClick={() => void confirm()}>{busy && <Spinner />}{quote.schedule_only ? editor.action === "keep" ? "确认保留名单" : quote.target.stores < quote.current.stores ? "确认下期减少" : "确认下期配置" : editor.restore ? `恢复为 ${quote.target.stores} 家，补差 ${yuanLabel(quote.amount_cents)}` : "确认购买"}</Button></div>
+        </div>}
+        {failure && <p role="alert" className="text-sm text-destructive">{failure}</p>}
+      </>}
+    </DialogContent>
+  </Dialog>
 }

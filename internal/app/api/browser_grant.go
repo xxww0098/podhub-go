@@ -44,6 +44,7 @@ func (s *Server) postBrowserGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.OrgID = p.OrgID
+	in.UserID = p.UserID
 	in.WritesDisabled = s.WritesDisabled
 	in.Now = s.now()
 	open := s.OpenGrant

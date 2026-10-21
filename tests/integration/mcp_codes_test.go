@@ -82,7 +82,8 @@ func TestMCPCodesMatchAdmin(t *testing.T) {
 		{"member", "mcp-code-member", "generateActivationCodes", seatBody, "需要超级管理员权限"},
 		{"staff", "mcp-code-staff", "generateQuotaCards", walletBody, "需要超级管理员权限"},
 		{"quantity", superToken, "generateQuotaCards", walletTooMany, "兑换码数量需在 1-500 之间"},
-		{"bad tier", superToken, "generateActivationCodes", seatBadTier, "成员名额档位无效"},
+		{"retired activation", superToken, "generateActivationCodes", seatBody, "仅支持创建钱包额度兑换码，成员席位批次已停用"},
+		{"bad tier", superToken, "generateActivationCodes", seatBadTier, "仅支持创建钱包额度兑换码，成员席位批次已停用"},
 	}
 	for _, tc := range denied {
 		t.Run(tc.name, func(t *testing.T) {
@@ -146,7 +147,6 @@ func TestMCPCodesMatchAdmin(t *testing.T) {
 	pairs := []struct {
 		name, tool, body, prefix string
 	}{
-		{"activation", "generateActivationCodes", seatBody, "POD-PLAN-"},
 		{"quota", "generateQuotaCards", walletBody, "POD-WALLET-"},
 	}
 	var plains []string
@@ -192,7 +192,7 @@ func TestMCPCodesMatchAdmin(t *testing.T) {
 	var audits int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*) FROM audit_logs
-		WHERE user_id = 89101 AND action = 'redeem_codes_created' AND message NOT LIKE '%POD-%'`).Scan(&audits); err != nil || audits != 4 {
+		WHERE user_id = 89101 AND action = 'redeem_codes_created' AND message NOT LIKE '%POD-%'`).Scan(&audits); err != nil || audits != 2 {
 		t.Fatalf("audits %d %v", audits, err)
 	}
 	var leaked int

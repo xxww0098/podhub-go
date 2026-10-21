@@ -13,7 +13,7 @@ import (
 )
 
 const admitSQL = `
-SELECT s.id, s.deleted_at_ms, s.manual_disabled, s.quota_suspended,
+SELECT s.id, s.deleted_at_ms, s.manual_disabled, (NOT public.subscription_store_allowed(s.org_id,s.uuid,to_timestamp($4::double precision/1000))),
        s.assignee_membership_id,
        m.id AS membership_id,
        c.credential_revision, c.key_expires_at_ms,
@@ -21,7 +21,7 @@ SELECT s.id, s.deleted_at_ms, s.manual_disabled, s.quota_suspended,
        c.wrapped_dek, c.dek_nonce, c.key_fingerprint
 FROM organization_stores s
 LEFT JOIN organization_members m
-       ON m.org_id = s.org_id AND m.user_id = $3 AND m.status = 'active' AND NOT m.manual_disabled AND NOT m.quota_suspended
+       ON m.org_id = s.org_id AND m.user_id = $3 AND m.status = 'active' AND NOT m.manual_disabled AND public.subscription_member_allowed(m.org_id,m.id,to_timestamp($4::double precision/1000))
 LEFT JOIN store_seller_credentials c ON c.store_id = s.id
 WHERE s.org_id = $1 AND s.uuid = $2::uuid
 LIMIT 1`
@@ -48,7 +48,7 @@ func (s *Store) Admit(ctx context.Context, orgID, userID int64, role, storeID st
 		dekNonce      []byte
 		finger        []byte
 	)
-	err := s.Pool.QueryRow(ctx, admitSQL, orgID, storeID, userID).Scan(
+	err := s.Pool.QueryRow(ctx, admitSQL, orgID, storeID, userID, nowMS).Scan(
 		&id, &deleted, &manual, &quota, &assignee, &member,
 		&rev, &expires, &version, &clientID, &keyID, &nonce, &ciphertext, &wrapped, &dekNonce, &finger,
 	)

@@ -30,6 +30,7 @@ var ErrGrantLimited = errors.New("browser grant rate limited")
 // function does not read the environment.
 type GrantInput struct {
 	OrgID             int64
+	UserID            int64
 	StoreID           string
 	ListingRowID      string
 	RowRevision       int64
@@ -112,6 +113,10 @@ func Grant(ctx context.Context, pool *pgxpool.Pool, in GrantInput, reserve Reser
 	if err != nil {
 		return GrantResult{}, statusErr(503, "服务暂不可用", "internal")
 	}
+	if err := requireStoreSubscription(ctx, tx, in.OrgID, in.UserID, in.StoreID, in.Now); err != nil {
+		return GrantResult{}, err
+	}
+
 	_ = storePK
 	revoked, err := offerRevoked(ctx, tx, in)
 	if err != nil {

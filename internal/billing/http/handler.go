@@ -45,6 +45,7 @@ func Register(router chi.Router, deps Deps) {
 	router.Get("/api/billing/webhooks/{provider}", h.webhookGet)
 	router.Get("/api/billing/callback/complete", h.complete)
 	router.Post("/api/redeem", h.redeem)
+	h.registerSubscription(router)
 }
 
 type handler struct{ deps Deps }
@@ -165,7 +166,7 @@ func (h handler) apply(ctx context.Context, notice Notice) error {
 	}
 	defer tx.Rollback(ctx)
 	var orgID *int64
-	err = tx.QueryRow(ctx, `SELECT public.billing_lock_payment_order($1)`, notice.PublicID).Scan(&orgID)
+	err = tx.QueryRow(ctx, `SELECT public.billing_payment_order_org($1)`, notice.PublicID).Scan(&orgID)
 	if err != nil {
 		return err
 	}
@@ -173,6 +174,9 @@ func (h handler) apply(ctx context.Context, notice Notice) error {
 		return pgx.ErrNoRows
 	}
 	if err := tenantx.EnterApp(ctx, tx, *orgID); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `SELECT id FROM organizations WHERE id=$1 FOR UPDATE`, *orgID); err != nil {
 		return err
 	}
 	var order struct {
@@ -193,16 +197,7 @@ func (h handler) apply(ctx context.Context, notice Notice) error {
 		return err
 	}
 	now := h.now()
-	if order.Status != "pending" {
-		// A paid callback can arrive after the reaper closed the order. The
-		// money is gone from the payer either way, so record why this needs a
-		// human instead of returning success silently.
-		if notice.Paid && !notice.Canceled && order.Status == "canceled" {
-			if err := service.MarkOrderReconciled(ctx, tx, order.ID, "fulfilled_after_cancel"); err != nil {
-				return err
-			}
-			return tx.Commit(ctx)
-		}
+	if order.Status == "paid" {
 		return tx.Commit(ctx)
 	}
 	if !providerMatches(notice.Provider, order.Provider) || order.Amount != notice.AmountCents || !strings.EqualFold(order.Currency, notice.Currency) {
@@ -215,6 +210,9 @@ func (h handler) apply(ctx context.Context, notice Notice) error {
 		return errors.New("mismatch")
 	}
 	if notice.Canceled {
+		if order.Status != "pending" {
+			return tx.Commit(ctx)
+		}
 		tag, err := tx.Exec(ctx, `
 			UPDATE payment_orders
 			   SET status = 'canceled', canceled_at = clock_timestamp(), updated_at = clock_timestamp()

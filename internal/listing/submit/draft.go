@@ -215,7 +215,7 @@ func SendDrafts(ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, bo
 		}
 		return data, nil
 	}
-	enqueued, err := enqueueDrafts(ctx, tx, orgID, userID, req.StoreID, req.CardID, admitted)
+	enqueued, err := enqueueDrafts(ctx, tx, orgID, userID, req.StoreID, req.CardID, admitted, now)
 	if err != nil {
 		return DraftData{}, err
 	}
@@ -285,7 +285,7 @@ func SendStored(ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, st
 		return BatchData{Items: items}, nil
 	}
 	cardID := admitted[0].cardID
-	enqueued, err := enqueueDrafts(ctx, tx, orgID, userID, storeID, cardID, admitted)
+	enqueued, err := enqueueDrafts(ctx, tx, orgID, userID, storeID, cardID, admitted, now)
 	if err != nil {
 		return BatchData{}, err
 	}
@@ -651,7 +651,11 @@ const readIntentSQL = `
 				  FROM public.submission_intents
 				 WHERE org_id = $1 AND store_id = $2::uuid AND client_operation_id = $3`
 
-func enqueueDrafts(ctx context.Context, tx pgx.Tx, orgID, userID int64, storeID, cardID string, ready []frozen) ([]DraftItem, error) {
+func enqueueDrafts(ctx context.Context, tx pgx.Tx, orgID, userID int64, storeID, cardID string, ready []frozen, now time.Time) ([]DraftItem, error) {
+	if err := requireStoreSubscription(ctx, tx, orgID, userID, storeID, now); err != nil {
+		return nil, err
+	}
+
 	digests := make([]string, len(ready))
 	for i, row := range ready {
 		digests[i] = row.digest

@@ -6,6 +6,7 @@ package billing
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -20,12 +21,20 @@ func init() {
 	service.Redeem = billingrepo.Redeem
 	service.SubscriptionView = billingrepo.SubscriptionView
 	service.Quote = billingrepo.Quote
+	service.ConfirmSchedule = billingrepo.ConfirmSchedule
+	contract.FulfillSubscriptionOrder = func(ctx context.Context, tx any, publicID string, now time.Time) error {
+		order, err := billingrepo.LoadOrder(ctx, tx.(pgx.Tx), publicID)
+		if err != nil {
+			return err
+		}
+		return billingrepo.FulfillPaidSubscription(ctx, tx.(pgx.Tx), order, now)
+	}
 	service.CreateSubscriptionOrder = billingrepo.CreateSubscriptionOrder
 	service.CreateTopupOrder = billingrepo.CreateTopupOrder
 	service.LoadOrder = billingrepo.LoadOrder
 	service.MarkOrderPaid = billingrepo.MarkOrderPaid
 	service.MarkOrderReconciled = billingrepo.MarkOrderNeedsReconciliation
-	service.FulfillSubscription = billingrepo.FulfillSubscription
+	service.FulfillSubscription = billingrepo.FulfillPaidSubscription
 	service.ErrNoSubscription = billingrepo.ErrNoSubscription
 	contract.API = walletBridge{}
 }

@@ -1,6 +1,9 @@
 package contract
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // Line is one row of a quote breakdown. Cents is that line rounded on its
 // own; the total is the exact sum rounded once, so a line can differ from the
@@ -19,11 +22,14 @@ type Target struct {
 
 // QuoteRequest is the client's intent.
 type QuoteRequest struct {
-	Action      string
-	Target      Target
-	Months      int
-	KeepStores  []string
-	KeepMembers []int64
+	ExpectedWorkspace string   `json:"expected_workspace_uuid"`
+	Action            string   `json:"action"`
+	Target            Target   `json:"target"`
+	Months            int      `json:"months"`
+	KeepStores        []string `json:"keep_store_ids"`
+	KeepMembers       []int64  `json:"keep_member_ids"`
+	PeriodID          int64    `json:"period_id,omitempty"`
+	RenewWithChange   *bool    `json:"renew_with_change,omitempty"`
 }
 
 // Capacity is a used/limit pair on the plan screen.
@@ -34,9 +40,14 @@ type Capacity struct {
 
 // NextTerm is a scheduled capacity change, applied at term_end.
 type NextTerm struct {
-	PlanKey string `json:"plan_key"`
-	Stores  int    `json:"stores"`
-	Members int    `json:"members"`
+	EffectiveAt  *time.Time `json:"effective_at,omitempty"`
+	ExtraStores  int        `json:"extra_stores"`
+	ExtraMembers int        `json:"extra_members"`
+	KeepStores   []string   `json:"keep_store_ids"`
+	KeepMembers  []int64    `json:"keep_member_ids"`
+	PlanKey      string     `json:"plan_key"`
+	Stores       int        `json:"stores"`
+	Members      int        `json:"members"`
 }
 
 // Renewal is what one more month costs at the scheduled capacity.
@@ -47,7 +58,51 @@ type Renewal struct {
 }
 
 // View is the plan screen payload.
+type Period struct {
+	ID       int64     `json:"id"`
+	StartsAt time.Time `json:"starts_at"`
+	EndsAt   time.Time `json:"ends_at"`
+	Target
+	Stores      int      `json:"stores"`
+	Members     int      `json:"members"`
+	KeepStores  []string `json:"keep_store_ids"`
+	KeepMembers []int64  `json:"keep_member_ids"`
+}
+
+type StoreChoice struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	ManualDisabled bool   `json:"manual_disabled"`
+	Allowed        bool   `json:"allowed"`
+}
+
+type Plan struct {
+	Key          string `json:"key"`
+	MonthlyCents int64  `json:"monthly_cents"`
+	Stores       int    `json:"stores"`
+	Members      int    `json:"members"`
+}
+
+type MemberChoice struct {
+	ID    int64  `json:"id"`
+	Name  string `json:"name"`
+	Owner bool   `json:"owner"`
+}
+
 type View struct {
+	MemberChoices []MemberChoice `json:"member_choices"`
+
+	Revision           int64         `json:"revision"`
+	ExtraStores        int           `json:"extra_stores"`
+	ExtraMembers       int           `json:"extra_members"`
+	CurrentEnd         *time.Time    `json:"current_end"`
+	Periods            []Period      `json:"periods"`
+	StoreChoices       []StoreChoice `json:"store_choices"`
+	Plans              []Plan        `json:"plans"`
+	StoreMonthlyCents  int64         `json:"store_monthly_cents"`
+	MemberMonthlyCents int64         `json:"member_monthly_cents"`
+	PendingPublicID    string        `json:"pending_public_id,omitempty"`
+
 	PlanKey      string     `json:"plan_key"`
 	Status       string     `json:"status"`
 	TermStart    *time.Time `json:"term_start"`
@@ -77,6 +132,12 @@ type QuoteTargetOut struct {
 
 // Offered is a priced quote as returned to the client.
 type Offered struct {
+	EffectiveAt        *time.Time `json:"effective_at"`
+	KeepStores         []string   `json:"keep_store_ids"`
+	Renewal            Target     `json:"renewal"`
+	RenewalAmountCents int64      `json:"renewal_amount_cents"`
+	TermEnd            *time.Time `json:"term_end"`
+
 	ID           string         `json:"quote_id,omitempty"`
 	ExpiresAt    *time.Time     `json:"expires_at,omitempty"`
 	Revision     int64          `json:"revision"`
@@ -111,3 +172,6 @@ type Order struct {
 	PurchaseAgreement    []byte
 	CreatedBy            int64
 }
+
+// FulfillSubscriptionOrder is installed by billing for the administrative payment confirmation path.
+var FulfillSubscriptionOrder func(context.Context, any, string, time.Time) error

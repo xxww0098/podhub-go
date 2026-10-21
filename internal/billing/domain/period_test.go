@@ -116,3 +116,23 @@ func TestProrateSum(t *testing.T) {
 		t.Fatalf("negative units must be ignored: %d, want %d", got, wantNeg)
 	}
 }
+
+func TestPurchaseAnchorSurvivesShortMonth(t *testing.T) {
+	anchor := sh(2027, 1, 31, 10, 30, 0)
+	feb := AnchoredEnd(anchor, anchor, 1)
+	march := AnchoredEnd(anchor, feb, 1)
+	if !feb.Equal(sh(2027, 2, 28, 10, 30, 0)) || !march.Equal(sh(2027, 3, 31, 10, 30, 0)) {
+		t.Fatalf("anchor drift: %s %s", feb, march)
+	}
+	leap := sh(2028, 1, 31, 10, 30, 0)
+	if !TermEnd(leap, 1).Equal(sh(2028, 2, 29, 10, 30, 0)) {
+		t.Fatal("leap month")
+	}
+	if got := roundHalfUp(PeriodFraction(4000, anchor, feb, march)); got != 4000 {
+		t.Fatalf("full service month=%d", got)
+	}
+	half := anchor.Add(TermEnd(anchor, 1).Sub(anchor) / 2)
+	if got := roundHalfUp(PeriodFraction(2000, anchor, half, feb)); got != 1000 {
+		t.Fatalf("remaining half month=%d", got)
+	}
+}

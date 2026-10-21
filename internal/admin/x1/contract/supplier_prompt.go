@@ -15,16 +15,30 @@ import (
 //go:embed ocr_prompt.ru.txt
 var ocrPromptFile embed.FS
 
-// TemplateSHA256 is sha256 of ocr_prompt.ru.txt bytes.
-func TemplateSHA256() string {
-	raw, _ := ocrPromptFile.ReadFile("ocr_prompt.ru.txt")
+// ocrPromptText and ocrPromptSHA256 are fixed at init from the embedded template.
+// Compose and TemplateSHA256 do not read the file again.
+var (
+	ocrPromptText   string
+	ocrPromptSHA256 string
+)
+
+func init() {
+	raw, err := ocrPromptFile.ReadFile("ocr_prompt.ru.txt")
+	if err != nil {
+		panic("ocr_prompt.ru.txt: " + err.Error())
+	}
+	text := string(raw)
+	if strings.Count(text, "{brief}") != 1 || strings.Count(text, "{fixed_tags}") != 1 || strings.Count(text, "Только JSON.") != 1 {
+		panic("ocr_prompt.ru.txt: want exactly one {brief}, one {fixed_tags}, and one Только JSON.")
+	}
+	ocrPromptText = text
 	sum := sha256.Sum256(raw)
-	return hex.EncodeToString(sum[:])
+	ocrPromptSHA256 = hex.EncodeToString(sum[:])
 }
 
-func templateText() string {
-	raw, _ := ocrPromptFile.ReadFile("ocr_prompt.ru.txt")
-	return string(raw)
+// TemplateSHA256 is sha256 of the embedded ocr_prompt.ru.txt bytes.
+func TemplateSHA256() string {
+	return ocrPromptSHA256
 }
 
 // BriefValid reports whether the published cell is a canonical six-line card.
@@ -56,10 +70,10 @@ func LineValue(brief string, index int) string {
 }
 
 // Compose fills {brief} and {fixed_tags} once each.
+// It only joins the already-loaded template, the brief, the tags, and an optional ban sentence.
 // Banned terms insert a sentence before the last "Только JSON.".
 func Compose(brief string, tags []string, banned []string) string {
-	tpl := templateText()
-	head, rest, ok := strings.Cut(tpl, "{brief}")
+	head, rest, ok := strings.Cut(ocrPromptText, "{brief}")
 	if !ok {
 		return ""
 	}

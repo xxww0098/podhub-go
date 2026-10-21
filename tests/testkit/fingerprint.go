@@ -173,6 +173,7 @@ var postRustTables = map[string]bool{
 	"storage_object_refs":        true,
 	"storage_objects":            true,
 	"storage_uploads":            true,
+	"subscription_periods":       true,
 	"subscription_events":        true,
 	"subscription_quotes":        true,
 	"subscriptions":              true,
@@ -262,12 +263,16 @@ var postRustConstraints = map[string]map[string]bool{
 // non-extension function stays at 35: the Rust head count of 34 plus
 // prune_aged_inbox from migration 00300.
 var intentionalFunctions = map[string]bool{
+	"subscription_store_allowed":           true,
+	"subscription_member_allowed":          true,
+	"billing_due_subscriptions":            true,
+	"billing_due_drains":                   true,
+	"billing_reap_subscription_orders":     true,
 	"storage_key_fence":                    true,
 	"lock_storage_key_shared":              true,
 	"try_lock_storage_key_exclusive":       true,
 	"storage_ref_candidates":               true,
 	"sync_storage_object_refs":             true,
-	"subscription_term_month_start":        true,
 	"payment_order_subscription_immutable": true,
 	"billing_payment_order_org":            true,
 	"billing_lock_payment_order":           true,
@@ -741,7 +746,8 @@ func compareRoutineBodies(t failer, ctx context.Context, pool *pgxpool.Pool) {
 			t.Fatalf("trigger %s is not named in the goose SQL", name)
 		}
 	}
-	if triggers != 28 {
-		t.Fatalf("triggers %d, want 28", triggers)
+	// 00350 removes the month-start constraint trigger.
+	if triggers != 27 {
+		t.Fatalf("triggers %d, want 27", triggers)
 	}
 }

@@ -605,6 +605,7 @@ type ozonShop struct {
 
 func newOzonShop(t *testing.T, ctx context.Context, pool *pgxpool.Pool, org, user int64, ring seal.Ring, disabled bool, ozon httpapi.OzonRecorder) *ozonShop {
 	t.Helper()
+	seedPaidGrantWorkspace(t, ctx, pool, org, user)
 	storePK, storeID := insertNextStore(t, ctx, pool, org)
 	insertSealedCredential(t, ctx, pool, org, user, storePK, ring, farExpiry())
 	shop := &ozonShop{

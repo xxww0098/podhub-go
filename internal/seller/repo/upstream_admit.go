@@ -26,8 +26,8 @@ func NewAdmitStore(pool *pgxpool.Pool, ring seal.Ring, keyReady bool) AdmitStore
 }
 
 const admitSQL = `
-SELECT s.id, s.deleted_at_ms, s.manual_disabled, s.quota_suspended, s.assignee_membership_id,
-       m.id, m.status, m.manual_disabled, m.quota_suspended,
+SELECT s.id, s.deleted_at_ms, s.manual_disabled, (NOT public.subscription_store_allowed(s.org_id,s.uuid,to_timestamp($4::double precision/1000))), s.assignee_membership_id,
+       m.id, m.status, m.manual_disabled, (NOT public.subscription_member_allowed(m.org_id,m.id,to_timestamp($4::double precision/1000))),
        c.key_expires_at_ms, c.envelope_version, c.client_id, c.key_id,
        c.nonce, c.ciphertext, c.wrapped_dek, c.dek_nonce, c.key_fingerprint
 FROM organization_stores s
@@ -56,7 +56,7 @@ func (s AdmitStore) Admit(ctx context.Context, orgID, userID int64, role, storeU
 		nonce, ciphertext         []byte
 		wrapped, dekNonce, finger []byte
 	)
-	err := s.Pool.QueryRow(ctx, admitSQL, orgID, storeUUID, userID).Scan(
+	err := s.Pool.QueryRow(ctx, admitSQL, orgID, storeUUID, userID, nowMS).Scan(
 		&id, &deleted, &storeManual, &storeQuota, &assignee,
 		&member, &memberStatus, &memberManual, &memberQuota,
 		&expires, &version, &clientID, &keyID, &nonce, &ciphertext, &wrapped, &dekNonce, &finger,

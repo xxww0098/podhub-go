@@ -23,11 +23,46 @@ func NextMonthStart(t time.Time) time.Time {
 	return MonthStart(t).AddDate(0, 1, 0)
 }
 
-// TermEnd returns start shifted by whole months. start must already be a
-// month boundary; every caller builds it from MonthStart or NextMonthStart, so
-// AddDate never lands on a short month's tail.
+// TermEnd clamps a purchase anniversary to the last day of a short month.
 func TermEnd(start time.Time, months int) time.Time {
-	return start.AddDate(0, months, 0)
+	return AnchoredEnd(start, start, months)
+}
+
+// AnchoredEnd always uses the original day and clock, so Jan 31 → Feb 28 → Mar 31.
+func AnchoredEnd(anchor, start time.Time, months int) time.Time {
+	anchor, start = anchor.In(Shanghai), start.In(Shanghai)
+	month := time.Date(start.Year(), start.Month(), 1, 0, 0, 0, 0, Shanghai).AddDate(0, months, 0)
+	day := min(anchor.Day(), daysInMonth(month))
+	return time.Date(month.Year(), month.Month(), day, anchor.Hour(), anchor.Minute(), anchor.Second(), anchor.Nanosecond(), Shanghai)
+}
+
+// PeriodFraction adds exact fractions of purchase-anchored service months.
+func PeriodFraction(unit int64, anchor, from, to time.Time) *big.Rat {
+	acc := new(big.Rat)
+	if unit <= 0 || !to.After(from) {
+		return acc
+	}
+	month := time.Date(from.In(Shanghai).Year(), from.In(Shanghai).Month(), 1, 0, 0, 0, 0, Shanghai)
+	start := AnchoredEnd(anchor, month, 0)
+	if start.After(from) {
+		start = AnchoredEnd(anchor, month, -1)
+	}
+	for start.Before(to) {
+		end := AnchoredEnd(anchor, start, 1)
+		left, right := from, to
+		if start.After(left) {
+			left = start
+		}
+		if end.Before(right) {
+			right = end
+		}
+		if right.After(left) {
+			part := big.NewRat(int64(right.Sub(left)), int64(end.Sub(start)))
+			acc.Add(acc, part.Mul(part, new(big.Rat).SetInt64(unit)))
+		}
+		start = end
+	}
+	return acc
 }
 
 // OnMonthStart reports whether t is exactly a Shanghai month boundary. Every

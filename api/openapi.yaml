@@ -12,6 +12,290 @@ info:
     the wire body. Field order of each JSON body is pinned by the hand-written
     structs, not by the generated models.
 paths:
+  "/api/billing/subscription":
+    "get":
+      "tags": ["billing"]
+      "operationId": "subscriptionGet"
+      "responses":
+        "200":
+          "description": "Subscription result"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionView"
+        "400":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+        "401":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+        "403":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+        "404":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+        "409":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+        "500":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+        "503":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+  "/api/billing/quotes":
+    "post":
+      "tags": ["billing"]
+      "operationId": "subscriptionQuote"
+      "responses":
+        "200":
+          "description": "Subscription result"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionQuote"
+        "400":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+        "401":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+        "403":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+        "404":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+        "409":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+        "500":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+        "503":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "$ref": "#/components/schemas/SubscriptionQuoteRequest"
+  "/api/billing/schedule":
+    "post":
+      "tags": ["billing"]
+      "operationId": "subscriptionSchedule"
+      "responses":
+        "200":
+          "description": "Subscription result"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionView"
+        "400":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+        "401":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+        "403":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+        "404":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+        "409":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+        "500":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+        "503":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "$ref": "#/components/schemas/SubscriptionScheduleRequest"
+  "/api/billing/orders":
+    "post":
+      "tags": ["billing"]
+      "operationId": "subscriptionOrderCreate"
+      "responses":
+        "201":
+          "description": "Subscription result"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionOrderBrief"
+        "400":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+        "401":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+        "403":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+        "404":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+        "409":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+        "500":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+        "503":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "$ref": "#/components/schemas/SubscriptionOrderRequest"
+  "/api/billing/orders/{public_id}":
+    "get":
+      "tags": ["billing"]
+      "operationId": "subscriptionOrderGet"
+      "responses":
+        "200":
+          "description": "Subscription result"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionOrder"
+        "400":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+        "401":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+        "403":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+        "404":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+        "409":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+        "500":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+        "503":
+          "description": "Request refused"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/SubscriptionError"
+      "parameters": [{"name": "public_id", "in": "path", "required": true, "schema": {"type": "string"}}]
   "/mcp":
     get:
       operationId: mcpGet
@@ -17837,6 +18121,427 @@ components:
           schema:
             "$ref": "#/components/schemas/RatingError"
   schemas:
+    "SubscriptionTarget":
+      "type": "object"
+      "properties":
+        "plan_key":
+          "type": "string"
+        "extra_stores":
+          "type": "integer"
+          "format": "int64"
+        "extra_members":
+          "type": "integer"
+          "format": "int64"
+      "required": ["plan_key", "extra_stores", "extra_members"]
+      "additionalProperties": false
+    "SubscriptionPeriod":
+      "type": "object"
+      "properties":
+        "id":
+          "type": "integer"
+          "format": "int64"
+        "starts_at":
+          "type": "string"
+          "format": "date-time"
+        "ends_at":
+          "type": "string"
+          "format": "date-time"
+        "plan_key":
+          "type": "string"
+        "extra_stores":
+          "type": "integer"
+          "format": "int64"
+        "extra_members":
+          "type": "integer"
+          "format": "int64"
+        "stores":
+          "type": "integer"
+          "format": "int64"
+        "members":
+          "type": "integer"
+          "format": "int64"
+        "keep_store_ids":
+          "type": "array"
+          "items":
+            "type": "string"
+          "nullable": true
+        "keep_member_ids":
+          "type": "array"
+          "items":
+            "type": "integer"
+            "format": "int64"
+          "nullable": true
+      "required": ["id", "starts_at", "ends_at", "plan_key", "extra_stores", "extra_members", "stores", "members", "keep_store_ids", "keep_member_ids"]
+      "additionalProperties": false
+    "SubscriptionView":
+      "type": "object"
+      "properties":
+        "revision":
+          "type": "integer"
+          "format": "int64"
+        "plan_key":
+          "type": "string"
+        "status":
+          "type": "string"
+          "enum": ["free", "active", "expired"]
+        "extra_stores":
+          "type": "integer"
+          "format": "int64"
+        "extra_members":
+          "type": "integer"
+          "format": "int64"
+        "current_end":
+          "type": "string"
+          "format": "date-time"
+          "nullable": true
+        "term_start":
+          "type": "string"
+          "format": "date-time"
+          "nullable": true
+        "term_end":
+          "type": "string"
+          "format": "date-time"
+          "nullable": true
+        "stores":
+          "type": "object"
+          "properties":
+            "used":
+              "type": "integer"
+              "format": "int64"
+            "limit":
+              "type": "integer"
+              "format": "int64"
+          "required": ["used", "limit"]
+          "additionalProperties": false
+        "members":
+          "type": "object"
+          "properties":
+            "used":
+              "type": "integer"
+              "format": "int64"
+            "limit":
+              "type": "integer"
+              "format": "int64"
+          "required": ["used", "limit"]
+          "additionalProperties": false
+        "next":
+          "type": "object"
+          "properties":
+            "plan_key":
+              "type": "string"
+            "extra_stores":
+              "type": "integer"
+              "format": "int64"
+            "extra_members":
+              "type": "integer"
+              "format": "int64"
+            "stores":
+              "type": "integer"
+              "format": "int64"
+            "members":
+              "type": "integer"
+              "format": "int64"
+            "keep_store_ids":
+              "type": "array"
+              "items":
+                "type": "string"
+              "nullable": true
+            "effective_at":
+              "type": "string"
+              "format": "date-time"
+            "keep_member_ids":
+              "type": "array"
+              "items":
+                "type": "integer"
+                "format": "int64"
+              "nullable": true
+          "required": ["plan_key", "extra_stores", "extra_members", "stores", "members", "keep_store_ids", "keep_member_ids"]
+          "additionalProperties": false
+        "next_renewal":
+          "type": "object"
+          "properties":
+            "months":
+              "type": "integer"
+              "format": "int64"
+            "amount_cents":
+              "type": "integer"
+              "format": "int64"
+            "breakdown":
+              "type": "array"
+              "items":
+                "type": "object"
+                "properties":
+                  "label":
+                    "type": "string"
+                  "cents":
+                    "type": "integer"
+                    "format": "int64"
+                "required": ["label", "cents"]
+                "additionalProperties": false
+          "required": ["months", "amount_cents"]
+          "additionalProperties": false
+        "periods":
+          "type": "array"
+          "items":
+            "$ref": "#/components/schemas/SubscriptionPeriod"
+        "store_choices":
+          "type": "array"
+          "items":
+            "type": "object"
+            "properties":
+              "id":
+                "type": "string"
+              "name":
+                "type": "string"
+              "manual_disabled":
+                "type": "boolean"
+              "allowed":
+                "type": "boolean"
+            "required": ["id", "name", "manual_disabled", "allowed"]
+            "additionalProperties": false
+        "plans":
+          "type": "array"
+          "items":
+            "type": "object"
+            "properties":
+              "key":
+                "type": "string"
+              "monthly_cents":
+                "type": "integer"
+                "format": "int64"
+              "stores":
+                "type": "integer"
+                "format": "int64"
+              "members":
+                "type": "integer"
+                "format": "int64"
+            "required": ["key", "monthly_cents", "stores", "members"]
+            "additionalProperties": false
+        "store_monthly_cents":
+          "type": "integer"
+          "format": "int64"
+        "member_monthly_cents":
+          "type": "integer"
+          "format": "int64"
+        "draining":
+          "type": "boolean"
+        "pending_order":
+          "type": "boolean"
+        "pending_public_id":
+          "type": "string"
+        "purchase_agreement":
+          "type": "object"
+          "properties":
+            "version":
+              "type": "string"
+            "title":
+              "type": "string"
+            "effective_at":
+              "type": "string"
+            "content":
+              "type": "string"
+          "required": ["version", "title", "effective_at", "content"]
+          "additionalProperties": false
+        "member_choices":
+          "type": "array"
+          "items":
+            "type": "object"
+            "properties":
+              "id":
+                "type": "integer"
+                "format": "int64"
+              "name":
+                "type": "string"
+              "owner":
+                "type": "boolean"
+            "required": ["id", "name", "owner"]
+            "additionalProperties": false
+      "required": ["revision", "plan_key", "status", "extra_stores", "extra_members", "current_end", "term_start", "term_end", "stores", "members", "next", "next_renewal", "periods", "store_choices", "plans", "store_monthly_cents", "member_monthly_cents", "draining", "pending_order", "purchase_agreement", "member_choices"]
+      "additionalProperties": false
+    "SubscriptionQuoteRequest":
+      "type": "object"
+      "properties":
+        "action":
+          "type": "string"
+          "enum": ["subscribe", "renew", "change", "schedule", "keep"]
+        "target":
+          "$ref": "#/components/schemas/SubscriptionTarget"
+        "months":
+          "type": "integer"
+          "enum": [1, 3, 6, 12]
+        "keep_store_ids":
+          "type": "array"
+          "items":
+            "type": "string"
+          "nullable": true
+        "keep_member_ids":
+          "type": "array"
+          "items":
+            "type": "integer"
+            "format": "int64"
+          "nullable": true
+        "period_id":
+          "type": "integer"
+          "format": "int64"
+        "renew_with_change":
+          "type": "boolean"
+        "expected_workspace_uuid":
+          "type": "string"
+          "format": "uuid"
+      "required": ["action", "expected_workspace_uuid"]
+      "additionalProperties": false
+    "SubscriptionQuote":
+      "type": "object"
+      "properties":
+        "quote_id":
+          "type": "string"
+        "expires_at":
+          "type": "string"
+          "format": "date-time"
+        "revision":
+          "type": "integer"
+          "format": "int64"
+        "action":
+          "type": "string"
+        "effective_at":
+          "type": "string"
+          "format": "date-time"
+          "nullable": true
+        "term_end":
+          "type": "string"
+          "format": "date-time"
+          "nullable": true
+        "current":
+          "type": "object"
+          "properties":
+            "plan_key":
+              "type": "string"
+            "stores":
+              "type": "integer"
+              "format": "int64"
+            "members":
+              "type": "integer"
+              "format": "int64"
+            "term_end":
+              "type": "string"
+              "format": "date-time"
+              "nullable": true
+          "required": ["plan_key", "stores", "members", "term_end"]
+          "additionalProperties": false
+        "target":
+          "type": "object"
+          "properties":
+            "plan_key":
+              "type": "string"
+            "stores":
+              "type": "integer"
+              "format": "int64"
+            "members":
+              "type": "integer"
+              "format": "int64"
+          "required": ["plan_key", "stores", "members"]
+          "additionalProperties": false
+        "amount_cents":
+          "type": "integer"
+          "format": "int64"
+        "breakdown":
+          "type": "array"
+          "items":
+            "type": "object"
+            "properties":
+              "label":
+                "type": "string"
+              "cents":
+                "type": "integer"
+                "format": "int64"
+            "required": ["label", "cents"]
+            "additionalProperties": false
+        "schedule_only":
+          "type": "boolean"
+        "keep_store_ids":
+          "type": "array"
+          "items":
+            "type": "string"
+          "nullable": true
+        "renewal":
+          "$ref": "#/components/schemas/SubscriptionTarget"
+        "renewal_amount_cents":
+          "type": "integer"
+          "format": "int64"
+      "required": ["quote_id", "expires_at", "revision", "action", "effective_at", "term_end", "current", "target", "amount_cents", "breakdown", "schedule_only", "keep_store_ids", "renewal", "renewal_amount_cents"]
+      "additionalProperties": false
+    "SubscriptionOrderBrief":
+      "type": "object"
+      "properties":
+        "order_id":
+          "type": "integer"
+          "format": "int64"
+        "public_id":
+          "type": "string"
+        "payment_deadline_at":
+          "type": "string"
+          "format": "date-time"
+      "required": ["order_id", "public_id", "payment_deadline_at"]
+      "additionalProperties": false
+    "SubscriptionOrder":
+      "type": "object"
+      "properties":
+        "public_id":
+          "type": "string"
+        "status":
+          "type": "string"
+        "amount_cents":
+          "type": "integer"
+          "format": "int64"
+        "reconciliation_reason":
+          "type": "string"
+          "nullable": true
+        "purchase_agreement":
+          "type": "object"
+          "properties":
+            "version":
+              "type": "string"
+            "title":
+              "type": "string"
+            "effective_at":
+              "type": "string"
+            "content":
+              "type": "string"
+            "accepted_at":
+              "type": "string"
+            "accepted_by":
+              "type": "string"
+          "required": ["version", "title", "effective_at", "content", "accepted_at", "accepted_by"]
+          "additionalProperties": false
+      "required": ["public_id", "status", "amount_cents", "reconciliation_reason", "purchase_agreement"]
+      "additionalProperties": false
+    "SubscriptionScheduleRequest":
+      "type": "object"
+      "properties":
+        "quote_id":
+          "type": "string"
+        "cancel_pending":
+          "type": "boolean"
+      "required": ["quote_id"]
+      "additionalProperties": false
+    "SubscriptionOrderRequest":
+      "type": "object"
+      "properties":
+        "quote_id":
+          "type": "string"
+        "accepted_version":
+          "type": "string"
+      "required": ["quote_id", "accepted_version"]
+      "additionalProperties": false
+    "SubscriptionError":
+      "type": "object"
+      "properties":
+        "error":
+          "type": "string"
+        "code":
+          "type": "string"
+      "required": ["error", "code"]
+      "additionalProperties": false
     StoreError:
       type: object
       additionalProperties: false

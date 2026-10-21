@@ -111,34 +111,16 @@ func listRowsTx(ctx context.Context, tx pgx.Tx, orgID int64, actor domain.Actor)
 // when set, otherwise the Store pool for the effective tier and seats. A
 // missing Workspace is MsgWorkspaceMissing.
 func loadStoreLimit(ctx context.Context, tx pgx.Tx, orgID int64) (int64, *contract.APIError) {
-	var seatLimit *int64
-	var storeOverride *int64
-	err := tx.QueryRow(ctx, `
-		SELECT seat_limit, store_limit_override FROM public.organizations WHERE id = $1`,
-		orgID).Scan(&seatLimit, &storeOverride)
+	var limit int64
+	err := tx.QueryRow(ctx, `SELECT COALESCE((SELECT plan_stores+extra_stores FROM public.subscription_periods WHERE org_id=$1 AND starts_at<=clock_timestamp() AND clock_timestamp()<ends_at),1)
+ FROM public.organizations WHERE id=$1`, orgID).Scan(&limit)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, contract.NotFound(contract.MsgWorkspaceMissing)
 	}
 	if err != nil {
 		return 0, asAPIError(err, contract.MsgUnavailable)
 	}
-	tier, seats, err := loadSeatState(ctx, tx, orgID)
-	if err != nil {
-		return 0, asAPIError(err, contract.MsgUnavailable)
-	}
-	// The admin seat override flows through the same merge the entitlement
-	// projection uses, so an admin-granted seat raises the Store pool too.
-	if seatLimit != nil && *seatLimit >= 1 {
-		seats = *seatLimit
-	}
-	base := domain.StoreQuotaFor(tier, seats)
-	if storeOverride != nil && *storeOverride >= domain.MinStoreLimit {
-		return *storeOverride, nil
-	}
-	if base < domain.MinStoreLimit {
-		return domain.MinStoreLimit, nil
-	}
-	return base, nil
+	return limit, nil
 }
 
 // loadSeatState is load_active_seat_state: live lots set the tier and the

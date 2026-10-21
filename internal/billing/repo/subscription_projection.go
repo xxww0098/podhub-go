@@ -12,8 +12,8 @@ import (
 	"github.com/xxww0098/podhub-go/internal/platform/db"
 )
 
-// Subscription is the stored term. status is written by the expiration sweep;
-// readers trust the column rather than comparing term_end themselves.
+// Subscription stores renewal intent and caches the currently projected period.
+// Paid periods determine access even before the background sweep runs.
 type Subscription struct {
 	OrgID        int64
 	Status       string
@@ -26,6 +26,10 @@ type Subscription struct {
 	NextStores   int
 	NextMembers  int
 	Revision     int64
+	Anchor       *time.Time
+	Periods      []domain.Period
+	CurrentStart *time.Time
+	CurrentEnd   *time.Time
 }
 
 // Active reports whether the term is still running.
@@ -43,11 +47,21 @@ func (s Subscription) Snapshot() domain.Snapshot {
 		NextExtraStores:  s.NextStores,
 		NextExtraMembers: s.NextMembers,
 	}
+	snap.Periods = s.Periods
+	if s.Anchor != nil {
+		snap.Anchor = *s.Anchor
+	}
 	if s.TermEnd != nil {
 		snap.TermEnd = *s.TermEnd
 	}
 	if s.NextPlanKey != nil {
 		snap.NextPlanKey = *s.NextPlanKey
+	}
+	if s.NextPlanKey == nil && len(s.Periods) > 0 {
+		tail := s.Periods[len(s.Periods)-1]
+		snap.NextPlanKey = tail.PlanKey
+		snap.NextExtraStores = tail.ExtraStores
+		snap.NextExtraMembers = tail.ExtraMembers
 	}
 	return snap
 }
@@ -134,11 +148,11 @@ func LockSubscription(ctx context.Context, tx pgx.Tx, orgID int64) (Subscription
 	err := tx.QueryRow(ctx, `
 		SELECT org_id, status, plan_key, term_start, term_end,
 		       extra_stores, extra_members, next_plan_key,
-		       next_extra_stores, next_extra_members, revision
+		       next_extra_stores, next_extra_members, revision, billing_anchor
 		  FROM subscriptions WHERE org_id = $1 FOR UPDATE`, orgID).Scan(
 		&s.OrgID, &s.Status, &s.PlanKey, &s.TermStart, &s.TermEnd,
 		&s.ExtraStores, &s.ExtraMembers, &s.NextPlanKey,
-		&s.NextStores, &s.NextMembers, &s.Revision)
+		&s.NextStores, &s.NextMembers, &s.Revision, &s.Anchor)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Subscription{}, ErrNoSubscription
 	}
@@ -151,6 +165,9 @@ func LockSubscription(ctx context.Context, tx pgx.Tx, orgID int64) (Subscription
 func ProjectSubscription(ctx context.Context, tx pgx.Tx, orgID int64, now time.Time) (Projection, error) {
 	s, err := LockSubscription(ctx, tx, orgID)
 	if err != nil {
+		return Projection{}, err
+	}
+	if err := s.loadPeriods(ctx, tx, now); err != nil {
 		return Projection{}, err
 	}
 	cat, err := Catalog(ctx, tx)
@@ -170,9 +187,21 @@ func ProjectSubscription(ctx context.Context, tx pgx.Tx, orgID int64, now time.T
 	stores := int64(plan.Stores)
 	var expires *time.Time
 	if active {
-		seats += int64(s.ExtraMembers)
-		stores += int64(s.ExtraStores)
+		for _, p := range s.Periods {
+			if !p.Start.After(now) && p.End.After(now) {
+				seats = int64(p.PlanMembers + p.ExtraMembers)
+				stores = int64(p.PlanStores + p.ExtraStores)
+				break
+			}
+		}
 		expires = s.TermEnd
+	}
+	if active {
+		if _, err := tx.Exec(ctx, `UPDATE subscriptions SET plan_key=$2,extra_stores=$3,extra_members=$4,term_start=$5,
+   revision=revision+1,updated_at=$6 WHERE org_id=$1 AND (plan_key,extra_stores,extra_members,term_start) IS DISTINCT FROM ($2::text,$3::integer,$4::integer,$5::timestamptz)`,
+			orgID, s.PlanKey, s.ExtraStores, s.ExtraMembers, s.CurrentStart, now); err != nil {
+			return Projection{}, err
+		}
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE organizations
@@ -190,77 +219,20 @@ func ProjectSubscription(ctx context.Context, tx pgx.Tx, orgID int64, now time.T
 	return Projection{Plan: planKey, SeatLimit: seats, StoreLimit: stores, ExpiresAt: expires, Revision: s.Revision}, nil
 }
 
-// ReconcileSubscriptionCapacity suspends members and stores beyond the
-// projection. A member or store that still owns a live drain job is not
-// suspended: work queued before expiry is allowed to finish.
+// ReconcileSubscriptionCapacity updates display flags immediately. Already accepted
+// work uses its intent; these flags never grant permission to enqueue new work.
 func ReconcileSubscriptionCapacity(ctx context.Context, tx pgx.Tx, orgID, seats, stores int64, now time.Time) error {
-	drainStart, err := DrainStart(ctx, tx, orgID)
+	_, err := tx.Exec(ctx, `UPDATE organization_members m
+ SET quota_suspended=NOT public.subscription_member_allowed($1,m.id,$2),updated_at=clock_timestamp()
+ WHERE m.org_id=$1 AND NOT m.manual_disabled AND m.status='active'
+ AND m.quota_suspended IS DISTINCT FROM NOT public.subscription_member_allowed($1,m.id,$2)`, orgID, now)
 	if err != nil {
 		return err
 	}
-	if seats < 1 {
-		seats = 1
-	}
-	if stores < 1 {
-		stores = 1
-	}
-	if _, err := tx.Exec(ctx, `
-		WITH ranked AS (
-		    SELECT m.id,
-		           row_number() OVER (
-		               ORDER BY CASE WHEN m.role = 'owner' THEN 0 ELSE 1 END,
-		                        m.join_order ASC, m.id ASC) AS rn
-		      FROM organization_members m
-		     WHERE m.org_id = $1 AND NOT m.manual_disabled AND m.role <> 'owner'
-		),
-		blocked AS (
-		    SELECT DISTINCT j.member_id
-		      FROM jobs j
-		     WHERE j.org_id = $1 AND j.member_id IS NOT NULL
-		       AND $3::timestamptz IS NOT NULL
-		       AND j.created_at < $3::timestamptz
-		       AND j.kind NOT IN ('media.render', 'media.upload')
-		       AND j.cancel_requested_at IS NULL
-		       AND (j.state IN ('queued', 'retry_wait')
-		            OR (j.state = 'running' AND j.lease_until > $2))
-		)
-		UPDATE organization_members m
-		   SET quota_suspended = (r.rn > $4 AND b.member_id IS NULL),
-		       updated_at = clock_timestamp()
-		  FROM ranked r
-		  LEFT JOIN blocked b ON b.member_id = r.id
-		 WHERE m.id = r.id
-		   AND m.quota_suspended IS DISTINCT FROM (r.rn > $4 AND b.member_id IS NULL)`,
-		orgID, now, drainStart, seats); err != nil {
-		return err
-	}
-	_, err = tx.Exec(ctx, `
-		WITH ranked AS (
-		    SELECT s.id,
-		           row_number() OVER (ORDER BY s.create_order ASC, s.id ASC) AS rn
-		      FROM organization_stores s
-		     WHERE s.org_id = $1 AND s.deleted_at_ms IS NULL AND NOT s.manual_disabled
-		),
-		blocked AS (
-		    SELECT DISTINCT j.store_id
-		      FROM jobs j
-		     WHERE j.org_id = $1 AND j.store_id IS NOT NULL
-		       AND $3::timestamptz IS NOT NULL
-		       AND j.created_at < $3::timestamptz
-		       AND j.kind NOT IN ('media.render', 'media.upload')
-		       AND j.cancel_requested_at IS NULL
-		       AND (j.state IN ('queued', 'retry_wait')
-		            OR (j.state = 'running' AND j.lease_until > $2))
-		)
-		UPDATE organization_stores s
-		   SET quota_suspended = (r.rn > $4 AND b.store_id IS NULL),
-		       revision = revision + 1,
-		       updated_at = clock_timestamp()
-		  FROM ranked r
-		  LEFT JOIN blocked b ON b.store_id = r.id
-		 WHERE s.id = r.id
-		   AND s.quota_suspended IS DISTINCT FROM (r.rn > $4 AND b.store_id IS NULL)`,
-		orgID, now, drainStart, stores)
+	_, err = tx.Exec(ctx, `UPDATE organization_stores s
+ SET quota_suspended=NOT public.subscription_store_allowed($1,s.uuid,$2),revision=revision+1,updated_at=clock_timestamp()
+ WHERE s.org_id=$1 AND s.deleted_at_ms IS NULL AND NOT s.manual_disabled
+ AND s.quota_suspended IS DISTINCT FROM NOT public.subscription_store_allowed($1,s.uuid,$2)`, orgID, now)
 	return err
 }
 
@@ -290,13 +262,7 @@ func DrainStart(ctx context.Context, tx pgx.Tx, orgID int64) (*time.Time, error)
 func ExpireDue(ctx context.Context, pool *pgxpool.Pool, batch int, now time.Time) (int, error) {
 	var ids []int64
 	err := db.InTx(ctx, pool, db.AppRole(), func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, "SELECT set_config('role', 'podhub_billing_lookup', true)"); err != nil {
-			return err
-		}
-		rows, err := tx.Query(ctx, `
-			SELECT org_id FROM subscriptions
-			 WHERE status = 'active' AND term_end <= $1
-			 ORDER BY term_end LIMIT $2`, now, batch)
+		rows, err := tx.Query(ctx, `SELECT org_id FROM public.billing_due_subscriptions($1,$2)`, now, batch)
 		if err != nil {
 			return err
 		}
@@ -327,11 +293,18 @@ func ExpireDue(ctx context.Context, pool *pgxpool.Pool, batch int, now time.Time
 // reproject under the app role so the new tables' RLS applies.
 func expireOne(ctx context.Context, pool *pgxpool.Pool, orgID int64, now time.Time) error {
 	return db.InTx(ctx, pool, db.App(orgID), func(tx pgx.Tx) error {
+		if _, err := LockSubscription(ctx, tx, orgID); err != nil {
+			return err
+		}
 		tag, err := tx.Exec(ctx, `
 			UPDATE subscriptions
 			   SET status = 'expired', revision = revision + 1, updated_at = clock_timestamp()
 			 WHERE org_id = $1 AND status = 'active' AND term_end <= $2`, orgID, now)
-		if err != nil || tag.RowsAffected() != 1 {
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() != 1 {
+			_, err = ProjectSubscription(ctx, tx, orgID, now)
 			return err
 		}
 		// Counts only: the drain range is recomputed from effective_at, so a
