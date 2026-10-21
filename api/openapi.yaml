@@ -12806,6 +12806,323 @@ paths:
               schema:
                 type: object
 
+  "/api/supplier-catalog/sources/{source_id}":
+    get:
+      operationId: getSupplierCatalogSource
+      tags:
+      - supplier-catalog
+      summary: One source with its property definitions and rows
+      responses:
+        '200':
+          description: Implemented
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+        '403':
+          description: The session guard refused
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          description: Not found or outside the managed set
+          content:
+            application/json:
+              schema:
+                type: object
+        '500':
+          description: Database or downstream error
+          content:
+            application/json:
+              schema:
+                type: object
+
+  "/api/supplier-catalog/sources/{source_id}/rows":
+    get:
+      operationId: listSupplierCatalogRows
+      tags:
+      - supplier-catalog
+      summary: Rows of one source
+      responses:
+        '200':
+          description: Implemented
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+        '403':
+          description: The session guard refused
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          description: Not found or outside the managed set
+          content:
+            application/json:
+              schema:
+                type: object
+        '500':
+          description: Database or downstream error
+          content:
+            application/json:
+              schema:
+                type: object
+    post:
+      operationId: createSupplierCatalogRow
+      tags:
+      - supplier-catalog
+      summary: Create a row with its supply cost
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Implemented
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+        '403':
+          description: The session guard refused
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          description: Not found or outside the managed set
+          content:
+            application/json:
+              schema:
+                type: object
+        '409':
+          description: Validation or optimistic-concurrency refusal
+          content:
+            application/json:
+              schema:
+                type: object
+        '500':
+          description: Database or downstream error
+          content:
+            application/json:
+              schema:
+                type: object
+
+  "/api/supplier-catalog/sources/{source_id}/rows/{product_id}":
+    get:
+      operationId: getSupplierCatalogRow
+      tags:
+      - supplier-catalog
+      summary: One row
+      responses:
+        '200':
+          description: Implemented
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+        '403':
+          description: The session guard refused
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          description: Not found or outside the managed set
+          content:
+            application/json:
+              schema:
+                type: object
+        '500':
+          description: Database or downstream error
+          content:
+            application/json:
+              schema:
+                type: object
+    put:
+      operationId: updateSupplierCatalogRow
+      tags:
+      - supplier-catalog
+      summary: Edit a row; requires the current revision
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Implemented
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+        '403':
+          description: The session guard refused
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          description: Not found or outside the managed set
+          content:
+            application/json:
+              schema:
+                type: object
+        '409':
+          description: Validation or optimistic-concurrency refusal
+          content:
+            application/json:
+              schema:
+                type: object
+        '500':
+          description: Database or downstream error
+          content:
+            application/json:
+              schema:
+                type: object
+    delete:
+      operationId: deleteSupplierCatalogRow
+      tags:
+      - supplier-catalog
+      summary: Archive a row (soft delete)
+      responses:
+        '204':
+          description: Archived
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+        '403':
+          description: The session guard refused
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          description: Not found or outside the managed set
+          content:
+            application/json:
+              schema:
+                type: object
+        '500':
+          description: Database or downstream error
+          content:
+            application/json:
+              schema:
+                type: object
+
+  "/api/supplier-catalog/sources/{source_id}/rows/{product_id}/publish":
+    post:
+      operationId: publishSupplierCatalogRow
+      tags:
+      - supplier-catalog
+      summary: Publish a row once every readiness gate passes
+      responses:
+        '200':
+          description: Implemented
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+        '403':
+          description: The session guard refused
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          description: Not found or outside the managed set
+          content:
+            application/json:
+              schema:
+                type: object
+        '500':
+          description: Database or downstream error
+          content:
+            application/json:
+              schema:
+                type: object
+
+  "/api/supplier-catalog/sources/{source_id}/rows/{product_id}/unpublish":
+    post:
+      operationId: unpublishSupplierCatalogRow
+      tags:
+      - supplier-catalog
+      summary: Unpublish a row
+      responses:
+        '200':
+          description: Implemented
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+        '403':
+          description: The session guard refused
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          description: Not found or outside the managed set
+          content:
+            application/json:
+              schema:
+                type: object
+        '500':
+          description: Database or downstream error
+          content:
+            application/json:
+              schema:
+                type: object
   "/api/supplier-dbs/catalog":
     get:
       operationId: seller_supplier_db_catalog

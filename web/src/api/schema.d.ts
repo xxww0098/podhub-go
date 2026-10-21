@@ -1286,6 +1286,32 @@ export interface paths {
     /** Sources this account may maintain as a catalogue manager */
     get: operations["listSupplierCatalogSources"];
   };
+  "/api/supplier-catalog/sources/{source_id}": {
+    /** One source with its property definitions and rows */
+    get: operations["getSupplierCatalogSource"];
+  };
+  "/api/supplier-catalog/sources/{source_id}/rows": {
+    /** Rows of one source */
+    get: operations["listSupplierCatalogRows"];
+    /** Create a row with its supply cost */
+    post: operations["createSupplierCatalogRow"];
+  };
+  "/api/supplier-catalog/sources/{source_id}/rows/{product_id}": {
+    /** One row */
+    get: operations["getSupplierCatalogRow"];
+    /** Edit a row; requires the current revision */
+    put: operations["updateSupplierCatalogRow"];
+    /** Archive a row (soft delete) */
+    delete: operations["deleteSupplierCatalogRow"];
+  };
+  "/api/supplier-catalog/sources/{source_id}/rows/{product_id}/publish": {
+    /** Publish a row once every readiness gate passes */
+    post: operations["publishSupplierCatalogRow"];
+  };
+  "/api/supplier-catalog/sources/{source_id}/rows/{product_id}/unpublish": {
+    /** Unpublish a row */
+    post: operations["unpublishSupplierCatalogRow"];
+  };
   "/api/supplier-dbs/catalog": {
     /** Supplier-DB catalog entries for the seller surface */
     get: operations["seller_supplier_db_catalog"];
@@ -21514,6 +21540,306 @@ export interface operations {
       };
       /** @description The session guard refused */
       403: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Database or downstream error */
+      500: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+    };
+  };
+  /** One source with its property definitions and rows */
+  getSupplierCatalogSource: {
+    responses: {
+      /** @description Implemented */
+      200: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Not signed in */
+      401: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description The session guard refused */
+      403: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Not found or outside the managed set */
+      404: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Database or downstream error */
+      500: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+    };
+  };
+  /** Rows of one source */
+  listSupplierCatalogRows: {
+    responses: {
+      /** @description Implemented */
+      200: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Not signed in */
+      401: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description The session guard refused */
+      403: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Not found or outside the managed set */
+      404: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Database or downstream error */
+      500: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+    };
+  };
+  /** Create a row with its supply cost */
+  createSupplierCatalogRow: {
+    requestBody: {
+      content: {
+        "application/json": Record<string, never>;
+      };
+    };
+    responses: {
+      /** @description Implemented */
+      200: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Not signed in */
+      401: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description The session guard refused */
+      403: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Not found or outside the managed set */
+      404: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Validation or optimistic-concurrency refusal */
+      409: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Database or downstream error */
+      500: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+    };
+  };
+  /** One row */
+  getSupplierCatalogRow: {
+    responses: {
+      /** @description Implemented */
+      200: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Not signed in */
+      401: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description The session guard refused */
+      403: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Not found or outside the managed set */
+      404: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Database or downstream error */
+      500: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+    };
+  };
+  /** Edit a row; requires the current revision */
+  updateSupplierCatalogRow: {
+    requestBody: {
+      content: {
+        "application/json": Record<string, never>;
+      };
+    };
+    responses: {
+      /** @description Implemented */
+      200: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Not signed in */
+      401: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description The session guard refused */
+      403: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Not found or outside the managed set */
+      404: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Validation or optimistic-concurrency refusal */
+      409: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Database or downstream error */
+      500: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+    };
+  };
+  /** Archive a row (soft delete) */
+  deleteSupplierCatalogRow: {
+    responses: {
+      /** @description Archived */
+      204: {
+        content: never;
+      };
+      /** @description Not signed in */
+      401: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description The session guard refused */
+      403: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Not found or outside the managed set */
+      404: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Database or downstream error */
+      500: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+    };
+  };
+  /** Publish a row once every readiness gate passes */
+  publishSupplierCatalogRow: {
+    responses: {
+      /** @description Implemented */
+      200: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Not signed in */
+      401: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description The session guard refused */
+      403: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Not found or outside the managed set */
+      404: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Database or downstream error */
+      500: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+    };
+  };
+  /** Unpublish a row */
+  unpublishSupplierCatalogRow: {
+    responses: {
+      /** @description Implemented */
+      200: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Not signed in */
+      401: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description The session guard refused */
+      403: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Not found or outside the managed set */
+      404: {
         content: {
           "application/json": Record<string, never>;
         };

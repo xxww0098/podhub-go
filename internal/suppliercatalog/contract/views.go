@@ -170,3 +170,39 @@ type SourceDetail struct {
 	PropDefs []PropDef     `json:"propDefs"`
 	Rows     []CatalogRow  `json:"rows"`
 }
+
+// RowInput is one writable row.
+//
+// costCents and shippingCostCents are accepted here but deliberately absent
+// from CatalogRow: the manager may set the supply cost without reading back the
+// platform's margin (doc 8.3). The asymmetry is the rule, not an oversight.
+type RowInput struct {
+	Title                 string
+	PlatformCode          string
+	VariantGroup          string
+	DescriptionCategoryID *int64
+	TypeID                *int64
+	SuggestedRetail       *int64
+	SuggestedOld          *int64
+	CostCents             *int64
+	ShippingCents         *int64
+	LeadTime              string
+	Size                  string
+	Material              string
+	Craft                 string
+	GrossWeightG          *int64
+	Brand                 string
+	PackWidthMM           *int64
+	PackHeightMM          *int64
+	PackDepthMM           *int64
+	PackWeightG           *int64
+	Contents              string
+	Gallery               json.RawMessage
+	PSD                   json.RawMessage
+	Videos                json.RawMessage
+	Description           string
+	InternalNote          string
+	Props                 json.RawMessage
+	ExpectedRevision      *int64
+	Archived              bool
+}

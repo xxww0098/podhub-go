@@ -20,7 +20,8 @@ import (
 
 // Repo reads and writes catalogue rows for one catalog manager.
 type Repo struct {
-	Pool *pgxpool.Pool
+	Pool  *pgxpool.Pool
+	write writer
 }
 
 // managed lists the sources this user is an active manager of. It is the
