@@ -708,13 +708,16 @@ impl WindowRgbaRows {
         }
     }
 
-    fn source_row(&self, y: i64) -> Result<Vec<u8>, MediaError> {
-        let row_bytes = self.doc_width as usize * 4;
+    fn source_row(&self, y: i64) -> Result<&[u8], MediaError> {
         if y < self.group_top || y >= self.group_bottom {
-            return Ok(vec![0; row_bytes]);
+            // Empty means transparent canvas padding; the identity path
+            // writes zeros into the encoder's existing output buffer.
+            return Ok(&[]);
         }
+        let row_bytes = self.doc_width as usize * 4;
         let offset = (y - self.group_top) as usize * row_bytes;
-        Ok(self.window[offset..offset + row_bytes].to_vec())
+        // The immutable Arc-backed window outlives every row read.
+        Ok(&self.window[offset..offset + row_bytes])
     }
 }
 
@@ -730,15 +733,41 @@ impl RgbaRows for WindowRgbaRows {
     fn read_rgba_row(&self, target_y: u32, output: &mut Vec<u8>) -> Result<(), MediaError> {
         check_cancelled(self.cancellation.as_ref(), "render-pass-2")?;
         let row_read_started = crate::media::stage_timing::start();
-        let result = resample_output_row(
-            self.export_rect,
-            self.output_width,
-            self.output_height,
-            self.doc_width,
-            target_y,
-            &|y| self.source_row(y),
-            output,
-        );
+        let rect = self.export_rect;
+        let result = if self.output_width == rect.width && self.output_height == rect.height {
+            // The common 1:1 export needs only the cropped window segment,
+            // not a temporary full-document-width Vec for every JPEG row.
+            self.source_row(rect.top + i64::from(target_y)).map(|row| {
+                output.clear();
+                if row.is_empty() {
+                    output.resize(rect.width as usize * 4, 0);
+                } else {
+                    let start = usize::try_from(rect.left).unwrap_or_default() * 4;
+                    output.extend_from_slice(&row[start..start + rect.width as usize * 4]);
+                }
+            })
+        } else {
+            // Keep the measured scaling kernel unchanged. Testing padding
+            // inside its per-pixel sampler regressed scaled exports; expand
+            // padding here, once per source row, as the old adapter did.
+            resample_output_row(
+                rect,
+                self.output_width,
+                self.output_height,
+                self.doc_width,
+                target_y,
+                &|y| {
+                    self.source_row(y).map(|row| {
+                        if row.is_empty() {
+                            vec![0; self.doc_width as usize * 4]
+                        } else {
+                            row.to_vec()
+                        }
+                    })
+                },
+                output,
+            )
+        };
         crate::media::stage_timing::record(
             crate::media::stage_timing::Stage::RowRead,
             row_read_started,
@@ -860,3 +889,6 @@ fn check_cancelled(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod borrowed_rows_tests;
