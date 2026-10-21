@@ -122,7 +122,7 @@ func TestEnqueueDraftsBatchMatchesSequential(t *testing.T) {
 		}
 		tr.sql = nil
 		tr.batches = 0
-		views, err := enqueueDrafts(ctx, tx, orgID, userID, storeID, cardID, ready)
+		views, err := enqueueDrafts(ctx, tx, orgID, userID, storeID, ready)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -174,9 +174,14 @@ func TestEnqueueDraftsBatchMatchesSequential(t *testing.T) {
 
 func compareDrafts(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, storeID, cardID string, ready []frozen) (seq, bat []DraftItem) {
 	t.Helper()
+	// Keep the old single-card sequential oracle unchanged. The production
+	// enqueue now takes each row's card rather than a batch-wide card.
+	batched := func(ctx context.Context, tx pgx.Tx, orgID, userID int64, storeID, _ string, ready []frozen) ([]DraftItem, error) {
+		return enqueueDrafts(ctx, tx, orgID, userID, storeID, ready)
+	}
 	reset := pinDraftIDs(t)
 	seq = runDrafts(t, ctx, pool, orgID, userID, storeID, cardID, ready, enqueueDraftsSequential, reset)
-	bat = runDrafts(t, ctx, pool, orgID, userID, storeID, cardID, ready, enqueueDrafts, reset)
+	bat = runDrafts(t, ctx, pool, orgID, userID, storeID, cardID, ready, batched, reset)
 	if len(seq) != len(bat) {
 		t.Fatalf("len %d %d", len(seq), len(bat))
 	}
@@ -210,7 +215,7 @@ func compareDrafts(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID,
 		}
 	}
 	seqJobs := runDraftPayloads(t, ctx, pool, orgID, userID, storeID, cardID, ready, enqueueDraftsSequential, reset)
-	batJobs := runDraftPayloads(t, ctx, pool, orgID, userID, storeID, cardID, ready, enqueueDrafts, reset)
+	batJobs := runDraftPayloads(t, ctx, pool, orgID, userID, storeID, cardID, ready, batched, reset)
 	if len(seqJobs) != len(batJobs) {
 		t.Fatalf("jobs %d %d", len(seqJobs), len(batJobs))
 	}
@@ -407,7 +412,7 @@ func draftRows(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID int6
 			t.Fatal(err)
 		}
 		out[i] = frozen{
-			rowID: rowID, revision: 1, clientOp: "op-" + rowID, digest: "hash-" + rowID,
+			rowID: rowID, revision: 1, cardID: cardID, clientOp: "op-" + rowID, digest: "hash-" + rowID,
 			offerID: "offer-" + rowID, importBody: json.RawMessage(fmt.Sprintf(`{"i":%d}`, i)),
 		}
 	}

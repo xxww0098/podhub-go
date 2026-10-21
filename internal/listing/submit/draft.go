@@ -36,23 +36,23 @@ func statusErr(code int, message, kind string) error {
 	return Status{Code: code, Message: message, Kind: kind}
 }
 
-// DraftData is SubmitListingDraftsData. Field order is the Rust struct.
+// DraftData is the SubmitListingDraftsData HTTP response.
 // AcceptedSchemaRevisions is the server rule for this cache payload: the
 // order-independent revision, and the legacy order-sensitive revision when
 // it differs. A row matching either is unchanged. The browser only displays
 // this list; it does not refuse on its own.
 type DraftData struct {
-	ServerSchemaRevision    string      `json:"serverSchemaRevision"`
-	AcceptedSchemaRevisions []string    `json:"acceptedSchemaRevisions,omitempty"`
+	ServerSchemaRevision    string      `json:"server_schema_revision"`
+	AcceptedSchemaRevisions []string    `json:"accepted_schema_revisions,omitempty"`
 	Items                   []DraftItem `json:"items"`
 }
 
 // DraftItem is one SubmitListingDraftItemResult. Empty lists and nil
 // options are omitted, matching skip_serializing_if.
 type DraftItem struct {
-	RowID      string          `json:"rowId"`
+	RowID      string          `json:"row_id"`
 	Outcome    string          `json:"outcome"`
-	SkipReason string          `json:"skipReason,omitempty"`
+	SkipReason string          `json:"skip_reason,omitempty"`
 	Issues     json.RawMessage `json:"issues,omitempty"`
 	Blockers   json.RawMessage `json:"blockers,omitempty"`
 	Detail     string          `json:"detail,omitempty"`
@@ -63,17 +63,17 @@ type DraftItem struct {
 // IntentView is the empty-history ListingIntentView a fresh queued intent
 // serializes to. Derived facts that are None stay omitted.
 type IntentView struct {
-	SubmissionIssues        []struct{} `json:"submissionIssues"`
-	CurrentIssueStatus      string     `json:"currentIssueStatus"`
-	CanResume               bool       `json:"canResume"`
+	SubmissionIssues        []struct{} `json:"submission_issues"`
+	CurrentIssueStatus      string     `json:"current_issue_status"`
+	CanResume               bool       `json:"can_resume"`
 	ID                      string     `json:"id"`
-	StoreID                 string     `json:"storeId"`
-	ListingRowID            string     `json:"listingRowId"`
-	RowRevision             int64      `json:"rowRevision"`
-	ClientOperationID       string     `json:"clientOperationId"`
+	StoreID                 string     `json:"store_id"`
+	ListingRowID            string     `json:"listing_row_id"`
+	RowRevision             int64      `json:"row_revision"`
+	ClientOperationID       string     `json:"client_operation_id"`
 	State                   string     `json:"state"`
-	SubmissionReceiptStatus string     `json:"submissionReceiptStatus"`
-	UpdatedAtMS             int64      `json:"updatedAtMs"`
+	SubmissionReceiptStatus string     `json:"submission_receipt_status"`
+	UpdatedAtMS             int64      `json:"updated_at_ms"`
 }
 
 // BatchData is SubmitListingBatchData.
@@ -84,7 +84,7 @@ type BatchData struct {
 // BatchItem is one stored-row send result. The row projection is omitted:
 // ListingRowView is not produced here.
 type BatchItem struct {
-	RowID   string      `json:"rowId"`
+	RowID   string      `json:"row_id"`
 	Intent  *IntentView `json:"intent,omitempty"`
 	Created bool        `json:"created"`
 	Skipped string      `json:"skipped,omitempty"`
@@ -100,8 +100,8 @@ func SendDrafts(ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, bo
 		return DraftData{}, statusErr(503, "服务暂不可用", "internal")
 	}
 	var req struct {
-		StoreID string            `json:"storeId"`
-		CardID  string            `json:"cardId"`
+		StoreID string            `json:"store_id"`
+		CardID  string            `json:"card_id"`
 		Items   []json.RawMessage `json:"items"`
 	}
 	if err := json.Unmarshal(body, &req); err != nil || len(req.Items) == 0 {
@@ -179,6 +179,7 @@ func SendDrafts(ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, bo
 			items = append(items, *refusal)
 			continue
 		}
+		frozen.cardID = req.CardID
 		ready = append(ready, frozen)
 	}
 	data := DraftData{
@@ -215,7 +216,7 @@ func SendDrafts(ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, bo
 		}
 		return data, nil
 	}
-	enqueued, err := enqueueDrafts(ctx, tx, orgID, userID, req.StoreID, req.CardID, admitted)
+	enqueued, err := enqueueDrafts(ctx, tx, orgID, userID, req.StoreID, admitted)
 	if err != nil {
 		return DraftData{}, err
 	}
@@ -226,9 +227,12 @@ func SendDrafts(ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, bo
 	return data, nil
 }
 
-// SendStored freezes stored rows and enqueues listing.submit.batch.
-// expectedRevisions is still not applied.
-func SendStored(ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, storeID string, rowIDs []string, now time.Time) (BatchData, error) {
+// SendStored freezes the requested server revisions and enqueues
+// listing.submit.batch. A concurrent edit during admission rolls back the batch.
+func SendStored(ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, req BatchBody, now time.Time) (BatchData, error) {
+	if err := req.Validate(); err != nil {
+		return BatchData{}, statusErr(400, err.Error(), "bad_request")
+	}
 	if pool == nil {
 		return BatchData{}, statusErr(503, "服务暂不可用", "internal")
 	}
@@ -247,8 +251,9 @@ func SendStored(ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, st
 	var items []BatchItem
 	var ready []frozen
 	recordRevision := false
-	for _, rowID := range rowIDs {
-		item, one, recorded, err := freezeStored(ctx, tx, mod, orgID, storeID, rowID, now)
+	storeID := req.StoreID
+	for _, rowID := range req.RowIDs {
+		item, one, recorded, err := freezeStored(ctx, tx, mod, orgID, storeID, rowID, req.ExpectedRevisions[rowID], now)
 		if err != nil {
 			return BatchData{}, err
 		}
@@ -284,18 +289,28 @@ func SendStored(ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, st
 		}
 		return BatchData{Items: items}, nil
 	}
-	cardID := admitted[0].cardID
-	enqueued, err := enqueueDrafts(ctx, tx, orgID, userID, storeID, cardID, admitted)
+	enqueued, err := enqueueDrafts(ctx, tx, orgID, userID, storeID, admitted)
 	if err != nil {
 		return BatchData{}, err
 	}
-	for _, row := range admitted {
-		if _, err := tx.Exec(ctx, `
+	for _, item := range enqueued {
+		// A replay does not enqueue work or transition the existing intent.
+		// Leave its row projection (including updated_at) unchanged as well.
+		if item.Outcome != "created" {
+			continue
+		}
+		tag, err := tx.Exec(ctx, `
 			UPDATE public.listing_rows
 			   SET submission_state = 'queued', updated_at = clock_timestamp()
 			 WHERE org_id = $1 AND id = $2::uuid AND revision = $3`,
-			orgID, row.rowID, row.revision); err != nil {
+			orgID, item.Intent.ListingRowID, item.Intent.RowRevision)
+		if err != nil {
 			return BatchData{}, statusErr(500, "服务暂不可用", "internal")
+		}
+		// The existing intent trigger has already acquired the store and row
+		// locks. Check the content revision here without reversing that order.
+		if tag.RowsAffected() != 1 {
+			return BatchData{}, statusErr(409, "商品已更新，本批未入队，请刷新后重试", "revision_mismatch")
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -400,9 +415,15 @@ func loadSnapshot(ctx context.Context, tx pgx.Tx, mod contract.Module, card card
 
 func gateSchema(ctx context.Context, tx pgx.Tx, raw []byte, loaded loadedSchema) ([]byte, *DraftItem, bool, error) {
 	stored := draftRevision(raw)
-	before, err := previousSchemaFields(ctx, tx, stored)
-	if err != nil {
-		return nil, nil, false, statusErr(500, "服务暂不可用", "internal")
+	var before []schemaField
+	var err error
+	// Matching revisions are already accepted by decideSchema. History is
+	// needed only to compare a different revision, not once per current row.
+	if stored != loaded.current && stored != loaded.legacy {
+		before, err = previousSchemaFields(ctx, tx, stored)
+		if err != nil {
+			return nil, nil, false, statusErr(500, "服务暂不可用", "internal")
+		}
 	}
 	decision := decideSchema(stored, loaded.current, loaded.legacy, before, loaded.after, filledFieldKeys(raw))
 	if len(decision.Block) > 0 {
@@ -502,7 +523,7 @@ func freezeLean(ctx context.Context, mod contract.Module, schema, card, lean []b
 	}, nil, nil
 }
 
-func freezeStored(ctx context.Context, tx pgx.Tx, mod contract.Module, orgID int64, storeID, rowID string, now time.Time) (*BatchItem, frozen, bool, error) {
+func freezeStored(ctx context.Context, tx pgx.Tx, mod contract.Module, orgID int64, storeID, rowID string, expectedRevision int64, now time.Time) (*BatchItem, frozen, bool, error) {
 	var revision int64
 	var rowStore *string
 	var rowPayload, cardPayload []byte
@@ -517,6 +538,9 @@ func freezeStored(ctx context.Context, tx pgx.Tx, mod contract.Module, orgID int
 	}
 	if err != nil {
 		return nil, frozen{}, false, statusErr(500, "服务暂不可用", "internal")
+	}
+	if revision != expectedRevision {
+		return &BatchItem{RowID: rowID, Skipped: "revision_mismatch"}, frozen{}, false, nil
 	}
 	if rowStore == nil || strings.TrimSpace(*rowStore) == "" {
 		return &BatchItem{RowID: rowID, Skipped: "store_unbound"}, frozen{}, false, nil
@@ -651,7 +675,7 @@ const readIntentSQL = `
 				  FROM public.submission_intents
 				 WHERE org_id = $1 AND store_id = $2::uuid AND client_operation_id = $3`
 
-func enqueueDrafts(ctx context.Context, tx pgx.Tx, orgID, userID int64, storeID, cardID string, ready []frozen) ([]DraftItem, error) {
+func enqueueDrafts(ctx context.Context, tx pgx.Tx, orgID, userID int64, storeID string, ready []frozen) ([]DraftItem, error) {
 	digests := make([]string, len(ready))
 	for i, row := range ready {
 		digests[i] = row.digest
@@ -669,7 +693,7 @@ func enqueueDrafts(ctx context.Context, tx pgx.Tx, orgID, userID int64, storeID,
 	for i, row := range ready {
 		minted[i] = newID()
 		batch.Queue(insertIntentSQL,
-			minted[i], orgID, storeID, row.rowID, row.revision, row.clientOp, row.digest, row.offerID, cardID)
+			minted[i], orgID, storeID, row.rowID, row.revision, row.clientOp, row.digest, row.offerID, row.cardID)
 		batch.Queue(readIntentSQL, orgID, storeID, row.clientOp)
 	}
 	var replays []int

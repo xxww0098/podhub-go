@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
@@ -122,51 +123,40 @@ func finishReceipt(ctx context.Context, pool *pgxpool.Pool, attempts []Attempt, 
 	return nil
 }
 
-// settleBatch writes each intent that is still on the edge, then the job
-// once. An intent already past the edge is left as it is.
+// settleBatch commits the intents and job under one lease fence. A lost
+// lease or later item failure rolls back the whole settlement. Positive
+// receipts commit separately; intents past the edge stay unchanged.
 func settleBatch(ctx context.Context, pool *pgxpool.Pool, attempts []Attempt, out Outcome) error {
 	if len(attempts) == 0 {
 		return nil
 	}
 	lease := attempts[0].Lease
-	for _, in := range attempts {
-		state, err := intentState(ctx, pool, in.OrgID, in.IntentID)
-		if err != nil {
-			return err
+	return mutateSettlement(ctx, pool, lease, func(ctx context.Context, tx pgx.Tx) error {
+		for _, in := range attempts {
+			var state string
+			if err := tx.QueryRow(ctx, `
+				SELECT state FROM public.submission_intents
+				 WHERE org_id = $1 AND id = $2::uuid FOR UPDATE`, in.OrgID, in.IntentID).Scan(&state); err != nil {
+				return err
+			}
+			if !edgeAllows(out.Edge, state) {
+				continue
+			}
+			if err := settleIntentRows(ctx, tx, in, out); err != nil {
+				return err
+			}
 		}
-		if !edgeAllows(out.Edge, state) {
-			continue
+		switch out.JobState {
+		case queue.StateSucceeded, queue.StateFailed, queue.StateCancelled:
+		default:
+			return nil
 		}
-		one := in
-		one.Lease = queue.Lease{}
-		if err := settleIntent(ctx, pool, one, out); err != nil {
-			return err
+		var lastError *string
+		if out.JobError != "" {
+			lastError = &out.JobError
 		}
-	}
-	if lease.Owner == "" {
-		return nil
-	}
-	switch out.JobState {
-	case queue.StateSucceeded, queue.StateFailed, queue.StateCancelled:
-	default:
-		return nil
-	}
-	var ref []byte
-	if out.JobResult != "" {
-		raw, err := json.Marshal(map[string]string{"outcome": out.JobResult})
-		if err != nil {
-			return err
-		}
-		ref = raw
-	}
-	ok, err := queue.Finish(ctx, pool, lease, out.JobState, ref, out.JobError)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return errors.New("job lease was lost")
-	}
-	return nil
+		return finishSubmitJob(ctx, tx, lease, out.JobState, out.JobResult, lastError)
+	})
 }
 
 func edgeAllows(edge Edge, state string) bool {

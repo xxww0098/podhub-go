@@ -224,7 +224,8 @@ test("send network failure resets queueRunning and reverts in-flight row state",
     const url = String(input)
     calls.push(`${init?.method ?? "GET"} ${url}`)
     if (url === route("listingSubmit")) {
-      assert.deepEqual(JSON.parse(String(init?.body)), { storeId: "store", row_ids: ["row-fail"] })
+      assert.deepEqual(JSON.parse(String(init?.body)), { store_id: "store", row_ids: ["row-fail"],
+        expected_revisions: [{ row_id: "row-fail", revision: 1 }] })
       submitted = true; submissions++; entered()
       await responseGate
       return new Response(JSON.stringify({ message: "Cloud error" }), { status: 500, headers: { "Content-Type": "application/json" } })
@@ -340,12 +341,12 @@ for (const sameStore of [false, true]) {
     })
     const hook = capturePublishQueue()
     const original = globalThis.fetch
-    const submissions: { storeId: string, row_ids: string[] }[] = []
+    const submissions: { store_id: string, row_ids: string[] }[] = []
     globalThis.fetch = async (input, init) => {
       const url = String(input)
       if (url === route("listingSubmit")) {
         const body = JSON.parse(String(init?.body))
-        submissions.push({ storeId: body.storeId, row_ids: body.row_ids })
+        submissions.push({ store_id: body.store_id, row_ids: body.row_ids })
         return Response.json({ data: { items: body.row_ids.map((rowId: string) => ({ row_id: rowId, created: true, intent: { id: rowId } })) } })
       }
       if (url === route("listingCardsById", { id: "card" })) return Response.json({ data: { id: "card", revision: 1, payload: nativeCardPayload({ targetStoreId: [...new Set(cloudRows.map((row) => row.store_id))].join(",") }), updated_at_ms: 1 } })
@@ -355,8 +356,8 @@ for (const sameStore of [false, true]) {
     }
     try {
       await hook.startPublish()
-      assert.deepEqual(submissions.sort((a, b) => a.storeId.localeCompare(b.storeId)), sameStore ? [] : [
-        { storeId: "store-a", row_ids: ["a"] }, { storeId: "store-b", row_ids: ["b"] },
+      assert.deepEqual(submissions.sort((a, b) => a.store_id.localeCompare(b.store_id)), sameStore ? [] : [
+        { store_id: "store-a", row_ids: ["a"] }, { store_id: "store-b", row_ids: ["b"] },
       ])
     } finally {
       globalThis.fetch = original

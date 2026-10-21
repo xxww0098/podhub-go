@@ -43,8 +43,14 @@ HTTP 取消不是 `IntentTransition::CancelBeforeDispatch`。那十一条边仍�
 2. release facts 用类型化的 `unnest` 七列连接，列与规格 `jsonb_to_recordset` 相同（id、store、row、revision、client operation、state、updated_at）。避免把 `timestamptz` 先变成 JSON 文本再比相等。
 3. `organizations` 的 `FOR NO KEY UPDATE` 放在同一租户事务里。`00191` 授予了 UPDATE。缺失或 `dissolved_at` 非空：取消返回 `提交意图不存在`，release 返回 `Store 不存在`。
 4. 类目错误码改为规格里的 snake_case（`auth_invalid`、`forbidden`、`validation`、`not_found`、`internal`、`not_ported`）。树的成功字节不变。
-5. 意图列表和死信的 `limit=100` 再取 1 行，上限 101，因此可以有 `nextCursor`。这和卡片列表把 fetch 再夹到 100 不同，跟规格的 `clamp(1, 101)` 一致。
-6. `canResume`：当前 issue 存在且 `allowedActions` 含 `resume` 时为 true。`OZON_WRITES_DISABLED` 加 `resume` 为 true。没有 issue 为 false。多条同时满足时取数组最后一条。
+5. 意图列表和死信的 `limit=100` 再取 1 行，上限 101，因此可以返回下一页游标；意图列表字段为 `next_cursor`，死信列表仍为 `nextCursor`。这和卡片列表把 fetch 再夹到 100 不同，跟规格的 `clamp(1, 101)` 一致。
+6. `can_resume`：当前 issue 存在、`allowedActions` 含 `resume` 且 Intent 为 `rejected` 时为 true。没有 issue 或属于其他状态时为 false。多条同时满足时仍取数组最后一条。`rejected` 限制是后续按本仓库 OpenAPI 补齐的有意修正，不能宣称与早期移植逻辑同输入同结果。
+
+## 上架流程优化中的响应修正
+
+Intent HTTP 视图统一使用 OpenAPI 已声明的 snake_case，包括列表的 `next_cursor` 和 release 的 `released_intent_ids`。GET 查询及 release 请求参数保持原形状；存储的 issue 历史仍使用原键，已声明字段只在出站时映射，扩展内容不递归改名。GET/list、单条 GET、cancel、probe、release 的 200 均有严格 envelope 和实际响应契约测试。
+
+回执判读同时遵守现有 `ListingSubmissionReceipt`：缺精确键名的必填字段或类型错误为 `unreadable`，不再把所有 JSON 对象标成有效；有效回执在投影中保留去除首尾空白后的原始 JSON 和额外键。`can_resume` 的收紧仅改变读投影，不改数据库状态、取消/释放谓词或历史问题匹配。详细范围与验证见 [上架流程优化与回归证据](listing-flow-optimization.md)。
 
 ## 路由表
 
@@ -63,7 +69,7 @@ HTTP 取消不是 `IntentTransition::CancelBeforeDispatch`。那十一条边仍�
 
 ## 需要用户决定
 
-- `can_resume` 函数体不在规格里。上面的 `allowedActions` 含 `resume` 是从 `OZON_WRITES_DISABLED` → Resume 推出来的。
+- `can_resume` 的 Rust 函数体没有逐行对拍；本仓库现在按 OpenAPI 的 `rejected` 限制输出，不据此宣称所有历史状态与 Rust 完全一致。
 - `unknown` 状态另有一段历史对账码例外，规格没有把谓词写全。本端口只在 `code = last_error_code` 且未解决时给出 current issue。
 - `importProbe` 的推导没有写出。响应省略该字段。
 - `categoryKey` 在 `ListingIntentsQuery` 上，列表 SQL 骨架没有这个谓词。接受参数，不新增过滤。

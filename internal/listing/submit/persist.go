@@ -164,55 +164,68 @@ func digest(hash string) string {
 }
 
 func settleIntent(ctx context.Context, pool *pgxpool.Pool, in Attempt, out Outcome) error {
-	fn := func(ctx context.Context, tx pgx.Tx) error {
-		if err := tenant.EnterApp(ctx, tx, in.OrgID); err != nil {
+	return mutateSettlement(ctx, pool, in.Lease, func(ctx context.Context, tx pgx.Tx) error {
+		if err := settleIntentRows(ctx, tx, in, out); err != nil {
 			return err
 		}
-		if err := moveIntent(ctx, tx, in, out); err != nil {
-			return err
-		}
-		if err := moveWrite(ctx, tx, in, out); err != nil {
-			return err
-		}
-		if err := moveOccupancy(ctx, tx, in, out); err != nil {
-			return err
-		}
-		rowState := out.IntentState
-		if rowState == Superseded {
-			rowState = "none"
-		}
-		if rowState == Reconciled || rowState == Conflict || rowState == OperatorAttested {
-			rowState = "none"
-		}
-		if _, err := tx.Exec(ctx, `
-			UPDATE public.listing_rows
-			   SET submission_state = $4, updated_at = clock_timestamp()
-			 WHERE org_id = $1 AND id = $2::uuid AND revision = $3`,
-			in.OrgID, in.RowID, in.RowRevision, rowState); err != nil {
-			return err
-		}
-		if in.Lease.ID.String() == "00000000-0000-0000-0000-000000000000" || in.Lease.Owner == "" {
-			return nil
-		}
-		tag, err := tx.Exec(ctx, `
-			UPDATE public.jobs
-			   SET state = $4,
-			       last_error_code = NULLIF($5, ''),
-			       result_ref = CASE WHEN $6 = '' THEN result_ref ELSE jsonb_build_object('outcome', $6::text) END,
-			       lease_owner = NULL, lease_until = NULL, updated_at = clock_timestamp()
-			 WHERE id = $1 AND lease_owner = $2 AND lease_epoch = $3 AND state = 'running'`,
-			in.Lease.ID, in.Lease.Owner, in.Lease.Epoch, out.JobState, out.JobError, out.JobResult)
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() != 1 {
-			return errors.New("job lease was lost")
-		}
-		_, err = tx.Exec(ctx, `SELECT public.release_execution_permit('job', $1, $2)`, in.Lease.ID.String(), in.Lease.Epoch)
+		return finishSubmitJob(ctx, tx, in.Lease, out.JobState, out.JobResult, &out.JobError)
+	})
+}
+
+func settleIntentRows(ctx context.Context, tx pgx.Tx, in Attempt, out Outcome) error {
+	if err := tenant.EnterApp(ctx, tx, in.OrgID); err != nil {
 		return err
 	}
-	if in.Lease.Owner != "" {
-		ok, err := queue.MutateRunning(ctx, pool, in.Lease, fn)
+	if err := moveIntent(ctx, tx, in, out); err != nil {
+		return err
+	}
+	if err := moveWrite(ctx, tx, in, out); err != nil {
+		return err
+	}
+	if err := moveOccupancy(ctx, tx, in, out); err != nil {
+		return err
+	}
+	rowState := out.IntentState
+	if rowState == Superseded {
+		rowState = "none"
+	}
+	if rowState == Reconciled || rowState == Conflict || rowState == OperatorAttested {
+		rowState = "none"
+	}
+	_, err := tx.Exec(ctx, `
+		UPDATE public.listing_rows
+		   SET submission_state = $4, updated_at = clock_timestamp()
+		 WHERE org_id = $1 AND id = $2::uuid AND revision = $3`,
+		in.OrgID, in.RowID, in.RowRevision, rowState)
+	return err
+}
+
+// A nil lastError preserves the stored code; a non-nil value replaces it.
+func finishSubmitJob(ctx context.Context, tx pgx.Tx, lease queue.Lease, state, result string, lastError *string) error {
+	if lease.ID.String() == "00000000-0000-0000-0000-000000000000" || lease.Owner == "" {
+		return nil
+	}
+	tag, err := tx.Exec(ctx, `
+		UPDATE public.jobs
+		   SET state = $4,
+		       last_error_code = CASE WHEN $5::text IS NULL THEN last_error_code ELSE NULLIF($5, '') END,
+		       result_ref = CASE WHEN $6 = '' THEN result_ref ELSE jsonb_build_object('outcome', $6::text) END,
+		       lease_owner = NULL, lease_until = NULL, updated_at = clock_timestamp()
+		 WHERE id = $1 AND lease_owner = $2 AND lease_epoch = $3 AND state = 'running'`,
+		lease.ID, lease.Owner, lease.Epoch, state, lastError, result)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return errors.New("job lease was lost")
+	}
+	_, err = tx.Exec(ctx, `SELECT public.release_execution_permit('job', $1, $2)`, lease.ID.String(), lease.Epoch)
+	return err
+}
+
+func mutateSettlement(ctx context.Context, pool *pgxpool.Pool, lease queue.Lease, fn func(context.Context, pgx.Tx) error) error {
+	if lease.Owner != "" {
+		ok, err := queue.MutateRunning(ctx, pool, lease, fn)
 		if err != nil {
 			return err
 		}
