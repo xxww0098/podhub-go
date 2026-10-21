@@ -28,6 +28,9 @@ type PG struct {
 // the boundary is the only gate. A `partial` row is retried at once; a
 // `completed` row is not re-run. $3 is an explicit instant for tests; NULL
 // uses the database clock so a skewed app clock cannot open the gate.
+// The lease is at+90s and is returned only while it is still ahead of that
+// same instant. Comparing it with a later clock_timestamp() would hide a
+// boundary the gate had already accepted.
 const claimSQL = `
 WITH observed AS MATERIALIZED (SELECT COALESCE($3::timestamptz, clock_timestamp()) AS at),
 day AS MATERIALIZED (
@@ -49,7 +52,7 @@ day AS MATERIALIZED (
  RETURNING bucket_identity, run_day, lease_token::text, lease_epoch, lease_until
 )
 SELECT bucket_identity, run_day, lease_token, lease_epoch FROM claimed
-WHERE lease_until > clock_timestamp()
+WHERE lease_until > (SELECT at FROM observed)
 `
 
 const liveSQL = `bucket_identity = $1 AND run_day = $2 AND lease_token = $3::uuid
