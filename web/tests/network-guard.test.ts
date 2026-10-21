@@ -254,6 +254,20 @@ test("Bun destination options (unix socket, proxy) are refused even for an allow
   }
 })
 
+test("an awaited timer still runs before the test ends", async () => {
+  let ran = false
+  await new Promise<void>((resolve) => setTimeout(() => { ran = true; resolve() }, 15))
+  assert.equal(ran, true)
+})
+
+test("a timer armed here must not post after this test ends", () => {
+  setTimeout(() => { void fetch("/api/events/inbox", { method: "POST" }) }, 40)
+})
+
+test("the following test is not charged for that inbox post", async () => {
+  await new Promise((resolve) => setTimeout(resolve, 60))
+})
+
 test("WebSocket and EventSource constructors, when the runtime has them, are refused and recorded", async () => {
   const guard = installedGuard()
   const globals = globalThis as unknown as Record<string, unknown>
