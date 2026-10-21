@@ -48,8 +48,7 @@ func PlanStoreSuspension(limit int64, rows []StoreSeat) map[int64]bool {
 
 // ReconcileStores applies the projection's store limit inside the caller's
 // transaction. The limit now comes from organizations.store_limit, which
-// ProjectSubscription writes from the subscription; there is no second
-// override column and no per-seat multiplier.
+// ProjectSubscription derives from paid periods and administrative overrides.
 //
 // It is kept for callers that only need the store half (admin seat preview);
 // the projection uses ReconcileSubscriptionCapacity, which also knows about

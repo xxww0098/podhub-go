@@ -108,12 +108,11 @@ func listRowsTx(ctx context.Context, tx pgx.Tx, orgID int64, actor domain.Actor)
 }
 
 // loadStoreLimit is load_effective_store_quota_limit: the Workspace override
-// when set, otherwise the Store pool for the effective tier and seats. A
+// when set, otherwise the currently purchased period capacity. A
 // missing Workspace is MsgWorkspaceMissing.
 func loadStoreLimit(ctx context.Context, tx pgx.Tx, orgID int64) (int64, *contract.APIError) {
 	var limit int64
-	err := tx.QueryRow(ctx, `SELECT COALESCE((SELECT plan_stores+extra_stores FROM public.subscription_periods WHERE org_id=$1 AND starts_at<=clock_timestamp() AND clock_timestamp()<ends_at),1)
- FROM public.organizations WHERE id=$1`, orgID).Scan(&limit)
+	err := tx.QueryRow(ctx, `SELECT stores FROM public.subscription_capacity($1,clock_timestamp())`, orgID).Scan(&limit)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, contract.NotFound(contract.MsgWorkspaceMissing)
 	}

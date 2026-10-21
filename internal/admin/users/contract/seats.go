@@ -1,6 +1,9 @@
 package contract
 
-import "time"
+import (
+	"slices"
+	"time"
+)
 
 // Seat and store quota planning. Limits below 1 are floored at 1.
 // Manual-disabled rows never take a seat and are never restored.
@@ -104,14 +107,18 @@ type Lot struct {
 
 // SeatState is the organization row plus live lots.
 type SeatState struct {
-	OrgID          int64
-	Plan           string
-	SeatLimit      int64
-	Revision       int64
-	StoreOverride  *int64
-	MemberOverride *int64
-	Lots           []Lot
-	Expires        *time.Time
+	OrgID            int64
+	Plan             string
+	SeatLimit        int64
+	Revision         int64
+	StoreOverride    *int64
+	MemberOverride   *int64
+	Lots             []Lot
+	Expires          *time.Time
+	PurchasedStores  *int64
+	PurchasedMembers *int64
+	KeepStores       []string
+	KeepMembers      []int64
 }
 
 // SeatIntent is the preview or apply body after JSON defaults.
@@ -134,6 +141,9 @@ type SeatTarget struct {
 	FollowMembers     bool
 	FollowStores      bool
 	Expires           *time.Time
+	Subscription      bool
+	KeepStores        []string
+	KeepMembers       []int64
 }
 
 // ResolveSeats applies the preview and apply seat rules.
@@ -151,6 +161,9 @@ func ResolveSeats(state SeatState, intent SeatIntent) (SeatTarget, string) {
 	if planDefault < 1 {
 		planDefault = 1
 	}
+	if state.PurchasedMembers != nil {
+		plan, planDefault = state.Plan, *state.PurchasedMembers
+	}
 	var member *int64
 	if intent.FollowMembers {
 		member = nil
@@ -165,7 +178,14 @@ func ResolveSeats(state SeatState, intent SeatIntent) (SeatTarget, string) {
 		member = &v
 	}
 	seatLimit := EffectiveSeats(planDefault, member)
+	keepMembers := state.KeepMembers
+	if member != nil {
+		keepMembers = nil
+	}
 	planStores := StoreQuotaFor(plan, seatLimit)
+	if state.PurchasedStores != nil {
+		planStores = *state.PurchasedStores
+	}
 	followStores := intent.FollowStores || (intent.StoreOverride == nil && state.StoreOverride == nil)
 	var storeLimit int64
 	var storeOverride *int64
@@ -193,11 +213,16 @@ func ResolveSeats(state SeatState, intent SeatIntent) (SeatTarget, string) {
 		stored := storeLimit
 		storeOverride = &stored
 	}
+	keepStores := state.KeepStores
+	if storeOverride != nil {
+		keepStores = nil
+	}
 	return SeatTarget{
 		Plan: plan, SeatLimit: seatLimit, Purchased: planDefault,
 		MemberOverride: member, StoreLimit: storeLimit, StoreOverride: storeOverride,
 		PlanDefaultStores: planStores, FollowMembers: intent.FollowMembers, FollowStores: followStores,
-		Expires: state.Expires,
+		Expires:      state.Expires,
+		Subscription: state.PurchasedStores != nil, KeepStores: keepStores, KeepMembers: keepMembers,
 	}, ""
 }
 
@@ -212,6 +237,14 @@ func lotTiers(lots []Lot) []string {
 // PlanMembers walks join order. Owner is always targeted active and consumes
 // one slot. used and suspended count current non-manual rows.
 func PlanMembers(limit int64, rows []MemberRow) MemberPlan {
+	return planMembers(limit, rows, nil)
+}
+
+func (target SeatTarget) PlanMembers(rows []MemberRow) MemberPlan {
+	return planMembers(target.SeatLimit, rows, target.KeepMembers)
+}
+
+func planMembers(limit int64, rows []MemberRow, keep []int64) MemberPlan {
 	if limit < 1 {
 		limit = 1
 	}
@@ -227,6 +260,9 @@ func PlanMembers(limit int64, rows []MemberRow) MemberPlan {
 			out.Used++
 		}
 		target := row.Role == "owner" || running < limit
+		if keep != nil {
+			target = row.Role == "owner" || slices.Contains(keep, row.ID)
+		}
 		if target {
 			running++
 		}
@@ -274,10 +310,23 @@ type StorePlan struct {
 // PlanStores fills the most recently used stores first.
 // The suspend list is reordered least-recently-used first.
 func PlanStores(limit int64, rows []StoreRow) StorePlan {
+	return planStores(limit, rows, nil, false)
+}
+
+func (target SeatTarget) PlanStores(rows []StoreRow) StorePlan {
+	return planStores(target.StoreLimit, rows, target.KeepStores, target.Subscription)
+}
+
+func planStores(limit int64, rows []StoreRow, keep []string, subscription bool) StorePlan {
 	if limit < 1 {
 		limit = 1
 	}
 	ordered := append([]StoreRow(nil), rows...)
+	if subscription {
+		for i := range ordered {
+			ordered[i].LastUsed = 0 // Match subscription admission's creation order.
+		}
+	}
 	sortStores(ordered)
 	var out StorePlan
 	var used int64
@@ -294,6 +343,9 @@ func PlanStores(limit int64, rows []StoreRow) StorePlan {
 			out.Used++
 		}
 		target := used < limit
+		if keep != nil {
+			target = slices.Contains(keep, row.UUID)
+		}
 		if target {
 			used++
 		}

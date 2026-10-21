@@ -136,11 +136,12 @@ func FulfillSubscription(ctx context.Context, tx pgx.Tx, order contract.Order, n
 			return err
 		}
 	case domain.ActionChange:
+		periods, err := quotedChangePeriods(payload.ChangePeriods, sub.Periods, now)
+		if err != nil {
+			return err
+		}
 		applied := false
-		for _, p := range sub.Periods {
-			if !p.End.After(now) {
-				continue
-			}
+		for _, p := range periods {
 			// Split the running interval so historical authorizations retain their purchased capacity.
 			if p.Start.Before(now) {
 				if _, err = tx.Exec(ctx, `UPDATE subscription_periods SET ends_at=$3 WHERE org_id=$1 AND id=$2`, order.OrgID, p.ID, now); err != nil {
@@ -238,18 +239,42 @@ func LoadOrder(ctx context.Context, tx pgx.Tx, publicID string) (contract.Order,
 	return o, err
 }
 
-// MarkOrderPaid is the pending -> paid CAS. It returns false when the order
-// was already paid or was closed by the reaper.
+// MarkOrderPaid accepts pending orders and late subscription payments only.
 func MarkOrderPaid(ctx context.Context, tx pgx.Tx, orderID int64, providerRef string, now time.Time) (bool, error) {
 	tag, err := tx.Exec(ctx, `
 		UPDATE payment_orders
 		   SET status = 'paid', paid_at = $1, provider_ref = COALESCE($2, provider_ref),
 		       qr_code = NULL, pay_url = NULL, launch_state = NULL, updated_at = $1
-		 WHERE id = $3 AND status IN ('pending','canceled')`, now, providerRef, orderID)
+		 WHERE id = $3 AND (status = 'pending' OR (product = 'subscription' AND status = 'canceled'))`, now, providerRef, orderID)
 	if err != nil {
 		return false, err
 	}
 	return tag.RowsAffected() == 1, nil
+}
+
+// A changed or missing priced interval needs reconciliation, never a wider entitlement.
+func quotedChangePeriods(quoted, current []domain.Period, now time.Time) ([]domain.Period, error) {
+	if len(quoted) == 0 {
+		return nil, errors.New("change order without quoted periods")
+	}
+	byID := make(map[int64]domain.Period, len(current))
+	for _, p := range current {
+		byID[p.ID] = p
+	}
+	periods := make([]domain.Period, 0, len(quoted))
+	for _, frozen := range quoted {
+		if !frozen.End.After(now) {
+			continue
+		}
+		p, ok := byID[frozen.ID]
+		if !ok || !p.Start.Equal(frozen.Start) || !p.End.Equal(frozen.End) || p.Target != frozen.Target ||
+			p.PlanStores != frozen.PlanStores || p.PlanMembers != frozen.PlanMembers || p.PlanMonthlyCents != frozen.PlanMonthlyCents ||
+			p.StoreMonthlyCents != frozen.StoreMonthlyCents || p.MemberMonthlyCents != frozen.MemberMonthlyCents {
+			return nil, errors.New("quoted subscription period changed")
+		}
+		periods = append(periods, p)
+	}
+	return periods, nil
 }
 
 // MarkOrderNeedsReconciliation records a paid callback that could not be

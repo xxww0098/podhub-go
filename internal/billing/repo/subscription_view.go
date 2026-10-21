@@ -42,11 +42,12 @@ func SubscriptionView(ctx context.Context, pool *pgxpool.Pool, orgID int64, now 
 			out.Periods = append(out.Periods, contract.Period{ID: p.ID, StartsAt: p.Start, EndsAt: p.End, Target: contract.Target(p.Target), Stores: p.PlanStores + p.ExtraStores, Members: p.PlanMembers + p.ExtraMembers, KeepStores: p.KeepStores, KeepMembers: p.KeepMembers})
 			if !p.Start.After(now) {
 				out.PlanKey = p.PlanKey
-				out.Stores.Limit = p.PlanStores + p.ExtraStores
-				out.Members.Limit = p.PlanMembers + p.ExtraMembers
 				out.ExtraStores = p.ExtraStores
 				out.ExtraMembers = p.ExtraMembers
 			}
+		}
+		if err = tx.QueryRow(ctx, `SELECT stores,members FROM public.subscription_capacity($1,$2)`, orgID, now).Scan(&out.Stores.Limit, &out.Members.Limit); err != nil {
+			return err
 		}
 		var nextStores []string
 		var nextMembers []int64
