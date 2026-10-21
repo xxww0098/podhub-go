@@ -401,13 +401,18 @@ var intentionalRLSPolicies = map[string]map[string]bool{
 		"sc_skus_supplier_read":  true,
 		"sc_skus_seller_read":    true,
 	},
-	// 00365: the manager arm is split SELECT/UPDATE (plan 8.2 grants it
-	// "change cost_cents", not "create or delete a factory supply row"), and
-	// the settlement arm was removed: keyed on source_id it exposed the whole
+	// 00365: the manager arm is SELECT + INSERT + UPDATE, never DELETE. Plan
+	// 8.2 lets a manager create skus and change the cost, and a new sku with no
+	// offer row makes the seller portal render a silent CNY 0.00 (the LEFT JOIN
+	// yields NULL), so INSERT has to be granted with UPDATE. DELETE stays out:
+	// the manager writer must use INSERT ... ON CONFLICT DO UPDATE, which cannot
+	// destroy a row the way x1's DELETE+INSERT upsert would.
+	// The settlement arm was removed: keyed on source_id it exposed the whole
 	// factory cost sheet to any seller holding one dispatch.
 	"sc_source_offers": {
 		"sc_source_offers_staff_all":      true,
 		"sc_source_offers_manager_read":   true,
+		"sc_source_offers_manager_insert": true,
 		"sc_source_offers_manager_update": true,
 		"sc_source_offers_supplier_read":  true,
 	},

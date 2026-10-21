@@ -209,3 +209,69 @@ func asManager(ctx context.Context, pool *pgxpool.Pool, fn func(pgx.Tx) error) e
 		return fn(tx)
 	})
 }
+
+// TestCatalogManagerMayOpenAnOfferButNotDeleteOne pins the manager's write
+// arms on sc_source_offers to INSERT + UPDATE, never DELETE.
+//
+// The plan grants a manager "create / edit / delete sc_products and sc_skus"
+// and "change cost_cents". Those only compose if INSERT is allowed too: a new
+// sku with no offer row makes the seller's LEFT JOIN yield NULL, and the
+// portal renders a silent CNY 0.00. DELETE stays out because the manager
+// writer must upsert with ON CONFLICT; granting DELETE would also re-open the
+// x1-style DELETE+INSERT shape, which can drop a row between the two halves.
+func TestCatalogManagerMayOpenAnOfferButNotDeleteOne(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	pool := migratedPool(t, ctx)
+
+	seedCatalogCost(t, ctx, pool)
+
+	// Control: the manager can move the cost on the seeded offer. Without this
+	// the test would pass if the whole manager arm were broken.
+	if err := asManager(ctx, pool, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `UPDATE public.sc_source_offers SET cost_cents = 5000 WHERE source_id = 'src_cost_guard' AND sku_id = 'sku_cost'`)
+		return err
+	}); err != nil {
+		t.Fatalf("manager cannot change cost_cents on its own source: %v", err)
+	}
+
+	// A new sku needs a supply record, so INSERT must be allowed.
+	if _, err := pool.Exec(ctx, `INSERT INTO sc_products (product_id, source_id, title, published, created_at_ms, updated_at_ms, created_by_account_uuid) VALUES ('prod_new_offer', 'src_cost_guard', 'P', false, 1, 1, 'acct')`); err != nil {
+		t.Fatalf("insert product: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO sc_skus (sku_id, product_id, platform_code, title, published, created_at_ms, updated_at_ms, created_by_account_uuid) VALUES ('sku_new_offer', 'prod_new_offer', 'code_new_offer', 'S', false, 1, 1, 'acct')`); err != nil {
+		t.Fatalf("insert sku: %v", err)
+	}
+	if err := asManager(ctx, pool, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `INSERT INTO public.sc_source_offers (source_id, sku_id, cost_cents, created_at_ms, updated_at_ms) VALUES ('src_cost_guard', 'sku_new_offer', 3300, 1, 1)`)
+		return err
+	}); err != nil {
+		t.Fatalf("manager cannot open an offer for a sku it just created; the new row would render CNY 0.00: %v", err)
+	}
+
+	// The upsert the manager writer must use: one statement, INSERT + UPDATE only.
+	if err := asManager(ctx, pool, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `INSERT INTO public.sc_source_offers (source_id, sku_id, cost_cents, created_at_ms, updated_at_ms)
+			VALUES ('src_cost_guard', 'sku_new_offer', 3400, 1, 2)
+			ON CONFLICT (source_id, sku_id) DO UPDATE SET cost_cents = EXCLUDED.cost_cents, updated_at_ms = EXCLUDED.updated_at_ms`)
+		return err
+	}); err != nil {
+		t.Fatalf("manager upsert (INSERT ON CONFLICT DO UPDATE) failed; the writer cannot update an offer without DELETE: %v", err)
+	}
+
+	// DELETE must stay refused. RLS filters rather than errors on a missing
+	// arm, so the assertion is the row count, not an error.
+	if err := asManager(ctx, pool, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `DELETE FROM public.sc_source_offers WHERE source_id = 'src_cost_guard'`)
+		return err
+	}); err != nil {
+		t.Fatalf("manager DELETE on sc_source_offers raised: %v", err)
+	}
+	var remaining int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM public.sc_source_offers WHERE source_id = 'src_cost_guard'`).Scan(&remaining); err != nil {
+		t.Fatalf("count offers: %v", err)
+	}
+	if remaining != 2 {
+		t.Fatalf("a catalogue manager deleted offer rows (%d left, want 2); DELETE must not be granted", remaining)
+	}
+}

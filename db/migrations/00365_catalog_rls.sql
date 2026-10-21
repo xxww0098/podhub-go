@@ -269,12 +269,29 @@ CREATE POLICY sc_source_offers_staff_all ON public.sc_source_offers
     USING (current_setting('app.staff_access', true) = '1')
     WITH CHECK (current_setting('app.staff_access', true) = '1');
 
--- Plan 8.2 grants the manager "change cost_cents / shipping_cost_cents".
--- Creation and deletion of an offer are not in that table: an offer is the
--- factory's own supply record and only the platform (or the factory) opens
--- and closes one. So the manager arm is SELECT + UPDATE, not FOR ALL.
+-- Plan 8.2 grants the manager "change cost_cents / shipping_cost_cents" and
+-- "create / edit / delete sc_products and sc_skus". Those two grants only
+-- compose if the manager may also INSERT an offer: a new SKU needs a supply
+-- record, and without one the seller's LEFT JOIN yields NULL and the portal
+-- renders a silent CNY 0.00 (the same failure fixed in supplier/repo/catalog.go).
+--
+-- DELETE stays out. A manager removes a row by archiving the product, and the
+-- offer row is small and tied to the sku, so leaving it behind is harmless;
+-- whereas DELETE plus INSERT is exactly the upsert shape x1 uses, and mirroring
+-- it here would let a manager drop an offer by racing a re-create. The manager
+-- writer must use INSERT ... ON CONFLICT DO UPDATE instead, which needs only
+-- INSERT + UPDATE and cannot destroy the row.
 DROP POLICY IF EXISTS sc_source_offers_manager_all ON public.sc_source_offers;
 DROP POLICY IF EXISTS sc_source_offers_manager_read ON public.sc_source_offers;
+DROP POLICY IF EXISTS sc_source_offers_manager_insert ON public.sc_source_offers;
+CREATE POLICY sc_source_offers_manager_insert ON public.sc_source_offers
+    FOR INSERT TO podhub_app
+    WITH CHECK (EXISTS (
+        SELECT 1 FROM public.sc_catalog_managers m
+        WHERE m.source_id = sc_source_offers.source_id
+          AND m.user_id = NULLIF(current_setting('app.current_org_user_id', true), '')::bigint
+          AND m.status = 'active'
+    ));
 CREATE POLICY sc_source_offers_manager_read ON public.sc_source_offers
     FOR SELECT TO podhub_app
     USING (EXISTS (
