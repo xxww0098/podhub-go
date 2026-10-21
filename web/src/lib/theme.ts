@@ -1,13 +1,22 @@
-import { useCallback, useEffect, useState } from "react"
+import { useEffect } from "react"
+import { create } from "zustand"
 
 /**
  * Theme is a product constraint, not a preference toy: batches run late, beside
  * a dark Photoshop, and both themes are held to the same finish. `system`
  * follows the OS so the client matches the rest of the desktop.
+ *
+ * One store, not a hook-local useState: the rail toggle and the settings
+ * appearance pane have to move together.
  */
 export type ThemePreference = "system" | "light" | "dark"
 
 const STORAGE_KEY = "podhub.theme"
+
+type ThemeState = {
+  preference: ThemePreference
+  setPreference: (next: ThemePreference) => void
+}
 
 function isPreference(value: unknown): value is ThemePreference {
   return value === "system" || value === "light" || value === "dark"
@@ -36,13 +45,33 @@ function paint(preference: ThemePreference) {
   document.documentElement.dataset.theme = resolved
 }
 
+function persist(next: ThemePreference) {
+  try {
+    window.localStorage.setItem(STORAGE_KEY, next)
+  } catch {
+    /* a locked-down profile still gets a working theme for this session */
+  }
+}
+
+const useThemeStore = create<ThemeState>((set) => ({
+  preference: readThemePreference(),
+  setPreference: (next) => {
+    persist(next)
+    paint(next)
+    set({ preference: next })
+  },
+}))
+
 /** Called before the first paint so the window never flashes the wrong theme. */
 export function initTheme() {
-  paint(readThemePreference())
+  const preference = readThemePreference()
+  useThemeStore.setState({ preference })
+  paint(preference)
 }
 
 export function useTheme() {
-  const [preference, setPreference] = useState<ThemePreference>(readThemePreference)
+  const preference = useThemeStore((state) => state.preference)
+  const setPreference = useThemeStore((state) => state.setPreference)
 
   useEffect(() => {
     paint(preference)
@@ -56,14 +85,5 @@ export function useTheme() {
     return () => query.removeEventListener("change", onChange)
   }, [preference])
 
-  const update = useCallback((next: ThemePreference) => {
-    setPreference(next)
-    try {
-      window.localStorage.setItem(STORAGE_KEY, next)
-    } catch {
-      /* a locked-down profile still gets a working theme for this session */
-    }
-  }, [])
-
-  return { preference, resolved: resolveTheme(preference), setPreference: update }
+  return { preference, resolved: resolveTheme(preference), setPreference }
 }
