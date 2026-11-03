@@ -49,3 +49,16 @@ func TestCandidates(t *testing.T) {
 		t.Fatal("candidates are distinct")
 	}
 }
+
+func TestSliceIdentityUsesStorageConfiguration(t *testing.T) {
+	storage := "11111111-1111-4111-8111-111111111111"
+	digest := strings.Repeat("a", 64)
+	key := "podhub-slices/" + storage + "/uploads/2026-10-15/1792094400000-22222222-2222-4222-8222-222222222222/" + digest + ".jpg"
+	if !IsGCImageKey(key) || ImageIdentity(key) != storage+":"+digest {
+		t.Fatal("slice key has no storage-scoped identity")
+	}
+	got := Candidates("https://example.invalid/" + key)
+	if len(got) != 1 || got[0] != (Candidate{Workspace: storage, Digest: digest}) {
+		t.Fatalf("candidates: %+v", got)
+	}
+}

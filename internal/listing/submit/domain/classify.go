@@ -14,7 +14,8 @@ package domain
 // Seller write rows follow seller_upstream_writes_response_shape: only
 // settled carries a status and body. A sent request with no response is
 // result_unknown. The kill switch returns before any request, so it writes
-// no upstream row.
+// no upstream row. A proven refusal after Begin uses WriteNotSent to retain
+// its existing ledger without inventing a response or leaving an unknown lock.
 
 const (
 	CodeWritesDisabled      = "OZON_WRITES_DISABLED"
@@ -184,5 +185,22 @@ func RecoverSubmitting() Outcome {
 		WriteState:  "result_unknown",
 		Occupancy:   "held",
 		Requests:    0,
+	}
+}
+
+// WriteNotSent closes an already-begun attempt when the transport proves that
+// no request left the process; an uncertain network failure must not use it.
+func WriteNotSent() Outcome {
+	return Outcome{
+		Edge:          RejectSubmitting,
+		IntentState:   Rejected,
+		IntentError:   CodeEgressUnavailable,
+		JobState:      "failed",
+		JobError:      CodeEgressUnavailable,
+		JobResult:     "not_dispatched",
+		WriteState:    "reconciled",
+		Occupancy:     "released",
+		ReleaseReason: "not_dispatched",
+		Requests:      0,
 	}
 }

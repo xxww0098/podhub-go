@@ -24,7 +24,7 @@ export const PSD_CONTENT_REFUSAL_COPY = {
   PSD_RENDER_UNSUPPORTED_COLOR_MODE:
     "当前模板色彩模式不受支持。请在 Photoshop 中转为 RGB，并通过“转换为配置文件”转为 sRGB 后重新保存。",
   PSD_RENDER_COMPOSITE_ONLY:
-    "当前文件仅包含合并图像，不能作为可替换模板。请上传保留替换图层的分层 PSD/PSB。",
+    "当前文件仅包含合并图像，不能作为可替换模板。请选择保留替换图层的分层 PSD/PSB。",
 } as const
 
 export type PsdContentRefusalCode = keyof typeof PSD_CONTENT_REFUSAL_COPY

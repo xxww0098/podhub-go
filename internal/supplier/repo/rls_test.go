@@ -14,6 +14,7 @@ import (
 
 	"github.com/xxww0098/podhub-go/internal/platform/config"
 	"github.com/xxww0098/podhub-go/internal/platform/db"
+	"github.com/xxww0098/podhub-go/tests/testkit"
 )
 
 // TestSupplierHasNoFundsAccess is §11.6 row 5: a supplier session reads zero
@@ -96,18 +97,26 @@ func TestSupplierHasNoFundsAccess(t *testing.T) {
 func seedSupplier(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID int64, sourceID string) {
 	t.Helper()
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO account_users (id, public_id, email, password_hash, role, name, target, supplier_id, plan, created_at, updated_at)
-		VALUES ($1, $2, $3, 'x', 'user', 't', '/workspace', '', 'lite', clock_timestamp(), clock_timestamp())`,
+		INSERT INTO account_users (id, public_id, email, password_hash, role, name, target, supplier_id, plan, account_kind, created_at, updated_at)
+		VALUES ($1, $2, $3, 'x', 'user', 't', '/supplier', '', 'lite', 'supplier', clock_timestamp(), clock_timestamp())`,
 		userID, fmt.Sprintf("s%d", userID), fmt.Sprintf("s%d@example.invalid", userID)); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := pool.Exec(ctx, `INSERT INTO sc_factories (factory_id, name, created_at_ms, updated_at_ms) VALUES ($1, $2, 1, 1)`, sourceID, sourceID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO sc_sources (source_id, name, created_at_ms, updated_at_ms) VALUES ($1, $2, 1, 1)`,
+		INSERT INTO sc_sources (source_id, factory_id, name, created_at_ms, updated_at_ms) VALUES ($1, $1, $2, 1, 1)`,
 		sourceID, sourceID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO sc_source_members (source_id, user_id, created_by, created_at_ms) VALUES ($1, $2, $2, 1)`,
+		INSERT INTO sc_factory_members (factory_id, user_id, created_by, created_at_ms) VALUES ($1, $2, $2, 1)`,
+		sourceID, userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO sc_source_fulfillers (source_id, user_id, created_by, created_at_ms) VALUES ($1, $2, $2, 1)`,
 		sourceID, userID); err != nil {
 		t.Fatal(err)
 	}
@@ -117,8 +126,10 @@ func dropSupplier(ctx context.Context, pool *pgxpool.Pool, userID int64, sourceI
 	_, _ = pool.Exec(ctx, `DELETE FROM supplier_withdrawals WHERE source_id = $1`, sourceID)
 	_, _ = pool.Exec(ctx, `DELETE FROM supplier_wallet_ledger WHERE source_id = $1`, sourceID)
 	_, _ = pool.Exec(ctx, `DELETE FROM supplier_wallets WHERE source_id = $1`, sourceID)
-	_, _ = pool.Exec(ctx, `DELETE FROM sc_source_members WHERE source_id = $1`, sourceID)
+	_, _ = pool.Exec(ctx, `DELETE FROM sc_source_fulfillers WHERE source_id = $1`, sourceID)
+	_, _ = pool.Exec(ctx, `DELETE FROM sc_factory_members WHERE factory_id = $1`, sourceID)
 	_, _ = pool.Exec(ctx, `DELETE FROM sc_sources WHERE source_id = $1`, sourceID)
+	_, _ = pool.Exec(ctx, `DELETE FROM sc_factories WHERE factory_id = $1`, sourceID)
 	_, _ = pool.Exec(ctx, `DELETE FROM account_users WHERE id = $1`, userID)
 }
 
@@ -132,7 +143,7 @@ func parityDB(t *testing.T) (*pgxpool.Pool, context.Context) {
 	t.Helper()
 	dsn := os.Getenv("PODHUB_PARITY_DSN")
 	if dsn == "" {
-		if _, err := os.Stat("/var/run/docker.sock"); err != nil {
+		if !testkit.DockerAvailable() {
 			t.Skip("docker daemon is not available")
 		}
 	}

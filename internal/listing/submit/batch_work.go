@@ -10,10 +10,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
-	queue "github.com/xxww0098/podhub-go/internal/platform/jobsched"
+	queue "github.com/xxww0098/podhub-go/internal/queue/contract"
+	sellercontract "github.com/xxww0098/podhub-go/internal/seller/contract"
 )
 
-func workBatch(ctx context.Context, pool *pgxpool.Pool, job queue.Claimed, tr Transport, storeID string, intents []batchIntent) error {
+func (svc Service) workBatch(ctx context.Context, pool *pgxpool.Pool, job queue.Claimed, tr Transport, storeID string, intents []batchIntent) error {
 	storePK, err := storePK(ctx, pool, job.OrgID, storeID)
 	if err != nil {
 		return err
@@ -54,40 +55,168 @@ func workBatch(ctx context.Context, pool *pgxpool.Pool, job queue.Claimed, tr Tr
 		}
 	}
 	if task != "" {
-		return finishReceipt(ctx, pool, attempts, originals, task)
+		return svc.finishReceipt(ctx, pool, attempts, originals, task)
 	}
-	if bare && !anyQueued {
-		return settleBatch(ctx, pool, attempts, RecoverSubmitting())
-	}
-	busy, err := orgBatchBusy(ctx, pool, job.OrgID, job.ID.String())
-	if err != nil {
-		return err
-	}
-	if busy {
-		return queue.ErrOrgCap
-	}
-	if tr == nil || tr.WritesDisabled() {
-		return settleBatch(ctx, pool, attempts, Classify(Reply{WritesDisabled: true}))
-	}
-	if err := tr.Ready(ctx); err != nil {
-		if errors.Is(err, ErrNotSent) {
-			return settleBatch(ctx, pool, attempts, Classify(Reply{Connect: true}))
+	if bare {
+		if anyQueued {
+			return svc.settleInterruptedBatch(ctx, pool, attempts)
 		}
-		return err
+		return svc.settleBatch(ctx, pool, attempts, RecoverSubmitting())
 	}
-	for i := range attempts {
-		if facts[attempts[i].IntentID].state == Submitting {
-			continue
+	retain := func(facts map[string]intentFact) bool {
+		allCancelled, n := true, 0
+		for i, in := range attempts {
+			state := facts[in.IntentID].state
+			if state != Cancelled {
+				allCancelled = false
+			}
+			switch state {
+			case Cancelled, Rejected, Superseded, Reconciled, Conflict, OperatorAttested:
+				continue
+			}
+			attempts[n], items[n], originals[n], ids[n] = in, items[i], originals[i], in.IntentID
+			n++
 		}
-		if err := beginSending(ctx, pool, attempts[i]); err != nil {
+		attempts, items, originals, ids = attempts[:n], items[:n], originals[:n], ids[:n]
+		return allCancelled
+	}
+	allCancelled := retain(facts)
+	if len(attempts) > 0 {
+		busy, err := orgBatchBusy(ctx, pool, job.OrgID, job.ID.String())
+		if err != nil {
 			return err
 		}
+		if busy {
+			return queue.ErrOrgCap
+		}
+		if tr != nil && !tr.WritesDisabled() {
+			n, err := svc.splitPolicyBatch(ctx, pool, job, storePK, attempts)
+			if err != nil {
+				return err
+			}
+			attempts, items, originals, ids = attempts[:n], items[:n], originals[:n], ids[:n]
+		}
 	}
+	baseTransport := tr
+	for {
+		var refusal *Outcome
+		for len(attempts) > 0 {
+			if baseTransport == nil || baseTransport.WritesDisabled() {
+				out := Classify(Reply{WritesDisabled: true})
+				refusal = &out
+				break
+			}
+			bound, err := bindStoreTransport(ctx, baseTransport, sellercontract.StoreBinding{
+				OrgID: job.OrgID, UserID: job.SubmitterUserID, StorePK: storePK, StoreUUID: storeID, IntentIDs: ids,
+			})
+			if errors.Is(err, ErrNotSent) {
+				current, readErr := intentFacts(ctx, pool, job.OrgID, ids)
+				if readErr != nil {
+					return readErr
+				}
+				previous := len(attempts)
+				allCancelled = retain(current)
+				if len(attempts) < previous {
+					continue
+				}
+				out := Classify(Reply{Connect: true})
+				refusal = &out
+				break
+			}
+			if err != nil {
+				return err
+			}
+			if bound == nil || bound.WritesDisabled() {
+				out := Classify(Reply{WritesDisabled: true})
+				refusal = &out
+				break
+			}
+			if err := bound.Ready(ctx); err != nil {
+				if !errors.Is(err, ErrNotSent) {
+					return err
+				}
+				out := Classify(Reply{Connect: true})
+				refusal = &out
+				break
+			}
+			tr = bound
+			break
+		}
+
+		prepared := false
+		err = svc.mutateSettlement(ctx, pool, job.Lease(), func(ctx context.Context, tx pgx.Tx) error {
+			if err := tenant.EnterApp(ctx, tx, job.OrgID); err != nil {
+				return err
+			}
+			// Cancellation takes the organization lock before changing an intent.
+			var org int64
+			if err := tx.QueryRow(ctx, `SELECT id FROM public.organizations WHERE id=$1 AND dissolved_at IS NULL FOR NO KEY UPDATE`, job.OrgID).Scan(&org); err != nil {
+				return err
+			}
+			currentFacts := make(map[string]intentFact, len(attempts))
+			for _, in := range attempts {
+				var state string
+				if err := tx.QueryRow(ctx, `SELECT state FROM public.submission_intents WHERE org_id=$1 AND id=$2::uuid FOR UPDATE`, job.OrgID, in.IntentID).Scan(&state); err != nil {
+					return err
+				}
+				currentFacts[in.IntentID] = intentFact{state: state}
+			}
+			previous := len(attempts)
+			if previous > 0 {
+				allCancelled = retain(currentFacts)
+			}
+			if len(attempts) == 0 {
+				state := queue.StateSucceeded
+				if allCancelled {
+					state = queue.StateCancelled
+				}
+				return finishSubmitJob(ctx, tx, job.Lease(), state, "", nil)
+			}
+			if len(attempts) != previous && refusal == nil {
+				return errBatchChanged
+			}
+			if refusal != nil {
+				return settleBatchTx(ctx, tx, attempts, *refusal)
+			}
+			current, err := sliceImportsCurrentTx(ctx, tx, job.OrgID, originals...)
+			if err != nil {
+				return err
+			}
+			if !current {
+				return settleBatchTx(ctx, tx, attempts, sliceExpiredOutcome())
+			}
+
+			if err := requireDispatchPolicy(ctx, tx, job.OrgID, storePK, len(attempts)); err != nil {
+				return err
+			}
+			for i := range attempts {
+				if account, ok := tr.(sellercontract.PhysicalAccountTransport); ok {
+					attempts[i].PhysicalAccountKey = account.PhysicalAccountKey()
+				}
+				if err := beginSendingTx(ctx, tx, attempts[i]); err != nil {
+					return err
+				}
+			}
+			prepared = true
+			return nil
+		})
+		if errors.Is(err, errBatchChanged) {
+			continue
+		}
+		if err != nil || !prepared {
+			return err
+		}
+		break
+	}
+
 	body, err := mergeImport(originals, items)
 	if err != nil {
 		return err
 	}
 	status, resp, err := tr.Write(ctx, "/v3/product/import", body)
+	if errors.Is(err, ErrNotSent) && status == 0 {
+		return svc.settleBatch(ctx, pool, attempts, WriteNotSent())
+	}
 	reply := Reply{
 		Sent: true, Status: status, Body: resp,
 		TaskID: taskID(resp), ProviderCode: providerCode(resp),
@@ -102,22 +231,47 @@ func workBatch(ctx context.Context, pool *pgxpool.Pool, job queue.Claimed, tr Tr
 		if err := touchLeases(ctx, pool, job.OrgID, originals...); err != nil {
 			return err
 		}
-		if err := settleBatch(ctx, pool, attempts, Classify(reply)); err != nil {
+		if err := svc.settleBatch(ctx, pool, attempts, Classify(reply)); err != nil {
 			return queue.ErrReceiptHeld
 		}
 		return nil
 	}
-	return settleBatch(ctx, pool, attempts, Classify(reply))
+	return svc.settleBatch(ctx, pool, attempts, Classify(reply))
+}
+
+// A partially begun batch cannot be sent again. Settle each existing edge in
+// one fenced transaction: dispatched rows stay unknown, unsent rows are rejected.
+func (svc Service) settleInterruptedBatch(ctx context.Context, pool *pgxpool.Pool, attempts []Attempt) error {
+	lease := attempts[0].Lease
+	return svc.mutateSettlement(ctx, pool, lease, func(ctx context.Context, tx pgx.Tx) error {
+		for _, in := range attempts {
+			var state string
+			if err := tx.QueryRow(ctx, `SELECT state FROM public.submission_intents WHERE org_id=$1 AND id=$2::uuid FOR UPDATE`, in.OrgID, in.IntentID).Scan(&state); err != nil {
+				return err
+			}
+			out := Classify(Reply{Connect: true})
+			if state == Submitting {
+				out = RecoverSubmitting()
+			}
+			if edgeAllows(out.Edge, state) {
+				if err := settleIntentRows(ctx, tx, in, out); err != nil {
+					return err
+				}
+			}
+		}
+		reason := CodeDispatchInterrupted
+		return finishSubmitJob(ctx, tx, lease, queue.StateSucceeded, "unknown", &reason)
+	})
 }
 
 // finishReceipt runs after external_task_id is already stored. It does not
 // call the seller. A lock sends the job back; the receipt stays.
-func finishReceipt(ctx context.Context, pool *pgxpool.Pool, attempts []Attempt, bodies [][]byte, task string) error {
+func (svc Service) finishReceipt(ctx context.Context, pool *pgxpool.Pool, attempts []Attempt, bodies [][]byte, task string) error {
 	if err := touchLeases(ctx, pool, attempts[0].OrgID, bodies...); err != nil {
 		return err
 	}
 	reply := Reply{Sent: true, Status: 200, Body: receiptBody(task), TaskID: taskID(receiptBody(task))}
-	if err := settleBatch(ctx, pool, attempts, Classify(reply)); err != nil {
+	if err := svc.settleBatch(ctx, pool, attempts, Classify(reply)); err != nil {
 		return queue.ErrReceiptHeld
 	}
 	return nil
@@ -126,37 +280,38 @@ func finishReceipt(ctx context.Context, pool *pgxpool.Pool, attempts []Attempt, 
 // settleBatch commits the intents and job under one lease fence. A lost
 // lease or later item failure rolls back the whole settlement. Positive
 // receipts commit separately; intents past the edge stay unchanged.
-func settleBatch(ctx context.Context, pool *pgxpool.Pool, attempts []Attempt, out Outcome) error {
+func (svc Service) settleBatch(ctx context.Context, pool *pgxpool.Pool, attempts []Attempt, out Outcome) error {
 	if len(attempts) == 0 {
 		return nil
 	}
-	lease := attempts[0].Lease
-	return mutateSettlement(ctx, pool, lease, func(ctx context.Context, tx pgx.Tx) error {
-		for _, in := range attempts {
-			var state string
-			if err := tx.QueryRow(ctx, `
-				SELECT state FROM public.submission_intents
-				 WHERE org_id = $1 AND id = $2::uuid FOR UPDATE`, in.OrgID, in.IntentID).Scan(&state); err != nil {
-				return err
-			}
-			if !edgeAllows(out.Edge, state) {
-				continue
-			}
-			if err := settleIntentRows(ctx, tx, in, out); err != nil {
-				return err
-			}
-		}
-		switch out.JobState {
-		case queue.StateSucceeded, queue.StateFailed, queue.StateCancelled:
-		default:
-			return nil
-		}
-		var lastError *string
-		if out.JobError != "" {
-			lastError = &out.JobError
-		}
-		return finishSubmitJob(ctx, tx, lease, out.JobState, out.JobResult, lastError)
+	return svc.mutateSettlement(ctx, pool, attempts[0].Lease, func(ctx context.Context, tx pgx.Tx) error {
+		return settleBatchTx(ctx, tx, attempts, out)
 	})
+}
+
+func settleBatchTx(ctx context.Context, tx pgx.Tx, attempts []Attempt, out Outcome) error {
+	for _, in := range attempts {
+		var state string
+		if err := tx.QueryRow(ctx, `SELECT state FROM public.submission_intents WHERE org_id=$1 AND id=$2::uuid FOR UPDATE`, in.OrgID, in.IntentID).Scan(&state); err != nil {
+			return err
+		}
+		if !edgeAllows(out.Edge, state) {
+			continue
+		}
+		if err := settleIntentRows(ctx, tx, in, out); err != nil {
+			return err
+		}
+	}
+	switch out.JobState {
+	case queue.StateSucceeded, queue.StateFailed, queue.StateCancelled:
+	default:
+		return nil
+	}
+	var lastError *string
+	if out.JobError != "" {
+		lastError = &out.JobError
+	}
+	return finishSubmitJob(ctx, tx, attempts[0].Lease, out.JobState, out.JobResult, lastError)
 }
 
 func edgeAllows(edge Edge, state string) bool {
@@ -221,6 +376,8 @@ func mergeImport(originals [][]byte, items []json.RawMessage) ([]byte, error) {
 		Items []json.RawMessage `json:"items"`
 	}{Items: items})
 }
+
+var errBatchChanged = errors.New("listing batch targets changed before dispatch")
 
 var errBadImport = errString("frozen import must contain exactly one item")
 

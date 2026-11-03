@@ -49,7 +49,20 @@
 //! category material* in its body rather than a resident handle, because the
 //! rule is about what the category says today, not about the Card's pinned
 //! snapshot — see `variants.rs`. No schema handle.
+//!
+//! **Op 19, `seedAssociatedRow`** is `listing_core::ops::seed_associated_row`:
+//! `seedRow` plus the same-design identity (fixed 货号, common 型号 9048,
+//! association id), derived from `orgId`, `supplierSourceId`, `variantGroup`
+//! and the source digest. A category without a plain 9048 is `CORE_REFUSED`.
+//! Compiled out of the `browser` build, which is size-gated and never seeds
+//! association rows.
+//!
+//! **Op 20, `bannedTags`** is `listing_core::banned_tags` behind one JSON call
+//! (`tag_banned`, `partition`, `strip_text`, `normalize`, `stem_key`). Server
+//! build only; no schema handle. See `banned_tags.rs`.
 
+#[cfg(not(feature = "browser"))]
+use crate::banned_tags::{self, OP_BANNED_TAGS};
 use listing_core::envelope::CardPayload;
 use listing_core::ops::{self, LeanRow, RenderManifest, SchemaMaterial, SubmitDraft};
 use listing_core::records::ListingFieldEditor;
@@ -81,6 +94,11 @@ pub(crate) const OP_FREEZE_LISTING: u32 = 11;
 pub(crate) const OP_PROJECT_SUBMIT_DRAFT: u32 = 12;
 /// Op 13 — [`issue_manifest`].
 pub(crate) const OP_ISSUE_MANIFEST: u32 = 13;
+#[cfg(not(feature = "browser"))]
+pub(crate) const OP_SUPPLIER_CONFIG: u32 = 21;
+/// Op 19 — `ops_row::seed_associated_row`: a same-design member row. Server build only.
+#[cfg(not(feature = "browser"))]
+pub(crate) const OP_SEED_ASSOCIATED_ROW: u32 = 19;
 
 pub(crate) fn require_schema(schema: Option<&Material>) -> Result<&SchemaMaterial, CoreError> {
     match schema {
@@ -114,11 +132,24 @@ pub(crate) fn dispatch(
         OP_FREEZE_LISTING => ops_row::freeze_listing(require_schema(schema)?, bytes),
         OP_PROJECT_SUBMIT_DRAFT => project_submit_draft(bytes),
         OP_ISSUE_MANIFEST => issue_manifest(),
+        #[cfg(not(feature = "browser"))]
+        OP_SUPPLIER_CONFIG => {
+            let input = serde_json::from_slice(bytes).map_err(CoreError::decode)?;
+            serde_json::to_vec(&listing_core::supplier_config::validate(
+                require_schema(schema)?,
+                &input,
+            ))
+            .map_err(CoreError::decode)
+        }
         OP_WB_BUILD_PREVIEW => wb::ops::build_preview(schema, bytes),
         OP_WB_METADATA_ISSUES => wb::ops::metadata_issues(schema),
         OP_PLAN_STAGE => stage_gate::plan_from_bytes(bytes),
         OP_PARSE_OCR_ANSWER => ocr_answer::parse_answer(bytes),
         OP_VALIDATE_VARIANT_GROUP => variants::validate_variant_group(bytes),
+        #[cfg(not(feature = "browser"))]
+        OP_SEED_ASSOCIATED_ROW => ops_row::seed_associated_row(require_schema(schema)?, bytes),
+        #[cfg(not(feature = "browser"))]
+        OP_BANNED_TAGS => banned_tags::eval(bytes),
         other => Err(CoreError::decode(format!("unknown op {other}"))),
     }
 }

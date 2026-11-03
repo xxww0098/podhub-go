@@ -9,7 +9,6 @@ import (
 	"image/draw"
 	"image/jpeg"
 	_ "image/png"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -17,42 +16,46 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/xxww0098/podhub-go/internal/platform/httpx"
+	"github.com/xxww0098/podhub-go/internal/platform/db"
+	"github.com/xxww0098/podhub-go/internal/platform/r2"
 	sign "github.com/xxww0098/podhub-go/internal/platform/r2/sigv4"
 	"github.com/xxww0098/podhub-go/internal/supplier/contract"
 	"github.com/xxww0098/podhub-go/internal/supplier/domain"
 )
 
-func (r Repo) DownloadAsset(ctx context.Context, userID int64, dispatchID, assetID string, wantJSON bool, nowMs int64) (contract.AssetBytes, error) {
+func (r Repo) DownloadAsset(ctx context.Context, userID int64, dispatchID, assetID string, wantJSON bool, nowMs int64) (contract.DownloadGrant, error) {
 	meta, err := r.findAsset(ctx, userID, dispatchID, assetID)
 	if err != nil {
-		return contract.AssetBytes{}, err
+		return contract.DownloadGrant{}, err
 	}
 	if r.assets == nil {
-		return contract.AssetBytes{}, fail(503, "storage_unavailable", "委托原图存储未配置，请联系平台管理员")
+		return contract.DownloadGrant{}, fail(503, "storage_unavailable", "委托原图存储未配置，请联系平台管理员")
+	}
+	account, err := r.assets(ctx)
+	if err != nil {
+		return contract.DownloadGrant{}, fail(503, "storage_unavailable", "委托原图存储暂不可用")
 	}
 	mime := meta.mime
 	if !domain.SafeInline(mime) {
 		mime = "application/octet-stream"
 	}
-	if wantJSON {
-		extra := [][2]string{
-			{"response-content-disposition", "attachment; filename*=UTF-8''" + url.PathEscape(meta.name)},
-			{"response-content-type", mime},
-		}
-		raw, err := presign(*r.assets, meta.key, 120*time.Second, extra)
-		if err != nil {
-			return contract.AssetBytes{}, fail(503, "storage_unavailable", "对象存储暂不可用")
-		}
-		return contract.AssetBytes{Grant: &contract.DownloadGrant{
-			URL: raw, ExpiresAtMs: nowMs + 120*1000, Bytes: meta.bytes, FileName: meta.name, ContentType: mime, SHA256: meta.sha,
-		}}, nil
+	disposition := "attachment"
+	if !wantJSON && domain.SafeInline(meta.mime) {
+		disposition = "inline"
 	}
-	body, err := fetchLoopback(ctx, *r.assets, meta.key, 600*time.Second, 65*60*time.Second)
+	extra := [][2]string{
+		{"response-content-disposition", disposition + "; filename*=UTF-8''" + url.PathEscape(meta.name)},
+		{"response-content-type", mime},
+		{"response-cache-control", "private, no-store"},
+	}
+	now := time.UnixMilli(nowMs).Truncate(time.Second)
+	raw, _, err := sign.PresignURL(account, http.MethodGet, meta.key, "", now, 120*time.Second, extra, nil)
 	if err != nil {
-		return contract.AssetBytes{}, err
+		return contract.DownloadGrant{}, fail(503, "storage_unavailable", "对象存储暂不可用")
 	}
-	return contract.AssetBytes{Body: body, ContentType: mime, FileName: meta.name, Inline: domain.SafeInline(meta.mime)}, nil
+	return contract.DownloadGrant{
+		URL: raw, ExpiresAtMs: now.Add(120 * time.Second).UnixMilli(), Bytes: meta.bytes, FileName: meta.name, ContentType: mime, SHA256: meta.sha,
+	}, nil
 }
 
 type assetMeta struct {
@@ -63,7 +66,7 @@ type assetMeta struct {
 func (r Repo) findAsset(ctx context.Context, userID int64, dispatchID, assetID string) (assetMeta, error) {
 	var meta assetMeta
 	err := r.withTx(ctx, 0, userID, func(tx pgx.Tx) error {
-		if _, err := r.loadMembers(ctx, tx, userID); err != nil {
+		if _, err := loadFulfillerSources(ctx, tx); err != nil {
 			return err
 		}
 		var payload []byte
@@ -131,7 +134,7 @@ func (r Repo) assetKey(ctx context.Context, userID int64, dispatchID, assetID st
 
 func (r Repo) CatalogImage(ctx context.Context, sourceID, file string, edge uint32) (contract.ImageBody, error) {
 	if r.catalogStore == nil {
-		return contract.ImageBody{}, fail(503, "STORAGE_NOT_CONFIGURED", "先配置平台货源存储桶")
+		return contract.ImageBody{}, fail(503, "STORAGE_NOT_CONFIGURED", "先配置供应商商品库存储桶")
 	}
 	prefix, err := domain.NormalizeKeyPrefix(r.catalogStore.KeyPrefix)
 	if err != nil {
@@ -150,7 +153,7 @@ func (r Repo) CatalogImage(ctx context.Context, sourceID, file string, edge uint
 	if !ok {
 		return contract.ImageBody{}, fail(404, "NOT_FOUND", "记录不存在或已删除")
 	}
-	body, err := fetchLoopback(ctx, *r.catalogStore, key, 300*time.Second, 20*time.Second)
+	body, err := fetchCatalogImage(ctx, *r.catalogStore, key, 300*time.Second, 20*time.Second)
 	if err != nil {
 		if strings.Contains(err.Error(), "404") {
 			return contract.ImageBody{}, fail(404, "NOT_FOUND", "对象不存在")
@@ -162,16 +165,12 @@ func (r Repo) CatalogImage(ctx context.Context, sourceID, file string, edge uint
 }
 
 func (r Repo) imageVisible(ctx context.Context, sourceID, publicURL string) (bool, error) {
-	if r.pool == nil || r.begin == nil {
+	if r.pool == nil {
 		return false, contract.ErrUnavailable
 	}
-	tx, err := r.begin(ctx, r.pool.Begin, 0)
-	if err != nil {
-		return false, mapDB(err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
 	var present bool
-	err = tx.QueryRow(ctx, `
+	err := db.InTx(ctx, r.pool, db.AppRole(), func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
 		SELECT EXISTS (
 		  SELECT 1 FROM sc_products p
 		  JOIN sc_sources src ON src.source_id = p.source_id
@@ -182,59 +181,32 @@ func (r Repo) imageVisible(ctx context.Context, sourceID, publicURL string) (boo
 		      OR EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p.product_videos)='array' THEN p.product_videos ELSE '[]'::jsonb END) v WHERE v->>'coverUrl' = $2)
 		    )
 		)`, sourceID, publicURL).Scan(&present)
+	})
 	if err != nil {
 		return false, mapDB(err)
 	}
-	return present, tx.Commit(ctx)
+	return present, nil
 }
 
-func presign(account sign.Account, key string, ttl time.Duration, extra [][2]string) (string, error) {
-	raw, _, err := sign.PresignURL(account, http.MethodGet, key, "", time.Now().UTC(), ttl, extra, nil)
-	if err != nil {
-		return "", err
-	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		return "", err
-	}
-	if !loopbackHost(u.Hostname()) {
-		return "", errors.New("remote")
-	}
-	return raw, nil
-}
-
-func fetchLoopback(ctx context.Context, account sign.Account, key string, ttl, timeout time.Duration) ([]byte, error) {
-	raw, err := presign(account, key, ttl, nil)
+func fetchCatalogImage(ctx context.Context, account sign.Account, key string, ttl, timeout time.Duration) ([]byte, error) {
+	raw, _, err := sign.PresignURL(account, http.MethodGet, key, "", time.Now().UTC(), ttl, nil, nil)
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
+	res, err := r2.ExchangeAccount(ctx, account, r2.Request{
+		Method: http.MethodGet, URL: raw, Timeout: timeout,
+		StrictRead: true, NoCompress: true, MaxBytes: 20 * 1024 * 1024,
+	})
 	if err != nil {
 		return nil, err
 	}
-	client := &http.Client{CheckRedirect: httpx.UseLast, Transport: httpx.Loopback(false)}
-	res, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer res.Body.Close()
-	if res.StatusCode == http.StatusNotFound {
+	if res.Status == http.StatusNotFound {
 		return nil, errors.New("404")
 	}
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
+	if res.Status != http.StatusOK || len(res.Body) == 0 {
 		return nil, errors.New("bad status")
 	}
-	body, err := io.ReadAll(io.LimitReader(res.Body, 20*1024*1024+1))
-	if err != nil || len(body) == 0 || len(body) > 20*1024*1024 {
-		return nil, errors.New("bad body")
-	}
-	return body, nil
-}
-
-func loopbackHost(host string) bool {
-	return host == "127.0.0.1" || host == "localhost"
+	return res.Body, nil
 }
 
 func encodeObjectPath(key string) string {

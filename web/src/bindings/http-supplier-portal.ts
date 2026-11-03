@@ -1,26 +1,10 @@
 /**
- * 厂家门户 (ADR-0100 DEL-04) HTTP — the `/supplier` face's reads, the three
- * actions and the 管理面「厂家账号管理」writes.
- *
- * Types mirror the frozen wire contract
- * `src/wire/cloud_api/supplier_portal.rs`: the factory view is whitelist-only
- * (no org/store/seller identity/sku keys exist on the wire at all), and admin
- * account payloads echo a one-time password exactly once.
- *
- * The generated `route("supplier…")` keys are the path authority.
+ * 平台管理面的厂家账号与提现管理接口。
+ * 工厂工作空间的读取与履约操作位于 factory/api.ts。
  */
 import { api } from "@/api/client"
 import { route } from "@/api/routes"
 import type { components } from "@/api/schema"
-import { downloadGrant, startPresignedDownload } from "./object-download"
-
-export type SupplierMeData = components["schemas"]["SupplierMeData"]
-export type SupplierDispatchRow = components["schemas"]["SupplierDispatchRow"]
-export type SupplierDispatchListData =
-  components["schemas"]["SupplierDispatchListData"]
-export type SupplierDispatchDetail =
-  components["schemas"]["SupplierDispatchDetail"]
-export type SupplierActionData = components["schemas"]["SupplierActionData"]
 export type SupplierAccountMemberView =
   components["schemas"]["SupplierAccountMemberView"]
 export type SupplierAccountsGroup =
@@ -32,85 +16,43 @@ export type AdminSupplierAccountMutationData =
 export type AdminSupplierAccountDeleteData =
   components["schemas"]["AdminSupplierAccountDeleteData"]
 
-// ---------- factory reads ----------
-
-export async function getSupplierMe(): Promise<SupplierMeData> {
-  return api.get<SupplierMeData>(route("supplierMe"))
-}
-
-export async function listSupplierDispatches(
-  query?: { state?: string; cursor?: string },
-): Promise<SupplierDispatchListData> {
-  const params = new URLSearchParams()
-  if (query?.state) params.set("state", query.state)
-  if (query?.cursor) params.set("cursor", query.cursor)
-  const suffix = params.size > 0 ? `?${params.toString()}` : ""
-  return api.get<SupplierDispatchListData>(route("supplierDispatches") + suffix)
-}
-
-export async function getSupplierDispatch(
-  dispatchId: string,
-): Promise<SupplierDispatchDetail> {
-  const data = await api.get<{
-    dispatch: SupplierDispatchDetail
-  }>(route("supplierDispatchesByDispatchId", { dispatch_id: dispatchId }))
-  return data.dispatch
-}
-
-// ---------- factory actions ----------
-
-export async function acceptSupplierDispatch(
-  dispatchId: string,
-): Promise<SupplierActionData> {
-  return api.post<SupplierActionData>(
-    route("supplierDispatchesByDispatchIdAccept", { dispatch_id: dispatchId }),
-  )
-}
-
-export async function rejectSupplierDispatch(
-  dispatchId: string,
-  reason: string,
-): Promise<SupplierActionData> {
-  return api.post<SupplierActionData>(
-    route("supplierDispatchesByDispatchIdReject", { dispatch_id: dispatchId }),
-    { reason },
-  )
-}
-
-// 厂家不手填运单。已接单的包由同步环在读到物流信息后发货，所以这里没有 ship 客户端。
-
-/** Same-origin download route. Older pages use it as an `<a download>` relay. */
-export function supplierAssetUrl(dispatchId: string, assetId: string): string {
-  return route("supplierDispatchesByDispatchIdAssetsByAssetId", {
-    dispatch_id: dispatchId,
-    asset_id: assetId,
-  })
-}
-
-/** Ask Cloud for a short-lived object URL, then hand it to the browser download manager. */
-export async function downloadSupplierAsset(dispatchId: string, assetId: string): Promise<void> {
-  const grant = await downloadGrant(supplierAssetUrl(dispatchId, assetId))
-  startPresignedDownload(grant)
-}
-
 // ---------- admin: 厂家账号管理 ----------
 
+type FactoryWire = { factoryId: string; name: string; country: string; icon: string }
+type SupplierMemberWire = {
+  memberId: string; accountUuid: string; factory: FactoryWire; email: string; name?: string | null; status: string; createdAtMs: number
+}
+type SupplierAccountMutationWire = { member: SupplierMemberWire; initialPassword?: string | null }
+
+function supplierFactory(data: FactoryWire): SupplierAccountMemberView["factory"] {
+  return { factory_id: data.factoryId, name: data.name, country: data.country, icon: data.icon }
+}
+
+function supplierMember(data: SupplierMemberWire): SupplierAccountMemberView {
+  return { member_id: data.memberId, account_uuid: data.accountUuid, factory: supplierFactory(data.factory), email: data.email, name: data.name, status: data.status, created_at_ms: data.createdAtMs }
+}
+
+function supplierAccountMutation(data: SupplierAccountMutationWire): AdminSupplierAccountMutationData {
+  return { member: supplierMember(data.member), initial_password: data.initialPassword }
+}
+
 export async function listSupplierAccounts(): Promise<AdminSupplierAccountsData> {
-  return api.get<AdminSupplierAccountsData>(route("adminSupplierAccounts"))
+  const data = await api.get<{ groups: { factory: FactoryWire; members: SupplierMemberWire[] }[] }>(route("adminSupplierAccounts"))
+  return { groups: data.groups.map((group) => ({ factory: supplierFactory(group.factory), members: group.members.map(supplierMember) })) }
 }
 
 /** 开通；`initialPassword` 只在本响应出现一次。 */
 export async function createSupplierAccount(payload: {
-  sourceId: string
+  factoryId: string
   email: string
   name?: string
   password?: string
 }): Promise<AdminSupplierAccountMutationData> {
-  const data = await api.post<AdminSupplierAccountMutationData>(
+  const data = await api.post<SupplierAccountMutationWire>(
     route("adminSupplierAccounts"),
     payload,
   )
-  return data
+  return supplierAccountMutation(data)
 }
 
 /** 停用/启用（admin+）或重置密码（super_admin，回显一次）。 */
@@ -118,19 +60,20 @@ export async function patchSupplierAccount(
   memberId: string,
   payload: { status?: "active" | "disabled"; password?: string },
 ): Promise<AdminSupplierAccountMutationData> {
-  const data = await api.patch<AdminSupplierAccountMutationData>(
+  const data = await api.patch<SupplierAccountMutationWire>(
     route("adminSupplierAccountsByMemberId", { member_id: memberId }),
     payload,
   )
-  return data
+  return supplierAccountMutation(data)
 }
 
 export async function deleteSupplierAccount(
   memberId: string,
 ): Promise<AdminSupplierAccountDeleteData> {
-  return api.del<AdminSupplierAccountDeleteData>(
+  const data = await api.del<{ memberId: string; unbound: boolean }>(
     route("adminSupplierAccountsByMemberId", { member_id: memberId }),
   )
+  return { member_id: data.memberId, unbound: data.unbound }
 }
 
 /**

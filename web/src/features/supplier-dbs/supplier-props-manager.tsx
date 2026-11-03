@@ -26,7 +26,7 @@ import type {
   SupplierDbRow,
 } from "@/bindings/http-supplier-dbs"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import {
   Dialog,
@@ -100,48 +100,32 @@ function SortablePropRow({
         <Badge variant="outline">内部</Badge>
       ) : null}
       <span className="flex shrink-0 items-center">
-        <Button
-          type="button"
-          variant="ghost"
+        <IconButton
+          icon={ArrowUp}
+          label={`上移 ${def.name}`}
           size="icon-sm"
-          aria-label={`上移 ${def.name}`}
           disabled={disabled || first}
-          className="cursor-pointer"
           onClick={() => onMove(-1)}
-        >
-          <ArrowUp aria-hidden />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
+        />
+        <IconButton
+          icon={ArrowDown}
+          label={`下移 ${def.name}`}
           size="icon-sm"
-          aria-label={`下移 ${def.name}`}
           disabled={disabled || last}
-          className="cursor-pointer"
           onClick={() => onMove(1)}
-        >
-          <ArrowDown aria-hidden />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
+        />
+        <IconButton
+          icon={Pencil}
+          label={`编辑 ${def.name}`}
           size="icon-sm"
-          aria-label={`编辑 ${def.name}`}
-          className="cursor-pointer"
           onClick={onEdit}
-        >
-          <Pencil aria-hidden />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
+        />
+        <IconButton
+          icon={Trash2}
+          label={`删除 ${def.name}`}
           size="icon-sm"
-          aria-label={`删除 ${def.name}`}
-          className="cursor-pointer"
           onClick={onDelete}
-        >
-          <Trash2 aria-hidden />
-        </Button>
+        />
       </span>
     </li>
   )
@@ -281,16 +265,13 @@ export function SupplierPropManagerDialog({
             </SortableContext>
           </DndContext>
           <div className="flex justify-end">
-            <Button
-              type="button"
-              size="sm"
+            <IconButton
+              icon={Plus}
+              label="添加属性"
+              size="icon-sm"
               variant="outline"
-              className="cursor-pointer"
               onClick={() => setEditor({ mode: "create" })}
-            >
-              <Plus aria-hidden />
-              添加属性
-            </Button>
+            />
           </div>
         </DialogContent>
       </Dialog>

@@ -48,18 +48,28 @@ export function stubOpfs(options: { quotaOnce?: boolean } = {}) {
       getDirectoryHandle: async (name: string) => directory(`${prefix}${name}/`),
       getFileHandle: async (name: string) => ({
         ...file(`${prefix}${name}`),
-        createWritable: async () => ({
-          write: async (bytes: Uint8Array) => {
-            if (options.quotaOnce && !quotaBurned) {
-              quotaBurned = true
-              throw new DOMException("quota refused", "QuotaExceededError")
-            }
-            written.add(`${prefix}${name}`)
-            contents.set(`${prefix}${name}`, bytes.slice())
-          },
-          close: async () => {},
-          abort: async () => {},
-        }),
+        createWritable: async () => {
+          const chunks: Uint8Array[] = []
+          let length = 0
+          return {
+            write: async (bytes: Uint8Array) => {
+              if (options.quotaOnce && !quotaBurned) {
+                quotaBurned = true
+                throw new DOMException("quota refused", "QuotaExceededError")
+              }
+              chunks.push(bytes.slice())
+              length += bytes.length
+            },
+            close: async () => {
+              const bytes = new Uint8Array(length)
+              let offset = 0
+              for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length }
+              written.add(`${prefix}${name}`)
+              contents.set(`${prefix}${name}`, bytes)
+            },
+            abort: async () => {},
+          }
+        },
       }),
       removeEntry: async (name: string) => {
         const target = `${prefix}${name}`

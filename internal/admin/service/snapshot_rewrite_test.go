@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"testing"
@@ -33,21 +34,11 @@ func TestReadSnapshotRewritesSnakeAndLeavesCamel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := seal.ParseSnapshot(plain); err != nil {
-		t.Fatal(err)
+	_, err = seal.ParseSnapshot(plain)
+	if err != nil || bytes.Contains(plain, []byte("storageBuckets")) || bytes.Contains(plain, []byte("AKIA")) {
+		t.Fatalf("legacy rewrite retained storage settings: %v", err)
 	}
-	accounts, err := domain.OpenSnapshot(rewriteKey, db.nonce, db.cipher)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(accounts) != 1 || accounts[0].Role != "private" {
-		t.Fatalf("buckets %+v", accounts)
-	}
-	stored, err := seal.ParseSnapshot(plain)
-	if err != nil || len(stored.Buckets) != 1 || stored.Buckets[0].Role != "private" || !stored.Buckets[0].Active || stored.Buckets[0].SecretAccessKey != "secret" {
-		t.Fatalf("buckets %+v %v", stored.Buckets, err)
-	}
-	if snap.AIAccounts[0].APIKey != "secret" || snap.AIAccounts[0].BaseURL != "https://ai.example" || snap.Buckets[0].Bucket != "delegate-assets" {
+	if snap.AIAccounts[0].APIKey != "secret" || snap.AIAccounts[0].BaseURL != "https://ai.example" {
 		t.Fatalf("memory %+v", snap)
 	}
 	again, legacy, err := domain.ParseStored(plain)
@@ -71,6 +62,38 @@ func TestReadSnapshotRewritesSnakeAndLeavesCamel(t *testing.T) {
 	}
 	if db.calls != 0 {
 		t.Fatalf("camel row was rewritten %d times", db.calls)
+	}
+}
+
+func TestReadSnapshotRemovesRetiredStorageWithoutChangingConfiguration(t *testing.T) {
+	want, err := json.Marshal(domain.Snapshot{
+		SchemaVersion: 1, AIDefaultModel: "m",
+		AIAccounts: []domain.StoredAI{{ID: "a", Model: "m", APIKey: "ai-secret", Purpose: domain.PurposeOCR}},
+		AIRuntime:  domain.AIRuntime{MaxConcurrencyGlobal: 8, LeaseTTLSeconds: 120, AllowPublicEgress: true},
+		Payment: &seal.StoredPaymentConfig{Providers: []seal.StoredPaymentProvider{{
+			Provider: "manual", Enabled: true, Values: map[string]string{"appId": "kept"},
+		}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := append(append([]byte(nil), want[:len(want)-1]...), []byte(`,"storageBuckets":[{"secretAccessKey":"retired-secret"}]}`)...)
+	key := domain.KeySHA256(rewriteKey)
+	nonce, ciphertext, err := domain.Seal(key, []byte(configAAD), raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := &rewriteDB{blob: domain.ConfigBlob{Revision: 7, Nonce: nonce, Ciphertext: ciphertext, Found: true}}
+	api := &API{DB: db, IntegrationKey: rewriteKey}
+	if _, fault := api.readSnapshot(context.Background(), false); fault != nil {
+		t.Fatal(fault)
+	}
+	if db.calls != 1 || db.revision != 7 {
+		t.Fatalf("cleanup calls=%d revision=%d", db.calls, db.revision)
+	}
+	clean, err := domain.Open(key, []byte(configAAD), db.nonce, db.cipher)
+	if err != nil || !bytes.Equal(clean, want) {
+		t.Fatalf("cleanup changed AI or payment configuration: %s %v", clean, err)
 	}
 }
 
@@ -118,13 +141,7 @@ func (panicDB) SetRole(context.Context, domain.Actor, string, string, string) (d
 func (panicDB) SetPassword(context.Context, domain.Actor, string, string, string, bool) (int64, *contract.Fault) {
 	panic("SetPassword")
 }
-func (panicDB) PreviewSeats(context.Context, string, *int64) (domain.Account, domain.SeatLoad, *contract.Fault) {
-	panic("PreviewSeats")
-}
-func (panicDB) ApplySeats(context.Context, domain.Actor, string, string, *int64, domain.SeatIntent, int64, int64) (domain.MemberPlan, domain.StorePlan, domain.SeatTarget, int64, *contract.Fault) {
-	panic("ApplySeats")
-}
-func (panicDB) SetSeats(context.Context, domain.Actor, string, string, int64) (domain.Account, *contract.Fault) {
+func (panicDB) SetSeats(context.Context, domain.Actor, string, string, *int64) (domain.Account, *contract.Fault) {
 	panic("SetSeats")
 }
 func (panicDB) Dissolve(context.Context, domain.Actor, string, string, string) *contract.Fault {
@@ -148,10 +165,10 @@ func (panicDB) GrantLease(context.Context, domain.Actor, string, string, string,
 func (panicDB) RevokeLease(context.Context, domain.Actor, string, string, *int64) (*domain.LeaseRow, *contract.Fault) {
 	panic("RevokeLease")
 }
-func (panicDB) ListUsage(context.Context, domain.UsageFilter, int64, int64) (int64, []domain.UsageRow, *contract.Fault) {
+func (panicDB) ListUsage(context.Context, int64, domain.UsageFilter, int64, int64) (int64, []domain.UsageRow, *contract.Fault) {
 	panic("ListUsage")
 }
-func (panicDB) SummarizeUsage(context.Context, domain.UsageFilter) (domain.UsageSummary, *contract.Fault) {
+func (panicDB) SummarizeUsage(context.Context, int64, domain.UsageFilter) (domain.UsageSummary, *contract.Fault) {
 	panic("SummarizeUsage")
 }
 func (panicDB) PublishPrice(context.Context, domain.Actor, string, domain.Price) ([]domain.PriceRow, *contract.Fault) {
@@ -163,7 +180,7 @@ func (panicDB) UnpublishPrice(context.Context, domain.Actor, string) (bool, []do
 func (panicDB) LoadConfig(context.Context) (domain.ConfigBlob, *contract.Fault) {
 	panic("LoadConfig")
 }
-func (panicDB) SaveConfig(context.Context, domain.Actor, int64, int64, []byte, []byte, int, []string) *contract.Fault {
+func (panicDB) SaveConfig(context.Context, domain.Actor, int64, int64, []byte, []byte, int) *contract.Fault {
 	panic("SaveConfig")
 }
 func (panicDB) RewriteSnapshot(context.Context, int64, []byte, []byte) *contract.Fault {
@@ -171,19 +188,4 @@ func (panicDB) RewriteSnapshot(context.Context, int64, []byte, []byte) *contract
 }
 func (panicDB) CurrentPrices(context.Context) ([]domain.PriceRow, *contract.Fault) {
 	panic("CurrentPrices")
-}
-func (panicDB) LoadTotp(context.Context, int64) (*domain.TotpRow, *contract.Fault) {
-	panic("LoadTotp")
-}
-func (panicDB) VerifyTotp(context.Context, int64, time.Time, []byte, string) (string, *contract.Fault) {
-	panic("VerifyTotp")
-}
-func (panicDB) EnrollTotp(context.Context, domain.Actor, []byte, []byte, []string) *contract.Fault {
-	panic("EnrollTotp")
-}
-func (panicDB) ConfirmTotp(context.Context, domain.Actor, time.Time) *contract.Fault {
-	panic("ConfirmTotp")
-}
-func (panicDB) StepUp(context.Context, domain.Actor, time.Time) *contract.Fault {
-	panic("StepUp")
 }

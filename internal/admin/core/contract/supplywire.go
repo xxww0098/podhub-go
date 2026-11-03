@@ -2,9 +2,10 @@ package contract
 
 import "encoding/json"
 
-// SupplierDb is SupplierDbData. creatorName and accountEmail are omitted when nil.
+// SupplierDb is the product library view.
 type SupplierDb struct {
 	SourceID        string          `json:"sourceId"`
+	FactoryID       *string         `json:"factoryId,omitempty"`
 	Name            string          `json:"name"`
 	Country         string          `json:"country"`
 	Contact         string          `json:"contact"`
@@ -19,7 +20,7 @@ type SupplierDb struct {
 	UpdatedAtMs     int64           `json:"updatedAtMs"`
 	CreatedBy       string          `json:"createdBy"`
 	CreatorName     *string         `json:"creatorName,omitempty"`
-	AccountEmail    *string         `json:"accountEmail,omitempty"`
+	FulfillerEmail  *string         `json:"fulfillerEmail,omitempty"`
 }
 
 // Prop is SupplierDbPropDefData. The type key is "type".

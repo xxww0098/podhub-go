@@ -2,7 +2,7 @@
  * Cloud listing views ⇄ the workbench's own vocabulary.
  *
  * Each side owns its view of the same wire. Cloud's `ListingRowView`
- * / `ListingCardView` / `CatalogSchemaData` are the wire; the screens are
+ * / `ListingCardView` / `CatalogSchemaResponse` are the wire; the screens are
  * written against `WorkflowDraftView`, `CategorySchemaView` and friends. This
  * module is the only translation between them — nothing here decides anything,
  * and no new DTO is invented for either side.
@@ -45,6 +45,22 @@ export type ListingRowView = Omit<
 
 export type ListingCardView = components["schemas"]["ListingCardView"]
 
+export type PricingCurrency = "CNY" | "RUB"
+
+export type ManualProfitAssumptions = {
+  currency: PricingCurrency
+  costs: readonly {
+    name: string
+    amount: string
+    currency: PricingCurrency
+    /** Sale-currency units per one cost-currency unit. */
+    exchangeRate?: string
+  }[]
+  fees: readonly { name: string; rateBps: number }[]
+  /** Net profit divided by gross sale price, after supplied costs and fees. */
+  targetMarginBps: number
+}
+
 /**
  * `listing_cards.payload` (`listing_core::envelope::CardPayload`).
  *
@@ -83,6 +99,8 @@ export interface CardPayload {
   /** Reusable videos copied into each new Product Instance. */
   videos: WorkflowVideoMetadata[]
   videoCover?: WorkflowVideoMetadata
+  /** Operator-supplied assumptions, not an official platform fee quote. */
+  pricingAssumptions?: ManualProfitAssumptions
   queue: CardQueue
 }
 
@@ -190,6 +208,7 @@ export function cardPayload(card: ListingCardView): CardPayload {
     aiFieldPolicy: payload.aiFieldPolicy ?? { allowed_field_keys: [], protected_field_keys: [] },
     videos: payload.videos ?? [],
     videoCover: payload.videoCover,
+    pricingAssumptions: payload.pricingAssumptions,
     queue: {
       paused: payload.queue?.paused ?? false,
       stopAfterCurrent: payload.queue?.stopAfterCurrent ?? false,
@@ -217,7 +236,7 @@ export function categoryKey(
 
 // --- catalog ---------------------------------------------------------------
 
-type CatalogSchemaData = components["schemas"]["CatalogSchemaData"]
+type CatalogSchemaResponse = NonNullable<components["schemas"]["CatalogSchemaResponse"]>
 type CatalogSchemaField = components["schemas"]["CatalogSchemaField"]
 type CatalogTreeNode = components["schemas"]["CatalogTreeNode"]
 
@@ -283,7 +302,7 @@ function complexGroups(fields: readonly CategoryFieldView[]): CategoryComplexGro
   return [...grouped.entries()].sort(([a], [b]) => a - b).map(([, group]) => group)
 }
 
-export function catalogSchemaView(data: CatalogSchemaData): CategorySchemaView {
+export function catalogSchemaView(data: CatalogSchemaResponse): CategorySchemaView {
   const fields = data.fields.map(catalogFieldView)
   return {
     description_category_id: data.description_category_id,
@@ -295,31 +314,20 @@ export function catalogSchemaView(data: CatalogSchemaData): CategorySchemaView {
 }
 
 export function catalogTreeNodes(nodes: readonly CatalogTreeNode[]): CategoryTreeNodeView[] {
-  // The tree ships flat: every node carries its parent's type_id and roots carry null.
-  const views = new Map<number, CategoryTreeNodeView>()
-  const childrenOf = new Map<number, CategoryTreeNodeView[]>()
+  const views: CategoryTreeNodeView[] = nodes.map(node => ({
+    description_category_id: node.description_category_id,
+    category_name: node.category_name,
+    type_id: node.type_id,
+    type_name: node.type_name,
+    disabled: node.disabled,
+    children: [],
+  }))
   const roots: CategoryTreeNodeView[] = []
-  for (const node of nodes) {
-    const view: CategoryTreeNodeView = {
-      description_category_id: node.description_category_id,
-      category_name: node.category_name,
-      type_id: node.type_id,
-      type_name: node.type_name,
-      disabled: node.disabled,
-      children: [],
-    }
-    views.set(node.type_id, view)
-    if (node.parent_id == null) roots.push(view)
-    else {
-      const siblings = childrenOf.get(node.parent_id) ?? []
-      siblings.push(view)
-      childrenOf.set(node.parent_id, siblings)
-    }
-  }
-  for (const [parentTypeId, siblings] of childrenOf) {
-    const parent = views.get(parentTypeId)
-    if (parent) parent.children = siblings
-    else roots.push(...siblings)
-  }
+  nodes.forEach((node, index) => {
+    const view = views[index]!
+    const parent = node.parent_index == null ? undefined : views[node.parent_index]
+    if (parent) parent.children.push(view)
+    else roots.push(view)
+  })
   return roots
 }

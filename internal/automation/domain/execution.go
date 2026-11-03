@@ -1,7 +1,7 @@
 package domain
 
 // Execution statuses are automation_executions_status in
-// db/migrations/00264_automation_execution_receipts.sql.
+// the baseline schema.
 const (
 	ExecutionRunning     = "running"
 	ExecutionCompleted   = "completed"

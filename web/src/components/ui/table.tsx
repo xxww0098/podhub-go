@@ -8,11 +8,13 @@ import { cn } from "@/lib/utils"
  */
 function Table({
   className,
+  variant = "default",
   containerClassName,
   containerRef,
   onContainerScroll,
   ...props
 }: React.ComponentProps<"table"> & {
+  variant?: "default" | "directory"
   /** Bound the ledger's own scroll so filters and tallies stay on screen. */
   containerClassName?: string
   containerRef?: React.Ref<HTMLDivElement>
@@ -35,6 +37,7 @@ function Table({
         */
         className={cn(
           "w-full caption-bottom border-separate border-spacing-0 text-sm",
+          variant === "directory" && "[&_td]:px-3 [&_td]:py-2 [&_th]:h-9 [&_th]:px-3 [&_th]:font-normal [&_th]:tracking-normal [&_th]:text-muted-foreground",
           className,
         )}
         {...props}
@@ -132,7 +135,7 @@ function TableHead({ className, scope = "col", ...props }: React.ComponentProps<
       data-slot="table-head"
       scope={scope}
       className={cn(
-        "h-8 border-b border-border px-2.5 text-left align-middle text-meta font-semibold tracking-[0.09em] whitespace-nowrap text-faint-foreground uppercase [&:has([role=checkbox])]:pr-0",
+        "h-8 border-b border-border bg-muted/50 px-2.5 text-left align-middle text-meta font-medium whitespace-nowrap text-muted-foreground [&:has([role=checkbox])]:pr-0",
         className
       )}
       {...props}

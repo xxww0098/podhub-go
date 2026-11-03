@@ -332,26 +332,21 @@ test("a row sealed while its template restores gets no failure and no retry invi
 })
 
 
-test("AI-only and guided hooks carry their opening model selection through the batch coordinator", async () => {
+test("AI-only and guided hooks leave model selection to the server", async () => {
   for (const method of ["runAiRows", "runGuidedPreparation"] as const) {
     const f = setup(["a", "b"])
     const listingFetch = globalThis.fetch
     const routing: unknown[] = []
     globalThis.fetch = async (input, init) => {
-      if (String(input).endsWith("/prepare")) routing.push(JSON.parse(String(init?.body)).model_routing)
+      if (String(input).endsWith("/prepare")) routing.push("model_routing" in JSON.parse(String(init?.body)))
       return listingFetch(input, init)
     }
     try {
-      patchListingWorkbench({ modelRouting: { primary_model: "primary", backup_model: "backup" } })
       const run = f.start(method, ["a", "b"])
-      patchListingWorkbench({ modelRouting: { primary_model: "later" } })
       await tick()
       await f.flush()
       await run
-      assert.deepEqual(routing, [
-        { primary_model: "primary", backup_model: "backup" },
-        { primary_model: "primary", backup_model: "backup" },
-      ])
+      assert.deepEqual(routing, [false, false])
     } finally { await f.restore() }
   }
 })

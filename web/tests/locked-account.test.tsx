@@ -10,7 +10,7 @@ import {
   submitLockedPassword,
 } from "../src/app/locked-account-screen"
 import { loadAuthState, refusalRetiresSession } from "../src/app/App"
-import { handOffLockedSignIn } from "../src/features/supplier/supplier-login-card"
+import { handleFactorySignInError } from "../src/factory/login/factory-login-screen"
 
 const LOCKED_SOURCE = readFileSync(
   new URL("../src/app/locked-account-screen.tsx", import.meta.url),
@@ -173,26 +173,25 @@ test("refusals read as Chinese operator copy, never a raw cloud_ code", () => {
 })
 
 const SUPPLIER_CARD_SOURCE = readFileSync(
-  new URL("../src/features/supplier/supplier-login-card.tsx", import.meta.url),
+  new URL("../src/factory/login/factory-login-screen.tsx", import.meta.url),
   "utf8",
 )
 
 test("a provisioned factory account is handed to the password form, never told its password is wrong", () => {
   const notified: string[] = []
   let handovers = 0
-  const handled = handOffLockedSignIn(lockedRefusal, {
-    handover: () => {
+  handleFactorySignInError(lockedRefusal,
+    () => {
       handovers += 1
     },
-    notify: (_reason, fallback) => {
+    (_reason, fallback) => {
       notified.push(fallback)
     },
-  })
+  )
   // The login call itself succeeded — the Cookie is already written — so the
   // 403 is the gate, not a rejected credential. The negative assertion is the
   // one that matters: a hand-over that ALSO toasts "check your email and
   // password" would still reach the form and pass a positive-only test.
-  assert.equal(handled, true)
   assert.equal(handovers, 1)
   assert.deepEqual(notified, [])
 })
@@ -200,18 +199,15 @@ test("a provisioned factory account is handed to the password form, never told i
 test("an ordinary refused sign-in still reports and stays on the card", () => {
   const notified: string[] = []
   let handovers = 0
-  const handled = handOffLockedSignIn(
+  handleFactorySignInError(
     Object.assign(new Error("账号或密码不正确"), { code: "VALIDATION", status: 400 }),
-    {
-      handover: () => {
+    () => {
         handovers += 1
       },
-      notify: (_reason, fallback) => {
+    (_reason, fallback) => {
         notified.push(fallback)
       },
-    },
   )
-  assert.equal(handled, false)
   assert.equal(handovers, 0)
   assert.deepEqual(notified, ["登录失败。请检查邮箱和密码。"])
 })
@@ -220,33 +216,31 @@ test("the factory sign-in card routes its only catch through that hand-over", ()
   // One catch, one call site: the card cannot grow a second fallback branch
   // that reports the credential error for a locked account.
   assert.equal(SUPPLIER_CARD_SOURCE.split("} catch (reason) {").length - 1, 1)
-  assert.match(SUPPLIER_CARD_SOURCE, /handOffLockedSignIn\(reason, \{/)
-  // The optional chain, not a mandatory call: the card is also rendered alone.
-  assert.match(SUPPLIER_CARD_SOURCE, /onPasswordChangeRequired\?\.\(\)/)
-  assert.doesNotMatch(SUPPLIER_CARD_SOURCE, /[^?.]onPasswordChangeRequired\(\)/)
+  assert.match(SUPPLIER_CARD_SOURCE, /handleFactorySignInError\(reason,/)
+  // The callback is only invoked when the host provided it.
+  assert.match(SUPPLIER_CARD_SOURCE, /onPasswordChangeRequired &&/)
   // The spinner drops before the host swaps the tree.
-  const handoverAt = SUPPLIER_CARD_SOURCE.indexOf("handover: () => {")
+  const handoverAt = SUPPLIER_CARD_SOURCE.indexOf("onPasswordChangeRequired &&")
   const busyAt = SUPPLIER_CARD_SOURCE.indexOf("setBusy(false)", handoverAt)
-  const callbackAt = SUPPLIER_CARD_SOURCE.indexOf("onPasswordChangeRequired?.()", handoverAt)
+  const callbackAt = SUPPLIER_CARD_SOURCE.indexOf("onPasswordChangeRequired()", handoverAt)
   assert.ok(handoverAt > 0 && busyAt > handoverAt && callbackAt > busyAt)
 })
 
 test("both factory mounts, anonymous and signed-in, carry the hand-over", () => {
   const app = readFileSync(new URL("../src/app/App.tsx", import.meta.url), "utf8")
   const supplier = readFileSync(
-    new URL("../src/features/supplier/supplier-app.tsx", import.meta.url),
+    new URL("../src/factory/factory-app.tsx", import.meta.url),
     "utf8",
   )
   // Splitting on the tag opener counts the mounts without pinning line numbers.
-  const mounts = app.split("<SupplierApp").slice(1)
+  const mounts = app.split("<FactoryApp").slice(1)
   assert.equal(mounts.length, 2)
   for (const mount of mounts) {
     const element = mount.slice(0, mount.indexOf("/>"))
     assert.match(element, /onPasswordChangeRequired=\{lockAccount\}/)
   }
-  // `lockAccount` clears the add-account card too, so a factory sign-in never
-  // leaves that modal state armed behind the forced password change.
-  assert.match(app, /const lockAccount = \(\) => \{\s*setAddingAccount\(false\)/)
+  // There is one account per browser, so `lockAccount` only swaps the phase.
+  assert.match(app, /const lockAccount = \(\) => \{\s*setAuth\(\{ phase: "locked" \}\)/)
   assert.match(supplier, /onPasswordChangeRequired\?: \(\) => void/)
   assert.match(supplier, /onPasswordChangeRequired=\{onPasswordChangeRequired\}/)
 })

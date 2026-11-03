@@ -34,12 +34,10 @@ import {
   propDefsFor,
   propValueText,
   queryRows,
-  readGalleryDensity,
   searchFromFilters,
   sortGallery,
   tagFacets,
   typeLabelFor,
-  writeGalleryDensity,
   writeGalleryProductToUrl,
   writeGalleryFiltersToUrl,
   type GalleryFilters,
@@ -169,10 +167,10 @@ test("URL roundtrip: filters ⇄ querystring preserve every term", () => {
 
 test("db facets count keyword-matched rows; 库 select cascades 类目", () => {
   const dbs = [
-    { sourceId: "src_1", name: "美国3C厂", country: "US", icon: "🏭" },
-    { sourceId: "src_2", name: "美东厂", country: "US", icon: "" },
+    { source_id: "src_1", name: "美国3C厂", country: "US", icon: "🏭" },
+    { source_id: "src_2", name: "美东厂", country: "US", icon: "" },
   ]
-  const facets = dbFacets(dbs, queryRows(ROWS, ""))
+  const facets = dbFacets(dbs, queryRows(ROWS, "", index))
   assert.deepEqual(
     facets.map((f) => [f.value, f.count]),
     [
@@ -181,7 +179,7 @@ test("db facets count keyword-matched rows; 库 select cascades 类目", () => {
     ],
   )
   // Keyword narrows the counts a facet may promise.
-  const narrowed = dbFacets(dbs, queryRows(ROWS, "灯带"))
+  const narrowed = dbFacets(dbs, queryRows(ROWS, "灯带", index))
   assert.deepEqual(
     narrowed.map((f) => [f.value, f.count]),
     [
@@ -239,41 +237,41 @@ test("tag cloud counts fixed_tags in scope and caps the list", () => {
 })
 
 test("filterGallery combines db + cat + price range + tags(AND) + q", () => {
-  assert.equal(filterGallery(ROWS, EMPTY_FILTERS).length, 3)
+  assert.equal(filterGallery(ROWS, EMPTY_FILTERS, index).length, 3)
   assert.deepEqual(
-    filterGallery(ROWS, { ...EMPTY_FILTERS, db: "src_1" }).map((r) => r.productId),
+    filterGallery(ROWS, { ...EMPTY_FILTERS, db: "src_1" }, index).map((r) => r.productId),
     idsByListedDesc(["prd_1", "prd_2"]),
   )
   assert.deepEqual(
-    filterGallery(ROWS, { ...EMPTY_FILTERS, cat: "20000000" }).map((r) => r.productId),
+    filterGallery(ROWS, { ...EMPTY_FILTERS, cat: "20000000" }, index).map((r) => r.productId),
     ["prd_3"],
   )
   assert.deepEqual(
-    filterGallery(ROWS, { ...EMPTY_FILTERS, priceMax: "10" }).map((r) => r.productId),
+    filterGallery(ROWS, { ...EMPTY_FILTERS, priceMax: "10" }, index).map((r) => r.productId),
     ["prd_2"],
   )
   assert.deepEqual(
-    filterGallery(ROWS, { ...EMPTY_FILTERS, priceMin: "16", priceMax: "60" }).map(
+    filterGallery(ROWS, { ...EMPTY_FILTERS, priceMin: "16", priceMax: "60" }, index).map(
       (r) => r.productId,
     ),
     idsByListedDesc(["prd_1", "prd_3"]),
   )
   // tags stack (AND): 节日 alone matches two rows, 节日+红色 one.
   assert.deepEqual(
-    filterGallery(ROWS, { ...EMPTY_FILTERS, tags: ["节日"] }).map((r) => r.productId),
+    filterGallery(ROWS, { ...EMPTY_FILTERS, tags: ["节日"] }, index).map((r) => r.productId),
     idsByListedDesc(["prd_1", "prd_3"]),
   )
   assert.deepEqual(
-    filterGallery(ROWS, { ...EMPTY_FILTERS, tags: ["节日", "红色"] }).map((r) => r.productId),
+    filterGallery(ROWS, { ...EMPTY_FILTERS, tags: ["节日", "红色"] }, index).map((r) => r.productId),
     ["prd_1"],
   )
   assert.deepEqual(
-    filterGallery(ROWS, { ...EMPTY_FILTERS, q: "p003" }).map((r) => r.productId),
+    filterGallery(ROWS, { ...EMPTY_FILTERS, q: "p003" }, index).map((r) => r.productId),
     ["prd_3"],
   )
   // q matches tags too.
   assert.deepEqual(
-    filterGallery(ROWS, { ...EMPTY_FILTERS, q: "家居" }).map((r) => r.productId),
+    filterGallery(ROWS, { ...EMPTY_FILTERS, q: "家居" }, index).map((r) => r.productId),
     ["prd_2"],
   )
   assert.equal(hasFacetFilters(EMPTY_FILTERS), false)
@@ -323,13 +321,29 @@ test("leadTimeLabel 数字区间补「天」，已有交期口径只加发货", 
   assert.equal(leadTimeLabel("当天发货"), "当天发货")
 })
 
-test("matchesQuery covers 名称/编号/tags", () => {
+test("matchesQuery covers 名称/编号/tags/类目", () => {
   const target = row({ title: "圣诞帽", platformCode: "P001", fixedTags: ["节日"] })
-  assert.equal(matchesQuery(target, "圣诞"), true)
-  assert.equal(matchesQuery(target, "p001"), true)
-  assert.equal(matchesQuery(target, "节日"), true)
-  assert.equal(matchesQuery(target, "收纳"), false)
-  assert.equal(matchesQuery(target, "  "), true)
+  assert.equal(matchesQuery(target, "圣诞", index), true)
+  assert.equal(matchesQuery(target, "p001", index), true)
+  assert.equal(matchesQuery(target, "节日", index), true)
+  assert.equal(matchesQuery(target, "  日用品  ", index), true)
+  assert.equal(matchesQuery(target, "收纳", index), false)
+  assert.equal(matchesQuery(target, "  ", index), true)
+})
+
+test("类目搜索对完整目录生效，筛选结果、下拉计数和分页保持一致", () => {
+  const rows = Array.from({ length: 30 }, (_, i) => row({
+    productId: `prd_${i}`,
+    descriptionCategoryId: i === 29 ? 17030122 : 20000000,
+  }))
+  const query = "日用品"
+  const keywordRows = queryRows(rows, query, index)
+  const filtered = filterGallery(rows, { ...EMPTY_FILTERS, q: query }, index)
+  assert.deepEqual(keywordRows.map((item) => item.productId), ["prd_29"])
+  assert.deepEqual(filtered, keywordRows)
+  assert.deepEqual(categoryFacets(keywordRows, "", index), [{ value: "17030122", label: "节日用品", count: 1 }])
+  assert.deepEqual(paginate(filtered, 2).rows, keywordRows)
+  assert.equal(paginate(filtered, 2).page, 1)
 })
 
 test("paginate clamps and pageNumbers ellipsizes", () => {
@@ -342,20 +356,6 @@ test("paginate clamps and pageNumbers ellipsizes", () => {
   assert.deepEqual(pageNumbers(1, 10), [1, 2, "ellipsis", 10])
   assert.deepEqual(pageNumbers(5, 10), [1, "ellipsis", 4, 5, 6, "ellipsis", 10])
   assert.deepEqual(pageNumbers(2, 3), [1, 2, 3])
-})
-
-test("density persists to storage and tolerates junk", () => {
-  const store = new Map<string, string>()
-  const storage = {
-    getItem: (key: string) => store.get(key) ?? null,
-    setItem: (key: string, value: string) => void store.set(key, value),
-  }
-  assert.equal(readGalleryDensity(storage), "standard")
-  writeGalleryDensity(storage, "compact")
-  assert.equal(readGalleryDensity(storage), "compact")
-  store.set("podhub.supplier-dbs-gallery.density", "huge")
-  assert.equal(readGalleryDensity(storage), "standard")
-  assert.equal(readGalleryDensity(undefined), "standard")
 })
 
 test("propValueText renders each def type; select maps option labels", () => {

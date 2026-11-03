@@ -20,7 +20,7 @@ import (
 const (
 	// State values are jobs.state. They are not river_job_state.
 	// Succeeded, failed, and cancelled are declared in names.go as aliases
-	// of platform/jobsched. Function bodies in this file still say those names.
+	// of queue/contract. The kernel uses those shared row types.
 	StateQueued    = "queued"
 	StateRunning   = "running"
 	StateRetryWait = "retry_wait"
@@ -65,7 +65,7 @@ func Enqueue(ctx context.Context, pool *pgxpool.Pool, jobs []NewJob, laneLimit i
 	return out, nil
 }
 
-// EnqueueOn inserts into a transaction that already has the worker role.
+// EnqueueOn inserts under the caller's worker or tenant app transaction.
 // The caller commits. Listing submit uses it so the intents and the jobs
 // land in one transaction.
 func EnqueueOn(ctx context.Context, tx pgx.Tx, jobs []NewJob, laneLimit int64) ([]Queued, error) {
@@ -152,6 +152,7 @@ func Claim(ctx context.Context, pool *pgxpool.Pool, kind, owner string, limit in
 		if remaining <= 0 {
 			break
 		}
+		lastUser = user
 		n := int(ClaimMaxPerUser)
 		if n > remaining {
 			n = remaining
@@ -181,7 +182,6 @@ func Claim(ctx context.Context, pool *pgxpool.Pool, kind, owner string, limit in
 			}
 			claimed = append(claimed, one)
 			took++
-			lastUser = user
 		}
 		remaining -= took
 	}
@@ -210,7 +210,8 @@ func Renew(ctx context.Context, pool *pgxpool.Pool, lease Lease) (bool, error) {
 		UPDATE public.jobs
 		   SET lease_until = clock_timestamp() + ($4::bigint * interval '1 second'),
 		       updated_at = clock_timestamp()
-		 WHERE id = $1 AND lease_owner = $2 AND lease_epoch = $3 AND state = 'running'`,
+		 WHERE id = $1 AND lease_owner = $2 AND lease_epoch = $3 AND state = 'running'
+		   AND lease_until > clock_timestamp()`,
 		lease.ID, lease.Owner, lease.Epoch, DefaultLeaseSeconds)
 	if err != nil {
 		return false, err
@@ -401,6 +402,18 @@ func withFence(ctx context.Context, pool *pgxpool.Pool, lease Lease, fn func(con
 		return false, err
 	}
 	if err := lockHeadsThenQuotas(ctx, tx, []headKey{{User: lease.UserID, Lane: lease.Lane}}, []string{PermitClass(lease.Kind)}); err != nil {
+		return false, err
+	}
+	var owned bool
+	err = tx.QueryRow(ctx, `
+		SELECT true FROM public.jobs
+		 WHERE id = $1 AND lease_owner = $2 AND lease_epoch = $3 AND state = 'running'
+		   AND lease_until > clock_timestamp()
+		 FOR UPDATE`, lease.ID, lease.Owner, lease.Epoch).Scan(&owned)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
 		return false, err
 	}
 	if err := fn(ctx, tx); err != nil {

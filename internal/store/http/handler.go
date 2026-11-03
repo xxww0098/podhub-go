@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
+	"github.com/xxww0098/podhub-go/internal/platform/httpx/jsonwire"
 	"github.com/xxww0098/podhub-go/internal/store/contract"
 	"github.com/xxww0098/podhub-go/internal/store/domain"
 )
@@ -64,7 +65,11 @@ type Deps struct {
 	// Refresh serves the two snapshot refresh loops.
 	Refresh RefreshActions
 	// Products serves the products mirror pages.
-	Products ProductActions
+	Products         ProductActions
+	ProductWorkspace ProductWorkspaceActions
+	// Shipping serves the seller shipping readiness and ensure routes. Nil
+	// leaves them on the 501 path.
+	Shipping ShippingActions
 }
 
 // Mount registers the group read and the rename write.
@@ -73,6 +78,9 @@ func Mount(r chi.Router, d Deps) {
 		return
 	}
 	h := handler{Deps: d}
+	if d.ProductWorkspace != nil {
+		r.Method(http.MethodGet, PathProductsExport, http.HandlerFunc(h.exportProducts))
+	}
 	r.Method(http.MethodPost, PathRefresh, http.HandlerFunc(h.refresh))
 	if d.Tags != nil {
 		r.Method(http.MethodPost, PathTags, http.HandlerFunc(h.createTag))
@@ -93,6 +101,7 @@ func Mount(r chi.Router, d Deps) {
 		r.Method(http.MethodPost, PathTombstone, http.HandlerFunc(h.consumeTombstone))
 	}
 	if d.Credential != nil {
+		r.Method(http.MethodPost, PathCredentialName, http.HandlerFunc(h.resolveCredentialName))
 		r.Method(http.MethodPost, PathCredential, http.HandlerFunc(h.registerCredential))
 		r.Method(http.MethodDelete, PathCredential, http.HandlerFunc(h.deleteCredential))
 		r.Method(http.MethodPost, PathCredentialTest, http.HandlerFunc(h.testCredential))
@@ -108,6 +117,10 @@ func Mount(r chi.Router, d Deps) {
 		r.Method(http.MethodPost, PathProductSync, http.HandlerFunc(h.syncProducts))
 		r.Method(http.MethodPost, PathProductVerify, http.HandlerFunc(h.verifyProducts))
 		r.Method(http.MethodGet, PathThumbnail, http.HandlerFunc(h.thumbnail))
+	}
+	if d.Shipping != nil {
+		r.Method(http.MethodGet, PathShippingReadiness, http.HandlerFunc(h.shippingReadiness))
+		r.Method(http.MethodPost, PathShippingEnsure, http.HandlerFunc(h.shippingEnsure))
 	}
 }
 
@@ -170,7 +183,7 @@ func (h handler) refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body := refreshBody{storeBody: storeJSON(store), CurrencyWarning: warning, CurrencyMismatch: warning != ""}
-	writeJSON(w, http.StatusOK, body)
+	jsonwire.Write(w, http.StatusOK, body)
 }
 
 func emptyObject(raw []byte) bool {
@@ -260,22 +273,7 @@ func writeFail(w http.ResponseWriter, err error) {
 }
 
 func writeErr(w http.ResponseWriter, status int, message, code string) {
-	writeJSON(w, status, wireError{Error: message, Code: code})
-}
-
-func writeJSON(w http.ResponseWriter, status int, body any) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(body); err != nil {
-		slog.Error("store company json", "err", err.Error())
-		http.Error(w, access.MsgUnavailable, http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(status)
-	_, _ = w.Write(bytes.TrimRight(buf.Bytes(), "\n"))
+	jsonwire.Write(w, status, wireError{Error: message, Code: code})
 }
 
 func jsonContent(ct string) bool {

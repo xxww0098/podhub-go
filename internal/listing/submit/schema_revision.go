@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	catalogcontract "github.com/xxww0098/podhub-go/internal/catalog/contract"
 )
 
 // schemaField is the part of a category field that moves a schema revision.
@@ -347,11 +348,21 @@ func noteSchemaRevision(ctx context.Context, tx pgx.Tx, revision string, snapsho
 	if revision == "" || tx == nil {
 		return nil
 	}
-	_, err := tx.Exec(ctx, `
+	tag, err := tx.Exec(ctx, `
 		INSERT INTO public.listing_schema_revisions (schema_revision, snapshot)
 		VALUES ($1, $2::jsonb)
 		ON CONFLICT (schema_revision) DO NOTHING`, revision, snapshot)
-	return err
+	if err != nil || tag.RowsAffected() == 1 {
+		return err
+	}
+	var registered []byte
+	if err := tx.QueryRow(ctx, `SELECT snapshot FROM public.listing_schema_revisions WHERE schema_revision=$1`, revision).Scan(&registered); err != nil {
+		return err
+	}
+	if !catalogcontract.SameSnapshot(registered, snapshot) {
+		return errors.New("schema revision content mismatch")
+	}
+	return nil
 }
 
 func requiredFieldNames(issues json.RawMessage) []string {

@@ -248,7 +248,7 @@ export function DelegateSetupDialog({
               </span>
             </DialogTitle>
             <DialogDescription>
-              逐行选厂家并上传原图（jpg/png/webp/psd，单张 ≤500MB）；全部就绪后
+              逐行选厂家并上传图片（jpg/png/webp，单张 ≤500MB）；全部就绪后
               {isRest ? "委托剩余行" : "建单"}。
             </DialogDescription>
           </DialogHeader>

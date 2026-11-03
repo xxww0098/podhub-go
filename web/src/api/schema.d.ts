@@ -10,20 +10,84 @@ type XOR<T, U> = (T | U) extends object ? (Without<T, U> & U) | (Without<U, T> &
 type OneOf<T extends any[]> = T extends [infer Only] ? Only : T extends [infer A, infer B, ...infer Rest] ? OneOf<[XOR<A, B>, ...Rest]> : never;
 
 export interface paths {
+  "/api/listing/store-policies/{store_id}": {
+    /** Read a visible store's dispatch policy and Shanghai daily usage */
+    get: operations["listing_store_policy_get"];
+    /** Replace a store dispatch policy as a workspace manager */
+    put: operations["listing_store_policy_put"];
+    parameters: {
+      path: {
+        store_id: string;
+      };
+    };
+  };
+  "/api/workspaces/products/export": {
+    /** @description 导出当前筛选的全部可见商品镜像，最多5万行且最多64MiB；超限返回413，不返回部分CSV。 */
+    get: operations["exportWorkspaceProducts"];
+  };
+  "/api/listing/task-records": {
+    /** @description Existing submission receipts, media jobs and product sync jobs visible to the current workspace member. This read never sends or retries work. */
+    get: operations["listingTaskRecords"];
+  };
+  "/api/workspace/slice-storage": {
+    get: operations["getWorkspaceSliceStorage"];
+    /** @description Owner only. Omit bucket to generate podhub- followed by a random UUID without hyphens, or supply a valid R2 name before creation. The reserved name cannot change during retries or after activation. Custom names are never adopted from an existing bucket; ambiguous creation requires review. Creates through OAuth, configures CORS and public access, obtains a bucket-scoped credential, then verifies actual upload/read/list/delete before activation. */
+    post: operations["provisionWorkspaceSliceStorage"];
+  };
+  "/api/workspace/slice-storage/cleanup": {
+    /** @description Owner only. Daily schedules use Asia/Shanghai and begin at the next selected time. Manual mode stops starting automatic clears; a running clear must finish before changing the policy. */
+    patch: operations["updateWorkspaceSliceCleanup"];
+  };
+  "/api/workspace/slice-storage/clear": {
+    post: operations["clearWorkspaceSliceStorage"];
+  };
+  "/api/workspace/slice-storage/objects": {
+    get: operations["listWorkspaceSliceObjects"];
+  };
+  "/api/workspace/slice-storage/stats": {
+    get: operations["workspaceSliceStats"];
+  };
+  "/api/workspace/slice-storage/download": {
+    get: operations["downloadWorkspaceSliceObject"];
+  };
+  "/api/workspace/slice-storage/objects/delete": {
+    post: operations["deleteWorkspaceSliceObjects"];
+  };
+  "/api/workspace/slice-storage/cloudflare": {
+    get: operations["getCloudflareConnection"];
+    delete: operations["disconnectCloudflare"];
+  };
+  "/api/workspace/slice-storage/cloudflare/authorize": {
+    /** @description Creates a login-session-bound OAuth state cookie and an S256 PKCE authorization URL. The caller navigates to the returned URL. */
+    post: operations["authorizeCloudflare"];
+  };
+  "/api/workspace/slice-storage/cloudflare/callback": {
+    /** @description Owner only. Exchanges a single-use authorization code with PKCE. Stores the access token in an encrypted HttpOnly cookie for at most 15 minutes, bound to the current workspace and PodHub login session. No refresh token is retained. */
+    get: operations["callbackCloudflare"];
+  };
+  "/api/workspace/slice-storage/cloudflare/accounts": {
+    get: operations["listCloudflareAccounts"];
+  };
   "/api/billing/subscription": {
     get: operations["subscriptionGet"];
   };
   "/api/billing/quotes": {
     post: operations["subscriptionQuote"];
   };
-  "/api/billing/schedule": {
-    post: operations["subscriptionSchedule"];
+  "/api/billing/keep": {
+    post: operations["subscriptionKeep"];
   };
   "/api/billing/orders": {
     post: operations["subscriptionOrderCreate"];
   };
   "/api/billing/orders/{public_id}": {
     get: operations["subscriptionOrderGet"];
+  };
+  "/api/billing/orders/{public_id}/pay": {
+    post: operations["subscriptionOrderPay"];
+  };
+  "/api/billing/auto-renew": {
+    put: operations["subscriptionAutoRenew"];
   };
   "/mcp": {
     /**
@@ -130,6 +194,8 @@ export interface paths {
   "/api/listing/rows/{id}": {
     /** One listing row */
     get: operations["getListingRow"];
+    /** Delete one inactive product draft, retaining jobs and billing receipts */
+    delete: operations["deleteListingRow"];
     /** Save one row's draft through listing-core */
     patch: operations["patchListingRow"];
     parameters: {
@@ -222,7 +288,7 @@ export interface paths {
     get: operations["getListingEvents"];
   };
   "/api/listing/browser/grant": {
-    /** Hand the browser one store key for a direct Ozon send. It does not enqueue or dial Ozon. */
+    /** Hand an owner or manager one store key for a direct Ozon send. It does not enqueue or dial Ozon. */
     post: operations["postListingBrowserGrant"];
   };
   "/api/listing/browser/import-info": {
@@ -246,32 +312,26 @@ export interface paths {
   "/api/auth/logout": {
     post: operations["postAuthLogout"];
   };
-  "/api/auth/switch": {
-    post: operations["postAuthSwitch"];
-  };
   "/api/auth/password": {
     post: operations["postAuthPassword"];
   };
   "/api/auth/forgot": {
     post: operations["postAuthForgot"];
   };
+  "/api/auth/email/change": {
+    post: operations["postAuthEmailChange"];
+  };
+  "/api/auth/email/confirm": {
+    post: operations["postAuthEmailConfirm"];
+  };
   "/api/auth/reset": {
     post: operations["postAuthReset"];
-  };
-  "/api/auth/verify": {
-    post: operations["postAuthVerify"];
-  };
-  "/api/auth/verify/resend": {
-    post: operations["postAuthVerifyResend"];
   };
   "/api/auth/session": {
     get: operations["getAuthSession"];
   };
   "/api/auth/name": {
     put: operations["putAuthName"];
-  };
-  "/api/auth/accounts/{uuid}": {
-    delete: operations["deleteAuthAccount"];
   };
   "/api/workspaces/members": {
     get: operations["getWorkspaceMembers"];
@@ -418,13 +478,10 @@ export interface paths {
     };
   };
   "/api/automation/grants": {
-    /** automation_grants_list */
     get: operations["automation_grants_list"];
-    /** automation_grant_create */
     post: operations["automation_grant_create"];
   };
   "/api/automation/grants/{id}/revoke": {
-    /** automation_grant_revoke */
     post: operations["automation_grant_revoke"];
     parameters: {
       path: {
@@ -464,6 +521,23 @@ export interface paths {
     /** ingest_client_listing_logs */
     post: operations["ingest_client_listing_logs"];
   };
+  "/api/admin/factories": {
+    /** 列出可绑定的工厂 */
+    get: operations["list_factories"];
+    /** 超级管理员创建工厂及首个登录账号 */
+    post: operations["create_factory"];
+  };
+  "/api/admin/factories/{factory_id}": {
+    /** 修改工厂资料 */
+    put: operations["update_factory"];
+    /** 删除未绑定商品库的工厂 */
+    delete: operations["delete_factory"];
+    parameters: {
+      path: {
+        factory_id: string;
+      };
+    };
+  };
   "/api/admin/supplier-accounts": {
     /** list_supplier_accounts */
     get: operations["list_supplier_accounts"];
@@ -482,13 +556,10 @@ export interface paths {
     };
   };
   "/api/admin/supplier-automation/grants": {
-    /** supplier_automation_grants_list */
     get: operations["supplier_automation_grants_list"];
-    /** supplier_automation_grant_create */
     post: operations["supplier_automation_grant_create"];
   };
   "/api/admin/supplier-automation/grants/{id}/revoke": {
-    /** supplier_automation_grant_revoke */
     post: operations["supplier_automation_grant_revoke"];
     parameters: {
       path: {
@@ -515,6 +586,10 @@ export interface paths {
   "/api/admin/supplier-db-storage/uploads": {
     /** admin_supplier_db_storage_uploads_create */
     post: operations["admin_supplier_db_storage_uploads_create"];
+  };
+  "/api/admin/supplier-db-storage/uploads/confirm": {
+    /** Verify a staged storage upload and promote it to its authorized path */
+    post: operations["confirm_supplier_db_storage_upload"];
   };
   "/api/admin/supplier-dbs": {
     /** list_supplier_dbs */
@@ -602,7 +677,7 @@ export interface paths {
   "/api/admin/supplier-dbs/{source_id}/fulfillers": {
     /** list_source_fulfillers */
     get: operations["list_source_fulfillers"];
-    /** grant_source_fulfiller */
+    /** Bind an existing supplier account to receive this factory's dispatches */
     post: operations["grant_source_fulfiller"];
     parameters: {
       path: {
@@ -623,7 +698,7 @@ export interface paths {
   "/api/admin/supplier-dbs/{source_id}/catalog-managers": {
     /** list_catalog_managers */
     get: operations["list_catalog_managers"];
-    /** grant_catalog_manager */
+    /** Authorize an existing platform account for this catalog */
     post: operations["grant_catalog_manager"];
     parameters: {
       path: {
@@ -641,29 +716,9 @@ export interface paths {
       };
     };
   };
-  "/api/admin/supplier-dbs/{source_id}/rows/{product_id}/prompt/diff": {
-    /** diff_supplier_prompt */
-    get: operations["diff_supplier_prompt"];
-    parameters: {
-      path: {
-        source_id: string;
-        product_id: string;
-      };
-    };
-  };
   "/api/admin/supplier-dbs/{source_id}/rows/{product_id}/prompt/preview": {
     /** preview_supplier_prompt */
     post: operations["preview_supplier_prompt"];
-    parameters: {
-      path: {
-        source_id: string;
-        product_id: string;
-      };
-    };
-  };
-  "/api/admin/supplier-dbs/{source_id}/rows/{product_id}/prompt/publish": {
-    /** publish_supplier_prompt_revision */
-    post: operations["publish_supplier_prompt_revision"];
     parameters: {
       path: {
         source_id: string;
@@ -715,23 +770,6 @@ export interface paths {
     parameters: {
       path: {
         source_id: string;
-      };
-    };
-  };
-  "/api/admin/supplier-prompts": {
-    /** list_supplier_prompts */
-    get: operations["list_supplier_prompts"];
-  };
-  "/api/admin/supplier-prompts/sync": {
-    /** sync_supplier_prompts */
-    post: operations["sync_supplier_prompts"];
-  };
-  "/api/admin/supplier-prompts/{product_id}": {
-    /** patch_supplier_prompt */
-    patch: operations["patch_supplier_prompt"];
-    parameters: {
-      path: {
-        product_id: string;
       };
     };
   };
@@ -827,6 +865,8 @@ export interface paths {
     get: operations["adminAiRequestsSummary"];
   };
   "/api/admin/ai/prices": {
+    /** Read current platform model prices */
+    get: operations["adminAiPricesGet"];
     /** publish_price */
     put: operations["publish_price"];
     /** unpublish_price */
@@ -887,7 +927,9 @@ export interface paths {
     post: operations["adminIntegrationsAiVerify"];
   };
   "/api/admin/integrations/config": {
-    /** replace */
+    /** Read the credential-free platform AI configuration */
+    get: operations["adminIntegrationsConfigGet"];
+    /** Replace platform AI configuration with a revision check */
     put: operations["adminIntegrationsConfigReplace"];
   };
   "/api/admin/listing/packages/official": {
@@ -983,6 +1025,21 @@ export interface paths {
       };
     };
   };
+  "/api/admin/subscription-coupons": {
+    /** List subscription percentage coupons */
+    get: operations["adminSubscriptionCouponsList"];
+    /** Create an immutable percentage coupon */
+    post: operations["adminSubscriptionCouponsCreate"];
+  };
+  "/api/admin/subscription-coupons/{code}": {
+    /** Enable or disable a subscription coupon */
+    put: operations["adminSubscriptionCouponsUpdate"];
+    parameters: {
+      path: {
+        code: string;
+      };
+    };
+  };
   "/api/admin/redeem-codes": {
     /** list */
     get: operations["admin_get_api_admin_redeem-codes"];
@@ -1023,10 +1080,6 @@ export interface paths {
     /** seller_relay_probe */
     post: operations["seller_relay_probe"];
   };
-  "/api/admin/step-up": {
-    /** step_up */
-    post: operations["step_up"];
-  };
   "/api/admin/stores/products": {
     /** admin_observation_products */
     get: operations["admin_observation_products"];
@@ -1051,14 +1104,6 @@ export interface paths {
     /** issue_grant */
     post: operations["issue_grant"];
   };
-  "/api/admin/totp/confirm": {
-    /** confirm */
-    post: operations["confirm"];
-  };
-  "/api/admin/totp/enroll": {
-    /** enroll */
-    post: operations["enroll"];
-  };
   "/api/admin/users": {
     /** list_users */
     get: operations["list_users"];
@@ -1068,24 +1113,6 @@ export interface paths {
   "/api/admin/users/{uuid}/admin": {
     /** set_user_admin */
     post: operations["set_user_admin"];
-    parameters: {
-      path: {
-        uuid: string;
-      };
-    };
-  };
-  "/api/admin/users/{uuid}/member-seats/apply": {
-    /** apply_user_member_seats */
-    post: operations["apply_user_member_seats"];
-    parameters: {
-      path: {
-        uuid: string;
-      };
-    };
-  };
-  "/api/admin/users/{uuid}/member-seats/preview": {
-    /** preview_member_seats */
-    post: operations["preview_member_seats"];
     parameters: {
       path: {
         uuid: string;
@@ -1326,9 +1353,23 @@ export interface paths {
       };
     };
   };
-  "/api/supplier/dispatches": {
-    /** One page of the supplier's dispatches, filtered by state */
-    get: operations["list_dispatches"];
+  "/api/supplier/workspaces/{source_id}/dispatches": {
+    /** One page of up to 20 dispatches for an authorized factory workspace */
+    get: operations["list_supplier_workspace_dispatches"];
+    parameters: {
+      path: {
+        source_id: string;
+      };
+    };
+  };
+  "/api/supplier/workspaces/{source_id}/dashboard": {
+    /** Complete status counts and urgent dispatches for an authorized factory workspace */
+    get: operations["get_supplier_workspace_dashboard"];
+    parameters: {
+      path: {
+        source_id: string;
+      };
+    };
   };
   "/api/supplier/dispatches/{dispatch_id}": {
     /** One dispatch with its lines and assets */
@@ -1349,7 +1390,7 @@ export interface paths {
     };
   };
   "/api/supplier/dispatches/{dispatch_id}/assets/{asset_id}": {
-    /** Download one dispatch asset; JSON metadata or raw bytes */
+    /** Download one dispatch asset; JSON grant or temporary object redirect */
     get: operations["supplierDownload"];
     parameters: {
       path: {
@@ -1399,14 +1440,36 @@ export interface paths {
     /** not ported (drop-off list fields are unverified) */
     post: operations["postSellerWarehouseDropOffList"];
   };
+  "/api/ai/image-sets": {
+    /** Recover a tenant-owned request by its original key without repeating inference */
+    get: operations["aiFindImageSet"];
+    /** Generate and persist exactly three product images with independent per-image billing */
+    post: operations["aiCreateImageSet"];
+  };
+  "/api/ai/image-sets/capability": {
+    /** Read the configured image model and published three-image price without purchasing */
+    get: operations["aiImageSetCapability"];
+  };
+  "/api/ai/image-sets/{id}": {
+    /** Read a tenant-owned set; never retries inference */
+    get: operations["aiGetImageSet"];
+  };
   "/api/ai/chat/completions": {
     /** Hold, relay, and settle one non-streaming chat completion per Idempotency-Key */
     post: operations["aiChatCompletions"];
   };
+  "/api/ai/v1/messages": {
+    /** Hold, relay, and settle one non-streaming Anthropic Messages call per Idempotency-Key */
+    post: operations["aiAnthropicMessages"];
+  };
+  "/api/ai/responses": {
+    /** Hold, relay, and settle one non-streaming Responses call per Idempotency-Key */
+    post: operations["aiResponses"];
+  };
   "/api/ai/ocr/completions": {
-    /** Stored OCR result for one Idempotency-Key */
+    /** Read one bound OCR receipt without repeating inference */
     get: operations["aiOcrResult"];
-    /** OCR purchase; refused with 400 because listing writeback is not served */
+    /** Verify private image bytes, purchase one recognition and persist its listing result */
     post: operations["aiOcrCompletions"];
   };
   "/api/ai/wallet": {
@@ -1464,9 +1527,11 @@ export interface paths {
     /** Ozon attribute schema for one category and type from the 24h cache; a miss is filled with platform fetch keys */
     get: operations["catalogSchema"];
   };
-  "/api/catalog/fetch-config": {
+  "/api/admin/catalog/fetch-config": {
     /** Platform catalog fetch schedule, keys, and cache freshness; super admin only */
     get: operations["catalogFetchConfig"];
+    /** Save platform category credentials and a disabled fetch schedule; super admin only */
+    put: operations["saveCatalogFetchConfig"];
   };
   "/api/catalog/wb/subjects/{subject_id}": {
     /** Stored WB subject catalog and validated defaults; the only accepted query is one language parameter */
@@ -1508,7 +1573,7 @@ export interface paths {
     get: operations["listFieldLibrary"];
   };
   "/api/workspaces/stores/{uuid}": {
-    /** Edit one Store's name, Client ID, assignee key grant, tags, or group */
+    /** Edit one Store's name, Client ID, tags, or group */
     put: operations["storeUpdate"];
     /** Soft-delete one Store, purge its held key, and release its quota slot */
     delete: operations["storeDelete"];
@@ -1563,12 +1628,14 @@ export interface paths {
     delete: operations["delete_me"];
   };
   "/api/avatars/workspaces/{workspace_id}": {
+    get: operations["get_workspace"];
     put: operations["put_workspace"];
   };
   "/api/avatars/workspaces/{workspace_id}/upload": {
+    put: operations["upload_workspace"];
     post: operations["init_workspace"];
   };
-  "/api/catalog/fetch-config/run": {
+  "/api/admin/catalog/fetch-config/run": {
     /**
      * Fetch now, whatever the schedule says.
      * @description The handler claims and answers immediately: one run is the tree download
@@ -1586,14 +1653,8 @@ export interface paths {
      */
     post: operations["run_now"];
   };
-  "/api/catalog/fetch-config/wb-credential": {
-    put: operations["put_wb_credential"];
-  };
   "/api/catalog/schema/dictionary-search": {
     post: operations["search_catalog_dictionary"];
-  };
-  "/api/integrations/config": {
-    get: operations["integrationsConfigGet"];
   };
   "/api/invitations": {
     post: operations["create_invite"];
@@ -1606,18 +1667,6 @@ export interface paths {
   };
   "/api/invitations/{uuid}/decline": {
     post: operations["decline_invite"];
-  };
-  "/api/listing/cards/{id}/reconcile": {
-    post: operations["reconcile_card"];
-  };
-  "/api/listing/cards/{id}/sku-import/preview": {
-    post: operations["preview_card_sku_import"];
-  };
-  "/api/listing/cards/{id}/templates/{digest}": {
-    get: operations["listing_template_download"];
-  };
-  "/api/listing/rows/release-unknown": {
-    post: operations["release_unknown_rows"];
   };
   "/api/listing/rows/{id}/ai/fail": {
     post: operations["fail_row_ai"];
@@ -1635,25 +1684,11 @@ export interface paths {
     post: operations["confirm_row_image"];
   };
   "/api/listing/rows/{id}/prepare": {
+    /** @description 固定识别、切片或上传的持久化任务；prepare 同时安排可执行的识别和媒体阶段，各阶段阻塞项独立返回。自动化调用尚未接入。 */
     post: operations["prepare_row"];
   };
   "/api/listing/rows/{id}/prepare/cancel": {
     post: operations["cancel_prepare_row"];
-  };
-  "/api/listing/rows/{id}/repair-and-submit": {
-    post: operations["repair_and_submit_row"];
-  };
-  "/api/listing/templates": {
-    post: operations["listing_template_register"];
-  };
-  "/api/listing/templates/{id}/confirm": {
-    post: operations["listing_template_confirm"];
-  };
-  "/api/listing/templates/{id}/multipart/abort": {
-    post: operations["listing_template_multipart_abort"];
-  };
-  "/api/listing/templates/{id}/multipart/complete": {
-    post: operations["listing_template_multipart_complete"];
   };
   "/api/me/catalog-automation/grants": {
     get: operations["catalog_automation_grants_list"];
@@ -1661,6 +1696,11 @@ export interface paths {
   };
   "/api/me/catalog-automation/grants/{id}/revoke": {
     post: operations["catalog_automation_grant_revoke"];
+    parameters: {
+      path: {
+        id: string;
+      };
+    };
   };
   "/api/media/objects/complete-batch": {
     post: operations["complete_batch"];
@@ -1692,9 +1732,6 @@ export interface paths {
   "/api/notifications/{uuid}/read": {
     post: operations["mark_one_read"];
   };
-  "/api/ocr-quota": {
-    get: operations["ocr_quota"];
-  };
   "/api/orders": {
     get: operations["list_own_orders"];
   };
@@ -1711,17 +1748,8 @@ export interface paths {
      */
     post: operations["recover_own_order"];
   };
-  "/api/payment-intent": {
-    post: operations["payment_intent"];
-  };
-  "/api/payment-intent/renewal": {
-    post: operations["renewal_intent"];
-  };
   "/api/payment-methods": {
     get: operations["get_payment_methods"];
-  };
-  "/api/plans": {
-    get: operations["entitlementPlans"];
   };
   "/api/prompts/categories": {
     get: operations["list_leaves"];
@@ -1734,24 +1762,6 @@ export interface paths {
   };
   "/api/view/account-overview": {
     get: operations["account_overview"];
-  };
-  "/api/workspace/billing/overview": {
-    /**
-     * The Workspace's entitlement overview for the plans screen: purchased vs
-     * effective seats, the admin overrides, Store usage, every unexpired lot a
-     * renewal may target, and what the next lot boundary flips. Display only —
-     * it projects the same facts the writers enforce.
-     */
-    get: operations["workspace_billing_overview_get"];
-  };
-  "/api/workspace/ops/product-variants/operations": {
-    post: operations["product_variant_operations"];
-  };
-  "/api/workspace/ops/product-variants/operations/{operation_id}": {
-    get: operations["product_variant_operation_status"];
-  };
-  "/api/workspace/ops/product-variants/previews": {
-    post: operations["product_variant_previews"];
   };
   "/api/workspaces": {
     get: operations["list_workspaces"];
@@ -1784,14 +1794,20 @@ export interface paths {
   };
   "/api/workspaces/stores/credentials/export": {
     /**
-     * Export the Cloud-held Seller keys the actor may manage, as plaintext rows.
-     * @description This is the one route where plaintext leaves Cloud: it answers the same
-     * `may_manage_key` boundary the register/rotate/delete routes enforce — Owner
-     * receives every keyed Store, an assignee only the Stores whose 「允许指派人
-     * 管理密钥」is open for them. The audit row records who exported and how many
-     * keys, never key material.
+     * Export the workspace's Cloud-held Seller keys as plaintext rows.
+     * @description Workspace owners and managers can export every keyed store in their workspace.
+     * The audit row records who exported and how many keys, never key material.
      */
     post: operations["storesCredentialsExport"];
+  };
+  "/api/workspaces/stores/credentials/resolve-name": {
+    /**
+     * Read the Seller store name without saving credentials or store changes.
+     * @description Requires a usable workspace seat. With an empty api_key, store_uuid must
+     * identify a store whose held credential the actor may test, and client_id
+     * must match that credential. Neither keys nor upstream response bodies are returned.
+     */
+    post: operations["storesCredentialsResolveName"];
   };
   "/api/workspaces/stores/finance-balances/refresh": {
     post: operations["storesFinanceBalancesRefresh"];
@@ -1849,18 +1865,152 @@ export interface paths {
     /** One page of preparation jobs */
     get: operations["listListingJobs"];
   };
+  "/api/admin/ai/ocr-tests/{id}/upload": {
+    post: operations["ai_ocr_test_upload"];
+  };
+  "/api/admin/ai/ocr-tests/{id}/confirm": {
+    post: operations["ai_ocr_test_confirm"];
+  };
+  "/api/admin/ai/ocr-tests/{id}": {
+    get: operations["ai_ocr_test_get"];
+    post: operations["ai_ocr_test_run"];
+  };
+  "/api/supplier-catalog/sources/{source_id}/uploads": {
+    /** presign_supplier_db_upload */
+    post: operations["presignCatalogManagerUpload"];
+    parameters: {
+      path: {
+        source_id: string;
+      };
+    };
+  };
+  "/api/supplier-catalog/sources/{source_id}/uploads/confirm": {
+    /** confirm_supplier_db_upload */
+    post: operations["confirmCatalogManagerUpload"];
+    parameters: {
+      path: {
+        source_id: string;
+      };
+    };
+  };
+  "/api/supplier-catalog/sources/{source_id}/uploads/abort": {
+    /** abort_supplier_db_upload */
+    post: operations["abortCatalogManagerUpload"];
+    parameters: {
+      path: {
+        source_id: string;
+      };
+    };
+  };
 }
 
 export type webhooks = Record<string, never>;
 
 export interface components {
   schemas: {
+    StoreListingPolicy: {
+      /** Format: uuid */
+      store_id: string;
+      daily_cap: number | null;
+      min_gap_seconds: number;
+      /** @enum {string} */
+      timezone: "Asia/Shanghai";
+      submitted_today: number;
+      /** Format: date-time */
+      last_dispatched_at: string | null;
+      /** Format: date-time */
+      next_allowed_at: string | null;
+      /** @enum {string|null} */
+      wait_reason: "STORE_DAILY_CAP_REACHED" | "STORE_MIN_SEND_GAP" | null;
+      can_manage: boolean;
+    };
+    TaskRecordsPage: {
+      items: components["schemas"]["TaskRecord"][];
+      next_cursor: string | null;
+    };
+    TaskRecord: {
+      /** Format: uuid */
+      id: string;
+      /** @enum {string} */
+      kind: "listing" | "product_sync" | "media";
+      /** Format: uuid */
+      store_id: string | null;
+      store_name: string;
+      title: string;
+      /** Format: uuid */
+      card_id: string | null;
+      /** Format: uuid */
+      row_id: string | null;
+      state: string;
+      error_code: string;
+      external_task_id: string | null;
+      attempt: number | null;
+      /** Format: date-time */
+      next_attempt_at: string | null;
+      /** Format: date-time */
+      created_at: string;
+      /** Format: date-time */
+      updated_at: string;
+    };
+    CloudflareConnection: {
+      available: boolean;
+      connected: boolean;
+      /**
+       * Format: int64
+       * @description Unix timestamp in seconds; zero when not connected
+       */
+      expires_at: number;
+    };
+    WorkspaceSliceStorage: {
+      configured: boolean;
+      can_manage: boolean;
+      /** @description Current owner and server-side deletion switch both allow deletion. */
+      delete_enabled?: boolean;
+      /** @description Stable storage namespace used to bind folder deletion to the selected workspace configuration. */
+      key_prefix?: string;
+      bucket?: string;
+      public_base_url?: string;
+      oauth_available?: boolean;
+      cloudflare_connected?: boolean;
+      /** @enum {string} */
+      clear_status?: "idle" | "pending" | "retrying" | "completed";
+      /** @enum {string} */
+      daily_clear_status?: "waiting" | "unconfirmed" | "running" | "retrying" | "completed";
+      /** @enum {string} */
+      cleanup_mode?: "daily" | "manual";
+      /** @description Daily cleanup time in Asia/Shanghai; null in manual mode. */
+      cleanup_time?: string | null;
+      provision?: ({
+        id: string;
+        account_id: string;
+        bucket: string;
+        /** @enum {string} */
+        phase: "creating" | "bucket_ready" | "token_creating" | "verifying" | "ready" | "blocked";
+        error_code: string;
+      }) | null;
+    };
+    WorkspaceSliceObjects: {
+      objects: components["schemas"]["WorkspaceSliceObject"][];
+      folders: string[];
+      next_cursor: string;
+    };
+    WorkspaceSliceObject: {
+      key: string;
+      size: number;
+      last_modified: string;
+      etag: string;
+    };
+    WorkspaceSliceStats: {
+      objects: number;
+      bytes: number;
+      complete: boolean;
+      /** Format: date-time */
+      observed_at: string;
+    };
     SubscriptionTarget: {
       plan_key: string;
       /** Format: int64 */
-      extra_stores: number;
-      /** Format: int64 */
-      extra_members: number;
+      stores: number;
     };
     SubscriptionPeriod: {
       /** Format: int64 */
@@ -1871,15 +2021,8 @@ export interface components {
       ends_at: string;
       plan_key: string;
       /** Format: int64 */
-      extra_stores: number;
-      /** Format: int64 */
-      extra_members: number;
-      /** Format: int64 */
       stores: number;
-      /** Format: int64 */
-      members: number;
       keep_store_ids: string[] | null;
-      keep_member_ids: number[] | null;
     };
     SubscriptionView: {
       /** Format: int64 */
@@ -1887,10 +2030,6 @@ export interface components {
       plan_key: string;
       /** @enum {string} */
       status: "free" | "active" | "expired";
-      /** Format: int64 */
-      extra_stores: number;
-      /** Format: int64 */
-      extra_members: number;
       /** Format: date-time */
       current_end: string | null;
       /** Format: date-time */
@@ -1909,22 +2048,10 @@ export interface components {
         /** Format: int64 */
         limit: number;
       };
-      next: {
+      next_renewal: {
         plan_key: string;
         /** Format: int64 */
-        extra_stores: number;
-        /** Format: int64 */
-        extra_members: number;
-        /** Format: int64 */
         stores: number;
-        /** Format: int64 */
-        members: number;
-        keep_store_ids: string[] | null;
-        /** Format: date-time */
-        effective_at?: string;
-        keep_member_ids: number[] | null;
-      };
-      next_renewal: {
         /** Format: int64 */
         months: number;
         /** Format: int64 */
@@ -1945,47 +2072,50 @@ export interface components {
       plans: {
           key: string;
           /** Format: int64 */
-          monthly_cents: number;
-          /** Format: int64 */
-          stores: number;
-          /** Format: int64 */
-          members: number;
+          store_monthly_cents: number;
         }[];
-      /** Format: int64 */
-      store_monthly_cents: number;
-      /** Format: int64 */
-      member_monthly_cents: number;
       draining: boolean;
       pending_order: boolean;
       pending_public_id?: string;
+      /** @description unselected marks an auto-issued renewal that still needs a payment channel. */
+      pending_provider?: string;
+      /** Format: int64 */
+      pending_amount_cents?: number;
+      /** Format: date-time */
+      pending_deadline_at?: string | null;
+      auto_renew: boolean;
+      /** @description Paid service ended; no store may run new work until renewed. */
+      frozen: boolean;
+      /** Format: int64 */
+      store_cap: number;
       purchase_agreement: {
         version: string;
         title: string;
         effective_at: string;
         content: string;
       };
-      member_choices: {
-          /** Format: int64 */
-          id: number;
-          name: string;
-          owner: boolean;
-        }[];
     };
     SubscriptionQuoteRequest: {
+      /** @description Optional percentage coupon; validated again when creating the order. */
+      coupon_code?: string;
       /** @enum {string} */
-      action: "subscribe" | "renew" | "change" | "schedule" | "keep";
+      action: "subscribe" | "renew" | "change" | "keep";
       target?: components["schemas"]["SubscriptionTarget"];
       /** @enum {integer} */
       months?: 1 | 3 | 6 | 12;
       keep_store_ids?: string[] | null;
-      keep_member_ids?: number[] | null;
       /** Format: int64 */
       period_id?: number;
-      renew_with_change?: boolean;
       /** Format: uuid */
       expected_workspace_uuid: string;
     };
     SubscriptionQuote: {
+      coupon?: {
+        code: string;
+        discount_percent: number;
+        /** Format: int64 */
+        discount_cents: number;
+      };
       quote_id: string;
       /** Format: date-time */
       expires_at: string;
@@ -2009,8 +2139,6 @@ export interface components {
         plan_key: string;
         /** Format: int64 */
         stores: number;
-        /** Format: int64 */
-        members: number;
       };
       /** Format: int64 */
       amount_cents: number;
@@ -2019,13 +2147,14 @@ export interface components {
           /** Format: int64 */
           cents: number;
         }[];
-      schedule_only: boolean;
+      free_only: boolean;
       keep_store_ids: string[] | null;
-      renewal: components["schemas"]["SubscriptionTarget"];
-      /** Format: int64 */
-      renewal_amount_cents: number;
     };
     SubscriptionOrderBrief: {
+      provider?: string;
+      entry_state?: string;
+      qr_code?: string | null;
+      pay_url?: string | null;
       /** Format: int64 */
       order_id: number;
       public_id: string;
@@ -2033,6 +2162,10 @@ export interface components {
       payment_deadline_at: string;
     };
     SubscriptionOrder: {
+      provider?: string;
+      entry_state?: string;
+      qr_code?: string | null;
+      pay_url?: string | null;
       public_id: string;
       status: string;
       /** Format: int64 */
@@ -2047,13 +2180,23 @@ export interface components {
         accepted_by: string;
       };
     };
-    SubscriptionScheduleRequest: {
+    SubscriptionKeepRequest: {
       quote_id: string;
       cancel_pending?: boolean;
     };
     SubscriptionOrderRequest: {
+      /** @enum {string} */
+      provider?: "manual" | "alipay" | "wechat" | "stripe" | "airwallex" | "easypay_alipay" | "easypay_wechat";
       quote_id: string;
       accepted_version: string;
+    };
+    SubscriptionPayRequest: {
+      /** @enum {string} */
+      provider?: "manual" | "alipay" | "wechat" | "stripe" | "airwallex" | "easypay_alipay" | "easypay_wechat";
+      accepted_version: string;
+    };
+    SubscriptionAutoRenewRequest: {
+      enabled: boolean;
     };
     SubscriptionError: {
       error: string;
@@ -2204,6 +2347,56 @@ export interface components {
       created_at: string;
       settled_at: string | null;
     };
+    AIImageSetCapability: {
+      available: boolean;
+      account_id?: string;
+      /** @enum {string} */
+      model?: "qwen-image-2.1-pro";
+      /** @enum {integer} */
+      count?: 3;
+      /** Format: int64 */
+      unit_microfen?: number;
+      /** Format: int64 */
+      set_microfen?: number;
+    };
+    AIImageSetRequest: {
+      account_id: string;
+      /** @enum {string} */
+      model: "qwen-image-2.1-pro";
+      source_base64: string;
+      /**
+       * Format: int64
+       * @description Confirmed per-image price from capability; a changed current price is rejected before any purchase
+       */
+      expected_unit_microfen: number;
+    };
+    AIImageAsset: {
+      /** Format: uuid */
+      object_id: string;
+      /** Format: uri */
+      url: string;
+      sha256: string;
+    };
+    AIImageSetItem: {
+      ordinal: number;
+      /** @enum {string} */
+      status: "ready" | "processing" | "failed" | "unknown";
+      request_id: string;
+      error_class?: string;
+      /** Format: int64 */
+      charged_microfen: number;
+      asset?: components["schemas"]["AIImageAsset"];
+    };
+    AIImageSet: {
+      /** Format: uuid */
+      id: string;
+      /** @enum {string} */
+      requested_model: "qwen-image-2.1-pro";
+      /** @enum {string} */
+      status: "ready" | "processing" | "partial" | "failed" | "unknown";
+      source_sha256: string;
+      items: components["schemas"]["AIImageSetItem"][];
+    };
     AIChatResponse: {
       /** @description OpenAI chat completion object as returned upstream; SSE replies are folded into one object */
       completion: Record<string, never>;
@@ -2212,9 +2405,10 @@ export interface components {
       listing_row: Record<string, unknown> | null;
     };
     AIOcrResultResponse: {
-      /** @description Stored response body */
-      completion: Record<string, never>;
-      status: string;
+      data: components["schemas"]["AiCompletionData"];
+    };
+    OcrPurchaseRequest: {
+      upload_ticket: string;
     };
     AIWalletLedgerEntry: {
       entry_type: string;
@@ -2236,6 +2430,7 @@ export interface components {
       spent_microfen: number;
       updated_at: string;
       ledger: components["schemas"]["AIWalletLedgerEntry"][];
+      recharges: components["schemas"]["AiRechargeOrderView"][];
     };
     AILogItem: {
       /** Format: int64 */
@@ -2300,12 +2495,37 @@ export interface components {
       total: number;
     };
     AIPricesResponse: {
-      /** @description null when no price is effective */
-      prices: components["schemas"]["AIPrice"][] | null;
-      /** @description Always null */
-      ocr_models: string[] | null;
-      /** @description Always null */
-      default_ocr_model: string | null;
+      /** @description Effective model prices; empty when none are published. */
+      prices: components["schemas"]["AIPrice"][];
+      /** @description Configured active recognition models with an effective price. */
+      ocr_models: string[];
+      /** @description Configured default among the offered recognition models; empty when unavailable. */
+      default_ocr_model: string;
+    };
+    PublishAiPriceRequest: {
+      model: string;
+      /** @enum {string} */
+      billing_mode?: "token" | "per_request";
+      /** Format: int64 */
+      input_microfen_per_million: number;
+      /** Format: int64 */
+      cached_input_microfen_per_million: number;
+      /** Format: int64 */
+      output_microfen_per_million: number;
+      /** Format: int64 */
+      reasoning_microfen_per_million: number;
+      /** Format: int64 */
+      per_request_microfen?: number;
+      /** Format: int64 */
+      max_request_microfen: number;
+    };
+    AIAdminPriceResponse: {
+      data: {
+        prices: components["schemas"]["AiPriceView"][];
+      };
+    };
+    AIRemovePriceRequest: {
+      model: string;
     };
     /** @enum {string} */
     DatabaseStatus: "available" | "unavailable";
@@ -2315,6 +2535,10 @@ export interface components {
       holder_instance?: string;
       /** Format: int64 */
       fence_token?: number;
+      /** Format: int64 */
+      expires_at_ms?: number;
+      /** Format: int64 */
+      heartbeat_at_ms?: number;
     };
     HealthResponse: {
       ok: boolean;
@@ -2434,28 +2658,7 @@ export interface components {
       code?: string;
       expected_workspace_uuid?: string;
     };
-    BillingRedeemResponse: {
-      ok: boolean;
-      plan: {
-        key: string;
-        name: string;
-      };
-      /** Format: int64 */
-      member_seats: number;
-      /**
-       * Format: int64
-       * @description Always 0
-       */
-      ocr_credits: number;
-      /** Format: int64 */
-      wallet_cents: number;
-      /** Format: int64 */
-      replaced_lots: number;
-      /** Format: int64 */
-      replaced_seats: number;
-      /** @description Present only when the redeemed plan has an expiry */
-      plan_expires_at?: string;
-    };
+    BillingRedeemResponse: components["schemas"]["RedeemData"];
     CatalogError: {
       error: string;
       /** @enum {string} */
@@ -2471,9 +2674,9 @@ export interface components {
       disabled: boolean;
       /**
        * Format: int64
-       * @description The parent node type_id. Null on roots; the tree ships as one flat node list.
+       * @description Zero-based index of the parent in items. Null on roots; category IDs are inherited by type nodes.
        */
-      parent_id?: number | null;
+      parent_index: number | null;
     };
     CatalogTreeResponse: {
       language: string;
@@ -2496,8 +2699,8 @@ export interface components {
       constraints: {
         collection: boolean;
         /** Format: int64 */
-        max_value_count?: number;
-        dictionary_id?: string;
+        max_value_count?: number | null;
+        dictionary_id?: string | null;
       };
       attribute_id: string | null;
       complex_id: string | null;
@@ -2544,11 +2747,11 @@ export interface components {
       description_category_id: number;
       /** Format: int64 */
       type_id: number;
-      language: string;
+      language: components["schemas"]["CatalogSchemaLanguage"];
       /** Format: int64 */
       fetched_at_ms: number;
-      /** @description Cached Ozon attribute rows, returned as stored */
-      fields: Record<string, never>[];
+      /** @description Cached listing fields, returned as stored */
+      fields: components["schemas"]["CatalogSchemaField"][];
       native_material: components["schemas"]["CatalogNativeMaterial"];
     } | null;
     CatalogFetchConfigResponse: {
@@ -2558,19 +2761,11 @@ export interface components {
       window_start_minute: number;
       window_end_minute: number;
       utc_offset_minutes: number;
-      language: string;
       keys: {
           client_id: string;
           api_key_configured: boolean;
           disabled: boolean;
         }[];
-      wb_credential: {
-        configured: boolean;
-        /** Format: int64 */
-        credential_revision: number;
-        /** Format: int64 */
-        last_verified_at_ms: number | null;
-      };
       /** Format: int64 */
       next_run_at_ms: number | null;
       /** Format: int64 */
@@ -2658,12 +2853,6 @@ export interface components {
        * signed-in state: the shell offers create-Workspace or wait-for-invite.
        */
       account_mode?: components["schemas"]["AccountMode"];
-      /**
-       * @description Every account signed in on this browser's session stack (`sids`
-       * Cookie), in stack order; `active` marks the session requests resolve
-       * to. At least the active account is always listed.
-       */
-      accounts?: components["schemas"]["StackedAccountView"][];
       active_workspace?: components["schemas"]["WorkspaceSummaryView"];
       /**
        * @description Present only when this process was started with client listing-log
@@ -2681,6 +2870,8 @@ export interface components {
        * active/disabled answer. Defaulted so older fixtures stay valid.
        */
       is_agent?: boolean;
+      /** @description Whether this platform account has an active source-level catalogue maintenance grant. */
+      is_catalog_manager?: boolean;
       /** Format: int64 */
       owned_count: number;
       /** Format: int64 */
@@ -2708,11 +2899,6 @@ export interface components {
        */
       avatar_url?: string;
       email?: string;
-      /**
-       * @description Omitted once the address is verified. `false` asks the shell to show
-       * the verification notice.
-       */
-      email_verified?: boolean;
       /** @description Derived display flag (`role != user`). Not an authorization signal. */
       is_admin?: boolean;
       /**
@@ -2730,6 +2916,11 @@ export interface components {
       name_changed_at_ms?: number;
       role?: string;
       supplier_id?: string;
+      /**
+       * @description Public id of the signed-in account. The shell keys per-account local
+       * state (product snapshots, image-set owners, telemetry identity) on it.
+       */
+      uuid?: string;
     };
     AdminAccountMutationData: {
       ok: boolean;
@@ -3020,6 +3211,8 @@ export interface components {
      * nested under a Workspace.
      */
     AdminDirectoryPersonView: {
+      /** @enum {string} */
+      account_kind: "platform" | "supplier";
       created_at: string;
       disabled: boolean;
       editable: boolean;
@@ -3073,28 +3266,12 @@ export interface components {
     AdminFactoryWithdrawalListData: {
       withdrawals: components["schemas"]["AdminFactoryWithdrawalView"][];
     };
-    AdminMemberSeatApplyRequest: {
+    AdminSetMemberCapRequest: {
       /**
        * Format: int64
-       * @description Must match preview.storeSlots.effective; expiring lots do not bump quota_revision.
+       * @description Member limit for this Workspace, 1 to the global cap of 10. `null` clears the override.
        */
-      expected_store_limit: number;
-      follow_plan_member_seats?: boolean;
-      follow_plan_store_limit?: boolean;
-      /** Format: int64 */
-      member_seats_override?: number | null;
-      /**
-       * Format: int64
-       * @description Must match preview.revision
-       */
-      revision: number;
-      /** Format: int64 */
-      store_limit_override?: number | null;
-      /**
-       * Format: int64
-       * @description Specific owned Workspace. Omit to pin to the owner's first Workspace (legacy).
-       */
-      workspace_id?: number | null;
+      seats: number | null;
     };
     AdminObservationConsoleData: {
       /** Format: int64 */
@@ -3190,14 +3367,7 @@ export interface components {
       canceled_at?: string | null;
       created_at: string;
       created_by_email: string;
-      /**
-       * Format: int64
-       * @description Upgrade credit deducted from `amount_cents` at creation.
-       */
-      credit_cents: number;
       currency: string;
-      /** Format: int64 */
-      member_seats: number;
       /** Format: int32 */
       months: number;
       /** Format: int64 */
@@ -3209,44 +3379,65 @@ export interface components {
       status: string;
       workspace_name: string;
     };
+    AdminSubscriptionCouponCreate: {
+      code: string;
+      discount_percent: number;
+      /**
+       * Format: date-time
+       * @description 可用时段的开始时间，包含此时刻。
+       */
+      starts_at: string;
+      /**
+       * Format: date-time
+       * @description 可用时段的结束时间，不包含此时刻。
+       */
+      expires_at: string;
+      /** @description 使用次数上限；0 表示不限次数，必须显式提供。 */
+      max_uses: number;
+    };
+    AdminSubscriptionCoupon: {
+      code: string;
+      discount_percent: number;
+      /** Format: date-time */
+      starts_at: string;
+      /** Format: date-time */
+      expires_at: string;
+      /** @description 使用次数上限；0 表示不限次数。 */
+      max_uses: number;
+      /** Format: int64 */
+      used_count: number;
+      enabled: boolean;
+      /** Format: date-time */
+      created_at: string;
+    };
     AdminRedeemCodeCreateData: {
       codes: components["schemas"]["AdminRedeemCodeCreated"][];
     };
     AdminRedeemCodeCreateRequest: {
-      /** Format: int32 */
-      duration_days: number;
       expires_at?: string | null;
-      /** Format: int64 */
-      member_seats: number;
       note?: string | null;
-      /** Format: int64 */
-      ocr_credits?: number;
-      product?: string;
+      /** @enum {string} */
+      plan_key?: "lite" | "pro" | "max";
+      /** Format: int32 */
+      plan_stores?: number;
+      /** @enum {integer} */
+      plan_months?: 1 | 3 | 6 | 12;
       /** Format: int32 */
       quantity: number;
-      /** @description Purchased tier (`pro` / `max` / `ultra`) on a member-seat code. */
-      tier?: string;
       /** Format: int64 */
       wallet_cents?: number;
     };
     AdminRedeemCodeCreated: {
       batch_id: string;
       code: string;
-      /** Format: int32 */
-      duration_days: number;
       expires_at: string;
       /** Format: int64 */
       id: number;
+      plan_key?: string | null;
+      plan_stores?: number | null;
+      plan_months?: number | null;
       /** Format: int64 */
-      member_seats: number;
-      /** Format: int64 */
-      ocr_credits?: number;
-      plan: string;
-      plan_name: string;
-      product?: string;
-      tier?: string;
-      /** Format: int64 */
-      wallet_cents?: number;
+      wallet_cents: number;
     };
     AdminRedeemCodeListData: {
       codes: components["schemas"]["AdminRedeemCodeView"][];
@@ -3268,29 +3459,21 @@ export interface components {
       code_preview: string;
       created_at: string;
       created_by_email?: string | null;
-      /** Format: int32 */
-      duration_days: number;
       expires_at?: string | null;
       /** Format: int64 */
       id: number;
-      /** Format: int64 */
-      member_seats: number;
       note?: string | null;
-      /** Format: int64 */
-      ocr_credits?: number;
-      plan: string;
-      plan_name: string;
-      product?: string;
+      plan_key?: string | null;
+      plan_stores?: number | null;
+      plan_months?: number | null;
       revoked_at?: string | null;
       revoked_by_email?: string | null;
       status: components["schemas"]["AdminRedeemCodeStatus"];
-      /** @description Purchased tier on a member-seat code; empty on other products. */
-      tier?: string;
       used_at?: string | null;
       used_by_email?: string | null;
       used_by_workspace?: string | null;
       /** Format: int64 */
-      wallet_cents?: number;
+      wallet_cents: number;
     };
     AdminSupplierAccountDeleteData: {
       member_id: string;
@@ -3514,7 +3697,7 @@ export interface components {
       model: string;
       /** Format: int64 */
       output_microfen: number;
-      price: components["schemas"]["AiPriceView"];
+      price: components["schemas"]["AIRequestPrice"];
       /** Format: int64 */
       prompt_tokens: number;
       /** Format: int64 */
@@ -3532,11 +3715,13 @@ export interface components {
     /** @description Provider completion body and server billing record for the same call. */
     AiCompletionData: {
       billing: components["schemas"]["AiBillingView"];
-      completion: Record<string, never>;
+      completion: {
+        [key: string]: unknown;
+      };
       listing_row?: null | components["schemas"]["ListingRowView"];
     };
     /** @enum {string} */
-    AiErrorCode: "AUTH_REQUIRED" | "FORBIDDEN" | "VALIDATION" | "RELAY_UNAVAILABLE" | "INSUFFICIENT_BALANCE" | "OCR_QUOTA_EXCEEDED" | "OCR_CONTRACT_VIOLATION" | "BUSY" | "REQUEST_IN_FLIGHT" | "REQUEST_UNBILLED_UNKNOWN" | "REQUEST_ENDED" | "OCR_REQUIRES_CLAIM" | "UPSTREAM_FAILED" | "UPSTREAM_CREDENTIALS" | "UPSTREAM_UNBILLABLE" | "UPSTREAM_UNKNOWN" | "WRITES_DISABLED" | "NOT_FOUND" | "CONFLICT" | "WORKSPACE_MISMATCH" | "LISTING_WRITEBACK_PENDING" | "PROMPT_NOT_READY" | "PURCHASE_EXPIRED" | "INTERNAL";
+    AiErrorCode: "AUTH_REQUIRED" | "FORBIDDEN" | "VALIDATION" | "RELAY_UNAVAILABLE" | "PAYMENT_NOT_AVAILABLE" | "INSUFFICIENT_BALANCE" | "OCR_QUOTA_EXCEEDED" | "OCR_CONTRACT_VIOLATION" | "MEDIA_COMPLETE_MISSING" | "BUSY" | "REQUEST_IN_FLIGHT" | "REQUEST_UNBILLED_UNKNOWN" | "REQUEST_ENDED" | "OCR_REQUIRES_CLAIM" | "UPSTREAM_FAILED" | "UPSTREAM_CREDENTIALS" | "UPSTREAM_UNBILLABLE" | "UPSTREAM_UNKNOWN" | "WRITES_DISABLED" | "NOT_FOUND" | "CONFLICT" | "WORKSPACE_MISMATCH" | "LISTING_WRITEBACK_PENDING" | "PROMPT_NOT_READY" | "PURCHASE_EXPIRED" | "INTERNAL";
     AiErrorResponse: {
       code: components["schemas"]["AiErrorCode"];
       error: string;
@@ -3546,6 +3731,9 @@ export interface components {
     AiModelOption: {
       id: string;
       owned_by: string;
+    };
+    AiModelsResponse: {
+      data: components["schemas"]["AiModelsData"];
     };
     AiModelsData: {
       models: components["schemas"]["AiModelOption"][];
@@ -3619,6 +3807,9 @@ export interface components {
       /** Format: int64 */
       topup_microfen: number;
     };
+    AiVerifyResponse: {
+      data: components["schemas"]["AiVerifyData"];
+    };
     /**
      * @description Authentication success and catalogue presence. Presence is informational:
      * some gateways serve models absent from their published catalogue.
@@ -3628,7 +3819,7 @@ export interface components {
       verified: boolean;
     };
     /** @enum {string} */
-    AuthErrorCode: "AUTH_INVALID" | "FORBIDDEN" | "VALIDATION" | "INTERNAL" | "QUOTA_EXCEEDED" | "WRITES_DISABLED" | "RATE_LIMITED" | "WORKSPACE_LIMIT_REACHED" | "TOTP_REQUIRED";
+    AuthErrorCode: "AUTH_INVALID" | "FORBIDDEN" | "VALIDATION" | "INTERNAL" | "QUOTA_EXCEEDED" | "WRITES_DISABLED" | "RATE_LIMITED" | "WORKSPACE_LIMIT_REACHED";
     AuthErrorResponse: {
       code: components["schemas"]["AuthErrorCode"];
       error: string;
@@ -3728,12 +3919,10 @@ export interface components {
       value: string;
     };
     CatalogDictionarySearchResponse: {
-      items: components["schemas"]["CatalogSchemaOption"][];
-      /** Format: int64 */
-      total: number;
+      data: components["schemas"]["CatalogSchemaOption"][];
     };
     /** @enum {string} */
-    CatalogErrorCode: "auth_invalid" | "auth_required" | "forbidden" | "validation" | "conflict" | "internal" | "capability_not_ready" | "not_found" | "writes_disabled";
+    CatalogErrorCode: "auth_invalid" | "auth_required" | "forbidden" | "validation" | "conflict" | "internal" | "capability_not_ready" | "not_found" | "writes_disabled" | "not_ported";
     CatalogErrorResponse: {
       code: components["schemas"]["CatalogErrorCode"];
       error: string;
@@ -3759,11 +3948,9 @@ export interface components {
       failure_streak: number;
       /** @description The ordered failover list. Empty means the feature has no key yet. */
       keys: components["schemas"]["CatalogFetchKeyView"][];
-      /** @description Language variant the daily fetch downloads and caches. */
-      language: components["schemas"]["CatalogTreeLanguage"];
       /** Format: int64 */
       last_duration_ms?: number | null;
-      /** @description Operator-facing failure detail of the last run; empty after a success. */
+      /** @description Operator-facing detail of the last run; empty after a clean success. */
       last_error: string;
       /**
        * Format: int32
@@ -3795,7 +3982,6 @@ export interface components {
        * @description Offset from UTC in minutes; the schedule is wall-clock local to it.
        */
       utc_offset_minutes: number;
-      wb_credential: components["schemas"]["CatalogFetchWbCredentialView"];
       /** Format: int32 */
       window_end_minute: number;
       /**
@@ -3813,7 +3999,6 @@ export interface components {
       at_minute: number;
       enabled: boolean;
       keys: components["schemas"]["CatalogFetchKeyInput"][];
-      language: components["schemas"]["CatalogTreeLanguage"];
       schedule_mode: components["schemas"]["CatalogFetchScheduleMode"];
       /** Format: int32 */
       utc_offset_minutes: number;
@@ -3843,33 +4028,17 @@ export interface components {
        */
       disabled: boolean;
     };
-    /** @enum {string} */
+    /**
+     * @description How the last run ended. A run refreshes only the category tree; category
+     * field schemas and dictionary values are loaded on demand.
+     * @enum {string}
+     */
     CatalogFetchRunStatus: "ok" | "failed";
     /**
      * @description How the daily fetch picks its time.
      * @enum {string}
      */
     CatalogFetchScheduleMode: "fixed" | "random";
-    /** @description Safe WB credential status. The token itself is write-only. */
-    CatalogFetchWbCredentialView: {
-      configured: boolean;
-      /**
-       * Format: int64
-       * @description Independent CAS revision for replacing the WB token.
-       */
-      credential_revision: number;
-      /**
-       * Format: int64
-       * @description Time of the successful `parent_categories` validation for the stored token.
-       */
-      last_verified_at_ms?: number | null;
-    };
-    /** @description Replace only the platform WB category-read credential. */
-    CatalogFetchWbCredentialWriteRequest: {
-      /** Format: int64 */
-      expected_credential_revision: number;
-      token: string;
-    };
     /**
      * @description The cached material for one `(category, type, language)` coordinate. No
      * `schema_revision`: it is recomputed from the fields.
@@ -3968,9 +4137,9 @@ export interface components {
       type_name: string;
       /**
        * Format: int64
-       * @description The parent node type_id. Null on roots; the tree ships as one flat node list.
+       * @description Zero-based index of the parent in items. Null on roots; category IDs are inherited by type nodes.
        */
-      parent_id?: number | null;
+      parent_index: number | null;
     };
     CatalogTreeData: {
       /** Format: int64 */
@@ -3986,11 +4155,11 @@ export interface components {
     /**
      * @description One Cloud-hosted category AI prompt. Provisioned by SuperAdmin; any
      * authenticated operator may list the prompts for the current category leaf
-     * `content` is a six-line product brief, validated and stored in canonical form
+     * `content` is canonical product-fact JSON: product_type_ru, facts_ru.
      * server-side (`validate_brief`, ≤ 4 KB; `docs/ocr.md` §4.2).
      */
     CategoryPromptData: {
-      /** @description Absent for operators. Platform staff still receive the six-line brief. */
+      /** @description Absent for operators. Platform staff receive confirmed product facts. */
       content?: string | null;
       /** Format: int64 */
       description_category_id: number;
@@ -4032,12 +4201,12 @@ export interface components {
     CompleteListingRowMediaPayload: {
       /** @description `WorkflowFailureLogEntry[]`. */
       failure_log?: unknown;
-      /** @description `{ images, videos, videoCover? }`. */
+      /** @description `{ images }`; this endpoint records rendered image slices. */
       media?: unknown;
       /** @description `RenderEvidence` plus `sliceCount` / `degradations`. */
       render_evidence?: unknown;
     };
-    /** @description The claimed browser reports a media outcome under its lease and a row CAS. */
+    /** @description The browser reports a media outcome against its durable job, pinned rendering inputs and current row revision. Browser media jobs do not acquire execution leases. */
     CompleteListingRowMediaRequest: {
       error_code?: string | null;
       /**
@@ -4196,6 +4365,12 @@ export interface components {
       consumed_at_ms: number;
       store_uuid: string;
     };
+    CreateAutomationGrantRequest: {
+      name: string;
+      actions: string[];
+      /** Format: int64 */
+      expires_in_days?: number | null;
+    };
     /** @description The create response is the only place the bearer token ever appears. */
     CreateAutomationGrantData: {
       grant: components["schemas"]["AutomationGrantView"];
@@ -4281,18 +4456,18 @@ export interface components {
       name: string;
     };
     /**
-     * @description The desktop reports only the outcome of its own Seller credential probe. The
-     * credential itself never crosses this wire contract.
+     * @description Creates the store before registering its Seller credentials. An omitted or
+     * blank name is filled from Seller info after credential registration.
      */
     CreateWorkspaceStoreRequest: {
       /**
        * Format: int64
        * @description Membership to assign the new Store to. Owner omitting it leaves the
-       * store unassigned; anyone else is assigned to themselves.
+       * store unassigned; a manager who omits it is assigned to the store.
        */
       assignee_membership_id?: number | null;
       client_id?: string | null;
-      name: string;
+      name?: string;
     };
     CreateWorkspaceStoreTagRequest: {
       name: string;
@@ -4408,6 +4583,8 @@ export interface components {
     };
     DelegateOrderView: {
       cancel_requested: boolean;
+      /** @description Why a ready order cannot yet select a fulfiller. */
+      dispatch_blocked_reason?: string;
       /** Format: int64 */
       created_at_ms: number;
       /**
@@ -4660,33 +4837,8 @@ export interface components {
     }]>;
     /** @enum {string} */
     DraftIssueSeverity: "blocking" | "warning";
-    /**
-     * @description What the purchased state flips to at the next lot boundary: the tier,
-     * effective seats and Store slots in effect right after `at`, plus the
-     * member/Store suspensions the reconcile planners project for that instant.
-     */
-    EntitlementChangeView: {
-      /** @description RFC 3339 instant the change lands. */
-      at: string;
-      /** Format: int64 */
-      effective_seats: number;
-      /** Format: int64 */
-      effective_stores: number;
-      /** @description Effective tier right after `at` (`lite` when nothing remains). */
-      plan: string;
-      /**
-       * Format: int64
-       * @description Members projected `quota_suspended` once the new seat limit applies.
-       */
-      suspended_members: number;
-      /**
-       * Format: int64
-       * @description Stores projected `quota_suspended` once the new Store limit applies.
-       */
-      suspended_stores: number;
-    };
     /** @enum {string} */
-    EntitlementErrorCode: "AUTH_INVALID" | "AUTH_REQUIRED" | "FORBIDDEN" | "VALIDATION" | "INTERNAL" | "WRITES_DISABLED" | "PAYMENT_NOT_AVAILABLE" | "PLAN_NOT_PURCHASABLE" | "PLAN_DOWNGRADE_FORBIDDEN" | "PENDING_ORDER_EXISTS" | "OPERATION_CONFLICT" | "NOT_WORKSPACE_OWNER" | "ORDER_ALREADY_SETTLED" | "WORKSPACE_MISMATCH";
+    EntitlementErrorCode: "AUTH_INVALID" | "AUTH_REQUIRED" | "FORBIDDEN" | "VALIDATION" | "INTERNAL" | "NOT_FOUND" | "CONFLICT" | "WRITES_DISABLED" | "PAYMENT_NOT_AVAILABLE" | "PLAN_NOT_PURCHASABLE" | "PLAN_DOWNGRADE_FORBIDDEN" | "PENDING_ORDER_EXISTS" | "OPERATION_CONFLICT" | "NOT_WORKSPACE_OWNER" | "ORDER_ALREADY_SETTLED" | "WORKSPACE_MISMATCH";
     EntitlementErrorResponse: {
       code: components["schemas"]["EntitlementErrorCode"];
       /**
@@ -4734,10 +4886,7 @@ export interface components {
       limits: components["schemas"]["EntitlementLimitsView"];
       plan: string;
     };
-    /**
-     * @description One exported Seller credential row. Plaintext leaves Cloud only through the
-     * export endpoint, and only for Stores the actor may manage keys for.
-     */
+    /** @description One exported Seller credential row. The store roster never contains plaintext. */
     ExportWorkspaceStoreCredentialItem: {
       api_key: string;
       client_id: string;
@@ -4765,6 +4914,8 @@ export interface components {
     FailListingRowAiRequest: {
       job_id: string;
       lease: components["schemas"]["ListingBrowserJobLease"];
+      /** @description Browser preparation failure code; the server maps known codes to safe messages. */
+      error_code?: string;
     };
     FieldAddressView: OneOf<[{
       field_key: string;
@@ -4875,78 +5026,92 @@ export interface components {
       phase: components["schemas"]["ImportProbePhase"];
     };
     /**
-     * @description One complete AI account in the encrypted Cloud snapshot. Secrets stay
-     * server-side; the read model is a redacted view.
-     */
-    IntegrationAiAccount: {
-      active: boolean;
-      api_format: components["schemas"]["IntegrationAiApiFormat"];
-      api_key: string;
-      base_url: string;
-      id: string;
-      label: string;
-      model: string;
-      /**
-       * Format: int64
-       * @description Higher priority is selected first; equal priorities rotate in the gateway.
-       * Defaulted so older snapshots still decode.
-       */
-      priority?: number;
-      /**
-       * @description Defaulted so a snapshot stored before thinking control still decrypts
-       * and decodes.
-       */
-      thinking?: components["schemas"]["IntegrationAiThinking"];
-      thinking_format?: components["schemas"]["IntegrationAiThinkingFormat"];
-    };
-    /** @description Redacted AI account for authenticated operators; provider keys stay in Cloud. */
-    IntegrationAiAccountView: {
-      active: boolean;
-      api_format: components["schemas"]["IntegrationAiApiFormat"];
-      base_url: string;
-      id: string;
-      label: string;
-      model: string;
-      /** Format: int64 */
-      priority?: number;
-      thinking?: components["schemas"]["IntegrationAiThinking"];
-      thinking_format?: components["schemas"]["IntegrationAiThinkingFormat"];
-    };
-    /**
      * @description Wire shape expected by one administrator-provisioned AI endpoint.
      * @enum {string}
      */
     IntegrationAiApiFormat: "chat_completions" | "anthropic_messages" | "responses";
     /**
-     * @description Requested reasoning depth; `Off` doubles as the thinking switch.
+     * @description Requested thinking mode for the configured provider.
      * @enum {string}
      */
-    IntegrationAiThinking: "provider_default" | false | "low" | "medium" | "high";
+    AdminIntegrationAiThinking: "provider_default" | "disabled" | "low" | "medium" | "high";
     /**
      * @description Request-body shape the endpoint expects for the thinking control
      * (declared by the administrator, never detected).
      * @enum {string}
      */
     IntegrationAiThinkingFormat: "none" | "reasoning_effort" | "enable_thinking" | "thinking_type" | "anthropic_budget" | "anthropic_adaptive";
-    /**
-     * @description Authenticated read model. `cache_ttl_seconds` is the maximum lifetime of
-     * the matching device-local SecretStore cache; `revision` changes on every
-     * administrator replacement.
-     */
-    IntegrationConfigData: {
-      ai_accounts: components["schemas"]["IntegrationAiAccountView"][];
+    AdminIntegrationConfigResponse: {
+      data: components["schemas"]["AdminIntegrationConfigView"];
+    };
+    /** @description Credential-free snapshot returned after read or optimistic replacement. */
+    AdminIntegrationConfigView: {
       ai_default_model: string;
-      /** Format: int64 */
-      cache_ttl_seconds: number;
+      /** Format: int32 */
+      schema_version: number;
       /** Format: int64 */
       revision: number;
       /** Format: int32 */
-      schema_version: number;
-      /**
-       * @description One account per bucket role: `transit`, `assets`, `private`. Secret
-       * fields never join the read model.
-       */
-      storage_buckets: components["schemas"]["IntegrationMediaAccountView"][];
+      cache_ttl_seconds: number;
+      ai_accounts: components["schemas"]["AdminIntegrationAiAccountView"][];
+      ai_runtime: components["schemas"]["AdminIntegrationAiRuntime"];
+    };
+    /**
+     * @description Which pool an AI account belongs to. ocr serves recognition; image serves set generation; chat serves text calls in the account API format.
+     * @enum {string}
+     */
+    AdminIntegrationAiPurpose: "ocr" | "image" | "chat";
+    /** @description Platform AI ceilings and the public-endpoint switch. A concurrency or rate of 0 turns that ceiling off. */
+    AdminIntegrationAiRuntime: {
+      /** Format: int32 */
+      max_concurrency_global: number;
+      /** Format: int32 */
+      max_concurrency_user: number;
+      /** Format: int32 */
+      max_concurrency_account: number;
+      /** Format: int32 */
+      user_rate_per_minute: number;
+      /** Format: int32 */
+      lease_ttl_seconds: number;
+      /** @description Lets the model-list probe dial public addresses. Off refuses them. */
+      allow_public_egress: boolean;
+    };
+    AdminIntegrationAiAccountView: {
+      id: string;
+      label: string;
+      base_url: string;
+      model: string;
+      api_format: components["schemas"]["IntegrationAiApiFormat"];
+      active: boolean;
+      thinking: components["schemas"]["AdminIntegrationAiThinking"];
+      thinking_format: components["schemas"]["IntegrationAiThinkingFormat"];
+      /** Format: int64 */
+      priority: number;
+      purpose: components["schemas"]["AdminIntegrationAiPurpose"];
+    };
+    AdminIntegrationAiAccountWrite: {
+      id: string;
+      label: string;
+      base_url: string;
+      model: string;
+      api_format: components["schemas"]["IntegrationAiApiFormat"];
+      active: boolean;
+      thinking?: components["schemas"]["AdminIntegrationAiThinking"];
+      thinking_format?: components["schemas"]["IntegrationAiThinkingFormat"];
+      /** Format: int64 */
+      priority?: number;
+      purpose: components["schemas"]["AdminIntegrationAiPurpose"];
+      /** @description New credential, or empty to retain the existing account credential. */
+      api_key: string;
+    };
+    AdminIntegrationConfigWriteRequest: {
+      /** Format: int64 */
+      expected_revision: number;
+      /** @description Omitted retains the stored default; empty derives from active chat accounts. */
+      ai_default_model?: string | null;
+      ai_accounts: components["schemas"]["AdminIntegrationAiAccountWrite"][];
+      /** @description Omitted retains the stored runtime settings. */
+      ai_runtime?: components["schemas"]["AdminIntegrationAiRuntime"];
     };
     /** @enum {string} */
     IntegrationConfigErrorCode: "AUTH_INVALID" | "FORBIDDEN" | "VALIDATION" | "CONFLICT" | "UNAVAILABLE" | "MEDIA_COMPLETE_MISSING" | "MEDIA_UPLOAD_BATCH_INVALID" | "INTERNAL" | "WRITES_DISABLED";
@@ -4954,55 +5119,6 @@ export interface components {
       code: components["schemas"]["IntegrationConfigErrorCode"];
       error: string;
     };
-    /** @description One complete S3-compatible account in the encrypted Cloud snapshot. */
-    IntegrationMediaAccount: {
-      access_key_id: string;
-      active: boolean;
-      bucket: string;
-      endpoint: string;
-      force_path_style: boolean;
-      id: string;
-      key_prefix: string;
-      label: string;
-      provider?: components["schemas"]["IntegrationMediaProvider"];
-      public_base_url: string;
-      region: string;
-      role: components["schemas"]["IntegrationMediaRole"];
-      secret_access_key: string;
-      session_token: string;
-    };
-    /**
-     * @description S3-compatible account as read by authenticated operators.
-     * Secret fields are server-only.
-     */
-    IntegrationMediaAccountView: {
-      active: boolean;
-      bucket: string;
-      endpoint: string;
-      force_path_style: boolean;
-      id: string;
-      key_prefix: string;
-      label: string;
-      provider?: components["schemas"]["IntegrationMediaProvider"];
-      public_base_url: string;
-      region: string;
-      role: components["schemas"]["IntegrationMediaRole"];
-    };
-    /**
-     * @description Bucket role. `transit` is cleared every day at 04:00 Asia/Shanghai,
-     * `assets` is the public long-lived library, `private` is the org-owned
-     * long-lived bucket with no public hostname.
-     * @enum {string}
-     */
-    IntegrationMediaRole: "transit" | "assets" | "private";
-    /**
-     * @description Object-storage supplier selected by platform staff.
-     *
-     * `LegacyS3` exists only for encrypted snapshots written before the supplier
-     * became explicit. New accounts cannot select it.
-     * @enum {string}
-     */
-    IntegrationMediaProvider: "legacy_s3" | "cloudflare" | "qiniu" | "tencent" | "aliyun" | "generic";
     /**
      * @description A `last_error_code` this build writes. Persisted Intents may carry
      * other values; those read as raw `lastErrorCode` with no
@@ -5174,7 +5290,7 @@ export interface components {
     /** @enum {string} */
     ListingDispatchEvidence: "not_dispatched" | "rejected" | "unknown";
     /** @enum {string} */
-    ListingErrorCode: "auth_required" | "auth_invalid" | "forbidden" | "validation" | "not_found" | "template_object_missing" | "conflict" | "gone" | "schema_sync_required" | "media_confirmation_required" | "queue_busy" | "supplier_not_listable" | "not_replayable" | "store_unusable" | "store_busy" | "store_unavailable" | "submit_capacity_full" | "offer_busy" | "internal";
+    ListingErrorCode: "auth_required" | "auth_invalid" | "forbidden" | "validation" | "not_found" | "conflict" | "gone" | "schema_sync_required" | "media_confirmation_required" | "queue_busy" | "supplier_not_listable" | "not_replayable" | "store_unusable" | "store_busy" | "store_unavailable" | "submit_capacity_full" | "offer_busy" | "internal";
     ListingErrorResponse: {
       /**
        * @description Present on HTTP 422: the `op_workflow` blockers that refused the
@@ -5637,40 +5753,6 @@ export interface components {
     MediaUploadBatchRequest: {
       workspace_uuid: string;
     };
-    /**
-     * @description One unexpired `member_seat_lots` row on the Workspace billing overview.
-     * `active` marks the lot covering right now; a future `starts_at` is a
-     * settled renewal successor that has not taken over yet. `renewable` marks
-     * the lots a renewal intent may still target — unexpired and not already
-     * extended by a successor lot.
-     */
-    MemberSeatLotView: {
-      active: boolean;
-      expires_at: string;
-      /**
-       * Format: int64
-       * @description `member_seat_lots.id` — the `renews_lot_id` a renewal intent freezes.
-       */
-      id: number;
-      renewable: boolean;
-      /**
-       * Format: int64
-       * @description Set when this lot is itself a renewal successor.
-       */
-      renews_lot_id?: number;
-      /** Format: int64 */
-      seats: number;
-      /** @description RFC 3339 timestamps. */
-      starts_at: string;
-      tier: string;
-      /**
-       * Format: int64
-       * @description The lot's remaining value if an upgrade to a higher tier supersedes it
-       * right now — the frozen nominal price prorated over whole unused days.
-       * Zero for a granted lot (no paid order to value it) or a fully used one.
-       */
-      upgrade_credit_cents: number;
-    };
     MessageCenterChatItem: {
       chat_id: string;
       chat_status: string;
@@ -5719,11 +5801,16 @@ export interface components {
       waiting_reply_store_count: number;
     };
     MessageCenterMessageView: {
-      items: string[];
-      /** Format: int64 */
-      total: number;
+      message_id: string;
+      user_type: string;
+      created_at: string;
+      is_read: boolean;
+      is_image: boolean;
+      data: string[] | null;
     };
     MessageCenterSendRequest: {
+      /** Format: uuid */
+      operation_id: string;
       chat_id: string;
       store_id: string;
       text: string;
@@ -5799,7 +5886,7 @@ export interface components {
       workspace_name: string;
     };
     /** @enum {string} */
-    NotificationKind: "workspace_invitation" | "agent_commission_credited" | "agent_withdrawal_paid" | "agent_withdrawal_rejected" | "delegate_order_event";
+    NotificationKind: "workspace_invitation" | "agent_commission_credited" | "agent_withdrawal_paid" | "agent_withdrawal_rejected" | "delegate_order_event" | "subscription_renewal_due" | "subscription_frozen";
     NotificationReadData: {
       ok: boolean;
       /**
@@ -5817,8 +5904,21 @@ export interface components {
       kind: components["schemas"]["NotificationKind"];
       /** Format: int64 */
       read_at_ms?: number | null;
+      subscription?: null | components["schemas"]["NotificationSubscription"];
       uuid: string;
       withdrawal?: null | components["schemas"]["NotificationWithdrawal"];
+    };
+    /**
+     * @description What a `subscription_renewal_due` or `subscription_frozen` notification
+     * announces. The renewal carries the order and amount, the freeze the workspace.
+     */
+    NotificationSubscription: {
+      /** Format: int64 */
+      amount_cents?: number;
+      public_id?: string;
+      /** Format: int64 */
+      term_end_ms?: number;
+      workspace_name?: string;
     };
     /**
      * @description The withdrawal an `agent_withdrawal_paid` / `_rejected` notification
@@ -5853,24 +5953,8 @@ export interface components {
       sha256: string;
       url: string;
     };
-    /** @description Ordered OCR models. Cloud validates availability and charges the model actually used. */
-    OcrModelRouting: {
-      backup_model?: string | null;
-      primary_model: string;
-    };
-    OcrQuotaData: {
-      /** Format: int64 */
-      extra: number;
-      extra_expires_at?: string | null;
-      /** Format: int64 */
-      monthly: number;
-      /** Format: int64 */
-      packaged: number;
-      /** Format: int64 */
-      used: number;
-    };
     /** @enum {string} */
-    OcrRecoveryAttemptKind: "original" | "contract_retry";
+    OcrRecoveryAttemptKind: "original";
     /** @enum {string} */
     OcrRecoveryAttemptStatus: "absent" | "held" | "dispatching" | "settled" | "failed" | "unbilled_unknown";
     OcrRecoveryAttemptView: {
@@ -6085,16 +6169,17 @@ export interface components {
       advertising_configured: boolean;
       /** @description 指派人登录邮箱。未分配店没有指派人。 */
       assignee_email?: string | null;
-      assignee_key_manage: boolean;
       /** Format: int64 */
       assignee_membership_id?: number | null;
       /** @description 指派人显示名。None 表示这个店未分配（仅 Owner/Manager 可见可用）。 */
       assignee_name?: string | null;
-      /** @description 打开密钥编辑器并改密钥：Owner，或指派人且「允许指派人管理密钥」为开。 */
+      /** @description 工作空间所有者或管理员可以修改密钥。 */
       can_edit_credential: boolean;
       /** @description Owner/Manager 可改每一家的名册（建店/改派/删店）。 */
       can_manage: boolean;
       client_id: string;
+      /** @description The Store's Seller contract currency; empty until the key is tested. */
+      company_currency?: string;
       /** Format: int64 */
       cloud_revision?: number | null;
       cloud_status?: string | null;
@@ -6154,32 +6239,6 @@ export interface components {
       /** @description 改绑 = move the binding to another factory row. */
       source_id?: string | null;
     };
-    PaymentIntentRequest: {
-      /**
-       * @description The Workspace the dialog was opened on. The server re-resolves the
-       * active Workspace at write time; a stale dialog answers 409 instead of
-       * charging the Workspace the session landed on (B2).
-       */
-      expected_workspace_uuid: string;
-      /**
-       * @description One purchase attempt's id. A retry with the same id resumes the pending
-       * order this attempt already committed — the same public_id, the same
-       * reservation — instead of answering PENDING_ORDER_EXISTS. The client
-       * rotates it when the chosen content or provider changes.
-       */
-      operation_id?: string;
-      provider: string;
-      purchase_agreement?: null | components["schemas"]["PurchaseAgreementAcceptance"];
-      /**
-       * Format: int64
-       * @description Seats on this purchase, 1–20.
-       */
-      seats: number;
-      /** @description Billing term: `month`, `quarter`, or `year` (year is discounted). */
-      term: string;
-      /** @description Purchased tier: `pro`, `max`, or `ultra`. */
-      tier: string;
-    };
     PaymentMethodsData: {
       manual: boolean;
       providers: string[];
@@ -6198,18 +6257,7 @@ export interface components {
       amount_cents: number;
       canceled_at?: string | null;
       created_at: string;
-      /**
-       * Format: int64
-       * @description Upgrade credit deducted from `amount_cents` at creation; the gross price
-       * is `amount_cents + credit_cents` (zero on a wallet top-up).
-       */
-      credit_cents: number;
       currency: string;
-      /**
-       * Format: int32
-       * @description Lot validity settle grants, frozen at creation (30 / 90 / 365).
-       */
-      duration_days: number;
       /**
        * @description Where the payment entry stands, derived from the stored row alone:
        * `paid` / `canceled` are the terminal statuses; `ready` means a
@@ -6219,8 +6267,6 @@ export interface components {
        * pending order whose entry has not been stored (yet).
        */
       entry_state: string;
-      /** Format: int64 */
-      member_seats: number;
       /**
        * Format: int32
        * @description Billed months, frozen at creation (1 / 3 / 12).
@@ -6228,77 +6274,30 @@ export interface components {
       months: number;
       paid_at?: string | null;
       pay_url?: string | null;
-      /** @description The purchased tier (`pro` / `max` / `ultra`). */
+      /** @description The plan key of a subscription order. */
       plan: string;
       provider: string;
       public_id: string;
       purchase_agreement?: null | components["schemas"]["PurchaseAgreementReceipt"];
       qr_code?: string | null;
       remittance?: string | null;
-      /**
-       * Format: int64
-       * @description Set when the order extends an existing lot (a renewal) instead of
-       * minting a fresh current one.
-       */
-      renews_lot_id?: number | null;
       status: string;
-      /**
-       * Format: int64
-       * @description Per seat-month price after the term discount, in fen, frozen at creation.
-       */
-      unit_month_cents: number;
     };
     PlanView: {
       admin_only: boolean;
       /** Format: int64 */
       ai_tokens_monthly: number;
-      /** Format: int64 */
-      asset_monthly: number;
       highlights: string[];
-      /** Format: int64 */
-      included_seats: number;
       key: string;
-      /** Format: int64 */
-      listing_monthly: number;
-      /** Format: int64 */
-      max_stores: number;
       /**
        * Format: int64
-       * @description Member seats included in the plan. Migration mirror of
-       * `included_seats`; clients should read `member_seats`. When the field is
-       * absent on an old wire, deserialization falls back to `included_seats`.
+       * @description Monthly price of each store, in fen.
        */
-      member_seats: number;
+      store_monthly_cents: number;
       name: string;
       /** Format: int64 */
-      ocr_monthly: number;
-      /** Format: int64 */
-      price_monthly: number;
-      /** Format: int64 */
-      price_yearly: number;
-      /** Format: int64 */
       s3_upload_bytes_monthly: number;
-      /**
-       * Format: int64
-       * @description Store slots included in the plan. Migration mirror of `max_stores`;
-       * clients should read `store_limit`. When the field is absent on an old
-       * wire, deserialization falls back to `max_stores`.
-       */
-      store_limit: number;
       tagline: string;
-    };
-    PlansData: {
-      /**
-       * @description Display rows from the `plans` table — names, taglines, highlights and
-       * the legacy bundle columns. They carry no purchasable truth: quoting
-       * reads `seat_catalog`, which mirrors `billing::seats`.
-       */
-      plans: components["schemas"]["PlanView"][];
-      /**
-       * @description The purchasable member-seat catalog. `billing::seats` is the source of
-       * truth; this field is its read projection.
-       */
-      seat_catalog: components["schemas"]["SeatCatalogData"];
     };
     PrepareListingRowData: {
       /** @description Refusals on individual rails; other returned Jobs remain runnable. */
@@ -6324,11 +6323,11 @@ export interface components {
        * jobs and cannot be reused on another row.
        */
       command_id?: string | null;
-      model_routing?: null | components["schemas"]["OcrModelRouting"];
       /**
        * @description Exactly one requested preparation operation. `prepare` is the fixed
        * recognition + media combination; the other values only admit their own
-       * rail and prerequisites.
+       * rail and prerequisites. Recognition pins the system default model on
+       * the server when creating the job; clients cannot select a model.
        */
       operation: components["schemas"]["PrepareListingRowOperation"];
       /**
@@ -6501,32 +6500,25 @@ export interface components {
       /** @enum {string} */
       kind: "delete";
       offer_ids: string[];
-    } | {
+    } | ({
       /** Format: int64 */
       action_id: number;
+      /** @enum {string} */
+      action_type: "PROMOCODE" | "ELASTIC_BOOSTING" | "STOCK_DISCOUNT";
       items: components["schemas"]["ProductPromotionMutationItem"][];
       /** @enum {string} */
       kind: "promotion_join";
-    } | {
+    }) | ({
       /** Format: int64 */
       action_id: number;
-      /**
-       * @description Promotion `action_type` as `GET /v1/actions` spells it, e.g.
-       * `PROMOCODE`, `ELASTIC_BOOSTING`, `STOCK_DISCOUNT`. Ledger rows
-       * written before this field exist deserialize as `""`, which routes
-       * to the not-exitable guidance.
-       */
-      action_type?: string;
-      /**
-       * @description Per-product exit price for the over-limit exit route. Empty on
-       * pre-v2 ledger rows; on that route a product without an entry
-       * fails with an explanation instead of being silently skipped.
-       */
+      /** @enum {string} */
+      action_type: "PROMOCODE" | "ELASTIC_BOOSTING" | "STOCK_DISCOUNT";
+      /** @description Required one-to-one with product_ids for boosting; absent for PROMOCODE. */
       exit_prices?: components["schemas"]["ProductPromotionExitPrice"][];
       /** @enum {string} */
       kind: "promotion_leave";
       product_ids: number[];
-    };
+    });
     ProductMutationResponse: {
       items: components["schemas"]["ProductMutationItemResult"][];
       operation_id: string;
@@ -6542,8 +6534,8 @@ export interface components {
       product_id: number;
     };
     /**
-     * @description One promotion the seller may take part in, already narrowed to the
-     * selection: `eligible` and `participating` count only selected products.
+     * @description One live seller activity. The selected counts apply only to a selected-product
+     * overview; the total counts always describe the whole store.
      */
     ProductPromotionActionView: {
       /** Format: int64 */
@@ -6557,8 +6549,8 @@ export interface components {
        */
       eligible_selected: number;
       /**
-       * @description Set while the promotion is frozen: the seller may not raise prices or
-       * withdraw products until it passes.
+       * @description Non-empty means Ozon reports frozen terms. Raising prices, changing
+       * participation or reducing committed stock is blocked.
        */
       freeze_date: string;
       is_participating: boolean;
@@ -6576,94 +6568,77 @@ export interface components {
       potential_products_total: number;
       title: string;
     };
-    /**
-     * @description One product's over-limit exit price: strictly above its join limit, so
-     * the update method's price rule removes it from the promotion.
-     */
+    /** @description A unified price strictly above the promotion limit. */
     ProductPromotionExitPrice: {
-      /** Format: double */
-      exit_price: number;
+      exit_price: string;
+      currency_code: string;
       /** Format: int64 */
       product_id: number;
     };
     ProductPromotionMutationItem: {
-      /**
-       * Format: double
-       * @description Promotional price. Ozon rejects anything above the product's
-       * `max_action_price` for the promotion.
-       */
-      action_price: number;
+      /** @description Explicit price in currency_code; must not exceed max_action_price. No automatic clamping. */
+      action_price: string;
+      currency_code: string;
       offer_id: string;
       /** Format: int64 */
       product_id: number;
-      /**
-       * Format: double
-       * @description Units committed to the promotion; `0` lets Ozon use all available
-       * stock.
-       */
+      /** @description Committed units for PROMOCODE only; zero and omitted upstream for boosting. */
       stock: number;
     };
-    /** @description One selected product's terms inside one promotion. */
+    /** @description Live terms for one product inside one promotion. Unknown optional values remain null. */
     ProductPromotionOfferView: {
       /** Format: int64 */
       action_id: number;
-      /**
-       * Format: double
-       * @description Agreed promotional price; `0` for a candidate that has not joined.
-       */
-      action_price: number;
-      /**
-       * @description How the product entered the promotion. The actions v2 source lists
-       * `SELLER` or `AUTO`; v1-era values were `MANUAL`/`NOT_SET`.
-       */
-      add_mode: string;
-      /**
-       * Format: double
-       * @description Elastic-boosting terms. Zero everywhere for promotions that do not
-       * trade discount depth for search boost.
-       */
-      current_boost: number;
-      /**
-       * Format: double
-       * @description Highest promotional price Ozon accepts. Joining above it is rejected.
-       */
-      max_action_price: number;
-      /** Format: double */
-      max_boost: number;
-      /** Format: double */
-      min_boost: number;
-      /** Format: double */
-      min_stock: number;
-      /**
-       * @description `true` when the product is already in the promotion, `false` when it is
-       * only a candidate.
-       */
-      participating: boolean;
-      /**
-       * Format: double
-       * @description Current non-promotional price.
-       */
-      price: number;
-      /** Format: double */
-      price_max_elastic: number;
-      /** Format: double */
-      price_min_elastic: number;
       /** Format: int64 */
       product_id: number;
-      /**
-       * Format: double
-       * @description Units committed to the promotion; `0` means "all available".
-       */
-      stock: number;
+      offer_id?: string;
+      name?: string;
+      /** @description Exact Ozon SKU decimal identifier; never a floating-point number. */
+      sku?: string;
+      participating: boolean;
+      /** @description Current price amount in price_currency_code, as supplied by Ozon. */
+      price: string;
+      price_currency_code: string;
+      action_price: string;
+      /** @description Actual highest price Ozon accepts, without adjustment. */
+      max_action_price: string;
+      /** @description Currency for action_price, max_action_price and elastic prices. May differ from price_currency_code. */
+      currency_code: string;
+      /** @description Ozon SELLER or AUTO; empty for an unspecified source. */
+      add_mode: string;
+      stock: number | null;
+      min_stock: number | null;
+      current_boost: number | null;
+      min_boost: number | null;
+      max_boost: number | null;
+      /** @description Empty when not supplied by Ozon. */
+      price_min_elastic: string;
+      /** @description Empty when not supplied by Ozon. */
+      price_max_elastic: string;
+      price_quarantined: boolean | null;
     };
     ProductPromotionsRequest: {
-      /** @description `product_id` of every selected product. */
-      product_ids: number[];
+      /** Format: uuid */
       store_id: string;
+      /** @description Selected-product overview. Empty without action_id reads only the activity catalog. */
+      product_ids: number[];
+      /**
+       * Format: int64
+       * @description Read one activity page; requires participating and empty product_ids.
+       */
+      action_id?: number;
+      /** @description True for participating products; false for candidates. Requires action_id. */
+      participating?: boolean;
+      /** @description Opaque cursor returned by the previous page; only valid with action_id. */
+      cursor?: string;
     };
     ProductPromotionsView: {
       actions: components["schemas"]["ProductPromotionActionView"][];
       offers: components["schemas"]["ProductPromotionOfferView"][];
+      /** @description Ozon's total for the selected activity and participation tab. */
+      total?: number;
+      /** @description Null after the last activity product page. */
+      next_cursor?: string | null;
     };
     ProductStockMutationItem: {
       offer_id: string;
@@ -6696,199 +6671,6 @@ export interface components {
     };
     /** @enum {string} */
     ProductSyncDomain: "products" | "prices" | "stocks" | "metrics";
-    /**
-     * @description One explicitly selected variant-attribute correction.
-     *
-     * A correction is not a general attribute editor: it may only name a
-     * characteristic the category declares as a variant dimension, and the
-     * operation's payload carries nothing else.
-     */
-    ProductVariantCorrection: {
-      /**
-       * Format: int64
-       * @description Ozon characteristic id.
-       */
-      attribute_id: number;
-      /**
-       * Format: int64
-       * @description Directory value id, when the characteristic is a dictionary one.
-       */
-      dictionary_value_id?: number | null;
-      /** @description Selected product, as the preview named it. */
-      product_id: string;
-      /** @description Free-text value, when the characteristic is not a dictionary one. */
-      value?: string | null;
-    };
-    /** @description One member of a group, as the preview reports it. */
-    ProductVariantMemberView: {
-      /**
-       * Format: int64
-       * @description The group this member is in right now, when the mirror observed one.
-       */
-      model_id?: number | null;
-      name: string;
-      offer_id: string;
-      product_id: string;
-    };
-    ProductVariantOperationData: {
-      /**
-       * @description The operation exists and its dispatch was admitted (or already
-       * happened). The caller polls the status route from here.
-       */
-      accepted: boolean;
-      items?: components["schemas"]["ProductVariantOperationItem"][];
-      /** Format: int64 */
-      last_checked_at_ms?: number | null;
-      operation_id: string;
-      state?: null | components["schemas"]["ProductGroupingState"];
-    };
-    /**
-     * @description One product's result. The same shape for the operation that was just
-     * accepted and for the status that is read later.
-     */
-    ProductVariantOperationItem: {
-      /** @description Why the item is where it is — a stable code, never Ozon's prose. */
-      detail_code?: string | null;
-      offer_id: string;
-      product_id: string;
-      state: components["schemas"]["ProductGroupingState"];
-      /**
-       * Format: int64
-       * @description The Ozon task id that carries this product's update, once Ozon
-       * answered with one.
-       */
-      task_id?: number | null;
-    };
-    /**
-     * @description Confirm one preview. The digest is the whole request: the server re-proves
-     * every fact behind it before anything is dispatched.
-     */
-    ProductVariantOperationRequest: {
-      operation_id: string;
-      preview_digest: string;
-      store_id: string;
-    };
-    /** @description The status read: database only, never a Seller call. */
-    ProductVariantOperationStatusData: {
-      /** Format: int64 */
-      deadline_at_ms?: number | null;
-      items?: components["schemas"]["ProductVariantOperationItem"][];
-      /** Format: int64 */
-      last_checked_at_ms?: number | null;
-      /** Format: int64 */
-      next_check_at_ms?: number | null;
-      operation_id: string;
-      /**
-       * Format: int32
-       * @description How many bounded observation passes have run.
-       */
-      passes: number;
-      state: components["schemas"]["ProductGroupingState"];
-    };
-    /**
-     * @description The preview: everything the operator confirms, and the digest the
-     * operation must quote back.
-     */
-    ProductVariantPreviewData: {
-      action: components["schemas"]["ProductGroupingAction"];
-      digest: string;
-      /** @description Empty means executable. */
-      problems?: components["schemas"]["ProductVariantProblemView"][];
-      products: components["schemas"]["ProductVariantProductView"][];
-      /**
-       * @description Source-group members the operator did **not** select. They stay in the
-       * old group, and the preview shows them so a partial selection is never
-       * a surprise.
-       */
-      source_remaining?: components["schemas"]["ProductVariantMemberView"][];
-      store_id: string;
-      target: components["schemas"]["ProductVariantTargetView"];
-      /** @description Members already in the target group. */
-      target_existing?: components["schemas"]["ProductVariantMemberView"][];
-    };
-    /** @description Ask for a preview of one grouping change. */
-    ProductVariantPreviewRequest: {
-      action: components["schemas"]["ProductGroupingAction"];
-      corrections?: components["schemas"]["ProductVariantCorrection"][];
-      /**
-       * @description An explicit \`9048\` value for a new group. Optional; absent means the
-       * server mints a stable one.
-       */
-      model_value?: string | null;
-      /**
-       * @description The products the operator selected, as strings (Ozon product ids
-       * exceed no JavaScript integer here, but the wire keeps them textual
-       * because every other product identity in this feature is).
-       */
-      product_ids: string[];
-      store_id: string;
-      /**
-       * Format: int64
-       * @description The target group's observed model id. Required by \`move\`, refused by
-       * the others: a new group has no Ozon id yet.
-       */
-      target_model_id?: number | null;
-    };
-    /**
-     * @description One reason the preview is not executable. A non-empty list *is* the
-     * refusal; the SPA renders the codes, never prose.
-     */
-    ProductVariantProblemView: {
-      /** Format: int64 */
-      attribute_id?: number | null;
-      /**
-       * @description A stable code: the listing-core variant issue keys where the rule
-       * refused, plus this route's own \`verify_first\`-family codes.
-       */
-      code: string;
-      product_id?: string | null;
-    };
-    /** @description One selected product, with its before and after facts. */
-    ProductVariantProductView: {
-      /**
-       * @description Stable digest of the complete dimension combination, so the SPA can
-       * point at the two rows that collide without recomputing the rule.
-       */
-      combination_key: string;
-      /**
-       * Format: int64
-       * @description The product's group as the mirror observed it. Absent = ungrouped.
-       */
-      current_model_id?: number | null;
-      name: string;
-      offer_id: string;
-      product_id: string;
-      /**
-       * Format: int64
-       * @description The model identity this operation writes (see the module doc).
-       */
-      target_model_id: number;
-      thumbnail_url?: string | null;
-      /** @description The dimensions that make this member a distinct variant. */
-      variant_values: components["schemas"]["ProductVariantValueView"][];
-    };
-    /** @description The group the operation writes into. */
-    ProductVariantTargetView: {
-      /** @description Members already in the target group. */
-      existing_members?: components["schemas"]["ProductVariantMemberView"][];
-      /**
-       * Format: int64
-       * @description The target group's observed Ozon id, when it already exists.
-       */
-      model_id?: number | null;
-      /** @description The \`9048\` value this operation submits. */
-      model_value?: string | null;
-    };
-    /** @description One variant dimension value of one selected product. */
-    ProductVariantValueView: {
-      /** Format: int64 */
-      attribute_id: number;
-      /** Format: int64 */
-      dictionary_value_id?: number | null;
-      /** @description The dimension's display name, from the category material. */
-      label: string;
-      value: string;
-    };
     ProductWarehouseStockView: {
       offer_id: string;
       /** Format: int64 */
@@ -6943,10 +6725,6 @@ export interface components {
     PromptMutationData: {
       prompt: components["schemas"]["CategoryPromptData"];
     };
-    PsdMultipartCompleteRequest: {
-      parts: components["schemas"]["PsdMultipartPartEtag"][];
-      ticket: string;
-    };
     PsdMultipartPart: {
       /** Format: int64 */
       byte_length: number;
@@ -6956,51 +6734,12 @@ export interface components {
       part_number: number;
       url: string;
     };
-    PsdMultipartPartEtag: {
-      etag: string;
-      /** Format: int32 */
-      part_number: number;
-    };
-    PsdMultipartTicketRequest: {
-      ticket: string;
-    };
     PsdMultipartUpload: {
       /** Format: int64 */
       part_size: number;
       parts: components["schemas"]["PsdMultipartPart"][];
       ticket: string;
       upload_id: string;
-    };
-    /** @description Transient bearer capability: never persist it in a Card, cache or diagnostic. */
-    PsdTemplateUpload: {
-      /** Format: int64 */
-      expires_at_ms: number;
-      headers: components["schemas"]["PsdTemplateUploadHeaders"];
-      url: string;
-    };
-    /** @description Content-Length is signed too, but browsers generate that forbidden header. */
-    PsdTemplateUploadHeaders: {
-      /**
-       * @description Standard base64 of the raw SHA-256. Present only when the PUT signature
-       * covers `x-amz-checksum-sha256`; the browser must send that exact header.
-       */
-      checksum_sha256?: string | null;
-      content_type: string;
-      if_none_match: string;
-    };
-    PsdTemplateView: {
-      /** Format: int64 */
-      bytes: number;
-      /** Format: int64 */
-      description_category_id: number;
-      file_name: string;
-      id: string;
-      multipart?: null | components["schemas"]["PsdMultipartUpload"];
-      ready: boolean;
-      sha256: string;
-      /** Format: int64 */
-      type_id: number;
-      upload?: null | components["schemas"]["PsdTemplateUpload"];
     };
     PublicPlatformCatalogData: {
       products: components["schemas"]["PublicPlatformProductData"][];
@@ -7051,7 +6790,7 @@ export interface components {
       upload_ticket: string;
     };
     /**
-     * @description PUT body. `expectedRevision = 0` creates the first configuration; every
+     * @description PUT body. `expected_revision = 0` creates the first configuration; every
      * subsequent save must send the revision returned by GET/PUT.
      */
     PutSupplierOzonConfigRequest: {
@@ -7063,6 +6802,7 @@ export interface components {
       values: {
         [key: string]: components["schemas"]["SupplierOzonConfigValue"][];
       };
+      complex_values: components["schemas"]["SupplierOzonComplexGroup"][];
       fixed_tags: string[];
       prompt_text: string;
       ai_output: components["schemas"]["SupplierOzonAiOutputPolicy"];
@@ -7097,48 +6837,24 @@ export interface components {
       still_unknown: number;
     };
     RedeemData: {
-      /** Format: int64 */
-      member_seats: number;
-      /**
-       * Format: int64
-       * @description Retired with the `ocr_credits` product; always 0, kept so older clients
-       * keep deserializing.
-       */
-      ocr_credits?: number;
-      /** @description Retired with the `ocr_credits` product; always absent. */
-      ocr_expires_at?: string | null;
       ok: boolean;
-      plan: components["schemas"]["RedeemedPlan"];
-      plan_expires_at?: string | null;
-      /**
-       * Format: int64
-       * @description A member-seat code replaces the Workspace's seat plan: how many
-       * unexpired lots the redeem truncated and the seats they carried.
-       * Always 0 for wallet codes and for a Workspace's first activation.
-       */
-      replaced_lots?: number;
+      plan_key?: string;
+      plan_stores?: number;
+      plan_months?: number;
+      /** Format: date-time */
+      starts_at?: string;
+      /** Format: date-time */
+      ends_at?: string;
       /** Format: int64 */
-      replaced_seats?: number;
-      /** Format: int64 */
-      wallet_cents?: number;
+      wallet_cents: number;
     };
     RedeemedPlan: {
       key: string;
       name: string;
     };
-    RegisterPsdTemplateRequest: {
-      /** Format: int64 */
-      bytes: number;
-      /** Format: int64 */
-      description_category_id: number;
-      file_name: string;
-      /** @description Previous multipart ticket for this exact object. Absent on the single PUT path. */
-      resume_ticket?: string | null;
-      sha256: string;
-      /** Format: int64 */
-      type_id: number;
-    };
     RegisterWorkspaceStoreCredentialData: {
+      /** @description Whether Seller info filled the automatic store name after saving the credential. */
+      name_filled: boolean;
       /** Format: int64 */
       credential_revision: number;
       fingerprint_changed: boolean;
@@ -7160,6 +6876,15 @@ export interface components {
       /** Format: int64 */
       expected_store_revision: number;
     };
+    ResolveWorkspaceStoreNameRequest: {
+      client_id: string;
+      /** @description Request-only; may be empty when using the authorized store's held key. */
+      api_key: string;
+      store_uuid?: string;
+    };
+    ResolveWorkspaceStoreNameData: {
+      name: string;
+    };
     ReleaseUnknownListingIntentsData: {
       /**
        * @description The current view of every named Intent this Workspace holds, after
@@ -7174,54 +6899,6 @@ export interface components {
        */
       released_intent_ids: string[];
     };
-    ReleaseUnknownListingRowsData: {
-      /**
-       * @description Rows whose unknown send was released. A row still held by a running
-       * dispatch or reconciler probe is absent and stays unknown.
-       */
-      released_row_ids: string[];
-    };
-    /**
-     * @description Operator confirmation that these rows' unanswered sends never reached
-     * Ozon: their `unknown` Intents retire and the rows become sendable again.
-     */
-    ReleaseUnknownListingRowsRequest: {
-      row_ids: string[];
-    };
-    /**
-     * @description Extend one member-seat lot: the order freezes the lot's tier and seats, and
-     * settle appends a successor lot starting at the predecessor's expiry — a
-     * renewal never adds current concurrent seats.
-     */
-    RenewalIntentRequest: {
-      /** @description Same contract as [`PaymentIntentRequest::expected_workspace_uuid`]. */
-      expected_workspace_uuid: string;
-      /** @description Same contract as [`PaymentIntentRequest::operation_id`]. */
-      operation_id?: string;
-      provider: string;
-      purchase_agreement?: null | components["schemas"]["PurchaseAgreementAcceptance"];
-      /**
-       * Format: int64
-       * @description `member_seat_lots.id` of the lot being extended.
-       */
-      renews_lot_id: number;
-      /** @description Billing term: `month`, `quarter`, or `year` (year is discounted). */
-      term: string;
-    };
-    /**
-     * @description Staff-only optimistic replacement. Empty arrays deliberately mean that the
-     * corresponding integration is unavailable to every client. Each bucket
-     * role appears at most once, and the physical bucket name, endpoint and
-     * exact public hostname are checked against the role.
-     */
-    ReplaceIntegrationConfigRequest: {
-      ai_accounts: components["schemas"]["IntegrationAiAccount"][];
-      /** @description Omitted retains the stored default; empty derives from active chat accounts. */
-      ai_default_model?: string | null;
-      /** Format: int64 */
-      expected_revision: number;
-      storage_buckets: components["schemas"]["IntegrationMediaAccount"][];
-    };
     RevokeInvitationData: {
       ok: boolean;
       revoked: boolean;
@@ -7230,7 +6907,7 @@ export interface components {
     RowStageView: "awaiting_content" | "recognizing" | "recognition_failed" | "rendering" | "uploading" | "media_failed" | "candidates_pending" | "build_stale" | "fields_invalid" | "ready_to_publish" | "queued" | "submitting" | "outcome_unknown" | "accepted" | "publish_rejected" | "operator_attested";
     /**
      * @description Global scopes use separate routes and views; the Workspace HTTP contract
-     * keeps its original fields. Null sourceIds means all sources, [] means none.
+     * keeps its original fields. Null source_ids means all sources, [] or an omitted field means none.
      */
     ScopedAutomationGrantView: {
       actions: string[];
@@ -7250,97 +6927,6 @@ export interface components {
     };
     ScopedAutomationGrantsData: {
       grants: components["schemas"]["ScopedAutomationGrantView"][];
-    };
-    /**
-     * @description The purchasable member-seat catalog: tiers, per-seat-month prices, terms
-     * with their discounts, and the seat/Store bounds — every number the
-     * `billing::seats` price book owns, so no client keeps a second copy.
-     */
-    SeatCatalogData: {
-      /**
-       * Format: int64
-       * @description Store slots the free tier carries.
-       */
-      free_stores: number;
-      /** Format: int64 */
-      max_seats_per_purchase: number;
-      /**
-       * Format: int64
-       * @description One Workspace's member-seat ceiling across all unexpired lots.
-       */
-      max_seats_per_workspace: number;
-      /**
-       * Format: int64
-       * @description One Workspace's Store ceiling.
-       */
-      max_stores_per_workspace: number;
-      /**
-       * Format: int64
-       * @description Seat bounds on one purchase.
-       */
-      min_seats_per_purchase: number;
-      /**
-       * Format: int64
-       * @description Store slots one paid seat binds.
-       */
-      stores_per_seat: number;
-      terms: components["schemas"]["SeatCatalogTermView"][];
-      tiers: components["schemas"]["SeatCatalogTierView"][];
-    };
-    /**
-     * @description The seat-month price one tier carries under one term — the same number
-     * `billing::seats::unit_month_cents` freezes onto a Payment Order.
-     */
-    SeatCatalogTermPriceView: {
-      /** @description A `SeatCatalogTermView::key`. */
-      term: string;
-      /** Format: int64 */
-      unit_month_cents: number;
-    };
-    /**
-     * @description One billing term Cloud sells: `months` is what an order freezes, `days` is
-     * what the settled lot lasts, and `discount_percent` scales the tier's list
-     * seat-month price (only the yearly term is discounted).
-     */
-    SeatCatalogTermView: {
-      /** Format: int32 */
-      days: number;
-      /**
-       * Format: int64
-       * @description List-price multiplier in percent: 80 on `year`, 100 otherwise.
-       */
-      discount_percent: number;
-      /** @description `month` / `quarter` / `year`. */
-      key: string;
-      /** Format: int32 */
-      months: number;
-    };
-    /** @description One purchasable tier (`lite` is free and never listed). */
-    SeatCatalogTierView: {
-      key: string;
-      /**
-       * Format: int64
-       * @description List price of one seat for one month, before any term discount.
-       */
-      list_unit_month_cents: number;
-      /**
-       * @description Whether the official-MCP ingress gate opens on this tier — the same
-       * predicate `require_official_mcp_access` enforces.
-       */
-      official_mcp: boolean;
-      /** @description Per-term seat-month prices, in `SeatCatalogData::terms` order. */
-      terms: components["schemas"]["SeatCatalogTermPriceView"][];
-    };
-    /**
-     * @description What one target tier could deduct from a purchase right now: the summed
-     * remaining value of every unexpired paid lot that tier supersedes. Uncapped —
-     * the order caps the credit at its own gross price.
-     */
-    SeatUpgradeCreditView: {
-      /** Format: int64 */
-      credit_cents: number;
-      /** @description The tier being purchased. */
-      tier: string;
     };
     /** @enum {string} */
     SecretRefStatus: "present" | "absent" | "unavailable";
@@ -7517,33 +7103,6 @@ export interface components {
     ShippingReadinessReason: "missing_bind" | "inject_not_available" | "shop_not_injected" | "waiting" | "result_unknown" | "failed" | "delivery_method_not_active" | "stale_version" | "weight_unit_unpinned" | "writes_disabled" | "non_integrated_unsupported";
     /** @enum {string} */
     ShippingReadinessStatus: "ready" | "stale" | "blocked";
-    /**
-     * @description Read one live Seller SKU and project it onto this Card's Category Schema.
-     * A preview only: nothing is written, on Ozon or here.
-     */
-    SkuImportPreviewRequest: {
-      /** @description Ozon SKU, as the operator typed it. */
-      sku: string;
-    };
-    /**
-     * @description `listing_core::sku_import::SkuImportPreview` in its own snake_case:
-     * `{ source_sku, source_product_id, source_offer_id, source_name,
-     * source_description_category_id, source_type_id, category_matches,
-     * candidates, skipped_fields }`.
-     */
-    SkuImportPreviewResponse: Record<string, never>;
-    /** @description One account on this browser's session stack, as the switcher prints it. */
-    StackedAccountView: {
-      active: boolean;
-      /**
-       * @description `GET /api/avatars/users/{uuid}`, revision-stamped. Absent when the
-       * account has no avatar.
-       */
-      avatar_url?: string;
-      email: string;
-      name: string;
-      uuid: string;
-    };
     /**
      * @description Workspace-wide totals — summed only over `fresh`/`stale` stores; expired
      * and never-synced stores move the coverage denominator, not the sums.
@@ -7754,8 +7313,8 @@ export interface components {
        * store's headline freshness stays on the reconcile commit.
        */
       refreshed_at_ms?: number | null;
-      /** Format: int64 */
-      sku?: number | null;
+      /** @description Decimal identifier as text, preserving integers beyond JavaScript's safe range. */
+      sku?: string | null;
       /**
        * @description The dictionary's mutually exclusive bucket: `on_sale`, `processing`,
        * `moderation_failed`, `hidden`, `archived`.
@@ -7941,21 +7500,63 @@ export interface components {
       tags?: string[];
       text?: string;
     };
+    FactoryInput: {
+      name: string;
+      country: string;
+      contact: string;
+      internalNote: string;
+      icon: string;
+    };
+    FactoryCreateInput: {
+      name: string;
+      country: string;
+      contact: string;
+      internalNote: string;
+      icon: string;
+      /** Format: email */
+      accountEmail: string;
+    };
+    Factory: {
+      factoryId: string;
+      name: string;
+      country: string;
+      contact: string;
+      internalNote: string;
+      icon: string;
+      /** Format: int64 */
+      createdAtMs: number;
+      /** Format: int64 */
+      updatedAtMs: number;
+      libraries: {
+          sourceId: string;
+          name: string;
+          country: string;
+          icon: string;
+        }[];
+    };
+    FactoryRef: {
+      factory_id: string;
+      name: string;
+      country: string;
+      icon: string;
+    };
     /** @description 一个厂家成员（管理面视角）：成员邮箱 / 状态 / 开通时间。 */
     SupplierAccountMemberView: {
+      /** @description Public account identifier for explicit fulfiller authorization. */
+      account_uuid: string;
       /** Format: int64 */
       created_at_ms: number;
       email: string;
       member_id: string;
       name?: string | null;
-      source: components["schemas"]["SellerSupplierDbData"];
+      factory: components["schemas"]["FactoryRef"];
       /** @description `active` / `disabled`。 */
       status: string;
     };
     /** @description 全部厂家成员按厂家分组。 */
     SupplierAccountsGroup: {
       members: components["schemas"]["SupplierAccountMemberView"][];
-      source: components["schemas"]["SellerSupplierDbData"];
+      factory: components["schemas"]["FactoryRef"];
     };
     SupplierActionData: {
       dispatch_id: string;
@@ -7996,7 +7597,7 @@ export interface components {
       bytes: number;
       kind: components["schemas"]["SupplierDbStorageObjectKind"];
       last_modified?: string | null;
-      /** @description Path relative to the configured `supplierDbStorage.keyPrefix`. */
+      /** @description Path relative to the server-configured `R2_ASSETS_KEY_PREFIX`. */
       path: string;
       public_url?: string | null;
     };
@@ -8005,8 +7606,78 @@ export interface components {
       next_cursor?: string | null;
       prefix: string;
     };
-    /** @description Transient capability; no usable URL is returned until authenticated confirmation. */
-    SupplierDbUploadTarget: components["schemas"]["DirectUploadTarget"];
+    SupplierDbMultipartPart: {
+      /** Format: int32 */
+      part_number: number;
+      url: string;
+      /** Format: int64 */
+      byte_length: number;
+      /** Format: int64 */
+      expires_at_ms: number;
+    };
+    SupplierDbMultipartPartEtag: {
+      /** Format: int32 */
+      part_number: number;
+      etag: string;
+    };
+    /** @description A large PSD upload, using the management API's multipart fields. */
+    SupplierDbMultipartUpload: {
+      upload_id: string;
+      /** Format: int64 */
+      part_size: number;
+      ticket: string;
+      parts: components["schemas"]["SupplierDbMultipartPart"][];
+    };
+    /** @description An omitted or empty upload_ticket is a no-op abort. */
+    SupplierDbUploadAbortRequest: {
+      upload_ticket?: string;
+    };
+    SupplierDbUploadConfirmRequest: {
+      upload_ticket: string;
+      /** @description Completed parts are required for a multipart PSD upload and omitted for a direct upload. */
+      parts?: components["schemas"]["SupplierDbMultipartPartEtag"][];
+    };
+    SupplierDbUploadConfirmResponse: {
+      data: {
+        key: string;
+        public_url: string;
+      };
+    };
+    /**
+     * @description Authorizes an upload within the selected source. The server generates the object key;
+     * filename is a basename, never a storage path. kind determines the extension, MIME and size limits:
+     * gallery accepts jpg/jpeg (image/jpeg), png (image/png) and webp (image/webp), up to 20 MiB;
+     * psd accepts psd (image/vnd.adobe.photoshop), up to 500 MiB;
+     * video accepts mp4 (video/mp4) and mov (video/quicktime), up to 200 MiB.
+     * Multipart resume is unsupported. A resume_ticket field is rejected, even when empty.
+     */
+    SupplierDbUploadPresignRequest: {
+      /** @enum {string} */
+      kind: "gallery" | "psd" | "video";
+      /** @description A basename with no leading or trailing whitespace, path separators or control characters. */
+      filename: string;
+      /** @enum {string} */
+      content_type: "image/jpeg" | "image/png" | "image/webp" | "image/vnd.adobe.photoshop" | "video/mp4" | "video/quicktime";
+      /**
+       * Format: int64
+       * @description The declared length must also fit the selected kind's limit.
+       */
+      bytes: number;
+      sha256: string;
+    };
+    SupplierDbUploadPresignResponse: {
+      data: {
+        upload: components["schemas"]["SupplierDbUploadTarget"];
+      };
+    };
+    /** @description Transient capability; the public URL is returned only after authenticated confirmation. */
+    SupplierDbUploadTarget: {
+      upload_ticket: string;
+      /** @description Confirm the matching object without uploading it again. */
+      already_present?: boolean;
+      upload?: components["schemas"]["DirectUploadGrant"];
+      multipart?: components["schemas"]["SupplierDbMultipartUpload"];
+    };
     /** @description 派发包详情：payload 白名单投影 + 素材下载路由 + 可用动作。 */
     SupplierDispatchDetail: {
       actions: components["schemas"]["SupplierActionsView"];
@@ -8045,8 +7716,23 @@ export interface components {
       /** Format: int32 */
       quantity: number;
     };
+    SupplierDashboardData: {
+      counts: components["schemas"]["SupplierDashboardCounts"];
+      urgent_orders: components["schemas"]["SupplierDispatchRow"][];
+    };
+    /** @description 全部订单的状态统计；加急属于待生产或生产中的子集。 */
+    SupplierDashboardCounts: {
+      /** Format: int64 */
+      pending: number;
+      /** Format: int64 */
+      producing: number;
+      /** Format: int64 */
+      urgent: number;
+      /** Format: int64 */
+      shipped: number;
+    };
     SupplierDispatchListData: {
-      /** @description Opaque keyset cursor；最后一页为空。顺序是备货截止升序，无截止日期的排最后。 */
+      /** @description Opaque keyset cursor；每页最多 20 条，最后一页为空。顺序是备货截止升序，无有效截止日期的排最后。 */
       cursor: string;
       dispatches: components["schemas"]["SupplierDispatchRow"][];
       has_more: boolean;
@@ -8072,6 +7758,8 @@ export interface components {
       posting_number: string;
       /** @description `dispatched` / `accepted` / `shipped`（待接单 / 生产中 / 已发货）。 */
       state: string;
+      /** @description 首个可预览生产素材的同源授权 URL；不是商品图，无可用素材时省略。 */
+      thumbnail_url?: string;
     };
     /** @description 物流快照白名单（get_v3 组装键的搬运，结构上不含买家 PII）。 */
     SupplierLogisticsView: {
@@ -8085,9 +7773,25 @@ export interface components {
       tpl_provider?: string | null;
       warehouse?: string | null;
     };
+    SupplierSourceCard: {
+      source_id: string;
+      name: string;
+      country: string;
+      icon: string;
+    };
+    SupplierDownloadGrant: {
+      url: string;
+      /** Format: int64 */
+      expires_at_ms: number;
+      /** Format: int64 */
+      bytes: number;
+      file_name: string;
+      content_type: string;
+      sha256: string;
+    };
     /** @description 我所属厂家（多成员数组；共享同一排单队列的厂家行 header）。 */
     SupplierMeData: {
-      sources: components["schemas"]["SellerSupplierDbData"][];
+      sources: components["schemas"]["SupplierSourceCard"][];
     };
     SupplierMediaVerificationData: {
       product_id: string;
@@ -8110,6 +7814,7 @@ export interface components {
       values: {
         [key: string]: components["schemas"]["SupplierOzonConfigValue"][];
       };
+      complex_values: components["schemas"]["SupplierOzonComplexGroup"][];
       fixed_tags: string[];
       prompt_text: string;
       ai_output: components["schemas"]["SupplierOzonAiOutputPolicy"];
@@ -8122,13 +7827,16 @@ export interface components {
       denial?: components["schemas"]["SupplierOzonConfigDenial"];
       /** Format: int64 */
       updated_at_ms: number;
-      /**
-       * Format: int32
-       * @description Newest saved revision. The editor shows this body, not the published cells.
-       */
-      draft_prompt_revision?: number | null;
-      /** Format: int32 */
-      published_prompt_revision?: number | null;
+    };
+    SupplierOzonComplexGroup: {
+      /** Format: int64 */
+      complex_id: number;
+      items: {
+          item_id: string;
+          values: {
+            [key: string]: components["schemas"]["SupplierOzonConfigValue"][];
+          };
+        }[];
     };
     /** @enum {string} */
     SupplierOzonConfigDenial: "source_not_listed" | "product_archived" | "sku_not_published" | "catalog_missing" | "catalog_expired" | "config_needs_reconfiguration" | "catalog_digest_mismatch" | "prompt_invalid";
@@ -8199,6 +7907,15 @@ export interface components {
       /** @enum {string} */
       issue: "fixed_tags";
       reason: string;
+    } | {
+      /** @enum {string} */
+      issue: "field_validation";
+      field_key: string;
+      code: string;
+      message: string;
+      /** Format: int64 */
+      complex_id?: number;
+      item_index?: number;
     };
     /**
      * @description Language of the current Ozon category material used to validate a supplier configuration.
@@ -8601,44 +8318,6 @@ export interface components {
       ready_to_publish: boolean;
     };
     /**
-     * @description The Workspace's entitlement overview for the plans screen — a display
-     * projection over `member_seat_lots` and the admin overrides, never a second
-     * authorization source.
-     *
-     * `plan_expires_at` is the stored `organizations` projection: the *latest*
-     * expiry among unexpired lots, future-dated renewal successors included. It
-     * is not "the current tier's end" — mixed lots make that reading wrong, so
-     * per-lot timing lives on `lots` and `next_change`.
-     */
-    WorkspaceBillingOverviewData: {
-      /** @description Every unexpired lot, earliest expiry first. */
-      lots: components["schemas"]["MemberSeatLotView"][];
-      /**
-       * @description Member seats: `default` is the purchased count floored at one,
-       * `overrideValue` the admin's persisted `member_seat_limit_override`,
-       * `effective`/`used`/`suspended` the live state.
-       */
-      member_seats: components["schemas"]["WorkspaceQuotaView"];
-      /** @description The next instant the purchased state changes, and what it changes to. */
-      next_change?: components["schemas"]["EntitlementChangeView"];
-      /** @description Highest tier among currently-active lots (the badge). */
-      plan: string;
-      plan_expires_at?: string;
-      /**
-       * Format: int64
-       * @description Seats summed over currently-active lots (0 on the free tier — the
-       * owner seat is a floor, not a purchase).
-       */
-      purchased_seats: number;
-      /**
-       * @description Store slots: `default` follows the effective seats on the active tier,
-       * `overrideValue` the admin's persisted `store_limit_override`.
-       */
-      store_slots: components["schemas"]["WorkspaceQuotaView"];
-      /** @description One row per purchasable tier: what an upgrade to it would deduct today. */
-      upgrade_credits: components["schemas"]["SeatUpgradeCreditView"][];
-    };
-    /**
      * @description One pending Workspace Invitation. It is addressed to an email rather than to a
      * person, so it has no display name, and it always carries the uuid the
      * roster revokes it by — never a one-time token.
@@ -8709,37 +8388,6 @@ export interface components {
       invite_roles: string[];
       leave: boolean;
       revoke_invitation: boolean;
-    };
-    /**
-     * @description One Workspace resource quota: plan default, nullable Workspace override, effective
-     * value, current usage and suspended quantity.
-     */
-    WorkspaceQuotaView: {
-      /**
-       * Format: int64
-       * @description Plan default for this resource.
-       */
-      default: number;
-      /**
-       * Format: int64
-       * @description Effective quota after applying the Workspace override.
-       */
-      effective: number;
-      /**
-       * Format: int64
-       * @description Workspace override; null means the plan default applies.
-       */
-      override_value?: number | null;
-      /**
-       * Format: int64
-       * @description Quantity suspended by quota enforcement.
-       */
-      suspended: number;
-      /**
-       * Format: int64
-       * @description Currently in-use quantity.
-       */
-      used: number;
     };
     /**
      * @description The one Membership assigned to run a Store (`docs/workspace-store-credentials.md`).
@@ -8814,8 +8462,6 @@ export interface components {
       edit_name: boolean;
       /** @description Register, rotate, or clear the hosted key. */
       manage_key: boolean;
-      /** @description Owner, and only when the Store currently has an Assignee. */
-      manage_key_grants: boolean;
       manage_store: boolean;
       manage_tags: boolean;
       /** @description Visible, live, and Cloud already holds ciphertext. Not a key-write grant. */
@@ -8966,12 +8612,12 @@ export interface components {
      */
     WorkspaceStoreView: {
       assignee?: null | components["schemas"]["WorkspaceStoreAssignee"];
-      /**
-       * @description Assignee key-management switch. Always false when unassigned. Opened at
-       * create when the store is assigned to the creator; otherwise Owner-set.
-       */
-      assignee_key_manage: boolean;
       client_id?: string | null;
+      /**
+       * @description The Seller contract currency read from `/v1/seller/info`. Empty until
+       * the Store's credentials are tested; a listing is always sent in it.
+       */
+      company_currency?: string;
       /** Format: int64 */
       create_order: number;
       credential_configured: boolean;
@@ -9077,7 +8723,6 @@ export interface components {
      * an omitted field leaves it unchanged.
      */
     UpdateWorkspaceStoreRequest: {
-      assignee_key_manage?: boolean | null;
       client_id?: string | null;
       /** @description Group to assign. Omitted leaves the current group. An empty string clears it. */
       group_uuid?: string | null;
@@ -9096,6 +8741,59 @@ export interface components {
       /** Format: int64 */
       revision: number;
       uuid: string;
+    };
+    ProductOcrFacts: {
+      product_type_ru: string;
+      facts_ru: string;
+    };
+    ArtworkOcrTestInput: {
+      source_id: string;
+      product_id: string;
+      profile: components["schemas"]["ProductOcrFacts"];
+      fixed_tags: string[];
+      model?: string;
+      image: {
+        bytes: number;
+        sha256: string;
+        /** @enum {string} */
+        content_type: "image/png" | "image/jpeg";
+      };
+    };
+    ArtworkOcrTestBody: {
+      input: components["schemas"]["ArtworkOcrTestInput"];
+      upload_ticket?: string;
+    };
+    ArtworkOcrTestUploadData: {
+      input: components["schemas"]["ArtworkOcrTestInput"];
+      target: components["schemas"]["DirectUploadTarget"];
+    };
+    ArtworkOcrTestBilling: {
+      request_id: string;
+      model: string;
+      status: string;
+      /** Format: int64 */
+      charged_microfen: number;
+      /** Format: int64 */
+      total_microfen?: number;
+      /** Format: int64 */
+      prompt_tokens?: number;
+      /** Format: int64 */
+      completion_tokens?: number;
+    };
+    ArtworkOcrTestResult: {
+      /** Format: uuid */
+      id: string;
+      input: components["schemas"]["ArtworkOcrTestInput"];
+      /** @enum {string} */
+      state: "running" | "succeeded" | "rejected" | "failed" | "unknown";
+      billing: components["schemas"]["ArtworkOcrTestBilling"];
+      error?: string;
+      answer?: {
+        ru: string;
+        description: string;
+        tags: string[];
+        candidates?: unknown[];
+      };
     };
   };
   responses: {
@@ -9198,6 +8896,485 @@ export type external = Record<string, never>;
 
 export interface operations {
 
+  /** Read a visible store's dispatch policy and Shanghai daily usage */
+  listing_store_policy_get: {
+    parameters: {
+      path: {
+        store_id: string;
+      };
+    };
+    responses: {
+      /** @description Current policy and actual dispatch usage; unknown dispatches remain counted */
+      200: {
+        content: {
+          "application/json": components["schemas"]["StoreListingPolicy"];
+        };
+      };
+      /** @description Invalid store id */
+      400: {
+        content: never;
+      };
+      /** @description Authentication required */
+      401: {
+        content: never;
+      };
+      /** @description Workspace membership unavailable */
+      403: {
+        content: never;
+      };
+      /** @description Store missing or outside the caller's visibility */
+      404: {
+        content: never;
+      };
+      /** @description Read failed */
+      500: {
+        content: never;
+      };
+    };
+  };
+  /** Replace a store dispatch policy as a workspace manager */
+  listing_store_policy_put: {
+    parameters: {
+      path: {
+        store_id: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": {
+          daily_cap?: number | null;
+          /** @default 0 */
+          min_gap_seconds?: number;
+        };
+      };
+    };
+    responses: {
+      /** @description Saved policy and current usage; waiting jobs are eligible for a fresh check */
+      200: {
+        content: {
+          "application/json": components["schemas"]["StoreListingPolicy"];
+        };
+      };
+      /** @description Invalid policy or request body */
+      400: {
+        content: never;
+      };
+      /** @description Authentication required */
+      401: {
+        content: never;
+      };
+      /** @description Manager authority required or cross-site request rejected */
+      403: {
+        content: never;
+      };
+      /** @description Store missing or outside the caller's visibility */
+      404: {
+        content: never;
+      };
+      /** @description Save failed */
+      500: {
+        content: never;
+      };
+    };
+  };
+  /** @description 导出当前筛选的全部可见商品镜像，最多5万行且最多64MiB；超限返回413，不返回部分CSV。 */
+  exportWorkspaceProducts: {
+    parameters: {
+      query?: {
+        storeId?: string;
+        status?: string;
+        q?: string;
+        includeGone?: boolean;
+      };
+    };
+    responses: {
+      /** @description UTF-8 BOM CSV */
+      200: {
+        headers: {
+          "Content-Disposition"?: string;
+        };
+        content: {
+          "text/csv": string;
+        };
+      };
+      /** @description 请求失败 */
+      default: {
+        content: {
+          "application/json": {
+            error: string;
+            code: string;
+          };
+        };
+      };
+    };
+  };
+  /** @description Existing submission receipts, media jobs and product sync jobs visible to the current workspace member. This read never sends or retries work. */
+  listingTaskRecords: {
+    parameters: {
+      query?: {
+        storeId?: string;
+        kind?: "listing" | "product_sync" | "media";
+        status?: "active" | "attention" | "finished" | "cancelled";
+        cursor?: string;
+        limit?: number;
+      };
+    };
+    responses: {
+      /** @description A page ordered by creation time and ID, newest first. Platform acceptance is not an on-sale result. */
+      200: {
+        content: {
+          "application/json": {
+            data: components["schemas"]["TaskRecordsPage"];
+          };
+        };
+      };
+      /** @description Invalid filters or cursor */
+      400: {
+        content: never;
+      };
+      /** @description Authentication required */
+      401: {
+        content: never;
+      };
+      /** @description Workspace membership is unavailable */
+      403: {
+        content: never;
+      };
+      /** @description Store does not exist or is not assigned to this member */
+      404: {
+        content: never;
+      };
+      /** @description Task records are temporarily unavailable */
+      503: {
+        content: never;
+      };
+    };
+  };
+  getWorkspaceSliceStorage: {
+    responses: {
+      /** @description Current workspace bucket and owner-only management capability; never returns credentials. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["WorkspaceSliceStorage"];
+        };
+      };
+    };
+  };
+  /** @description Owner only. Omit bucket to generate podhub- followed by a random UUID without hyphens, or supply a valid R2 name before creation. The reserved name cannot change during retries or after activation. Custom names are never adopted from an existing bucket; ambiguous creation requires review. Creates through OAuth, configures CORS and public access, obtains a bucket-scoped credential, then verifies actual upload/read/list/delete before activation. */
+  provisionWorkspaceSliceStorage: {
+    requestBody: {
+      content: {
+        "application/json": {
+          account_id: string;
+          /** @enum {boolean} */
+          public_access: true;
+          /** @description Optional custom name; lowercase ASCII letters, digits and hyphens only, with alphanumeric endpoints. Omit to generate a default name. */
+          bucket?: string;
+        };
+      };
+    };
+    responses: {
+      /** @description Verified workspace storage; creation is idempotent per workspace. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["WorkspaceSliceStorage"];
+        };
+      };
+      /** @description Invalid bucket name */
+      400: {
+        content: never;
+      };
+      /** @description Only the current workspace owner can provision storage */
+      403: {
+        content: never;
+      };
+      /** @description Bucket name already used or locked */
+      409: {
+        content: never;
+      };
+      /** @description External operation or verification failed; no successful activation is claimed */
+      502: {
+        content: never;
+      };
+      /** @description OAuth or storage services are not configured */
+      503: {
+        content: never;
+      };
+    };
+  };
+  /** @description Owner only. Daily schedules use Asia/Shanghai and begin at the next selected time. Manual mode stops starting automatic clears; a running clear must finish before changing the policy. */
+  updateWorkspaceSliceCleanup: {
+    requestBody: {
+      content: {
+        "application/json": {
+          /** @enum {string} */
+          cleanup_mode: "daily" | "manual";
+          /** @description Required for daily; null or omitted for manual. */
+          cleanup_time?: string | null;
+        };
+      };
+    };
+    responses: {
+      /** @description Saved cleanup policy and current bucket status. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["WorkspaceSliceStorage"];
+        };
+      };
+      /** @description Invalid cleanup mode or time */
+      400: {
+        content: never;
+      };
+      /** @description Workspace owner required */
+      403: {
+        content: never;
+      };
+      /** @description Automatic cleanup is still running */
+      409: {
+        content: never;
+      };
+      /** @description Workspace bucket is not configured */
+      422: {
+        content: never;
+      };
+    };
+  };
+  clearWorkspaceSliceStorage: {
+    responses: {
+      /** @description Owner requested clear; existing upload grants are allowed to expire before deletion. */
+      202: {
+        content: {
+          "application/json": {
+            /** @enum {string} */
+            clear_status: "pending";
+          };
+        };
+      };
+      /** @description Workspace owner required */
+      403: {
+        content: never;
+      };
+    };
+  };
+  listWorkspaceSliceObjects: {
+    parameters: {
+      query?: {
+        prefix?: string;
+        cursor?: string;
+      };
+    };
+    responses: {
+      /** @description One S3 page inside the workspace slice namespace. Folders are relative to the namespace root; object keys remain exact for downloads and deletion. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["WorkspaceSliceObjects"];
+        };
+      };
+      /** @description Workspace storage is not ready */
+      409: {
+        content: never;
+      };
+      /** @description Listing could not be read */
+      502: {
+        content: never;
+      };
+    };
+  };
+  workspaceSliceStats: {
+    responses: {
+      /** @description On-demand sum of actual S3 listings, at most 100000 objects. Incomplete totals are lower bounds, not a complete bucket count or billing quota. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["WorkspaceSliceStats"];
+        };
+      };
+      /** @description Statistics could not be read */
+      502: {
+        content: never;
+      };
+    };
+  };
+  downloadWorkspaceSliceObject: {
+    parameters: {
+      query: {
+        key: string;
+      };
+    };
+    responses: {
+      /** @description Five-minute GET URL for an object in this workspace's namespace */
+      200: {
+        content: {
+          "application/json": {
+            /** Format: uri */
+            url: string;
+          };
+        };
+      };
+      /** @description Key is not a canonical slice key in this workspace */
+      400: {
+        content: never;
+      };
+    };
+  };
+  deleteWorkspaceSliceObjects: {
+    requestBody: {
+      content: {
+        "application/json": OneOf<[{
+          keys: string[];
+        }, {
+          /** @description Full key prefix of a non-root folder inside the current storage uploads namespace */
+          prefix: string;
+        }]>;
+      };
+    };
+    responses: {
+      /** @description Deletes up to 100 exact objects or one batch of a recursive folder delete. Failed keys remain explicit. For folders, repeat the same prefix while has_more is true; stop on failures. An empty folder is an idempotent success. */
+      200: {
+        content: {
+          "application/json": {
+            deleted: number;
+            failed_keys: string[] | null;
+            /** @description Folder still contains objects after this batch; no snapshot guarantee for concurrent uploads. */
+            has_more: boolean;
+          };
+        };
+      };
+      /** @description Invalid keys */
+      400: {
+        content: never;
+      };
+      /** @description Workspace owner required */
+      403: {
+        content: never;
+      };
+      /** @description A selected object or a pending upload in the folder may still have an unexpired upload grant; wait 16 minutes */
+      409: {
+        content: never;
+      };
+      /** @description Deletion not confirmed; refresh the list before retrying */
+      502: {
+        content: never;
+      };
+    };
+  };
+  getCloudflareConnection: {
+    responses: {
+      /** @description Current login session's short-lived Cloudflare setup connection. Does not verify R2 usability. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CloudflareConnection"];
+        };
+      };
+      /** @description Login required */
+      401: {
+        content: never;
+      };
+      /** @description Workspace membership required */
+      403: {
+        content: never;
+      };
+    };
+  };
+  disconnectCloudflare: {
+    responses: {
+      /** @description Active access token revoked and setup cookies cleared; missing or expired setup connections are already disconnected. Buckets are retained. */
+      204: {
+        content: never;
+      };
+      /** @description Revocation could not be confirmed */
+      502: {
+        content: never;
+      };
+      /** @description OAuth is not configured */
+      503: {
+        content: never;
+      };
+    };
+  };
+  /** @description Creates a login-session-bound OAuth state cookie and an S256 PKCE authorization URL. The caller navigates to the returned URL. */
+  authorizeCloudflare: {
+    responses: {
+      /** @description Authorization URL. Client secret and PKCE verifier are never returned. */
+      200: {
+        content: {
+          "application/json": {
+            /** Format: uri */
+            authorization_url: string;
+          };
+        };
+      };
+      /** @description Login required */
+      401: {
+        content: never;
+      };
+      /** @description Workspace membership required or cross-origin write rejected */
+      403: {
+        content: never;
+      };
+      /** @description OAuth is not configured */
+      503: {
+        content: never;
+      };
+    };
+  };
+  /** @description Owner only. Exchanges a single-use authorization code with PKCE. Stores the access token in an encrypted HttpOnly cookie for at most 15 minutes, bound to the current workspace and PodHub login session. No refresh token is retained. */
+  callbackCloudflare: {
+    parameters: {
+      query: {
+        state: string;
+        code?: string;
+        error?: string;
+      };
+    };
+    responses: {
+      /** @description Redirects to workspace storage settings after success or an authorization error. A fixed error code in the URL fragment identifies denial, invalid state, or exchange failure. A successful connection does not create a bucket or enable slice storage. */
+      303: {
+        headers: {
+          Location?: string;
+        };
+        content: never;
+      };
+      /** @description Original login session required */
+      401: {
+        content: never;
+      };
+      /** @description OAuth is not configured */
+      503: {
+        content: never;
+      };
+    };
+  };
+  listCloudflareAccounts: {
+    responses: {
+      /** @description Accounts visible to the current user's Cloudflare grant */
+      200: {
+        content: {
+          "application/json": {
+            accounts: {
+                id: string;
+                name: string;
+              }[];
+          };
+        };
+      };
+      /** @description Cloudflare grant lacks account read permission */
+      403: {
+        content: never;
+      };
+      /** @description Setup connection is missing or expired */
+      409: {
+        content: never;
+      };
+      /** @description Account list could not be read completely */
+      502: {
+        content: never;
+      };
+      /** @description OAuth is not configured */
+      503: {
+        content: never;
+      };
+    };
+  };
   subscriptionGet: {
     responses: {
       /** @description Subscription result */
@@ -9307,10 +9484,10 @@ export interface operations {
       };
     };
   };
-  subscriptionSchedule: {
+  subscriptionKeep: {
     requestBody: {
       content: {
-        "application/json": components["schemas"]["SubscriptionScheduleRequest"];
+        "application/json": components["schemas"]["SubscriptionKeepRequest"];
       };
     };
     responses: {
@@ -9432,6 +9609,125 @@ export interface operations {
       200: {
         content: {
           "application/json": components["schemas"]["SubscriptionOrder"];
+        };
+      };
+      /** @description Request refused */
+      400: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      401: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      403: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      404: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      409: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      500: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      503: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+    };
+  };
+  subscriptionOrderPay: {
+    parameters: {
+      path: {
+        public_id: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SubscriptionPayRequest"];
+      };
+    };
+    responses: {
+      /** @description Subscription result */
+      200: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionOrderBrief"];
+        };
+      };
+      /** @description Request refused */
+      400: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      401: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      403: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      404: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      409: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      500: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+      /** @description Request refused */
+      503: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionError"];
+        };
+      };
+    };
+  };
+  subscriptionAutoRenew: {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SubscriptionAutoRenewRequest"];
+      };
+    };
+    responses: {
+      /** @description Subscription result */
+      200: {
+        content: {
+          "application/json": components["schemas"]["SubscriptionView"];
         };
       };
       /** @description Request refused */
@@ -10412,6 +10708,54 @@ export interface operations {
       };
     };
   };
+  /** Delete one inactive product draft, retaining jobs and billing receipts */
+  deleteListingRow: {
+    parameters: {
+      path: {
+        id: string;
+      };
+    };
+    responses: {
+      /** @description Deleted */
+      200: {
+        content: {
+          "application/json": {
+            data: {
+              id: string;
+            };
+          };
+        };
+      };
+      /** @description Invalid row id */
+      400: {
+        content: never;
+      };
+      /** @description Not signed in */
+      401: {
+        content: never;
+      };
+      /** @description Role or workspace refused */
+      403: {
+        content: never;
+      };
+      /** @description No row in this workspace */
+      404: {
+        content: never;
+      };
+      /** @description Preparation or publishing is still active */
+      409: {
+        content: never;
+      };
+      /** @description Database error */
+      500: {
+        content: never;
+      };
+      /** @description Writes unavailable */
+      503: {
+        content: never;
+      };
+    };
+  };
   /** Save one row's draft through listing-core */
   patchListingRow: {
     parameters: {
@@ -10952,7 +11296,7 @@ export interface operations {
       };
     };
   };
-  /** Hand the browser one store key for a direct Ozon send. It does not enqueue or dial Ozon. */
+  /** Hand an owner or manager one store key for a direct Ozon send. It does not enqueue or dial Ozon. */
   postListingBrowserGrant: {
     requestBody: {
       content: {
@@ -10978,7 +11322,7 @@ export interface operations {
           "application/json": Record<string, never>;
         };
       };
-      /** @description Role cannot submit */
+      /** @description Only workspace owners and managers may receive a store key */
       403: {
         content: {
           "application/json": Record<string, never>;
@@ -11155,22 +11499,6 @@ export interface operations {
       };
     };
   };
-  postAuthSwitch: {
-    responses: {
-      /** @description switched */
-      200: {
-        content: never;
-      };
-      /** @description invalid */
-      400: {
-        content: never;
-      };
-      /** @description logged out */
-      401: {
-        content: never;
-      };
-    };
-  };
   postAuthPassword: {
     responses: {
       /** @description rotated */
@@ -11189,12 +11517,88 @@ export interface operations {
   };
   postAuthForgot: {
     responses: {
-      /** @description accepted */
+      /** @description Request accepted; the same response is returned for unknown, disabled, and rate-cooled accounts. Delivery is asynchronous. */
       200: {
         content: never;
       };
-      /** @description invalid */
+      /** @description invalid email or JSON */
       400: {
+        content: never;
+      };
+      /** @description Too many requests from this IP */
+      429: {
+        headers: {
+          /** @description Seconds until another request is allowed */
+          "Retry-After"?: number;
+        };
+        content: never;
+      };
+      /** @description Request could not be persisted */
+      500: {
+        content: never;
+      };
+      /** @description Recovery mail configuration or database is unavailable */
+      503: {
+        content: never;
+      };
+    };
+  };
+  postAuthEmailChange: {
+    requestBody: {
+      content: {
+        "application/json": {
+          /** Format: email */
+          email: string;
+          current_password: string;
+        };
+      };
+    };
+    responses: {
+      /** @description Confirmation mail queued */
+      200: {
+        content: never;
+      };
+      /** @description Invalid email or current password */
+      400: {
+        content: never;
+      };
+      /** @description Authentication required */
+      401: {
+        content: never;
+      };
+      /** @description Email already registered */
+      409: {
+        content: never;
+      };
+      /** @description Too many requests */
+      429: {
+        content: never;
+      };
+      /** @description Mail service unavailable */
+      503: {
+        content: never;
+      };
+    };
+  };
+  postAuthEmailConfirm: {
+    requestBody: {
+      content: {
+        "application/json": {
+          token: string;
+        };
+      };
+    };
+    responses: {
+      /** @description Email changed and existing sessions revoked */
+      200: {
+        content: never;
+      };
+      /** @description Link invalid or expired */
+      400: {
+        content: never;
+      };
+      /** @description Email already registered */
+      409: {
         content: never;
       };
     };
@@ -11209,28 +11613,8 @@ export interface operations {
       400: {
         content: never;
       };
-    };
-  };
-  postAuthVerify: {
-    responses: {
-      /** @description verified */
-      200: {
-        content: never;
-      };
-      /** @description invalid */
-      400: {
-        content: never;
-      };
-    };
-  };
-  postAuthVerifyResend: {
-    responses: {
-      /** @description accepted */
-      200: {
-        content: never;
-      };
-      /** @description logged out */
-      401: {
+      /** @description Password computation capacity is full */
+      429: {
         content: never;
       };
     };
@@ -11255,23 +11639,6 @@ export interface operations {
       };
       /** @description logged out */
       401: {
-        content: never;
-      };
-    };
-  };
-  deleteAuthAccount: {
-    parameters: {
-      path: {
-        uuid: string;
-      };
-    };
-    responses: {
-      /** @description sessions revoked */
-      204: {
-        content: never;
-      };
-      /** @description invalid */
-      400: {
         content: never;
       };
     };
@@ -13121,113 +13488,95 @@ export interface operations {
       };
     };
   };
-  /** automation_grants_list */
   automation_grants_list: {
     responses: {
-      /** @description Implemented */
+      /** @description Saved result */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": {
+            data: components["schemas"]["AutomationGrantsData"];
+          };
         };
       };
-      /** @description Request or path parameter rejected */
+      /** @description Request refused or unavailable */
       400: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["AutomationErrorResponse"];
         };
       };
-      /** @description Not signed in */
+      /** @description Request refused or unavailable */
       401: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["AutomationErrorResponse"];
         };
       };
-      /** @description The session guard refused */
+      /** @description Request refused or unavailable */
       403: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["AutomationErrorResponse"];
         };
       };
-      /** @description Record not found in this scope */
+      /** @description Request refused or unavailable */
       404: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["AutomationErrorResponse"];
         };
       };
-      /** @description Conflict with the current state */
-      409: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Database or downstream error */
+      /** @description Request refused or unavailable */
       500: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["AutomationErrorResponse"];
         };
       };
     };
   };
-  /** automation_grant_create */
   automation_grant_create: {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreateAutomationGrantRequest"];
+      };
+    };
     responses: {
-      /** @description Implemented */
+      /** @description Saved result */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": {
+            data: components["schemas"]["CreateAutomationGrantData"];
+          };
         };
       };
-      /** @description Request or path parameter rejected */
+      /** @description Request refused or unavailable */
       400: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["AutomationErrorResponse"];
         };
       };
-      /** @description Not signed in */
+      /** @description Request refused or unavailable */
       401: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["AutomationErrorResponse"];
         };
       };
-      /** @description The session guard refused */
+      /** @description Request refused or unavailable */
       403: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["AutomationErrorResponse"];
         };
       };
-      /** @description Record not found in this scope */
+      /** @description Request refused or unavailable */
       404: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["AutomationErrorResponse"];
         };
       };
-      /** @description Conflict with the current state */
-      409: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Rate or quota limit reached */
-      429: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Database or downstream error */
+      /** @description Request refused or unavailable */
       500: {
         content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description A dependency is unavailable */
-      503: {
-        content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["AutomationErrorResponse"];
         };
       };
     };
   };
-  /** automation_grant_revoke */
   automation_grant_revoke: {
     parameters: {
       path: {
@@ -13235,58 +13584,42 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Implemented */
+      /** @description Saved result */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": {
+            data: components["schemas"]["AutomationGrantRevokeData"];
+          };
         };
       };
-      /** @description Request or path parameter rejected */
+      /** @description Request refused or unavailable */
       400: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["AutomationErrorResponse"];
         };
       };
-      /** @description Not signed in */
+      /** @description Request refused or unavailable */
       401: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["AutomationErrorResponse"];
         };
       };
-      /** @description The session guard refused */
+      /** @description Request refused or unavailable */
       403: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["AutomationErrorResponse"];
         };
       };
-      /** @description Record not found in this scope */
+      /** @description Request refused or unavailable */
       404: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["AutomationErrorResponse"];
         };
       };
-      /** @description Conflict with the current state */
-      409: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Rate or quota limit reached */
-      429: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Database or downstream error */
+      /** @description Request refused or unavailable */
       500: {
         content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description A dependency is unavailable */
-      503: {
-        content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["AutomationErrorResponse"];
         };
       };
     };
@@ -13563,6 +13896,95 @@ export interface operations {
       };
     };
   };
+  /** 列出可绑定的工厂 */
+  list_factories: {
+    responses: {
+      /** @description 工厂列表 */
+      200: {
+        content: {
+          "application/json": {
+            data: {
+              factories: components["schemas"]["Factory"][];
+            };
+          };
+        };
+      };
+    };
+  };
+  /** 超级管理员创建工厂及首个登录账号 */
+  create_factory: {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["FactoryCreateInput"];
+      };
+    };
+    responses: {
+      /** @description 工厂已创建 */
+      201: {
+        content: {
+          "application/json": {
+            data: {
+              factory: components["schemas"]["Factory"];
+              initialPassword?: string;
+            };
+          };
+        };
+      };
+      /** @description 需要超级管理员 */
+      403: {
+        content: never;
+      };
+    };
+  };
+  /** 修改工厂资料 */
+  update_factory: {
+    parameters: {
+      path: {
+        factory_id: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["FactoryInput"];
+      };
+    };
+    responses: {
+      /** @description 工厂已更新 */
+      200: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description 需要超级管理员 */
+      403: {
+        content: never;
+      };
+    };
+  };
+  /** 删除未绑定商品库的工厂 */
+  delete_factory: {
+    parameters: {
+      path: {
+        factory_id: string;
+      };
+    };
+    responses: {
+      /** @description 工厂已删除 */
+      200: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description 需要超级管理员 */
+      403: {
+        content: never;
+      };
+      /** @description 工厂仍绑定商品库 */
+      409: {
+        content: never;
+      };
+    };
+  };
   /** list_supplier_accounts */
   list_supplier_accounts: {
     responses: {
@@ -13767,46 +14189,41 @@ export interface operations {
       };
     };
   };
-  /** supplier_automation_grants_list */
   supplier_automation_grants_list: {
     responses: {
-      /** @description Implemented */
+      /** @description Saved result */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": {
+            data: components["schemas"]["ScopedAutomationGrantsData"];
+          };
         };
       };
-      /** @description Request or path parameter rejected */
+      /** @description Request refused or unavailable */
       400: {
         content: {
           "application/json": Record<string, never>;
         };
       };
-      /** @description Not signed in */
+      /** @description Request refused or unavailable */
       401: {
         content: {
           "application/json": Record<string, never>;
         };
       };
-      /** @description The session guard refused */
+      /** @description Request refused or unavailable */
       403: {
         content: {
           "application/json": Record<string, never>;
         };
       };
-      /** @description Record not found in this scope */
+      /** @description Request refused or unavailable */
       404: {
         content: {
           "application/json": Record<string, never>;
         };
       };
-      /** @description Conflict with the current state */
-      409: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Database or downstream error */
+      /** @description Request refused or unavailable */
       500: {
         content: {
           "application/json": Record<string, never>;
@@ -13814,66 +14231,53 @@ export interface operations {
       };
     };
   };
-  /** supplier_automation_grant_create */
   supplier_automation_grant_create: {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreateScopedAutomationGrantRequest"];
+      };
+    };
     responses: {
-      /** @description Implemented */
+      /** @description Saved result */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": {
+            data: components["schemas"]["CreateScopedAutomationGrantData"];
+          };
         };
       };
-      /** @description Request or path parameter rejected */
+      /** @description Request refused or unavailable */
       400: {
         content: {
           "application/json": Record<string, never>;
         };
       };
-      /** @description Not signed in */
+      /** @description Request refused or unavailable */
       401: {
         content: {
           "application/json": Record<string, never>;
         };
       };
-      /** @description The session guard refused */
+      /** @description Request refused or unavailable */
       403: {
         content: {
           "application/json": Record<string, never>;
         };
       };
-      /** @description Record not found in this scope */
+      /** @description Request refused or unavailable */
       404: {
         content: {
           "application/json": Record<string, never>;
         };
       };
-      /** @description Conflict with the current state */
-      409: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Rate or quota limit reached */
-      429: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Database or downstream error */
+      /** @description Request refused or unavailable */
       500: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description A dependency is unavailable */
-      503: {
         content: {
           "application/json": Record<string, never>;
         };
       };
     };
   };
-  /** supplier_automation_grant_revoke */
   supplier_automation_grant_revoke: {
     parameters: {
       path: {
@@ -13881,56 +14285,40 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Implemented */
+      /** @description Saved result */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": {
+            data: components["schemas"]["AutomationGrantRevokeData"];
+          };
         };
       };
-      /** @description Request or path parameter rejected */
+      /** @description Request refused or unavailable */
       400: {
         content: {
           "application/json": Record<string, never>;
         };
       };
-      /** @description Not signed in */
+      /** @description Request refused or unavailable */
       401: {
         content: {
           "application/json": Record<string, never>;
         };
       };
-      /** @description The session guard refused */
+      /** @description Request refused or unavailable */
       403: {
         content: {
           "application/json": Record<string, never>;
         };
       };
-      /** @description Record not found in this scope */
+      /** @description Request refused or unavailable */
       404: {
         content: {
           "application/json": Record<string, never>;
         };
       };
-      /** @description Conflict with the current state */
-      409: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Rate or quota limit reached */
-      429: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Database or downstream error */
+      /** @description Request refused or unavailable */
       500: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description A dependency is unavailable */
-      503: {
         content: {
           "application/json": Record<string, never>;
         };
@@ -14217,6 +14605,53 @@ export interface operations {
         content: {
           "application/json": Record<string, never>;
         };
+      };
+    };
+  };
+  /** Verify a staged storage upload and promote it to its authorized path */
+  confirm_supplier_db_storage_upload: {
+    requestBody: {
+      content: {
+        "application/json": {
+          path: string;
+          upload_ticket: string;
+        };
+      };
+    };
+    responses: {
+      /** @description Verified destination object and public URL */
+      200: {
+        content: {
+          "application/json": components["schemas"]["SupplierDbUploadConfirmResponse"];
+        };
+      };
+      /** @description Invalid path or upload receipt */
+      400: {
+        content: never;
+      };
+      /** @description Not signed in */
+      401: {
+        content: never;
+      };
+      /** @description Platform super administrator required */
+      403: {
+        content: never;
+      };
+      /** @description Staged upload object does not exist */
+      404: {
+        content: never;
+      };
+      /** @description Upload receipt or destination conflicts with the current state */
+      409: {
+        content: never;
+      };
+      /** @description Storage origin unavailable */
+      502: {
+        content: never;
+      };
+      /** @description Storage not configured */
+      503: {
+        content: never;
       };
     };
   };
@@ -14817,7 +15252,9 @@ export interface operations {
       200: {
         content: {
           "application/json": {
-            config: components["schemas"]["SupplierOzonConfigData"];
+            data: {
+              config: components["schemas"]["SupplierOzonConfigData"];
+            };
           };
         };
       };
@@ -14877,7 +15314,9 @@ export interface operations {
       200: {
         content: {
           "application/json": {
-            config: components["schemas"]["SupplierOzonConfigData"];
+            data: {
+              config: components["schemas"]["SupplierOzonConfigData"];
+            };
           };
         };
       };
@@ -15048,16 +15487,24 @@ export interface operations {
       };
     };
   };
-  /** grant_source_fulfiller */
+  /** Bind an existing supplier account to receive this factory's dispatches */
   grant_source_fulfiller: {
     parameters: {
       path: {
         source_id: string;
       };
     };
+    requestBody: {
+      content: {
+        "application/json": {
+          /** @description Public account identifier returned by the supplier account directory. */
+          account_uuid: string;
+        };
+      };
+    };
     responses: {
       /** @description Implemented */
-      200: {
+      201: {
         content: {
           "application/json": Record<string, never>;
         };
@@ -15241,11 +15688,19 @@ export interface operations {
       };
     };
   };
-  /** grant_catalog_manager */
+  /** Authorize an existing platform account for this catalog */
   grant_catalog_manager: {
     parameters: {
       path: {
         source_id: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": {
+          /** @description Public account identifier returned by the admin account directory. */
+          account_uuid: string;
+        };
       };
     };
     responses: {
@@ -15370,126 +15825,8 @@ export interface operations {
       };
     };
   };
-  /** diff_supplier_prompt */
-  diff_supplier_prompt: {
-    parameters: {
-      path: {
-        source_id: string;
-        product_id: string;
-      };
-    };
-    responses: {
-      /** @description Implemented */
-      200: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Request or path parameter rejected */
-      400: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Not signed in */
-      401: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description The session guard refused */
-      403: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Record not found in this scope */
-      404: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Conflict with the current state */
-      409: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Database or downstream error */
-      500: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-    };
-  };
   /** preview_supplier_prompt */
   preview_supplier_prompt: {
-    parameters: {
-      path: {
-        source_id: string;
-        product_id: string;
-      };
-    };
-    responses: {
-      /** @description Implemented */
-      200: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Request or path parameter rejected */
-      400: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Not signed in */
-      401: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description The session guard refused */
-      403: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Record not found in this scope */
-      404: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Conflict with the current state */
-      409: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Rate or quota limit reached */
-      429: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Database or downstream error */
-      500: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description A dependency is unavailable */
-      503: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-    };
-  };
-  /** publish_supplier_prompt_revision */
-  publish_supplier_prompt_revision: {
     parameters: {
       path: {
         source_id: string;
@@ -15690,11 +16027,16 @@ export interface operations {
         source_id: string;
       };
     };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SupplierDbUploadPresignRequest"];
+      };
+    };
     responses: {
-      /** @description Implemented */
+      /** @description Upload capability for the selected source and media kind */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["SupplierDbUploadPresignResponse"];
         };
       };
       /** @description Request or path parameter rejected */
@@ -15754,12 +16096,15 @@ export interface operations {
         source_id: string;
       };
     };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SupplierDbUploadAbortRequest"];
+      };
+    };
     responses: {
-      /** @description Implemented */
-      200: {
-        content: {
-          "application/json": Record<string, never>;
-        };
+      /** @description Upload aborted or no active multipart upload remained */
+      204: {
+        content: never;
       };
       /** @description Request or path parameter rejected */
       400: {
@@ -15818,11 +16163,16 @@ export interface operations {
         source_id: string;
       };
     };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SupplierDbUploadConfirmRequest"];
+      };
+    };
     responses: {
-      /** @description Implemented */
+      /** @description Confirmed object key and public URL */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["SupplierDbUploadConfirmResponse"];
         };
       };
       /** @description Request or path parameter rejected */
@@ -15869,164 +16219,6 @@ export interface operations {
       };
       /** @description A dependency is unavailable */
       503: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-    };
-  };
-  /** list_supplier_prompts */
-  list_supplier_prompts: {
-    responses: {
-      /** @description Implemented */
-      200: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Request or path parameter rejected */
-      400: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Not signed in */
-      401: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description The session guard refused */
-      403: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Record not found in this scope */
-      404: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Conflict with the current state */
-      409: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Database or downstream error */
-      500: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-    };
-  };
-  /** sync_supplier_prompts */
-  sync_supplier_prompts: {
-    responses: {
-      /** @description Implemented */
-      200: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Request or path parameter rejected */
-      400: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Not signed in */
-      401: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description The session guard refused */
-      403: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Record not found in this scope */
-      404: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Conflict with the current state */
-      409: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Rate or quota limit reached */
-      429: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Database or downstream error */
-      500: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description A dependency is unavailable */
-      503: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-    };
-  };
-  /** patch_supplier_prompt */
-  patch_supplier_prompt: {
-    parameters: {
-      path: {
-        product_id: string;
-      };
-    };
-    responses: {
-      /** @description Implemented */
-      200: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Request or path parameter rejected */
-      400: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Not signed in */
-      401: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description The session guard refused */
-      403: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Record not found in this scope */
-      404: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Conflict with the current state */
-      409: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Database or downstream error */
-      500: {
         content: {
           "application/json": Record<string, never>;
         };
@@ -16959,13 +17151,47 @@ export interface operations {
       };
     };
   };
+  /** Read current platform model prices */
+  adminAiPricesGet: {
+    responses: {
+      /** @description Current model prices */
+      200: {
+        content: {
+          "application/json": components["schemas"]["AIAdminPriceResponse"];
+        };
+      };
+      /** @description Not signed in */
+      401: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Not a super administrator */
+      403: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Price catalogue unavailable */
+      500: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+    };
+  };
   /** publish_price */
   publish_price: {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["PublishAiPriceRequest"];
+      };
+    };
     responses: {
       /** @description Implemented */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["AIAdminPriceResponse"];
         };
       };
       /** @description Request or path parameter rejected */
@@ -17008,11 +17234,16 @@ export interface operations {
   };
   /** unpublish_price */
   unpublish_price: {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AIRemovePriceRequest"];
+      };
+    };
     responses: {
       /** @description Implemented */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["AIAdminPriceResponse"];
         };
       };
       /** @description Request or path parameter rejected */
@@ -17428,11 +17659,16 @@ export interface operations {
   };
   /** list_models */
   list_models: {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AiProbeRequest"];
+      };
+    };
     responses: {
       /** @description Implemented */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["AiModelsResponse"];
         };
       };
       /** @description Request or path parameter rejected */
@@ -17473,6 +17709,12 @@ export interface operations {
       };
       /** @description Database or downstream error */
       500: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Upstream model catalogue request failed */
+      502: {
         content: {
           "application/json": Record<string, never>;
         };
@@ -17487,11 +17729,16 @@ export interface operations {
   };
   /** verify */
   adminIntegrationsAiVerify: {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AiProbeRequest"];
+      };
+    };
     responses: {
       /** @description Implemented */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["AiVerifyResponse"];
         };
       };
       /** @description Request or path parameter rejected */
@@ -17536,6 +17783,12 @@ export interface operations {
           "application/json": Record<string, never>;
         };
       };
+      /** @description Upstream model catalogue request failed */
+      502: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
       /** @description A dependency is unavailable */
       503: {
         content: {
@@ -17544,49 +17797,89 @@ export interface operations {
       };
     };
   };
-  /** replace */
-  adminIntegrationsConfigReplace: {
+  /** Read the credential-free platform AI configuration */
+  adminIntegrationsConfigGet: {
     responses: {
-      /** @description Implemented */
+      /** @description Credential-free configuration snapshot */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["AdminIntegrationConfigResponse"];
         };
       };
-      /** @description Request or path parameter rejected */
-      400: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Not signed in */
+      /** @description Request refused */
       401: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["IntegrationConfigErrorResponse"];
         };
       };
-      /** @description The session guard refused */
+      /** @description Request refused */
       403: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["IntegrationConfigErrorResponse"];
         };
       };
-      /** @description Record not found in this scope */
-      404: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Conflict with the current state */
-      409: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Database or downstream error */
+      /** @description Request refused */
       500: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": components["schemas"]["IntegrationConfigErrorResponse"];
+        };
+      };
+      /** @description Request refused */
+      503: {
+        content: {
+          "application/json": components["schemas"]["IntegrationConfigErrorResponse"];
+        };
+      };
+    };
+  };
+  /** Replace platform AI configuration with a revision check */
+  adminIntegrationsConfigReplace: {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AdminIntegrationConfigWriteRequest"];
+      };
+    };
+    responses: {
+      /** @description Credential-free configuration snapshot */
+      200: {
+        content: {
+          "application/json": components["schemas"]["AdminIntegrationConfigResponse"];
+        };
+      };
+      /** @description Request refused */
+      400: {
+        content: {
+          "application/json": components["schemas"]["IntegrationConfigErrorResponse"];
+        };
+      };
+      /** @description Request refused */
+      401: {
+        content: {
+          "application/json": components["schemas"]["IntegrationConfigErrorResponse"];
+        };
+      };
+      /** @description Request refused */
+      403: {
+        content: {
+          "application/json": components["schemas"]["IntegrationConfigErrorResponse"];
+        };
+      };
+      /** @description Request refused */
+      409: {
+        content: {
+          "application/json": components["schemas"]["IntegrationConfigErrorResponse"];
+        };
+      };
+      /** @description Request refused */
+      500: {
+        content: {
+          "application/json": components["schemas"]["IntegrationConfigErrorResponse"];
+        };
+      };
+      /** @description Request refused */
+      503: {
+        content: {
+          "application/json": components["schemas"]["IntegrationConfigErrorResponse"];
         };
       };
     };
@@ -18700,6 +18993,64 @@ export interface operations {
       };
     };
   };
+  /** List subscription percentage coupons */
+  adminSubscriptionCouponsList: {
+    responses: {
+      /** @description Coupons */
+      200: {
+        content: {
+          "application/json": {
+            data: {
+              coupons: components["schemas"]["AdminSubscriptionCoupon"][];
+            };
+          };
+        };
+      };
+    };
+  };
+  /** Create an immutable percentage coupon */
+  adminSubscriptionCouponsCreate: {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AdminSubscriptionCouponCreate"];
+      };
+    };
+    responses: {
+      /** @description Coupon created */
+      201: {
+        content: {
+          "application/json": {
+            data: components["schemas"]["AdminSubscriptionCoupon"];
+          };
+        };
+      };
+    };
+  };
+  /** Enable or disable a subscription coupon */
+  adminSubscriptionCouponsUpdate: {
+    parameters: {
+      path: {
+        code: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": {
+          enabled: boolean;
+        };
+      };
+    };
+    responses: {
+      /** @description Coupon updated */
+      200: {
+        content: {
+          "application/json": {
+            data: components["schemas"]["AdminSubscriptionCoupon"];
+          };
+        };
+      };
+    };
+  };
   /** list */
   "admin_get_api_admin_redeem-codes": {
     responses: {
@@ -19116,65 +19467,6 @@ export interface operations {
       };
     };
   };
-  /** step_up */
-  step_up: {
-    responses: {
-      /** @description Implemented */
-      200: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Request or path parameter rejected */
-      400: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Not signed in */
-      401: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description The session guard refused */
-      403: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Record not found in this scope */
-      404: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Conflict with the current state */
-      409: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Rate or quota limit reached */
-      429: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Database or downstream error */
-      500: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description A dependency is unavailable */
-      503: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-    };
-  };
   /** admin_observation_products */
   admin_observation_products: {
     responses: {
@@ -19428,124 +19720,6 @@ export interface operations {
       };
     };
   };
-  /** confirm */
-  confirm: {
-    responses: {
-      /** @description Implemented */
-      200: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Request or path parameter rejected */
-      400: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Not signed in */
-      401: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description The session guard refused */
-      403: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Record not found in this scope */
-      404: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Conflict with the current state */
-      409: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Rate or quota limit reached */
-      429: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Database or downstream error */
-      500: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description A dependency is unavailable */
-      503: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-    };
-  };
-  /** enroll */
-  enroll: {
-    responses: {
-      /** @description Implemented */
-      200: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Request or path parameter rejected */
-      400: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Not signed in */
-      401: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description The session guard refused */
-      403: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Record not found in this scope */
-      404: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Conflict with the current state */
-      409: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Rate or quota limit reached */
-      429: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Database or downstream error */
-      500: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description A dependency is unavailable */
-      503: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-    };
-  };
   /** list_users */
   list_users: {
     responses: {
@@ -19716,134 +19890,6 @@ export interface operations {
       };
     };
   };
-  /** apply_user_member_seats */
-  apply_user_member_seats: {
-    parameters: {
-      path: {
-        uuid: string;
-      };
-    };
-    responses: {
-      /** @description Implemented */
-      200: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Request or path parameter rejected */
-      400: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Not signed in */
-      401: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description The session guard refused */
-      403: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Record not found in this scope */
-      404: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Conflict with the current state */
-      409: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Rate or quota limit reached */
-      429: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Database or downstream error */
-      500: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description A dependency is unavailable */
-      503: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-    };
-  };
-  /** preview_member_seats */
-  preview_member_seats: {
-    parameters: {
-      path: {
-        uuid: string;
-      };
-    };
-    responses: {
-      /** @description Implemented */
-      200: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Request or path parameter rejected */
-      400: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Not signed in */
-      401: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description The session guard refused */
-      403: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Record not found in this scope */
-      404: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Conflict with the current state */
-      409: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Rate or quota limit reached */
-      429: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description Database or downstream error */
-      500: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-      /** @description A dependency is unavailable */
-      503: {
-        content: {
-          "application/json": Record<string, never>;
-        };
-      };
-    };
-  };
   /** set_user_password */
   set_user_password: {
     parameters: {
@@ -19913,6 +19959,11 @@ export interface operations {
     parameters: {
       path: {
         uuid: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AdminSetMemberCapRequest"];
       };
     };
     responses: {
@@ -20654,11 +20705,18 @@ export interface operations {
   };
   /** Finalize one uploaded asset */
   delegate_finalize_asset: {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreateDelegateAssetRequest"];
+      };
+    };
     responses: {
       /** @description Implemented */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": {
+            data: components["schemas"]["DelegateAssetMutationData"];
+          };
         };
       };
       /** @description Request or path parameter rejected */
@@ -20713,11 +20771,18 @@ export interface operations {
   };
   /** Sign one asset upload */
   delegate_presign_asset: {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["DelegateAssetPresignRequest"];
+      };
+    };
     responses: {
       /** @description Implemented */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": {
+            data: components["schemas"]["DelegateAssetPresignData"];
+          };
         };
       };
       /** @description Request or path parameter rejected */
@@ -20781,7 +20846,9 @@ export interface operations {
       /** @description Implemented */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": {
+            data: components["schemas"]["DelegateAssetDeleteData"];
+          };
         };
       };
       /** @description Request or path parameter rejected */
@@ -20818,11 +20885,18 @@ export interface operations {
   };
   /** List delegate bindings */
   delegate_list_bindings: {
+    parameters: {
+      query: {
+        store_id: string;
+      };
+    };
     responses: {
       /** @description Implemented */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": {
+            data: components["schemas"]["DelegateBindingsData"];
+          };
         };
       };
       /** @description Request or path parameter rejected */
@@ -20865,11 +20939,18 @@ export interface operations {
   };
   /** Create one delegate binding */
   delegate_create_binding: {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreateDelegateBindingRequest"];
+      };
+    };
     responses: {
       /** @description Implemented */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": {
+            data: components["schemas"]["DelegateBindingMutationData"];
+          };
         };
       };
       /** @description Request or path parameter rejected */
@@ -20933,7 +21014,9 @@ export interface operations {
       /** @description Implemented */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": {
+            data: components["schemas"]["DelegateBindingDeleteData"];
+          };
         };
       };
       /** @description Request or path parameter rejected */
@@ -20975,11 +21058,18 @@ export interface operations {
         binding_id: string;
       };
     };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["PatchDelegateBindingRequest"];
+      };
+    };
     responses: {
       /** @description Implemented */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": {
+            data: components["schemas"]["DelegateBindingMutationData"];
+          };
         };
       };
       /** @description Request or path parameter rejected */
@@ -21022,11 +21112,23 @@ export interface operations {
   };
   /** List delegate drop-ship orders */
   delegate_list_orders: {
+    parameters: {
+      query?: {
+        store_id?: string;
+        state?: string;
+        /** @description Case-insensitive substring of the posting number or bound supplier name. */
+        search?: string;
+        cursor?: string;
+        limit?: number;
+      };
+    };
     responses: {
       /** @description Implemented */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": {
+            data: components["schemas"]["DelegateOrderListData"];
+          };
         };
       };
       /** @description Request or path parameter rejected */
@@ -21069,11 +21171,23 @@ export interface operations {
   };
   /** Create one delegate drop-ship order */
   delegate_create_order: {
+    parameters: {
+      header: {
+        "Idempotency-Key": string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreateDelegateOrderRequest"];
+      };
+    };
     responses: {
       /** @description Implemented */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": {
+            data: components["schemas"]["DelegateOrderData"];
+          };
         };
       };
       /** @description Request or path parameter rejected */
@@ -21137,7 +21251,9 @@ export interface operations {
       /** @description Implemented */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": {
+            data: components["schemas"]["DelegateOrderData"];
+          };
         };
       };
       /** @description Request or path parameter rejected */
@@ -21189,7 +21305,9 @@ export interface operations {
       /** @description Implemented */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": {
+            data: components["schemas"]["DelegateOrderData"];
+          };
         };
       };
       /** @description Request or path parameter rejected */
@@ -21253,7 +21371,9 @@ export interface operations {
       /** @description Implemented */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": {
+            data: components["schemas"]["DelegateOrderData"];
+          };
         };
       };
       /** @description Request or path parameter rejected */
@@ -21317,7 +21437,9 @@ export interface operations {
       /** @description Implemented */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": {
+            data: components["schemas"]["DelegateOrderData"];
+          };
         };
       };
       /** @description Request or path parameter rejected */
@@ -21372,11 +21494,19 @@ export interface operations {
   };
   /** Seller posting states keyed by posting number */
   delegate_posting_states: {
+    parameters: {
+      query: {
+        store_id: string;
+        posting_numbers: string;
+      };
+    };
     responses: {
       /** @description Implemented */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": {
+            data: components["schemas"]["DelegatePostingStatesData"];
+          };
         };
       };
       /** @description Request or path parameter rejected */
@@ -21419,11 +21549,18 @@ export interface operations {
   };
   /** One window of seller postings */
   delegate_list_postings: {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["DelegatePostingsRequest"];
+      };
+    };
     responses: {
       /** @description Implemented */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": {
+            data: components["schemas"]["DelegatePostingsData"];
+          };
         };
       };
       /** @description Request or path parameter rejected */
@@ -21482,7 +21619,9 @@ export interface operations {
       /** @description Implemented */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": {
+            data: components["schemas"]["DelegateSourcesData"];
+          };
         };
       };
       /** @description Request or path parameter rejected */
@@ -21952,13 +22091,29 @@ export interface operations {
       };
     };
   };
-  /** One page of the supplier's dispatches, filtered by state */
-  list_dispatches: {
+  /** One page of up to 20 dispatches for an authorized factory workspace */
+  list_supplier_workspace_dispatches: {
+    parameters: {
+      query?: {
+        view?: "pending" | "producing" | "urgent" | "shipped";
+        search?: string;
+        /** @description 加急视图的订单状态筛选 */
+        status?: "dispatched" | "accepted";
+        /** @description 加急视图的原因筛选；催单与临期可能同时满足。 */
+        reason?: "deadline" | "nudge";
+        cursor?: string;
+      };
+      path: {
+        source_id: string;
+      };
+    };
     responses: {
       /** @description Implemented */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": {
+            data: components["schemas"]["SupplierDispatchListData"];
+          };
         };
       };
       /** @description Request or path parameter rejected */
@@ -21999,6 +22154,40 @@ export interface operations {
       };
     };
   };
+  /** Complete status counts and urgent dispatches for an authorized factory workspace */
+  get_supplier_workspace_dashboard: {
+    parameters: {
+      path: {
+        source_id: string;
+      };
+    };
+    responses: {
+      /** @description Implemented */
+      200: {
+        content: {
+          "application/json": {
+            data: components["schemas"]["SupplierDashboardData"];
+          };
+        };
+      };
+      /** @description Not signed in */
+      401: {
+        content: never;
+      };
+      /** @description The session guard refused */
+      403: {
+        content: never;
+      };
+      /** @description Factory workspace not found in this scope */
+      404: {
+        content: never;
+      };
+      /** @description Database or downstream error */
+      500: {
+        content: never;
+      };
+    };
+  };
   /** One dispatch with its lines and assets */
   get_dispatch: {
     parameters: {
@@ -22010,7 +22199,11 @@ export interface operations {
       /** @description Implemented */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": {
+            data: {
+              dispatch: components["schemas"]["SupplierDispatchDetail"];
+            };
+          };
         };
       };
       /** @description Request or path parameter rejected */
@@ -22062,7 +22255,9 @@ export interface operations {
       /** @description Implemented */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": {
+            data: components["schemas"]["SupplierActionData"];
+          };
         };
       };
       /** @description Request or path parameter rejected */
@@ -22115,7 +22310,7 @@ export interface operations {
       };
     };
   };
-  /** Download one dispatch asset; JSON metadata or raw bytes */
+  /** Download one dispatch asset; JSON grant or temporary object redirect */
   supplierDownload: {
     parameters: {
       path: {
@@ -22124,11 +22319,21 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Implemented */
+      /** @description Short-lived private download grant when Accept is application/json */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": {
+            data: components["schemas"]["SupplierDownloadGrant"];
+          };
         };
+      };
+      /** @description Authorized object URL; preserves Range and If-Range for direct streaming */
+      307: {
+        headers: {
+          Location?: string;
+          "Cache-Control"?: "private, no-store";
+        };
+        content: never;
       };
       /** @description Request or path parameter rejected */
       400: {
@@ -22166,6 +22371,12 @@ export interface operations {
           "application/json": Record<string, never>;
         };
       };
+      /** @description Private object storage is missing, inactive, or invalid */
+      503: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
     };
   };
   /** Reject one dispatch with a reason */
@@ -22175,11 +22386,20 @@ export interface operations {
         dispatch_id: string;
       };
     };
+    requestBody: {
+      content: {
+        "application/json": {
+          reason: string;
+        };
+      };
+    };
     responses: {
       /** @description Implemented */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": {
+            data: components["schemas"]["SupplierActionData"];
+          };
         };
       };
       /** @description Request or path parameter rejected */
@@ -22238,7 +22458,9 @@ export interface operations {
       /** @description Implemented */
       200: {
         content: {
-          "application/json": Record<string, never>;
+          "application/json": {
+            data: components["schemas"]["SupplierMeData"];
+          };
         };
       };
       /** @description Request or path parameter rejected */
@@ -22346,6 +22568,108 @@ export interface operations {
       };
     };
   };
+  /** Recover a tenant-owned request by its original key without repeating inference */
+  aiFindImageSet: {
+    parameters: {
+      header: {
+        "Idempotency-Key": components["parameters"]["AIIdempotencyKey"];
+      };
+    };
+    responses: {
+      /** @description Stored set and individual results */
+      200: {
+        content: {
+          "application/json": components["schemas"]["AIImageSet"];
+        };
+      };
+      /** @description Existing request is still processing */
+      202: {
+        content: {
+          "application/json": components["schemas"]["AIImageSet"];
+        };
+      };
+      400: components["responses"]["AIError"];
+      401: components["responses"]["AIError"];
+      403: components["responses"]["AIError"];
+      404: components["responses"]["AIError"];
+      500: components["responses"]["AIError"];
+    };
+  };
+  /** Generate and persist exactly three product images with independent per-image billing */
+  aiCreateImageSet: {
+    parameters: {
+      header: {
+        "Idempotency-Key": components["parameters"]["AIIdempotencyKey"];
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AIImageSetRequest"];
+      };
+    };
+    responses: {
+      /** @description Stored set; inspect status and individual items for ready, partial, failed or unknown outcomes */
+      200: {
+        content: {
+          "application/json": components["schemas"]["AIImageSet"];
+        };
+      };
+      /** @description Existing identical request is still processing; this response does not repeat generation */
+      202: {
+        content: {
+          "application/json": components["schemas"]["AIImageSet"];
+        };
+      };
+      400: components["responses"]["AIError"];
+      401: components["responses"]["AIError"];
+      402: components["responses"]["AIError"];
+      403: components["responses"]["AIError"];
+      409: components["responses"]["AIError"];
+      429: components["responses"]["AIError"];
+      500: components["responses"]["AIError"];
+      503: components["responses"]["AIError"];
+    };
+  };
+  /** Read the configured image model and published three-image price without purchasing */
+  aiImageSetCapability: {
+    responses: {
+      /** @description Available only with one active image account, valid persistent storage and a published per-image price */
+      200: {
+        content: {
+          "application/json": components["schemas"]["AIImageSetCapability"];
+        };
+      };
+      401: components["responses"]["AIError"];
+      403: components["responses"]["AIError"];
+      500: components["responses"]["AIError"];
+    };
+  };
+  /** Read a tenant-owned set; never retries inference */
+  aiGetImageSet: {
+    parameters: {
+      path: {
+        id: string;
+      };
+    };
+    responses: {
+      /** @description Stored set and confirmed public assets */
+      200: {
+        content: {
+          "application/json": components["schemas"]["AIImageSet"];
+        };
+      };
+      /** @description Set is processing */
+      202: {
+        content: {
+          "application/json": components["schemas"]["AIImageSet"];
+        };
+      };
+      401: components["responses"]["AIError"];
+      403: components["responses"]["AIError"];
+      404: components["responses"]["AIError"];
+      500: components["responses"]["AIError"];
+    };
+  };
   /** Hold, relay, and settle one non-streaming chat completion per Idempotency-Key */
   aiChatCompletions: {
     parameters: {
@@ -22377,15 +22701,80 @@ export interface operations {
       504: components["responses"]["AIError"];
     };
   };
-  /** Stored OCR result for one Idempotency-Key */
-  aiOcrResult: {
+  /** Hold, relay, and settle one non-streaming Anthropic Messages call per Idempotency-Key */
+  aiAnthropicMessages: {
     parameters: {
       header: {
         "Idempotency-Key": components["parameters"]["AIIdempotencyKey"];
       };
     };
+    requestBody: {
+      content: {
+        "application/json": Record<string, never>;
+      };
+    };
     responses: {
-      /** @description Stored OCR response body and request status */
+      /** @description Settled native response, or the stored replay for the same key */
+      200: {
+        content: {
+          "application/json": components["schemas"]["AIChatResponse"];
+        };
+      };
+      400: components["responses"]["AIError"];
+      401: components["responses"]["AIError"];
+      402: components["responses"]["AIError"];
+      403: components["responses"]["AIError"];
+      409: components["responses"]["AIRetryError"];
+      429: components["responses"]["AIRetryError"];
+      500: components["responses"]["AIError"];
+      502: components["responses"]["AIError"];
+      503: components["responses"]["AIError"];
+      504: components["responses"]["AIError"];
+    };
+  };
+  /** Hold, relay, and settle one non-streaming Responses call per Idempotency-Key */
+  aiResponses: {
+    parameters: {
+      header: {
+        "Idempotency-Key": components["parameters"]["AIIdempotencyKey"];
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": Record<string, never>;
+      };
+    };
+    responses: {
+      /** @description Settled native response, or the stored replay for the same key */
+      200: {
+        content: {
+          "application/json": components["schemas"]["AIChatResponse"];
+        };
+      };
+      400: components["responses"]["AIError"];
+      401: components["responses"]["AIError"];
+      402: components["responses"]["AIError"];
+      403: components["responses"]["AIError"];
+      409: components["responses"]["AIRetryError"];
+      429: components["responses"]["AIRetryError"];
+      500: components["responses"]["AIError"];
+      502: components["responses"]["AIError"];
+      503: components["responses"]["AIError"];
+      504: components["responses"]["AIError"];
+    };
+  };
+  /** Read one bound OCR receipt without repeating inference */
+  aiOcrResult: {
+    parameters: {
+      header: {
+        "Idempotency-Key": components["parameters"]["AIIdempotencyKey"];
+        "X-Listing-Job-Id": string;
+        "X-Listing-Lease-Owner": string;
+        "X-Listing-Lease-Epoch": number;
+      };
+    };
+    responses: {
+      /** @description Completion, durable billing receipt and optional persisted listing row. */
       200: {
         content: {
           "application/json": components["schemas"]["AIOcrResultResponse"];
@@ -22393,18 +22782,52 @@ export interface operations {
       };
       400: components["responses"]["AIError"];
       401: components["responses"]["AIError"];
+      402: components["responses"]["AIError"];
       403: components["responses"]["AIError"];
       404: components["responses"]["AIError"];
+      409: components["responses"]["AIError"];
+      422: components["responses"]["AIError"];
+      429: components["responses"]["AIError"];
       500: components["responses"]["AIError"];
+      502: components["responses"]["AIError"];
+      503: components["responses"]["AIError"];
+      504: components["responses"]["AIError"];
     };
   };
-  /** OCR purchase; refused with 400 because listing writeback is not served */
+  /** Verify private image bytes, purchase one recognition and persist its listing result */
   aiOcrCompletions: {
+    parameters: {
+      header: {
+        "Idempotency-Key": components["parameters"]["AIIdempotencyKey"];
+        "X-Listing-Job-Id": string;
+        "X-Listing-Lease-Owner": string;
+        "X-Listing-Lease-Epoch": number;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["OcrPurchaseRequest"];
+      };
+    };
     responses: {
+      /** @description Completion, durable billing receipt and optional persisted listing row. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["AIOcrResultResponse"];
+        };
+      };
       400: components["responses"]["AIError"];
       401: components["responses"]["AIError"];
+      402: components["responses"]["AIError"];
       403: components["responses"]["AIError"];
+      404: components["responses"]["AIError"];
+      409: components["responses"]["AIError"];
+      422: components["responses"]["AIError"];
+      429: components["responses"]["AIError"];
       500: components["responses"]["AIError"];
+      502: components["responses"]["AIError"];
+      503: components["responses"]["AIError"];
+      504: components["responses"]["AIError"];
     };
   };
   /** Wallet balance and the latest 50 ledger entries */
@@ -22654,7 +23077,7 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Tree, or data null on a miss without storeId */
+      /** @description Tree, or null on a miss without store_id */
       200: {
         content: {
           "application/json": components["schemas"]["CatalogTreeResponse"];
@@ -22681,7 +23104,7 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Schema with native material, or data null when no platform fetch key is usable */
+      /** @description Schema with native material, or null when no platform fetch key is usable */
       200: {
         content: {
           "application/json": components["schemas"]["CatalogSchemaResponse"];
@@ -22719,6 +23142,52 @@ export interface operations {
       };
       /** @description Catalog error */
       500: {
+        content: {
+          "application/json": components["schemas"]["CatalogErrorResponse"];
+        };
+      };
+    };
+  };
+  /** Save platform category credentials and a disabled fetch schedule; super admin only */
+  saveCatalogFetchConfig: {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CatalogFetchConfigWriteRequest"];
+      };
+    };
+    responses: {
+      /** @description Saved configuration without a data envelope */
+      200: {
+        content: {
+          "application/json": components["schemas"]["CatalogFetchConfigResponse"];
+        };
+      };
+      /** @description Catalog configuration error */
+      400: {
+        content: {
+          "application/json": components["schemas"]["CatalogErrorResponse"];
+        };
+      };
+      /** @description Catalog configuration error */
+      401: {
+        content: {
+          "application/json": components["schemas"]["CatalogErrorResponse"];
+        };
+      };
+      /** @description Catalog configuration error */
+      403: {
+        content: {
+          "application/json": components["schemas"]["CatalogErrorResponse"];
+        };
+      };
+      /** @description Catalog configuration error */
+      500: {
+        content: {
+          "application/json": components["schemas"]["CatalogErrorResponse"];
+        };
+      };
+      /** @description Catalog configuration error */
+      503: {
         content: {
           "application/json": components["schemas"]["CatalogErrorResponse"];
         };
@@ -22959,7 +23428,7 @@ export interface operations {
       };
     };
   };
-  /** Edit one Store's name, Client ID, assignee key grant, tags, or group */
+  /** Edit one Store's name, Client ID, tags, or group */
   storeUpdate: {
     parameters: {
       path: {
@@ -23088,6 +23557,13 @@ export interface operations {
     };
   };
   aiOcrUploadIssue: {
+    parameters: {
+      header: {
+        "X-Listing-Job-Id": string;
+        "X-Listing-Lease-Owner": string;
+        "X-Listing-Lease-Epoch": number;
+      };
+    };
     requestBody: {
       content: {
         "application/json": components["schemas"]["OcrUploadRequest"];
@@ -23096,7 +23572,9 @@ export interface operations {
     responses: {
       200: {
         content: {
-          "application/json": components["schemas"]["DirectUploadTarget"];
+          "application/json": {
+            data: components["schemas"]["DirectUploadTarget"];
+          };
         };
       };
       400: {
@@ -23122,6 +23600,13 @@ export interface operations {
     };
   };
   ocr_upload_confirm: {
+    parameters: {
+      header: {
+        "X-Listing-Job-Id": string;
+        "X-Listing-Lease-Owner": string;
+        "X-Listing-Lease-Epoch": number;
+      };
+    };
     requestBody: {
       content: {
         "application/json": components["schemas"]["OcrUploadConfirmRequest"];
@@ -23130,7 +23615,9 @@ export interface operations {
     responses: {
       200: {
         content: {
-          "application/json": components["schemas"]["DirectUploadSpec"];
+          "application/json": {
+            data: components["schemas"]["DirectUploadSpec"];
+          };
         };
       };
       400: {
@@ -23211,6 +23698,12 @@ export interface operations {
           "application/json": components["schemas"]["AiRechargeOrderData"];
         };
       };
+      /** @description Payment operation refused */
+      400: {
+        content: {
+          "application/json": components["schemas"]["AiErrorResponse"];
+        };
+      };
       401: {
         content: {
           "application/json": components["schemas"]["AiErrorResponse"];
@@ -23222,6 +23715,24 @@ export interface operations {
         };
       };
       404: {
+        content: {
+          "application/json": components["schemas"]["AiErrorResponse"];
+        };
+      };
+      /** @description Payment operation refused */
+      409: {
+        content: {
+          "application/json": components["schemas"]["AiErrorResponse"];
+        };
+      };
+      /** @description Payment operation refused */
+      500: {
+        content: {
+          "application/json": components["schemas"]["AiErrorResponse"];
+        };
+      };
+      /** @description Payment operation refused */
+      503: {
         content: {
           "application/json": components["schemas"]["AiErrorResponse"];
         };
@@ -23293,6 +23804,30 @@ export interface operations {
       };
     };
   };
+  get_workspace: {
+    parameters: {
+      path: {
+        /** @description Numeric Workspace id */
+        workspace_id: number;
+      };
+    };
+    responses: {
+      /** @description JPEG bytes */
+      200: {
+        content: never;
+      };
+      401: {
+        content: {
+          "application/json": components["schemas"]["AvatarErrorResponse"];
+        };
+      };
+      404: {
+        content: {
+          "application/json": components["schemas"]["AvatarErrorResponse"];
+        };
+      };
+    };
+  };
   put_workspace: {
     parameters: {
       path: {
@@ -23327,6 +23862,52 @@ export interface operations {
         };
       };
       503: {
+        content: {
+          "application/json": components["schemas"]["AvatarErrorResponse"];
+        };
+      };
+    };
+  };
+  upload_workspace: {
+    parameters: {
+      query: {
+        ticket: string;
+      };
+      path: {
+        /** @description Numeric Workspace id */
+        workspace_id: number;
+      };
+    };
+    requestBody: {
+      content: {
+        "image/jpeg": string;
+      };
+    };
+    responses: {
+      /** @description Bytes stored */
+      200: {
+        content: never;
+      };
+      400: {
+        content: {
+          "application/json": components["schemas"]["AvatarErrorResponse"];
+        };
+      };
+      404: {
+        content: {
+          "application/json": components["schemas"]["AvatarErrorResponse"];
+        };
+      };
+      410: {
+        content: {
+          "application/json": components["schemas"]["AvatarErrorResponse"];
+        };
+      };
+      /** @description Already stored */
+      412: {
+        content: never;
+      };
+      413: {
         content: {
           "application/json": components["schemas"]["AvatarErrorResponse"];
         };
@@ -23420,50 +24001,7 @@ export interface operations {
           "application/json": components["schemas"]["CatalogErrorResponse"];
         };
       };
-    };
-  };
-  put_wb_credential: {
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["CatalogFetchWbCredentialWriteRequest"];
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["CatalogFetchWbCredentialView"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["CatalogErrorResponse"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["CatalogErrorResponse"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["CatalogErrorResponse"];
-        };
-      };
-      409: {
-        content: {
-          "application/json": components["schemas"]["CatalogErrorResponse"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["CatalogErrorResponse"];
-        };
-      };
-      502: {
-        content: {
-          "application/json": components["schemas"]["CatalogErrorResponse"];
-        };
-      };
+      /** @description Fetch runtime or writer lease is unavailable */
       503: {
         content: {
           "application/json": components["schemas"]["CatalogErrorResponse"];
@@ -23500,30 +24038,6 @@ export interface operations {
       };
     };
   };
-  integrationsConfigGet: {
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["IntegrationConfigData"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["IntegrationConfigErrorResponse"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["IntegrationConfigErrorResponse"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["IntegrationConfigErrorResponse"];
-        };
-      };
-    };
-  };
   create_invite: {
     requestBody: {
       content: {
@@ -23547,6 +24061,12 @@ export interface operations {
         };
       };
       403: {
+        content: {
+          "application/json": components["schemas"]["AuthErrorResponse"];
+        };
+      };
+      /** @description Database or audit write failed; transaction rolled back */
+      500: {
         content: {
           "application/json": components["schemas"]["AuthErrorResponse"];
         };
@@ -23581,6 +24101,12 @@ export interface operations {
         };
       };
       403: {
+        content: {
+          "application/json": components["schemas"]["AuthErrorResponse"];
+        };
+      };
+      /** @description Database or audit write failed; transaction rolled back */
+      500: {
         content: {
           "application/json": components["schemas"]["AuthErrorResponse"];
         };
@@ -23624,6 +24150,12 @@ export interface operations {
           "application/json": components["schemas"]["AuthErrorResponse"];
         };
       };
+      /** @description Database or audit write failed; transaction rolled back */
+      500: {
+        content: {
+          "application/json": components["schemas"]["AuthErrorResponse"];
+        };
+      };
       503: {
         content: {
           "application/json": components["schemas"]["AuthErrorResponse"];
@@ -23663,159 +24195,15 @@ export interface operations {
           "application/json": components["schemas"]["AuthErrorResponse"];
         };
       };
-      503: {
+      /** @description Database or audit write failed; transaction rolled back */
+      500: {
         content: {
           "application/json": components["schemas"]["AuthErrorResponse"];
         };
       };
-    };
-  };
-  reconcile_card: {
-    parameters: {
-      path: {
-        /** @description Retired listing reconciliation endpoint */
-        id: string;
-      };
-    };
-    responses: {
-      410: {
+      503: {
         content: {
-          "application/json": components["schemas"]["ListingErrorResponse"];
-        };
-      };
-    };
-  };
-  preview_card_sku_import: {
-    parameters: {
-      path: {
-        /** @description Server-minted Listing Card id */
-        id: string;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["SkuImportPreviewRequest"];
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["SkuImportPreviewResponse"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ListingErrorResponse"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ListingErrorResponse"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ListingErrorResponse"];
-        };
-      };
-      /** @description No Card under that id, no such SKU in its Store, or a Store this operator may not see */
-      404: {
-        content: {
-          "application/json": components["schemas"]["ListingErrorResponse"];
-        };
-      };
-      /** @description The Card's category is not synced */
-      409: {
-        content: {
-          "application/json": components["schemas"]["ListingErrorResponse"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ListingErrorResponse"];
-        };
-      };
-      /** @description The Seller read failed */
-      502: {
-        content: {
-          "application/json": components["schemas"]["ListingErrorResponse"];
-        };
-      };
-    };
-  };
-  listing_template_download: {
-    parameters: {
-      path: {
-        id: string;
-        digest: string;
-      };
-    };
-    responses: {
-      /** @description Accept 含 application/json 时返回短时预签名 GET。当前页面用这张 URL 直连对象存储。 */
-      200: {
-        content: {
-          "application/json": components["schemas"]["ObjectDownloadGrant"];
-        };
-      };
-      /** @description 非 R2 存储上的单一 Range，只返回请求的字节。 */
-      206: {
-        content: never;
-      };
-      /** @description R2 上未声明 application/json 时，跳到同一张短时预签名 GET，API 不传文件字节。 */
-      307: {
-        content: never;
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ListingErrorResponse"];
-        };
-      };
-      409: {
-        content: {
-          "application/json": components["schemas"]["ListingErrorResponse"];
-        };
-      };
-      /** @description Range 起点超出对象长度。 */
-      416: {
-        content: never;
-      };
-    };
-  };
-  release_unknown_rows: {
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["ReleaseUnknownListingRowsRequest"];
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ReleaseUnknownListingRowsData"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ListingErrorResponse"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ListingErrorResponse"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ListingErrorResponse"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ListingErrorResponse"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ListingErrorResponse"];
+          "application/json": components["schemas"]["AuthErrorResponse"];
         };
       };
     };
@@ -23835,7 +24223,9 @@ export interface operations {
     responses: {
       200: {
         content: {
-          "application/json": components["schemas"]["ListingRowView"];
+          "application/json": {
+            data: components["schemas"]["ListingRowView"];
+          };
         };
       };
       400: {
@@ -23860,7 +24250,9 @@ export interface operations {
     responses: {
       200: {
         content: {
-          "application/json": components["schemas"]["ListingRowView"];
+          "application/json": {
+            data: components["schemas"]["ListingRowView"];
+          };
         };
       };
       400: {
@@ -23911,7 +24303,9 @@ export interface operations {
     responses: {
       200: {
         content: {
-          "application/json": components["schemas"]["CompleteListingRowMediaData"];
+          "application/json": {
+            data: components["schemas"]["CompleteListingRowMediaData"];
+          };
         };
       };
       400: {
@@ -23955,7 +24349,9 @@ export interface operations {
     responses: {
       200: {
         content: {
-          "application/json": components["schemas"]["ConfirmListingRowImagesResponse"];
+          "application/json": {
+            data: components["schemas"]["ConfirmListingRowImagesResponse"];
+          };
         };
       };
     };
@@ -23975,11 +24371,14 @@ export interface operations {
     responses: {
       200: {
         content: {
-          "application/json": components["schemas"]["ConfirmListingRowImageData"];
+          "application/json": {
+            data: components["schemas"]["ConfirmListingRowImageData"];
+          };
         };
       };
     };
   };
+  /** @description 固定识别、切片或上传的持久化任务；prepare 同时安排可执行的识别和媒体阶段，各阶段阻塞项独立返回。自动化调用尚未接入。 */
   prepare_row: {
     parameters: {
       path: {
@@ -23995,7 +24394,9 @@ export interface operations {
     responses: {
       200: {
         content: {
-          "application/json": components["schemas"]["PrepareListingRowData"];
+          "application/json": {
+            data: components["schemas"]["PrepareListingRowData"];
+          };
         };
       };
       400: {
@@ -24018,6 +24419,12 @@ export interface operations {
           "application/json": components["schemas"]["ListingErrorResponse"];
         };
       };
+      /** @description Command reuse or changed render input */
+      409: {
+        content: {
+          "application/json": components["schemas"]["ListingErrorResponse"];
+        };
+      };
       /** @description Blocked; body carries `blockers` */
       422: {
         content: {
@@ -24031,6 +24438,12 @@ export interface operations {
         };
       };
       500: {
+        content: {
+          "application/json": components["schemas"]["ListingErrorResponse"];
+        };
+      };
+      /** @description Requested preparation operation is not available */
+      501: {
         content: {
           "application/json": components["schemas"]["ListingErrorResponse"];
         };
@@ -24053,7 +24466,9 @@ export interface operations {
     responses: {
       200: {
         content: {
-          "application/json": components["schemas"]["CancelPrepareListingRowData"];
+          "application/json": {
+            data: components["schemas"]["CancelPrepareListingRowData"];
+          };
         };
       };
       401: {
@@ -24078,130 +24493,42 @@ export interface operations {
       };
     };
   };
-  repair_and_submit_row: {
-    parameters: {
-      path: {
-        /** @description Historical listing row */
-        id: string;
-      };
-    };
-    responses: {
-      410: {
-        content: {
-          "application/json": components["schemas"]["ListingErrorResponse"];
-        };
-      };
-    };
-  };
-  listing_template_register: {
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["RegisterPsdTemplateRequest"];
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["PsdTemplateView"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ListingErrorResponse"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ListingErrorResponse"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ListingErrorResponse"];
-        };
-      };
-    };
-  };
-  listing_template_confirm: {
-    parameters: {
-      path: {
-        id: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["PsdTemplateView"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ListingErrorResponse"];
-        };
-      };
-      409: {
-        content: {
-          "application/json": components["schemas"]["ListingErrorResponse"];
-        };
-      };
-    };
-  };
-  listing_template_multipart_abort: {
-    parameters: {
-      path: {
-        id: string;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["PsdMultipartTicketRequest"];
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["PsdTemplateView"];
-        };
-      };
-    };
-  };
-  listing_template_multipart_complete: {
-    parameters: {
-      path: {
-        id: string;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["PsdMultipartCompleteRequest"];
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["PsdTemplateView"];
-        };
-      };
-      409: {
-        content: {
-          "application/json": components["schemas"]["ListingErrorResponse"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ListingErrorResponse"];
-        };
-      };
-    };
-  };
   catalog_automation_grants_list: {
     responses: {
+      /** @description Saved result */
       200: {
         content: {
-          "application/json": components["schemas"]["ScopedAutomationGrantsData"];
+          "application/json": {
+            data: components["schemas"]["ScopedAutomationGrantsData"];
+          };
         };
       };
+      /** @description Request refused or unavailable */
+      400: {
+        content: {
+          "application/json": components["schemas"]["AutomationErrorResponse"];
+        };
+      };
+      /** @description Request refused or unavailable */
       401: {
+        content: {
+          "application/json": components["schemas"]["AutomationErrorResponse"];
+        };
+      };
+      /** @description Request refused or unavailable */
+      403: {
+        content: {
+          "application/json": components["schemas"]["AutomationErrorResponse"];
+        };
+      };
+      /** @description Request refused or unavailable */
+      404: {
+        content: {
+          "application/json": components["schemas"]["AutomationErrorResponse"];
+        };
+      };
+      /** @description Request refused or unavailable */
+      500: {
         content: {
           "application/json": components["schemas"]["AutomationErrorResponse"];
         };
@@ -24211,21 +24538,44 @@ export interface operations {
   catalog_automation_grant_create: {
     requestBody: {
       content: {
-        "application/json": components["schemas"]["CreateScopedAutomationGrantRequest"];
+        "application/json": components["schemas"]["CreateAutomationGrantRequest"];
       };
     };
     responses: {
+      /** @description Saved result */
       200: {
         content: {
-          "application/json": components["schemas"]["CreateScopedAutomationGrantData"];
+          "application/json": {
+            data: components["schemas"]["CreateScopedAutomationGrantData"];
+          };
         };
       };
+      /** @description Request refused or unavailable */
       400: {
         content: {
           "application/json": components["schemas"]["AutomationErrorResponse"];
         };
       };
+      /** @description Request refused or unavailable */
       401: {
+        content: {
+          "application/json": components["schemas"]["AutomationErrorResponse"];
+        };
+      };
+      /** @description Request refused or unavailable */
+      403: {
+        content: {
+          "application/json": components["schemas"]["AutomationErrorResponse"];
+        };
+      };
+      /** @description Request refused or unavailable */
+      404: {
+        content: {
+          "application/json": components["schemas"]["AutomationErrorResponse"];
+        };
+      };
+      /** @description Request refused or unavailable */
+      500: {
         content: {
           "application/json": components["schemas"]["AutomationErrorResponse"];
         };
@@ -24235,22 +24585,44 @@ export interface operations {
   catalog_automation_grant_revoke: {
     parameters: {
       path: {
-        /** @description Grant id */
         id: string;
       };
     };
     responses: {
+      /** @description Saved result */
       200: {
         content: {
-          "application/json": components["schemas"]["AutomationGrantRevokeData"];
+          "application/json": {
+            data: components["schemas"]["AutomationGrantRevokeData"];
+          };
         };
       };
+      /** @description Request refused or unavailable */
+      400: {
+        content: {
+          "application/json": components["schemas"]["AutomationErrorResponse"];
+        };
+      };
+      /** @description Request refused or unavailable */
       401: {
         content: {
           "application/json": components["schemas"]["AutomationErrorResponse"];
         };
       };
+      /** @description Request refused or unavailable */
+      403: {
+        content: {
+          "application/json": components["schemas"]["AutomationErrorResponse"];
+        };
+      };
+      /** @description Request refused or unavailable */
       404: {
+        content: {
+          "application/json": components["schemas"]["AutomationErrorResponse"];
+        };
+      };
+      /** @description Request refused or unavailable */
+      500: {
         content: {
           "application/json": components["schemas"]["AutomationErrorResponse"];
         };
@@ -24399,10 +24771,12 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Accept 含 application/json 时返回短时预签名 GET。其他 Accept 仍中转已核验的 PSD 字节。 */
+      /** @description 返回当前供应商 PSD 的短时预签名 GET 授权。 */
       200: {
         content: {
-          "application/json": components["schemas"]["ObjectDownloadGrant"];
+          "application/json": {
+            data: components["schemas"]["ObjectDownloadGrant"];
+          };
         };
       };
       400: {
@@ -24426,6 +24800,12 @@ export interface operations {
           "application/json": components["schemas"]["MediaLibraryErrorResponse"];
         };
       };
+      /** @description 供应商媒体元数据或对象摘要已变化。 */
+      409: {
+        content: {
+          "application/json": components["schemas"]["MediaLibraryErrorResponse"];
+        };
+      };
       503: {
         content: {
           "application/json": components["schemas"]["MediaLibraryErrorResponse"];
@@ -24443,7 +24823,9 @@ export interface operations {
     responses: {
       200: {
         content: {
-          "application/json": components["schemas"]["SupplierMediaVerificationData"];
+          "application/json": {
+            data: components["schemas"]["SupplierMediaVerificationData"];
+          };
         };
       };
       400: {
@@ -24462,6 +24844,12 @@ export interface operations {
         };
       };
       404: {
+        content: {
+          "application/json": components["schemas"]["MediaLibraryErrorResponse"];
+        };
+      };
+      /** @description 供应商媒体元数据或对象摘要已变化。 */
+      409: {
         content: {
           "application/json": components["schemas"]["MediaLibraryErrorResponse"];
         };
@@ -24565,25 +24953,6 @@ export interface operations {
       };
     };
   };
-  ocr_quota: {
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["OcrQuotaData"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["EntitlementErrorResponse"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["EntitlementErrorResponse"];
-        };
-      };
-    };
-  };
   list_own_orders: {
     parameters: {
       query?: {
@@ -24612,6 +24981,18 @@ export interface operations {
         };
       };
       403: {
+        content: {
+          "application/json": components["schemas"]["EntitlementErrorResponse"];
+        };
+      };
+      /** @description Payment operation refused */
+      500: {
+        content: {
+          "application/json": components["schemas"]["EntitlementErrorResponse"];
+        };
+      };
+      /** @description Payment operation refused */
+      503: {
         content: {
           "application/json": components["schemas"]["EntitlementErrorResponse"];
         };
@@ -24645,6 +25026,18 @@ export interface operations {
           "application/json": components["schemas"]["EntitlementErrorResponse"];
         };
       };
+      /** @description Payment operation refused */
+      500: {
+        content: {
+          "application/json": components["schemas"]["EntitlementErrorResponse"];
+        };
+      };
+      /** @description Payment operation refused */
+      503: {
+        content: {
+          "application/json": components["schemas"]["EntitlementErrorResponse"];
+        };
+      };
     };
   };
   cancel_own_order: {
@@ -24669,7 +25062,25 @@ export interface operations {
           "application/json": components["schemas"]["EntitlementErrorResponse"];
         };
       };
+      /** @description Payment operation refused */
+      404: {
+        content: {
+          "application/json": components["schemas"]["EntitlementErrorResponse"];
+        };
+      };
       409: {
+        content: {
+          "application/json": components["schemas"]["EntitlementErrorResponse"];
+        };
+      };
+      /** @description Payment operation refused */
+      500: {
+        content: {
+          "application/json": components["schemas"]["EntitlementErrorResponse"];
+        };
+      };
+      /** @description Payment operation refused */
+      503: {
         content: {
           "application/json": components["schemas"]["EntitlementErrorResponse"];
         };
@@ -24692,6 +25103,12 @@ export interface operations {
           "application/json": components["schemas"]["PaymentOrderData"];
         };
       };
+      /** @description Payment operation refused */
+      400: {
+        content: {
+          "application/json": components["schemas"]["EntitlementErrorResponse"];
+        };
+      };
       401: {
         content: {
           "application/json": components["schemas"]["EntitlementErrorResponse"];
@@ -24712,79 +25129,13 @@ export interface operations {
           "application/json": components["schemas"]["EntitlementErrorResponse"];
         };
       };
-    };
-  };
-  payment_intent: {
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["PaymentIntentRequest"];
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["PaymentOrderData"];
-        };
-      };
-      400: {
+      /** @description Payment operation refused */
+      500: {
         content: {
           "application/json": components["schemas"]["EntitlementErrorResponse"];
         };
       };
-      401: {
-        content: {
-          "application/json": components["schemas"]["EntitlementErrorResponse"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["EntitlementErrorResponse"];
-        };
-      };
-      409: {
-        content: {
-          "application/json": components["schemas"]["EntitlementErrorResponse"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["EntitlementErrorResponse"];
-        };
-      };
-    };
-  };
-  renewal_intent: {
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["RenewalIntentRequest"];
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["PaymentOrderData"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["EntitlementErrorResponse"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["EntitlementErrorResponse"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["EntitlementErrorResponse"];
-        };
-      };
-      409: {
-        content: {
-          "application/json": components["schemas"]["EntitlementErrorResponse"];
-        };
-      };
+      /** @description Payment operation refused */
       503: {
         content: {
           "application/json": components["schemas"]["EntitlementErrorResponse"];
@@ -24807,20 +25158,6 @@ export interface operations {
       500: {
         content: {
           "application/json": components["schemas"]["IntegrationConfigErrorResponse"];
-        };
-      };
-    };
-  };
-  entitlementPlans: {
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["PlansData"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["EntitlementErrorResponse"];
         };
       };
     };
@@ -24920,180 +25257,6 @@ export interface operations {
       401: {
         content: {
           "application/json": components["schemas"]["AuthErrorResponse"];
-        };
-      };
-    };
-  };
-  /**
-   * The Workspace's entitlement overview for the plans screen: purchased vs
-   * effective seats, the admin overrides, Store usage, every unexpired lot a
-   * renewal may target, and what the next lot boundary flips. Display only —
-   * it projects the same facts the writers enforce.
-   */
-  workspace_billing_overview_get: {
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["WorkspaceBillingOverviewData"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["EntitlementErrorResponse"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["EntitlementErrorResponse"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["EntitlementErrorResponse"];
-        };
-      };
-    };
-  };
-  product_variant_operations: {
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["ProductVariantOperationRequest"];
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ProductVariantOperationData"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["OpsErrorResponse"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["OpsErrorResponse"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["OpsErrorResponse"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["OpsErrorResponse"];
-        };
-      };
-      /** @description The preview expired or drifted; another operation holds the resource; the outcome is unknown */
-      409: {
-        content: {
-          "application/json": components["schemas"]["OpsErrorResponse"];
-        };
-      };
-      429: {
-        content: {
-          "application/json": components["schemas"]["OpsErrorResponse"];
-        };
-      };
-      502: {
-        content: {
-          "application/json": components["schemas"]["OpsErrorResponse"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["OpsErrorResponse"];
-        };
-      };
-    };
-  };
-  product_variant_operation_status: {
-    parameters: {
-      path: {
-        /** @description Grouping operation id */
-        operation_id: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ProductVariantOperationStatusData"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["OpsErrorResponse"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["OpsErrorResponse"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["OpsErrorResponse"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["OpsErrorResponse"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["OpsErrorResponse"];
-        };
-      };
-    };
-  };
-  product_variant_previews: {
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["ProductVariantPreviewRequest"];
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ProductVariantPreviewData"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["OpsErrorResponse"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["OpsErrorResponse"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["OpsErrorResponse"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["OpsErrorResponse"];
-        };
-      };
-      429: {
-        content: {
-          "application/json": components["schemas"]["OpsErrorResponse"];
-        };
-      };
-      502: {
-        content: {
-          "application/json": components["schemas"]["OpsErrorResponse"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["OpsErrorResponse"];
         };
       };
     };
@@ -25457,12 +25620,9 @@ export interface operations {
     };
   };
   /**
-   * Export the Cloud-held Seller keys the actor may manage, as plaintext rows.
-   * @description This is the one route where plaintext leaves Cloud: it answers the same
-   * `may_manage_key` boundary the register/rotate/delete routes enforce — Owner
-   * receives every keyed Store, an assignee only the Stores whose 「允许指派人
-   * 管理密钥」is open for them. The audit row records who exported and how many
-   * keys, never key material.
+   * Export the workspace's Cloud-held Seller keys as plaintext rows.
+   * @description Workspace owners and managers can export every keyed store in their workspace.
+   * The audit row records who exported and how many keys, never key material.
    */
   storesCredentialsExport: {
     responses: {
@@ -25482,6 +25642,32 @@ export interface operations {
         };
       };
       503: {
+        content: {
+          "application/json": components["schemas"]["WorkspaceStoreErrorResponse"];
+        };
+      };
+    };
+  };
+  /**
+   * Read the Seller store name without saving credentials or store changes.
+   * @description Requires a usable workspace seat. With an empty api_key, store_uuid must
+   * identify a store whose held credential the actor may test, and client_id
+   * must match that credential. Neither keys nor upstream response bodies are returned.
+   */
+  storesCredentialsResolveName: {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ResolveWorkspaceStoreNameRequest"];
+      };
+    };
+    responses: {
+      200: {
+        content: {
+          "application/json": components["schemas"]["ResolveWorkspaceStoreNameData"];
+        };
+      };
+      /** @description Invalid credentials, unavailable name, denied access, or unavailable Seller. */
+      default: {
         content: {
           "application/json": components["schemas"]["WorkspaceStoreErrorResponse"];
         };
@@ -26292,6 +26478,774 @@ export interface operations {
       };
       /** @description Database error */
       500: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+    };
+  };
+  ai_ocr_test_upload: {
+    parameters: {
+      path: {
+        id: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ArtworkOcrTestBody"];
+      };
+    };
+    responses: {
+      /** @description OCR test result */
+      200: {
+        content: {
+          "application/json": {
+            data: components["schemas"]["ArtworkOcrTestUploadData"];
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      400: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      401: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      402: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      403: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      404: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      409: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      422: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      429: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      500: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      502: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      503: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      504: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+    };
+  };
+  ai_ocr_test_confirm: {
+    parameters: {
+      path: {
+        id: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ArtworkOcrTestBody"];
+      };
+    };
+    responses: {
+      /** @description OCR test result */
+      200: {
+        content: {
+          "application/json": {
+            data: Record<string, never>;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      400: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      401: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      402: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      403: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      404: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      409: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      422: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      429: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      500: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      502: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      503: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      504: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+    };
+  };
+  ai_ocr_test_get: {
+    parameters: {
+      path: {
+        id: string;
+      };
+    };
+    responses: {
+      /** @description OCR test result */
+      200: {
+        content: {
+          "application/json": {
+            data: components["schemas"]["ArtworkOcrTestResult"];
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      400: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      401: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      402: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      403: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      404: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      409: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      422: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      429: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      500: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      502: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      503: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      504: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+    };
+  };
+  ai_ocr_test_run: {
+    parameters: {
+      path: {
+        id: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ArtworkOcrTestBody"];
+      };
+    };
+    responses: {
+      /** @description OCR test result */
+      200: {
+        content: {
+          "application/json": {
+            data: components["schemas"]["ArtworkOcrTestResult"];
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      400: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      401: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      402: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      403: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      404: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      409: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      422: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      429: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      500: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      502: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      503: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description Request refused or awaiting recovery */
+      504: {
+        content: {
+          "application/json": {
+            error?: string;
+            code?: string;
+            [key: string]: unknown;
+          };
+        };
+      };
+    };
+  };
+  /** presign_supplier_db_upload */
+  presignCatalogManagerUpload: {
+    parameters: {
+      path: {
+        source_id: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SupplierDbUploadPresignRequest"];
+      };
+    };
+    responses: {
+      /** @description Upload capability for the selected source and media kind */
+      200: {
+        content: {
+          "application/json": components["schemas"]["SupplierDbUploadPresignResponse"];
+        };
+      };
+      /** @description Request or path parameter rejected */
+      400: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Not signed in */
+      401: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description The session guard refused */
+      403: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Record not found in this scope */
+      404: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Conflict with the current state */
+      409: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Rate or quota limit reached */
+      429: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Database or downstream error */
+      500: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description A dependency is unavailable */
+      503: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+    };
+  };
+  /** confirm_supplier_db_upload */
+  confirmCatalogManagerUpload: {
+    parameters: {
+      path: {
+        source_id: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SupplierDbUploadConfirmRequest"];
+      };
+    };
+    responses: {
+      /** @description Confirmed object key and public URL */
+      200: {
+        content: {
+          "application/json": components["schemas"]["SupplierDbUploadConfirmResponse"];
+        };
+      };
+      /** @description Request or path parameter rejected */
+      400: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Not signed in */
+      401: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description The session guard refused */
+      403: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Record not found in this scope */
+      404: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Conflict with the current state */
+      409: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Rate or quota limit reached */
+      429: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Database or downstream error */
+      500: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description A dependency is unavailable */
+      503: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+    };
+  };
+  /** abort_supplier_db_upload */
+  abortCatalogManagerUpload: {
+    parameters: {
+      path: {
+        source_id: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SupplierDbUploadAbortRequest"];
+      };
+    };
+    responses: {
+      /** @description Upload aborted or no active multipart upload remained */
+      204: {
+        content: never;
+      };
+      /** @description Request or path parameter rejected */
+      400: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Not signed in */
+      401: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description The session guard refused */
+      403: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Record not found in this scope */
+      404: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Conflict with the current state */
+      409: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Rate or quota limit reached */
+      429: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description Database or downstream error */
+      500: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description A dependency is unavailable */
+      503: {
         content: {
           "application/json": Record<string, never>;
         };

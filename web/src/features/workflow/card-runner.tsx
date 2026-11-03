@@ -1,3 +1,4 @@
+import type { ImageSetMediaEdit } from "./image-sets/image-set-state"
 import type { BrandRepairCapability } from "./submit/use-repair-publish"
 import { useCallback, useMemo, useRef } from "react"
 import { useShallow } from "zustand/react/shallow"
@@ -5,8 +6,6 @@ import type {
   CategorySchemaView,
   FieldValueOrigin,
   OzonStoreView,
-  SkuImportCandidate,
-  SkuImportPreview,
   WorkflowCategoryDraft,
   WorkflowDraftValue,
   WorkflowValidationIssue,
@@ -47,8 +46,6 @@ type CardRunnerProps = {
   schema: CategorySchemaView
   draft: WorkflowCategoryDraft
   issues: WorkflowValidationIssue[]
-  onPreviewSkuImport: (sku: string) => Promise<SkuImportPreview>
-  onApplySkuImport: (candidates: SkuImportCandidate[], sourceSku: number) => void
   onFetchCategorySchema: () => Promise<void>
   storeConfigured: boolean
   storeLabel: string
@@ -73,6 +70,7 @@ type CardRunnerProps = {
     value: string,
   ) => void
   /** Write one draft value on one row — the 主题 picker's durable half. */
+  onEditMedia?: (draftId: string, edit: ImageSetMediaEdit) => Promise<boolean>
   onEditField: (
     draftId: string,
     fieldKey: string,
@@ -116,8 +114,6 @@ export function CardRunner({
   schema,
   draft,
   issues,
-  onPreviewSkuImport,
-  onApplySkuImport,
   onFetchCategorySchema,
   storeConfigured,
   storeLabel,
@@ -134,6 +130,7 @@ export function CardRunner({
   onRemoveRows,
   onEditCell,
   onEditField,
+  onEditMedia,
   onRetryRowSave,
   onFlushRows,
   onRunAiRows,
@@ -276,6 +273,7 @@ export function CardRunner({
           onClearRows={onClearRows}
           onRemoveRows={onRemoveRows}
           onEditCell={onEditCell}
+          onEditMedia={onEditMedia}
           onEditField={onEditField}
           onRetryRowSave={onRetryRowSave}
           onFlushRows={onFlushRows}
@@ -300,8 +298,6 @@ export function CardRunner({
           onRemoveComplexItem={removeCategoryComplexItem}
           aiAllowedFieldKeys={aiAllowedFieldKeys}
           aiProtectedFieldKeys={aiProtectedFieldKeys}
-          onPreviewSkuImport={onPreviewSkuImport}
-          onApplySkuImport={onApplySkuImport}
           onFetchCategorySchema={onFetchCategorySchema}
           onCancelQueue={onCancelQueue}
           onResumeQueue={onResumeQueue}

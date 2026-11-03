@@ -40,7 +40,10 @@ func TestLeaseDecisions(t *testing.T) {
 	if _, ok := ParseLeaseDomain(" billing "); ok {
 		t.Fatal("parse")
 	}
-	if len(LeaseDomains) != 7 || LeaseDomains[0] != "auth" || LeaseDomains[6] != "release" {
+	if len(LeaseDomains) != 8 || LeaseDomains[0] != "auth" || LeaseDomains[7] != "billing" {
 		t.Fatal(LeaseDomains)
+	}
+	if _, ok := ParseLeaseDomain("billing"); !ok {
+		t.Fatal("billing must parse")
 	}
 }

@@ -29,9 +29,9 @@ var layers = map[string]bool{"domain": true, "service": true, "repo": true, "htt
 // contract package only when the target has a strictly lower level.
 // Unknown units fail the test: add the unit here when you add a domain.
 var level = map[string]int{
-	"identity": 1,
-	"queue":    2, "media": 2, "catalog": 2, "billing": 2, "seller": 2, "telemetry": 2,
-	"listing/core": 3, "ai": 3, "supply": 3, "delegate": 3, "supplier": 3, "suppliercatalog": 3, "agent": 3, "ops": 3, "shipping": 3, "ozonerr": 3, "ratings": 3, "warehouse": 3, "store": 3,
+	"identity": 1, "queue": 1,
+	"media": 2, "catalog": 2, "billing": 2, "seller": 2, "telemetry": 2,
+	"listing/core": 3, "seller/ozon": 3, "ai": 3, "supply": 3, "delegate": 3, "supplier": 3, "suppliercatalog": 3, "agent": 3, "ops": 3, "shipping": 3, "ozonerr": 3, "ratings": 3, "warehouse": 3, "store": 3,
 	"listing/rules": 4, "automation": 4,
 	"listing/read": 5, "listing/write": 5,
 	"listing/submit": 6, "mcp": 6,
@@ -60,10 +60,9 @@ var deny = map[string][]string{
 
 // onlyIn pins a third-party module to the single package tree allowed to import it.
 var onlyIn = map[string]string{
-	"github.com/QuantumNous/new-api/relaykit": "internal/platform/llm",
-	"github.com/aws/aws-sdk-go-v2":            "internal/platform/r2",
-	"github.com/tetratelabs/wazero":           "internal/platform/wasm",
-	"github.com/pressly/goose":                "internal/platform/db",
+	"github.com/aws/aws-sdk-go-v2":  "internal/platform/r2",
+	"github.com/tetratelabs/wazero": "internal/platform/wasm",
+	"github.com/pressly/goose":      "internal/platform/db",
 }
 
 // pkg describes one directory under internal/.
@@ -313,7 +312,6 @@ func parsePointViolations(root string) []string {
 		{"OZON_WRITE_KILL_SWITCH", "internal/platform/config", matchQuoted},
 		{"CLOUD_MEDIA_GC_DELETE", "internal/platform/config", matchQuoted},
 		{"CLOUD_SELLER_BASE_URL", "internal/platform/config", matchQuoted},
-		{"CLOUD_AI_EGRESS_ALLOW_PUBLIC", "internal/platform/config", matchQuoted},
 		{"PODHUB_ALLOW_SUPERUSER_DB", "internal/platform/config", matchQuoted},
 		{"SHIPPING_INJECT_OZON_WRITES", "internal/platform/config", matchQuoted},
 		{"app.current_org_id", "internal/platform/db/tenantx", matchGUC},

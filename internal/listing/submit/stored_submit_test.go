@@ -1,8 +1,6 @@
 package submit
 
 import (
-	"bytes"
-	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -25,7 +23,7 @@ func TestSendStoredKeepsReplayStateAndCardOwnership(t *testing.T) {
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM listing_cards WHERE org_id = $1`, orgID)
 		purgeDraft(context.Background(), pool, orgID, userID)
-		_, _ = pool.Exec(context.Background(), `DELETE FROM ozon_catalog_schema_cache WHERE description_category_id = $1 AND type_id = $2`, category, typeID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM ozon_category_current WHERE description_category_id = $1 AND type_id = $2`, category, typeID)
 	})
 	for _, cardID := range cards {
 		_, err := pool.Exec(ctx, `
@@ -36,19 +34,10 @@ func TestSendStoredKeepsReplayStateAndCardOwnership(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	var compressed bytes.Buffer
-	zw := gzip.NewWriter(&compressed)
-	if _, err := zw.Write([]byte(`[]`)); err != nil {
-		t.Fatal(err)
-	}
-	if err := zw.Close(); err != nil {
-		t.Fatal(err)
-	}
 	now := time.Now()
-	_, err := pool.Exec(ctx, `
-		INSERT INTO ozon_catalog_schema_cache (description_category_id, type_id, language, payload, fetched_at_ms, byte_size)
-		VALUES ($1, $2, 'default', $3, $4, $5)`, category, typeID, compressed.Bytes(), now.UnixMilli(), compressed.Len())
-	if err != nil {
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO ozon_category_current (description_category_id, type_id, language, fields, content_digest, fetched_at_ms)
+		VALUES ($1, $2, 'default', '[]'::jsonb, $3, $4)`, category, typeID, fmt.Sprintf("sha256:%064x", 0), now.UnixMilli()); err != nil {
 		t.Fatal(err)
 	}
 	previousModule := boundModule
@@ -89,7 +78,7 @@ func TestSendStoredKeepsReplayStateAndCardOwnership(t *testing.T) {
 	for _, id := range rowIDs {
 		pins[id] = 1
 	}
-	result, err := SendStored(ctx, pool, orgID, userID, BatchBody{StoreID: storeID, RowIDs: rowIDs, ExpectedRevisions: pins}, now)
+	result, err := testSubmit().SendStored(ctx, pool, orgID, userID, BatchBody{StoreID: storeID, RowIDs: rowIDs, ExpectedRevisions: pins}, now)
 	if err != nil {
 		t.Fatal(err)
 	}

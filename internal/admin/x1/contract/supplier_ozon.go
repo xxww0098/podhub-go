@@ -17,54 +17,38 @@ const (
 	ozonOptions = "options"
 )
 
-// Fixed value keys the hand fixture treats as the ready set.
-// The spec's "九个" is loose; the fixture and the valid state use these eight.
-var ozonFixedKeys = []struct {
-	key  string
-	kind string
-}{
-	{"fixed:width", ozonInteger},
-	{"fixed:height", ozonInteger},
-	{"fixed:depth", ozonInteger},
-	{"fixed:dimension_unit", ozonText},
-	{"fixed:weight", ozonInteger},
-	{"fixed:weight_unit", ozonText},
-	{"fixed:vat", ozonDecimal},
-	{"fixed:currency_code", ozonText},
-}
-
 // OzonPut is a normalized ozon-config body.
 type OzonPut struct {
-	Category   int64
-	TypeID     int64
-	Language   string
-	Values     map[string]json.RawMessage
-	ValuesJSON []byte
-	Tags       []string
-	Prompt     string
-	AI         AiOutput
-	Expected   int64
+	Category    int64
+	TypeID      int64
+	Language    string
+	Values      map[string]json.RawMessage
+	ValuesJSON  []byte
+	ComplexJSON json.RawMessage
+	Tags        []string
+	Prompt      string
+	AI          AiOutput
+	Expected    int64
 }
 
 // OzonConfig is SupplierOzonConfigData, in declaration order.
 type OzonConfig struct {
-	ProductID               string                     `json:"productId"`
-	DescriptionCategoryID   int64                      `json:"descriptionCategoryId"`
-	TypeID                  int64                      `json:"typeId"`
-	Language                string                     `json:"language"`
-	Values                  map[string]json.RawMessage `json:"values"`
-	FixedTags               []string                   `json:"fixedTags"`
-	PromptText              string                     `json:"promptText"`
-	AI                      AiOutput                   `json:"aiOutput"`
-	Revision                int64                      `json:"revision"`
-	State                   string                     `json:"state"`
-	ValidatedCatalogDigest  *string                    `json:"validatedCatalogDigest,omitempty"`
-	Issues                  json.RawMessage            `json:"issues"`
-	Usable                  bool                       `json:"usable"`
-	Denial                  string                     `json:"denial,omitempty"`
-	UpdatedAtMs             int64                      `json:"updatedAtMs"`
-	DraftPromptRevision     *int32                     `json:"draftPromptRevision,omitempty"`
-	PublishedPromptRevision *int32                     `json:"publishedPromptRevision,omitempty"`
+	ProductID              string                     `json:"product_id"`
+	DescriptionCategoryID  int64                      `json:"description_category_id"`
+	TypeID                 int64                      `json:"type_id"`
+	Language               string                     `json:"language"`
+	Values                 map[string]json.RawMessage `json:"values"`
+	ComplexValues          json.RawMessage            `json:"complex_values"`
+	FixedTags              []string                   `json:"fixed_tags"`
+	PromptText             string                     `json:"prompt_text"`
+	AI                     AiOutput                   `json:"ai_output"`
+	Revision               int64                      `json:"revision"`
+	State                  string                     `json:"state"`
+	ValidatedCatalogDigest *string                    `json:"validatedCatalogDigest,omitempty"`
+	Issues                 json.RawMessage            `json:"issues"`
+	Usable                 bool                       `json:"usable"`
+	Denial                 string                     `json:"denial,omitempty"`
+	UpdatedAtMs            int64                      `json:"updated_at_ms"`
 }
 
 // CatalogStamp is one ozon_category_current row the judge reads.
@@ -72,6 +56,7 @@ type CatalogStamp struct {
 	Digest  string
 	Fetched int64
 	Present bool
+	Fields  json.RawMessage
 }
 
 // JudgeResult is the state written before a new-coordinate overwrite.
@@ -92,19 +77,16 @@ func HasLegacyIssue(raw []byte) bool {
 	return bytes.Contains(raw, []byte(`"legacy_configuration_requires_review"`))
 }
 
-// Judge decides valid versus needs_reconfiguration from the eight fixed keys
-// and the current catalog row. A missing catalog is catalog_missing.
-func Judge(values map[string]json.RawMessage, stamp CatalogStamp, now int64) JudgeResult {
+// Judge adds catalog freshness to the canonical Rust field issues.
+func Judge(fieldIssues json.RawMessage, stamp CatalogStamp, now int64) JudgeResult {
 	var issues []json.RawMessage
+	if len(fieldIssues) > 0 {
+		_ = json.Unmarshal(fieldIssues, &issues)
+	}
 	if !stamp.Present || stamp.Digest == "" {
 		issues = append(issues, json.RawMessage(`{"issue":"catalog_missing"}`))
 	} else if Freshness(stamp.Fetched, now, true) == "expired" {
 		issues = append(issues, json.RawMessage(`{"issue":"catalog_expired"}`))
-	}
-	for _, key := range ozonFixedKeys {
-		if !valueKind(values[key.key], key.kind) {
-			issues = append(issues, json.RawMessage(`{"issue":"missing_fixed_field","field":"`+strings.TrimPrefix(key.key, "fixed:")+`"}`))
-		}
 	}
 	if len(issues) == 0 {
 		digest := stamp.Digest
@@ -114,39 +96,27 @@ func Judge(values map[string]json.RawMessage, stamp CatalogStamp, now int64) Jud
 	return JudgeResult{State: "needs_reconfiguration", Issues: body, Count: len(issues)}
 }
 
-func valueKind(raw json.RawMessage, kind string) bool {
-	if len(bytes.TrimSpace(raw)) == 0 {
-		return false
-	}
-	var rows []map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &rows); err != nil || len(rows) == 0 {
-		return false
-	}
-	got := strings.Trim(string(rows[0]["kind"]), `"`)
-	return got == kind
-}
-
 // DecodeOzon rejects unknown fields. An empty prompt is stored empty.
-// A non-empty prompt must be a canonical six-line card.
+// A non-empty profile must contain confirmed product facts.
 func DecodeOzon(body []byte) (OzonPut, error) {
 	raw, err := strictObject(body)
 	if err != nil || !hasOnly(raw, []string{
-		"descriptionCategoryId", "typeId", "language", "values", "fixedTags", "promptText", "aiOutput", "expectedRevision",
+		"description_category_id", "type_id", "language", "values", "complex_values", "fixed_tags", "prompt_text", "ai_output", "expected_revision",
 	}) || !requireKeys(raw, []string{
-		"descriptionCategoryId", "typeId", "language", "values", "fixedTags", "promptText", "aiOutput", "expectedRevision",
+		"description_category_id", "type_id", "language", "values", "complex_values", "fixed_tags", "prompt_text", "ai_output", "expected_revision",
 	}) {
 		return OzonPut{}, invalid()
 	}
 	var category, typeID, expected int64
 	var language, prompt string
 	var tags []string
-	if !unmarshal(raw["descriptionCategoryId"], &category) || !unmarshal(raw["typeId"], &typeID) ||
-		!unmarshal(raw["language"], &language) || !unmarshal(raw["fixedTags"], &tags) ||
-		!unmarshal(raw["promptText"], &prompt) || !unmarshal(raw["expectedRevision"], &expected) {
+	if !unmarshal(raw["description_category_id"], &category) || !unmarshal(raw["type_id"], &typeID) ||
+		!unmarshal(raw["language"], &language) || !unmarshal(raw["fixed_tags"], &tags) ||
+		!unmarshal(raw["prompt_text"], &prompt) || !unmarshal(raw["expected_revision"], &expected) {
 		return OzonPut{}, invalid()
 	}
 	if expected < 0 {
-		return OzonPut{}, fail(contract.KindValidation, "expectedRevision 不能小于 0")
+		return OzonPut{}, fail(contract.KindValidation, "expected_revision 不能小于 0")
 	}
 	if category <= 0 || typeID <= 0 {
 		return OzonPut{}, fail(contract.KindValidation, "类目坐标必须为正整数")
@@ -161,25 +131,57 @@ func DecodeOzon(body []byte) (OzonPut, error) {
 	if err != nil {
 		return OzonPut{}, err
 	}
-	norm, err := NormalizeTags(tags, true)
+	complex, err := decodeComplexValues(raw["complex_values"])
+	if err != nil {
+		return OzonPut{}, invalid()
+	}
+	// Ozon fields are saved before the AI step supplies the required tags.
+	norm, err := NormalizeTags(tags, false)
 	if err != nil {
 		return OzonPut{}, err
 	}
 	prompt = strings.TrimSpace(prompt)
 	if prompt != "" {
-		prompt, err = CanonicalBrief(prompt)
+		prompt, err = CanonicalProfile(prompt)
 		if err != nil {
 			return OzonPut{}, fail(contract.KindValidation, err.Error())
 		}
 	}
-	ai, err := decodeAI(raw["aiOutput"])
+	ai, err := decodeAI(raw["ai_output"])
 	if err != nil {
 		return OzonPut{}, err
 	}
 	return OzonPut{
 		Category: category, TypeID: typeID, Language: language,
-		Values: values, ValuesJSON: packed, Tags: norm, Prompt: prompt, AI: ai, Expected: expected,
+		Values: values, ValuesJSON: packed, ComplexJSON: complex, Tags: norm, Prompt: prompt, AI: ai, Expected: expected,
 	}, nil
+}
+
+// Check the nested envelope even when category material is not available yet.
+func decodeComplexValues(raw json.RawMessage) (json.RawMessage, error) {
+	var groups []struct {
+		ID    *int64 `json:"complex_id"`
+		Items []struct {
+			ID     *string                    `json:"item_id"`
+			Values map[string]json.RawMessage `json:"values"`
+		} `json:"items"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if dec.Decode(&groups) != nil || groups == nil {
+		return nil, invalid()
+	}
+	for _, group := range groups {
+		if group.ID == nil || group.Items == nil {
+			return nil, invalid()
+		}
+		for _, item := range group.Items {
+			if item.ID == nil || item.Values == nil {
+				return nil, invalid()
+			}
+		}
+	}
+	return bytes.TrimSpace(raw), nil
 }
 
 func decodeAI(raw json.RawMessage) (AiOutput, error) {
@@ -276,110 +278,50 @@ func FinishOzon(cfg *OzonConfig, facts RowFacts) {
 	cfg.Usable = cfg.Denial == ""
 }
 
-// SyncCounts is the exact tally. Lists are capped separately.
-type SyncCounts struct {
-	Updated   int `json:"updated"`
-	UpToDate  int `json:"upToDate"`
-	Unmatched int `json:"unmatched"`
-	Failed    int `json:"failed"`
-}
-
-// SyncItem is one updated or up-to-date row.
-type SyncItem struct {
-	ProductID      string `json:"productId"`
-	ProductTitle   string `json:"productTitle"`
-	PromptFileName string `json:"promptFileName"`
-	Revision       int64  `json:"revision"`
-}
-
-// SyncMiss adds a reason of no_match or ambiguous.
-type SyncMiss struct {
-	ProductID      string `json:"productId"`
-	ProductTitle   string `json:"productTitle"`
-	PromptFileName string `json:"promptFileName"`
-	Revision       int64  `json:"revision"`
-	Reason         string `json:"reason"`
-}
-
-// SyncFailure carries the savepoint reason.
-type SyncFailure struct {
-	ProductID      string `json:"productId"`
-	ProductTitle   string `json:"productTitle"`
-	PromptFileName string `json:"promptFileName"`
-	Revision       int64  `json:"revision"`
-	Reason         string `json:"reason"`
-}
-
-// SyncReport is SupplierPromptSyncData.
-type SyncReport struct {
-	Counts           SyncCounts    `json:"counts"`
-	Updated          []SyncItem    `json:"updated"`
-	UpToDate         []SyncItem    `json:"upToDate"`
-	Unmatched        []SyncMiss    `json:"unmatched"`
-	Failed           []SyncFailure `json:"failed"`
-	DetailsTruncated bool          `json:"detailsTruncated"`
-}
-
-// EmptySync is the no-candidate report. Counts stay exact; slices are empty arrays.
-func EmptySync() SyncReport {
-	return SyncReport{
-		Updated: []SyncItem{}, UpToDate: []SyncItem{}, Unmatched: []SyncMiss{}, Failed: []SyncFailure{},
-	}
-}
-
-// PromptPublish is PublishSupplierPromptData.
-type PromptPublish struct {
-	ProductID         string `json:"productId"`
-	Revision          int32  `json:"revision"`
-	PublishedRevision int32  `json:"publishedRevision"`
-	ProductRevision   int64  `json:"productRevision"`
-	ConfigRevision    int64  `json:"configRevision"`
-}
-
 // BrowserGrant is the single PUT the browser receives.
 type BrowserGrant struct {
 	URL         string       `json:"url"`
 	Headers     GrantHeaders `json:"headers"`
-	ExpiresAtMs int64        `json:"expiresAtMs"`
+	ExpiresAtMs int64        `json:"expires_at_ms"`
 }
 
-// GrantHeaders is contentType, ifNoneMatch, and an optional checksum.
+// GrantHeaders uses the shared direct-upload wire contract.
 type GrantHeaders struct {
-	ContentType string `json:"contentType"`
-	IfNoneMatch string `json:"ifNoneMatch"`
-	Checksum    string `json:"checksumSha256,omitempty"`
+	ContentType string `json:"content_type"`
+	IfNoneMatch string `json:"if_none_match"`
+	Checksum    string `json:"checksum_sha256,omitempty"`
 }
 
 // UploadPart is one presigned part.
 type UploadPart struct {
-	PartNumber  int    `json:"partNumber"`
+	PartNumber  int    `json:"part_number"`
 	URL         string `json:"url"`
-	ByteLength  uint64 `json:"byteLength"`
-	ExpiresAtMs int64  `json:"expiresAtMs"`
+	ByteLength  uint64 `json:"byte_length"`
+	ExpiresAtMs int64  `json:"expires_at_ms"`
 }
 
 // MultipartPlan is present only for a large PSD.
 // Field order follows the names the spec states; the parent declaration order
 // is not pasted and is listed for the user to confirm.
 type MultipartPlan struct {
-	UploadID string       `json:"uploadId"`
+	UploadID string       `json:"upload_id"`
 	Ticket   string       `json:"ticket"`
-	PartSize uint64       `json:"partSize"`
+	PartSize uint64       `json:"part_size"`
 	Parts    []UploadPart `json:"parts"`
 }
 
 // UploadBody is the flattened DirectUploadTarget inside data.upload.
 type UploadBody struct {
 	Upload         *BrowserGrant  `json:"upload,omitempty"`
-	UploadTicket   string         `json:"uploadTicket"`
+	UploadTicket   string         `json:"upload_ticket"`
 	Multipart      *MultipartPlan `json:"multipart,omitempty"`
-	AlreadyPresent bool           `json:"alreadyPresent,omitempty"`
+	AlreadyPresent bool           `json:"already_present,omitempty"`
 }
 
 // ConfirmedUpload is SupplierDbUploadConfirmedData.
 type ConfirmedUpload struct {
 	Key       string `json:"key"`
-	PublicURL string `json:"publicUrl"`
+	PublicURL string `json:"public_url"`
 }
 
 // MovedObject is the move response.

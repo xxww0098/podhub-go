@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/xxww0098/podhub-go/internal/listing/submit"
 	"sync"
 	"testing"
 	"time"
@@ -12,7 +13,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	_ "github.com/xxww0098/podhub-go/internal/queue"
 	queuecontract "github.com/xxww0098/podhub-go/internal/queue/contract"
 	queuedomain "github.com/xxww0098/podhub-go/internal/queue/domain"
 	queuerepo "github.com/xxww0098/podhub-go/internal/queue/repo"
@@ -781,4 +781,8 @@ func testReconcilerSeat(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	if _, err := second.Exec(ctx, `SELECT pg_advisory_unlock($1)`, queuedomain.ReconcilerAdvisoryLock); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func listingSubmit() submit.Service {
+	return submit.Service{Queue: submit.Queue{EnqueueOn: queuerepo.EnqueueOn, MutateRunning: queuerepo.MutateRunning}}
 }

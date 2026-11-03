@@ -1,9 +1,6 @@
 package domain
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/sha256"
 	"strings"
 	"testing"
 )
@@ -99,33 +96,10 @@ func TestListXMLAndGroups(t *testing.T) {
 	}
 }
 
-func TestSnapshotAndAccounts(t *testing.T) {
-	secret := strings.Repeat("k", 32)
-	plain := []byte(`{"schemaVersion":1,"storageBuckets":[{"id":"a","role":"transit","bucket":"podhub-transit","active":true,"keyPrefix":"ozon/"},{"id":"b","role":"assets","bucket":"podhub-assets","active":true}]}`)
-	nonce := []byte("0123456789ab")
-	sealed, err := SealSnapshot(secret, nonce, plain)
-	if err != nil {
-		t.Fatal(err)
-	}
-	accounts, err := OpenSnapshot(secret, nonce, sealed)
-	if err != nil || len(accounts) != 2 || accounts[0].Provider != "legacy_s3" {
-		t.Fatal(err, accounts)
-	}
-	if _, err := OpenSnapshot("short", nonce, sealed); err != ErrKeyMissing {
-		t.Fatal(err)
-	}
-	if _, err := OpenSnapshot(exampleKey, nonce, sealed); err != ErrKeyExample {
-		t.Fatal(err)
-	}
-	if _, err := OpenSnapshot(secret, []byte("short"), sealed); err != ErrSnapshot {
-		t.Fatal(err)
-	}
-	legacy, err := sealBare(secret, nonce, plain)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := OpenSnapshot(secret, nonce, legacy); err != nil {
-		t.Fatal(err)
+func TestAccounts(t *testing.T) {
+	accounts := []CloudAccount{
+		{ID: "a", Role: "transit", Bucket: "podhub-transit", KeyPrefix: "ozon/", Active: true},
+		{ID: "b", Role: "assets", Bucket: "podhub-supplier", Active: true},
 	}
 	chosen, err := ResolveAccount(accounts, nil)
 	if err != nil || chosen.ID != "a" {
@@ -150,20 +124,7 @@ func TestSnapshotAndAccounts(t *testing.T) {
 	if err := RequirePersistent(CloudAccount{Role: "transit", Bucket: "podhub-transit"}); err != ErrTransit {
 		t.Fatal(err)
 	}
-	if err := RequirePersistent(CloudAccount{Role: "assets", Bucket: "podhub-assets"}); err != nil {
+	if err := RequirePersistent(CloudAccount{Role: "assets", Bucket: "podhub-supplier"}); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func sealBare(secret string, nonce, plain []byte) ([]byte, error) {
-	sum := sha256.Sum256([]byte(secret))
-	block, err := aes.NewCipher(sum[:])
-	if err != nil {
-		return nil, err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	return gcm.Seal(nil, nonce, plain, nil), nil
 }

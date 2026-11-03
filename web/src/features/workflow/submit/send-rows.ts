@@ -30,11 +30,15 @@ import type { PublishDiagnosticDispatch } from "../model/publish-diagnostic"
 const SEND_STORE_CONCURRENCY = 2
 const CHUNK_ROWS = 100
 
+export type AutomationTarget = { storeId: string; sha256: string; fileName: string }
+
 export type SendDeps = Readonly<{
   /** The native core; production lazily instantiates the tab's one `listing-core-wasm`. */
   core?: SendCore
   nowMs?: () => number
   diagnostics?: PublishDiagnosticDispatch
+  /** Automation pins the original source and Store. */
+  expectedTargets?: ReadonlyMap<string, AutomationTarget>
 }>
 
 function halts(results: readonly WorkflowOperationRowResult[]): boolean {
@@ -118,6 +122,15 @@ async function sendRowsBody(
     }
     if (!storeId?.trim()) {
       settled.push(blocked(row.id, "target_store_missing", "上架方案尚未绑定目标 Ozon 店铺", "在上架方案绑定店铺后再发送", { blockers: ["target_store_missing"] }))
+      continue
+    }
+    const expected = deps.expectedTargets?.get(row.id)
+    if (deps.expectedTargets && expected?.storeId !== storeId) {
+      settled.push(blocked(row.id, "target_store_changed", "商品目标店铺已变化，未发送", "检查上架方案后重新配置自动任务"))
+      continue
+    }
+    if (expected && (row.source?.sha256 !== expected.sha256 || row.source?.fileName !== expected.fileName)) {
+      settled.push(blocked(row.id, "source_changed", "商品源图已变化，未发送", "检查商品源图后重新配置自动任务"))
       continue
     }
     byStore.set(storeId, [...(byStore.get(storeId) ?? []), row.id])

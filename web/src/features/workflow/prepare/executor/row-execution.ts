@@ -86,7 +86,7 @@ export async function runPreparationRow(rowId: string, verb: PreparationVerb, co
         setProgress("plan", "running", "正在准备计划")
         logStage("queue.ready", rowId, { stage: "plan", waitedMs, queue: "plan" })
       },
-    }, automationScope, batch?.modelRouting).then(result => {
+    }, automationScope).then(result => {
       if (verb === "prepare" || verb === "recognize") batch?.pinned.add(rowId)
       return result
     })
@@ -182,7 +182,7 @@ export async function runPreparationRow(rowId: string, verb: PreparationVerb, co
     let followUp: PreparationPlan
     try {
       followUp = await retryWhenBusy(
-        () => planRow(rowId, "prepare", shouldStop, commandId, undefined, automationScope, batch?.modelRouting),
+        () => planRow(rowId, "prepare", shouldStop, commandId, undefined, automationScope),
         { ...PREPARE_BUSY_RETRY, cancelled: shouldStop, sleep: busySleep, onWait: retry => reportWaiting("plan", retry) },
       )
     } catch (reason) {

@@ -1,8 +1,9 @@
 <!doctype html>
 <html lang="zh-CN">
-  <head><meta charset="utf-8"><title>Workflow browser checks</title></head>
+  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Workflow browser checks</title></head>
   <body>
     <h1>Workflow browser checks</h1>
+    <p>隔离回归：真实组件与本地 WASM，Cloud 请求仅由内存 fixture 回答；未知请求一律失败。</p>
     <button id="run" type="button">运行检查</button>
     <pre id="results" aria-live="polite">等待运行</pre>
     <div id="fixture" style="height:700px; width:1200px; padding:24px"></div>

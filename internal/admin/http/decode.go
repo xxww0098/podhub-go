@@ -116,6 +116,18 @@ func (o object) optI64(key string) (*int64, *contract.Fault) {
 	return &n, nil
 }
 
+// nullableI64 reads a required integer key whose JSON value may be null.
+func (o object) nullableI64(key string) (*int64, *contract.Fault) {
+	if bytes.Equal(bytes.TrimSpace(o[key]), []byte("null")) {
+		return nil, nil
+	}
+	n, fault := o.i64(key)
+	if fault != nil {
+		return nil, fault
+	}
+	return &n, nil
+}
+
 func (o object) rawI64(key string) (int64, bool, *contract.Fault) {
 	raw, ok := o[key]
 	if !ok {
@@ -170,4 +182,15 @@ func (o object) objects(key string) ([]object, *contract.Fault) {
 		out = append(out, item)
 	}
 	return out, nil
+}
+
+// decodeObject reads one nested JSON object. Null and non-objects are invalid.
+func decodeObject(raw json.RawMessage) (object, *contract.Fault) {
+	var item object
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	if err := dec.Decode(&item); err != nil || item == nil {
+		return nil, invalidBody()
+	}
+	return item, nil
 }

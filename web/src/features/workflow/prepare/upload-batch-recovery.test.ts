@@ -47,7 +47,7 @@ async function runChangedStorage(input: {
           rememberAccountOverview({ ...overview,
             active_workspace: { ...overview.active_workspace, uuid: "another-workspace" } })
         }
-        return Response.json({ code: input.code ?? "MEDIA_UPLOAD_BATCH_INVALID", error: "stale upload batch" }, { status: 403 })
+        return Response.json({ code: input.code ?? "MEDIA_UPLOAD_BATCH_INVALID", error: "stale upload batch" }, { status: input.code === "FORBIDDEN" ? 403 : 400 })
       }
     }
     return send(url, init)

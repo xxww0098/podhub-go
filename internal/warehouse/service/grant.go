@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -40,6 +41,12 @@ func (s Service) Grant(ctx context.Context, in GrantInput) (GrantResult, error) 
 		OrgID: in.OrgID, UserID: in.UserID, Role: in.Role, StoreID: in.StoreID,
 	})
 	if err != nil {
+		// No credential reached the browser, so this intent is proven not dispatched.
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if cleanupErr := s.DB.RejectUnsentGrant(cleanup, in.OrgID, prepared.IntentID); cleanupErr != nil {
+			return GrantResult{}, cleanupErr
+		}
 		return GrantResult{}, err
 	}
 	return GrantResult{

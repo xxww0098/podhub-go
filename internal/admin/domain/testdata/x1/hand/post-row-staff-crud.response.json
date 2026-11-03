@@ -1,5 +1,5 @@
 {
-  "note": "手算。tests/cloud/supplier_dbs/staff_crud_… 只断言 201。字段按 SupplierDbRowData 声明序与 skip 规则。source 已 listed、无目录、无价、空说明。revision 停在 1（无坐标，write_row_config 不 bump）。creatorName 来自 staff() 注册名「平台货源管理员」：account_users.name 由 sync_account_side_tables 镜像到 account_profiles.name。没有 profile 行时该键省略。",
+  "note": "手算。tests/cloud/supplier_dbs/staff_crud_… 只断言 201。字段按 SupplierDbRowData 声明序与 skip 规则。source 已 listed、无目录、无价、空说明。revision 停在 1（无坐标，write_row_config 不 bump）。creatorName 来自 staff() 注册名「供应商商品库管理员」：account_users.name 由 sync_account_side_tables 镜像到 account_profiles.name。没有 profile 行时该键省略。",
   "status": 201,
   "response": {
     "data": {
@@ -53,7 +53,7 @@
         "createdAtMs": "<unix_ms>",
         "updatedAtMs": "<unix_ms>",
         "createdBy": "<actor_public_id>",
-        "creatorName": "平台货源管理员"
+        "creatorName": "供应商商品库管理员"
       }
     }
   }

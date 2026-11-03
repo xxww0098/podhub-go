@@ -13,13 +13,13 @@ import (
 
 // glueDir is the wasm-bindgen bundle for the threaded renderer. Its wasm, JS,
 // .d.ts and snippets are produced by one build and delivered together, so the
-// manifest pins the directory as a whole (web_glue_sha256) instead of giving
+// manifest pins the directory as a whole (glue_sha256) instead of giving
 // each file its own key. scripts/check-wasm-dist.sh recomputes that digest.
 const glueDir = "browser/render/threaded"
 
 // TestDistMatchesManifest walks dist/ recursively and compares every committed
 // .wasm with the sha256 SOURCES.sha256 pins for its dist-relative path. The
-// manifest keys carry their directory prefix (server/, browser/, test/), so a
+// manifest keys carry their directory prefix (server/, browser/), so a
 // module that moved between groups must be re-pinned, and a module that is
 // dropped from the manifest is caught here instead of by a silent loader.
 func TestDistMatchesManifest(t *testing.T) {
@@ -46,15 +46,14 @@ func TestDistMatchesManifest(t *testing.T) {
 	// The threaded bundle has no per-file key, so require the digest that
 	// covers it whenever the bundle is committed.
 	if _, err := os.Stat(filepath.Join("dist", filepath.FromSlash(glueDir))); err == nil {
-		if !isSHA256(manifestValue(t, "web_glue_sha256")) {
-			t.Errorf("dist/%s is committed but SOURCES.sha256 has no web_glue_sha256", glueDir)
+		if !isSHA256(manifestValue(t, "glue_sha256")) {
+			t.Errorf("dist/%s is committed but SOURCES.sha256 has no glue_sha256", glueDir)
 		}
 	}
 
 	// The embedded bytes are the committed bytes. go:embed cannot see files
 	// outside this package, so this is the only place the copy is checked.
 	embedded := map[string][]byte{
-		"server/listing-tags.wasm": ListingTags,
 		"server/listing-core.wasm": ListingCore,
 	}
 	for rel, data := range embedded {

@@ -140,6 +140,59 @@ fn zip_ignored_channels_and_non_prediction_recovery_remain_unchanged() {
 }
 
 #[test]
+fn ignored_zip_planes_do_not_inflate_or_reserve_decode_memory() {
+    let mut reader = PsdReader::new(&[], None, None);
+    reader.configure_allocation_limits(0, 0).unwrap();
+    let mut output = DecodeTarget::rgba(2, 2);
+    for depth in [8, 16, 32] {
+        read_data_zip(
+            &reader,
+            &[0x41],
+            None,
+            1024,
+            1024,
+            depth,
+            4,
+            0,
+            true,
+            0,
+            true,
+        )
+        .unwrap();
+        read_data_zip(
+            &reader,
+            &[0x41],
+            Some(&mut output),
+            1024,
+            1024,
+            depth,
+            4,
+            4,
+            true,
+            4,
+            true,
+        )
+        .unwrap();
+        read_data_zip(
+            &reader,
+            &[0x41],
+            Some(&mut output),
+            0,
+            1024,
+            depth,
+            4,
+            0,
+            true,
+            0,
+            true,
+        )
+        .unwrap();
+    }
+    assert_eq!(reader.allocation_observations().high_water_bytes, 0);
+    assert!(output.data.iter().all(|&byte| byte == 0));
+}
+
+#[test]
 fn consuming_reader_reports_corrupt_channels_instead_of_zeroing_them() {
     // A short non-predicted plane would be copied partially and zero-filled.
     let reader = PsdReader::new(&[], None, None);
@@ -445,7 +498,7 @@ fn pattern_rle_temporary_allocations_are_released_and_total_budget_is_enforced()
         &[0, 3, 0, 3, 1, 7, 8, 1, 9, 10],
     );
     let mut reader = PsdReader::new(&bytes, None, None);
-    let peak = 16 + 4 + 2 * size_of::<usize>() + 3;
+    let peak = 16 + 4 + 2 * size_of::<usize>();
     reader.configure_allocation_limits(peak, 0).unwrap();
     let pattern = read_pattern(&mut reader).unwrap();
     assert_eq!(
@@ -575,4 +628,82 @@ fn writer_rle_patterns_still_parse() {
     let decoded = read_pattern(&mut PsdReader::new(&bytes, None, None)).unwrap();
     assert_eq!(decoded.data, pattern.data);
     assert_eq!(decoded.name, pattern.name);
+}
+
+#[test]
+fn mask_parameter_combinations_do_not_invent_or_remove_real_masks() {
+    for params in 0_u8..16 {
+        for real_mask in [false, true] {
+            for padding in 0..4 {
+                let mut body = Vec::new();
+                for edge in [0_i32, 0, 2, 2] {
+                    body.extend(edge.to_be_bytes());
+                }
+                body.extend([255, LayerMaskFlags::MaskHasParametersAppliedToIt as u8]);
+                if real_mask {
+                    body.extend([0, 255]);
+                    for edge in [0_i32, 0, 2, 2] {
+                        body.extend(edge.to_be_bytes());
+                    }
+                }
+                body.push(params);
+                if params & 1 != 0 {
+                    body.push(128);
+                }
+                if params & 2 != 0 {
+                    body.extend(3.5_f64.to_be_bytes());
+                }
+                if params & 4 != 0 {
+                    body.push(64);
+                }
+                if params & 8 != 0 {
+                    body.extend(7.25_f64.to_be_bytes());
+                }
+                body.extend(vec![0; padding]);
+                let mut bytes = (body.len() as u32).to_be_bytes().to_vec();
+                bytes.extend(body);
+                // Metadata-only real masks remain readable without a -3 pixel channel.
+                for has_real_channel in [false, real_mask] {
+                    let mut reader = PsdReader::new(&bytes, None, None);
+                    let mut info = LayerAdditionalInfo::default();
+                    read_layer_mask_data(&mut reader, &mut info, has_real_channel).unwrap();
+                    assert_eq!(
+                        info.real_mask.is_some(),
+                        real_mask,
+                        "params={params}, padding={padding}"
+                    );
+                    let mask = info.mask.unwrap();
+                    assert_eq!(
+                        mask.user_mask_density,
+                        (params & 1 != 0).then_some(128.0 / 255.0)
+                    );
+                    assert_eq!(mask.user_mask_feather, (params & 2 != 0).then_some(3.5));
+                    assert_eq!(
+                        mask.vector_mask_density,
+                        (params & 4 != 0).then_some(64.0 / 255.0)
+                    );
+                    assert_eq!(mask.vector_mask_feather, (params & 8 != 0).then_some(7.25));
+                    assert_eq!(reader.offset, bytes.len());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn truncated_mask_parameters_cannot_read_the_following_section() {
+    let mut body = Vec::new();
+    for edge in [0_i32, 0, 2, 2] {
+        body.extend(edge.to_be_bytes());
+    }
+    body.extend([255, LayerMaskFlags::MaskHasParametersAppliedToIt as u8]);
+    body.extend([MaskParams::UserMaskFeather as u8, 0]); // only one of eight bytes
+    let mut bytes = (body.len() as u32).to_be_bytes().to_vec();
+    bytes.extend(body);
+    bytes.extend([0; 64]); // the next section must not complete this float
+    let mut reader = PsdReader::new(&bytes, None, None);
+    assert_eq!(
+        read_layer_mask_data(&mut reader, &mut LayerAdditionalInfo::default(), false),
+        Err(ReadError::UnexpectedEndOfBuffer)
+    );
 }

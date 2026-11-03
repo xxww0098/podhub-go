@@ -29,14 +29,16 @@ export type SellerSupplierDbData =
 export async function listAdminDelegateOrders(query?: {
   state?: string
   sourceId?: string
-  orgId?: number
+  orgId?: string
   cursor?: string
+  limit?: number
 }): Promise<AdminDelegateOrderListData> {
   const params = new URLSearchParams()
   if (query?.state) params.set("state", query.state)
   if (query?.sourceId) params.set("sourceId", query.sourceId)
-  if (query?.orgId !== undefined) params.set("orgId", String(query.orgId))
+  if (query?.orgId !== undefined) params.set("orgId", query.orgId)
   if (query?.cursor) params.set("cursor", query.cursor)
+  if (query?.limit !== undefined) params.set("limit", String(query.limit))
   const suffix = params.size > 0 ? `?${params.toString()}` : ""
   return api.get<AdminDelegateOrderListData>(
     route("adminDelegateOrders") + suffix,

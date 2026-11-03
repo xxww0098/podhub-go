@@ -10,9 +10,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	_ "github.com/xxww0098/podhub-go/internal/listing/core/service/engine"
+	"github.com/xxww0098/podhub-go/internal/listing/core"
+	listengine "github.com/xxww0098/podhub-go/internal/listing/core/service/engine"
 	listing "github.com/xxww0098/podhub-go/internal/listing/read/http"
-	_ "github.com/xxww0098/podhub-go/internal/listing/rules"
 	"github.com/xxww0098/podhub-go/tests/parity"
 )
 
@@ -31,17 +31,17 @@ func (m *memRules) EnabledBannedTags(context.Context) ([]listing.Rule, error) {
 }
 
 func TestListingRulesAndValidateDoNotMutate(t *testing.T) {
-	engine, err := listing.OpenEmbedded(context.Background())
+	mod, err := core.Shared(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = engine.Close(context.Background()) })
+	engine := listengine.New(mod)
 	mem := &memRules{rules: []listing.Rule{
 		{Term: "сигарета", MatchMode: "stem"},
 		{Term: "роза", MatchMode: "exact"},
 	}}
 	handler := HandlerFromMux(&Server{Engine: engine, Rules: mem}, chi.NewRouter())
-	version, err := listing.RulesVersion(mem.rules)
+	version, err := listengine.RulesVersion(mem.rules)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestListingRulesAndValidateDoNotMutate(t *testing.T) {
 func TestStaleRulesAndMissingEngineFailClosed(t *testing.T) {
 	mem := &memRules{rules: []listing.Rule{{Term: "роза", MatchMode: "exact"}}}
 	handler := HandlerFromMux(&Server{Rules: mem}, chi.NewRouter())
-	version, err := listing.RulesVersion(mem.rules)
+	version, err := listengine.RulesVersion(mem.rules)
 	if err != nil {
 		t.Fatal(err)
 	}

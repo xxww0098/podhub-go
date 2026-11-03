@@ -16,11 +16,11 @@
 
 三条写入：
 
-1. 浏览器 `POST /api/listing/browser/import-info`。白名单字段是 `code`、`field`、`attribute_id`、`attribute_name`、`description`、`state`、`level`，以及任务号、offer、类目、类型。未知字段丢掉。超过 100 条返回 400，一行都不写。需要 `CapListingSubmit`。
+1. 浏览器 `POST /api/listing/browser/import-info`。白名单字段是 `code`、`field`、`attribute_id`、`attribute_name`、`description`、`state`、`level`，以及任务号、offer、类目、类型。未知字段丢掉。超过 100 条返回 400，一行都不写。需要有效工作空间成员（owner、manager、member）。
 2. 浏览器 report 的 4xx。只留 grpc code 和 message。不存请求体。映射是 400→3、404→5、403→7、401→16、429→8。这五个状态上网关 `code` 只有 3、5、7、8、16 才采用，否则仍按 HTTP 状态；所以 400 带 `code: 9` 仍记 `3`。422 和其他 4xx 也记：网关给出正整数 `code` 就用那个数，没有就用十进制 HTTP 状态。attribute、类目、类型缺省仍是 0。
 3. 代理上的同一条 import/info。2xx 解析 items；4xx 只记 grpc code 和 message。没有任务号则什么都不记。单次最多 100 条，多出来的丢掉，代理正文仍原样返回。
 
-组织成员用 `GET /api/listing/ozon-errors` 看自己的计数。超级管理员用 `GET /api/admin/ozon-error-catalog` 看全局表，门禁与错误摘要相同：平台角色、验证器、15 分钟内的 step-up。两条都分页，可按 code、类目、类型过滤，按出现次数或最后出现时间排序。
+组织成员仍可用 `GET /api/listing/ozon-errors` 看自己的计数。全局目录写入和样本保留仍是内部能力；旧 `GET /api/admin/ozon-error-catalog` 与错误摘要入口已从当前管理端路由表撤下，不能作为现行查询接口。组织查询保留按 code、类目、类型过滤和排序能力，具体参数以 `api/openapi.yaml` 为准。
 
 写开关仍只有 `config.Load` 里那个布尔。这条目录不读它，也不因为开关关闭就签发密钥。
 
@@ -47,12 +47,12 @@
 | `TestOzonErrorCatalog` | `go test ./tests/integration -run TestOzonErrorCatalog$ -count=1` |
 | `TestOzonErrorCatalogFollowup` | `go test ./tests/integration -run TestOzonErrorCatalogFollowup -count=1` |
 | `TestSampleRetentionBoundaryDay`、`TestOther4xxKeepsExplicitCodeAndDropsBody`、`TestMissingAttributeCategoryTypeStayZero`、`TestSharedTaskKeyCanonical` | `go test ./internal/ozonerr/domain -count=1` |
-| `TestImportInfoObserveLeavesTheResponse` | `go test ./internal/seller -run TestImportInfoObserveLeavesTheResponse -count=1` |
+| `TestImportInfoObserveLeavesTheResponse` | `go test ./internal/seller/ozon -run TestImportInfoObserveLeavesTheResponse -count=1` |
 | `TestOzonCatalogGate` | `go test ./internal/admin/http -run TestOzonCatalogGate -count=1` |
 | `TestRedactStripsFixtureAndKeepsSellerText`、`TestRedactMarkers`、`TestParseImportDropsUnknownAndStripsSecret`、`TestParseImportRefusesTooMany`、`TestRequestFromReportMaps4xxOnly`、`TestUpstreamIgnoresRequestBodyExceptTaskID` | `go test ./internal/ozonerr/domain -count=1` |
 | 既有发放与报回 | `go test ./tests/integration -run 'TestBrowserGrantAndReport\|TestBrowserDirect' -count=1` |
 
-`TestOzonErrorCatalog` 覆盖：种子在且不被覆盖；同一任务和 offer 不重复计数；并发计数正确且没有 `40P01`；描述里的夹具密钥被剥掉，未知字段不入库；跨组织读写失败，缺少 GUC 失败；非超级管理员读不到全局表；2xx 报回仍是 accepted 且不写 `ozon_request`；4xx 报回仍是 rejected / `OZON_ROW_REJECTED`，目录另记 grpc code，第二次报回 409 且次数不变；import/info 不改意图状态，开关为真时仍可记录且响应里没有密钥；审阅者不能上报但可以看本组织；写失败不改已经提交的上架状态；代理观察不把请求体里的密钥存进样本。
+`TestOzonErrorCatalog` 覆盖：种子在且不被覆盖；同一任务和 offer 不重复计数；并发计数正确且没有 `40P01`；描述里的夹具密钥被剥掉，未知字段不入库；跨组织读写失败，缺少 GUC 失败；非超级管理员读不到全局表；2xx 报回仍是 accepted 且不写 `ozon_request`；4xx 报回仍是 rejected / `OZON_ROW_REJECTED`，目录另记 grpc code，第二次报回 409 且次数不变；import/info 不改意图状态，开关为真时仍可记录且响应里没有密钥；旧 reviewer 角色不能上报或读取；有效成员可以看本组织；写失败不改已经提交的上架状态；代理观察不把请求体里的密钥存进样本。
 
 ## 保留期限
 

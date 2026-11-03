@@ -190,14 +190,17 @@ export function rememberMediaObject(
   scope?: MediaDeliveryScope,
 ): void {
   const workspace = scope?.workspaceUuid ?? answer.workspaceUuid ?? activeWorkspaceUuid()
-  if (!workspace || activeWorkspaceUuid() !== workspace || !answer.objectKey.includes(`/teams/${workspace}/`)) return
+  if (!workspace || activeWorkspaceUuid() !== workspace || (answer.workspaceUuid && answer.workspaceUuid !== workspace)) return
   if (scope?.uploadBatch) {
+    if (answer.workspaceUuid !== workspace) return
     rememberBatchObject(scope.uploadBatch, answer, digest, extension, now, workspace)
     return
   }
+  if (mediaObjectClass(extension) === "images") return
   // Timestamped objects are intentionally session/batch scoped. A recovery
   // response without its batch must never poison the legacy cache.
   if (answer.objectKey.startsWith("uploads/") || answer.objectKey.includes("/uploads/")) return
+  if (!answer.objectKey.includes(`/teams/${workspace}/`)) return
   const workspacePrefix = `/teams/${workspace}/`
   const objectTail = answer.objectKey.split(workspacePrefix)[1]
   const shaAt = objectTail?.lastIndexOf("/sha256/") ?? -1
@@ -232,7 +235,7 @@ export function lookupMediaObject(
   now = Date.now(),
 ): DeliveredMediaObject | undefined {
   const workspace = activeWorkspaceUuid()
-  if (!workspace) return undefined
+  if (!workspace || mediaObjectClass(extension) === "images") return undefined
   const entries = load()
   const identity = storageIdentities.get(identityKey(workspace, extension))
   const exact = identity
@@ -303,7 +306,8 @@ export function matchesUploadBatch(batch: string, objectKey: string): boolean {
   return Boolean(timestamp && uuid && afterUploads?.split("/")[1] === `${timestamp}-${uuid}`)
 }
 function rememberBatchObject(batch: string, answer: CloudAnswer, digest: string, extension: string, now: number, workspace: string): void {
-  if (!matchesUploadBatch(batch, answer.objectKey)) return
+  // The server may reuse a verified object from an older physical directory.
+  if (!matchesUploadBatch(batch, answer.objectKey) && !batchExpiresAt.has(batch)) return
   const entries = batchKnown.get(batch) ?? new Map<string, MirrorEntry>()
   entries.set(batchCacheKey(batch, workspace, extension, digest), {
     objectKey: answer.objectKey, publicUrl: answer.publicUrl, accountId: answer.accountId,

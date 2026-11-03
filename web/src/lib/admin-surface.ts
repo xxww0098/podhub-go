@@ -67,7 +67,6 @@ const SHARED_QUERY_KEYS = ["screen", "invite", "settings"] as const
 const SCREEN_QUERY_KEYS: Partial<Record<AppScreen, readonly string[]>> = {
   catalog: ["product", "db", "cat", "pmin", "pmax", "q", "tags", "pick"],
   listing: ["cardId"],
-  "supplier-dbs": ["open"],
   "supplier-accounts": ["open"],
   "admin-delegate-orders": ["order"],
   "admin-console": ["workspaceId", "storeId"],
@@ -86,7 +85,7 @@ export function withoutForeignSearch(search: string, screen: AppScreen): string 
 
 /**
  * Rewrite `screen` and drop foreign module params. Catalog's in-module product
- * drill (`product=`) does not survive a shell jump — returning to 平台货源
+ * drill (`product=`) does not survive a shell jump — returning to 平台商品库
  * must land on the gallery, not the last detail. `cardId` is 批量上架's own
  * drill: it survives a jump only when another screen's address already carried
  * it (the header progress chip — an injection a caller made on purpose).

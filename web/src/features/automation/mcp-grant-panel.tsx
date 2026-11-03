@@ -2,7 +2,14 @@ import { useEffect, useState } from "react"
 import type { AccountOverview } from "@/bindings/commands"
 import { createAutomationGrant, listAutomationGrants, revokeAutomationGrant, type AutomationGrant, type GrantInput, type GrantScopeKind } from "@/bindings/http-automation-grants"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { IconButton } from "@/components/ui/icon-button"
+import { Copy, KeyRound } from "lucide-react"
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
+} from "@/components/ui/empty"
 import { notifyCommandError, notifySuccess } from "@/lib/notify"
 import { availableGrantScopes, roleGrantScope } from "./grant-options"
 import { McpGrantForm } from "./mcp-grant-form"
@@ -67,31 +74,43 @@ export function McpGrantPanel({ overview }: { overview?: AccountOverview }) {
     catch (reason) { notifyCommandError(reason, "无法复制，请手动选择复制") }
   }
 
-  if (!scope) return <p className="text-sm text-muted-foreground">登录后可以申请 MCP 令牌。</p>
-  return <div className="flex min-w-0 flex-col gap-4">
-    <Card size="sm">
-      <CardHeader><CardTitle>连接智能体</CardTitle><CardDescription>在客户端填写连接地址与 Bearer 令牌。令牌只能执行你授权的操作。</CardDescription></CardHeader>
-      <CardContent>
-        <div className="flex min-w-0 flex-wrap items-center gap-3">
-          <code className="min-w-0 flex-1 break-all font-mono text-compact">{endpoint}</code>
-          <Button type="button" variant="outline" size="sm" onClick={() => { void copy(endpoint) }}>复制连接地址</Button>
+  if (!authenticated) {
+    return (
+      <Empty role="status" className="min-h-60">
+        <EmptyHeader className="max-w-md">
+          <EmptyTitle>未开放申请</EmptyTitle>
+          <EmptyDescription>登录账号后方可申请智能体 MCP 授权令牌。</EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    )
+  }
+  return <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
+    <section aria-labelledby="mcp-connection" className="flex min-w-0 flex-col gap-3 rounded-xl border border-border bg-card p-6">
+      <div>
+        <h3 id="mcp-connection" className="text-2xl font-semibold">连接智能体</h3>
+        <p className="mt-1 text-lg text-muted-foreground">通过以下同源地址接入 PodHub Cloud 的智能体服务。</p>
+      </div>
+      <div className="flex min-w-0 items-center gap-2">
+        <code className="min-w-0 flex-1 break-all rounded-lg bg-muted px-3 py-2 font-mono text-compact text-foreground">{endpoint}</code>
+        <IconButton icon={Copy} label="复制连接地址" variant="outline" size="icon-sm" onClick={() => { void copy(endpoint) }} />
+      </div>
+    </section>
+    {token ? <section aria-label="保存新令牌" className="flex min-w-0 flex-col gap-3 rounded-xl border border-brand/30 bg-brand-soft/40 px-4 py-4">
+      <p className="flex items-center gap-2 text-compact font-medium text-foreground"><KeyRound aria-hidden className="size-4 text-brand" />请妥善保存；关闭设置后无法再次查看。</p>
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <code className="min-w-0 flex-1 basis-64 break-all rounded-lg border border-border bg-card px-3 py-2 font-mono text-compact" aria-label="新建 MCP 令牌">{token}</code>
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <IconButton icon={Copy} label="复制令牌" variant="default" size="icon-sm" onClick={() => { void copy(token) }} />
+          <Button type="button" size="sm" variant="outline" onClick={() => setToken(null)}>已保存，隐藏令牌</Button>
         </div>
-      </CardContent>
-    </Card>
-    {token ? <Card size="sm">
-      <CardHeader><CardTitle>保存新令牌</CardTitle><CardDescription>请立即复制并妥善保存；关闭设置后无法再次查看。</CardDescription></CardHeader>
-      <CardContent><div className="flex flex-col gap-3">
-        <code className="min-w-0 flex-1 break-all font-mono text-compact" aria-label="新建 MCP 令牌">{token}</code>
-        <p className="break-words text-meta text-muted-foreground">客户端请求头：Authorization: Bearer &lt;令牌&gt;</p>
-        <div className="flex flex-wrap gap-2">
-          <Button type="button" onClick={() => { void copy(token) }}>复制令牌</Button>
-          <Button type="button" variant="outline" onClick={() => setToken(null)}>已保存，隐藏令牌</Button>
-        </div>
-      </div></CardContent>
-    </Card> : <Card size="sm">
-      <CardHeader><CardTitle>申请令牌</CardTitle><CardDescription>为每个客户端单独授权，按需选择操作和有效期。</CardDescription></CardHeader>
-      <CardContent><McpGrantForm key={scope} scope={scope} overview={overview} busy={busy} onCreate={create} /></CardContent>
-    </Card>}
+      </div>
+      <p className="break-words text-meta text-muted-foreground">请求头：Authorization: Bearer &lt;令牌&gt;</p>
+    </section> : <section aria-label="申请令牌" className="rounded-xl border border-border bg-card p-6">
+      <h3 className="text-2xl font-semibold">申请令牌</h3>
+      <p className="mb-4 mt-1 text-lg text-muted-foreground">创建令牌以便智能体访问指定能力。</p>
+      {scope ? <McpGrantForm key={scope} scope={scope} overview={overview} busy={busy} onCreate={create} />
+        : <p role="status" className="text-lg text-muted-foreground">请选择工作空间后申请读取令牌。</p>}
+    </section>}
     <McpGrantList grants={grants} loading={loading} failed={failed} busy={busy} onRefresh={() => setRefresh((value) => value + 1)} onRevoke={revoke} />
   </div>
 }

@@ -2,7 +2,7 @@ package contract
 
 // SourceCard is one factory the signed-in member can see.
 type SourceCard struct {
-	SourceID string `json:"sourceId"`
+	SourceID string `json:"source_id"`
 	Name     string `json:"name"`
 	Country  string `json:"country"`
 	Icon     string `json:"icon"`
@@ -15,36 +15,49 @@ type MeData struct {
 
 // DispatchLine is a list row line.
 type DispatchLine struct {
-	OfferID  string `json:"offerId"`
+	OfferID  string `json:"offer_id"`
 	Name     string `json:"name"`
 	Quantity int32  `json:"quantity"`
 }
 
 // DispatchRow is one page entry. Nil pointers are omitted.
 type DispatchRow struct {
-	DispatchID    string         `json:"dispatchId"`
-	DispatchNo    string         `json:"dispatchNo"`
-	PostingNumber string         `json:"postingNumber"`
+	DispatchID    string         `json:"dispatch_id"`
+	DispatchNo    string         `json:"dispatch_no"`
+	PostingNumber string         `json:"posting_number"`
 	State         string         `json:"state"`
 	Deadline      *string        `json:"deadline,omitempty"`
 	Lines         []DispatchLine `json:"lines"`
-	NudgeCount    int32          `json:"nudgeCount"`
-	NudgedAtMs    *int64         `json:"nudgedAtMs,omitempty"`
-	PayoutCents   *int64         `json:"payoutCents,omitempty"`
-	PayoutState   *string        `json:"payoutState,omitempty"`
+	ThumbnailURL  *string        `json:"thumbnail_url,omitempty"`
+	NudgeCount    int32          `json:"nudge_count"`
+	NudgedAtMs    *int64         `json:"nudged_at_ms,omitempty"`
+	PayoutCents   *int64         `json:"payout_cents,omitempty"`
+	PayoutState   *string        `json:"payout_state,omitempty"`
 }
 
 // DispatchListData is the list envelope data.
 type DispatchListData struct {
 	Dispatches []DispatchRow `json:"dispatches"`
 	Cursor     string        `json:"cursor"`
-	HasMore    bool          `json:"hasMore"`
+	HasMore    bool          `json:"has_more"`
+}
+
+type DashboardCounts struct {
+	Pending   int64 `json:"pending"`
+	Producing int64 `json:"producing"`
+	Urgent    int64 `json:"urgent"`
+	Shipped   int64 `json:"shipped"`
+}
+
+type DashboardData struct {
+	Counts       DashboardCounts `json:"counts"`
+	UrgentOrders []DispatchRow   `json:"urgent_orders"`
 }
 
 // AssetLink is a detail-line download pointer. object_key is not on the wire.
 type AssetLink struct {
-	AssetID  string `json:"assetId"`
-	FileName string `json:"fileName"`
+	AssetID  string `json:"asset_id"`
+	FileName string `json:"file_name"`
 	SHA256   string `json:"sha256"`
 	Bytes    int64  `json:"bytes"`
 	Mime     string `json:"mime"`
@@ -53,7 +66,7 @@ type AssetLink struct {
 
 // LineDetail is a detail line.
 type LineDetail struct {
-	OfferID  string      `json:"offerId"`
+	OfferID  string      `json:"offer_id"`
 	Name     string      `json:"name"`
 	Quantity int32       `json:"quantity"`
 	Assets   []AssetLink `json:"assets"`
@@ -62,74 +75,65 @@ type LineDetail struct {
 // LogisticsView omits fields that are not JSON strings.
 type LogisticsView struct {
 	Warehouse         *string `json:"warehouse,omitempty"`
-	DeliveryMethod    *string `json:"deliveryMethod,omitempty"`
-	DeliveryType      *string `json:"deliveryType,omitempty"`
-	TplProvider       *string `json:"tplProvider,omitempty"`
+	DeliveryMethod    *string `json:"delivery_method,omitempty"`
+	DeliveryType      *string `json:"delivery_type,omitempty"`
+	TplProvider       *string `json:"tpl_provider,omitempty"`
 	City              *string `json:"city,omitempty"`
 	Region            *string `json:"region,omitempty"`
-	DeliveryDateBegin *string `json:"deliveryDateBegin,omitempty"`
-	DeliveryDateEnd   *string `json:"deliveryDateEnd,omitempty"`
-	ShipmentDate      *string `json:"shipmentDate,omitempty"`
+	DeliveryDateBegin *string `json:"delivery_date_begin,omitempty"`
+	DeliveryDateEnd   *string `json:"delivery_date_end,omitempty"`
+	ShipmentDate      *string `json:"shipment_date,omitempty"`
 }
 
 // ReceiptView is the dispatch receipt object.
 type ReceiptView struct {
-	TrackingNo *string `json:"trackingNo,omitempty"`
+	TrackingNo *string `json:"tracking_no,omitempty"`
 	Note       *string `json:"note,omitempty"`
 	Reason     *string `json:"reason,omitempty"`
-	AtMs       *int64  `json:"atMs,omitempty"`
+	AtMs       *int64  `json:"at_ms,omitempty"`
 }
 
 // ActionsView is the projection of what the current state allows.
 type ActionsView struct {
-	CanAccept bool `json:"canAccept"`
-	CanReject bool `json:"canReject"`
-	CanShip   bool `json:"canShip"`
+	CanAccept bool `json:"can_accept"`
+	CanReject bool `json:"can_reject"`
+	CanShip   bool `json:"can_ship"`
 }
 
 // DispatchDetail is GET one dispatch.
 type DispatchDetail struct {
-	DispatchID    string         `json:"dispatchId"`
-	DispatchNo    string         `json:"dispatchNo"`
-	PostingNumber string         `json:"postingNumber"`
+	DispatchID    string         `json:"dispatch_id"`
+	DispatchNo    string         `json:"dispatch_no"`
+	PostingNumber string         `json:"posting_number"`
 	State         string         `json:"state"`
 	Deadline      *string        `json:"deadline,omitempty"`
-	SellerNote    string         `json:"sellerNote"`
+	SellerNote    string         `json:"seller_note"`
 	Logistics     *LogisticsView `json:"logistics,omitempty"`
 	Lines         []LineDetail   `json:"lines"`
 	Receipt       *ReceiptView   `json:"receipt,omitempty"`
 	Actions       ActionsView    `json:"actions"`
-	CreatedAtMs   int64          `json:"createdAtMs"`
-	UpdatedAtMs   int64          `json:"updatedAtMs"`
-	NudgeCount    int32          `json:"nudgeCount"`
-	NudgedAtMs    *int64         `json:"nudgedAtMs,omitempty"`
-	PayoutCents   *int64         `json:"payoutCents,omitempty"`
-	PayoutState   *string        `json:"payoutState,omitempty"`
+	CreatedAtMs   int64          `json:"created_at_ms"`
+	UpdatedAtMs   int64          `json:"updated_at_ms"`
+	NudgeCount    int32          `json:"nudge_count"`
+	NudgedAtMs    *int64         `json:"nudged_at_ms,omitempty"`
+	PayoutCents   *int64         `json:"payout_cents,omitempty"`
+	PayoutState   *string        `json:"payout_state,omitempty"`
 }
 
 // ActionData is the accept/reject/ship body.
 type ActionData struct {
-	DispatchID string `json:"dispatchId"`
+	DispatchID string `json:"dispatch_id"`
 	State      string `json:"state"`
 }
 
 // DownloadGrant is the JSON asset grant.
 type DownloadGrant struct {
 	URL         string `json:"url"`
-	ExpiresAtMs int64  `json:"expiresAtMs"`
+	ExpiresAtMs int64  `json:"expires_at_ms"`
 	Bytes       int64  `json:"bytes"`
-	FileName    string `json:"fileName"`
-	ContentType string `json:"contentType"`
+	FileName    string `json:"file_name"`
+	ContentType string `json:"content_type"`
 	SHA256      string `json:"sha256"`
-}
-
-// AssetBytes is the proxied object. JSON is set when Accept asked for a grant.
-type AssetBytes struct {
-	Grant       *DownloadGrant
-	Body        []byte
-	ContentType string
-	FileName    string
-	Inline      bool
 }
 
 // GalleryItem is one seller gallery entry.

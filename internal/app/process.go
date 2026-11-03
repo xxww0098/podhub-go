@@ -7,12 +7,21 @@ import (
 
 	"github.com/xxww0098/podhub-go/internal/app/worker"
 	"github.com/xxww0098/podhub-go/internal/platform/config"
+	"github.com/xxww0098/podhub-go/internal/platform/httpx"
 	"github.com/xxww0098/podhub-go/internal/platform/observability"
 )
 
 // Main is the API process. It loads config once, then serves until SIGINT.
 func Main() int {
 	cfg := config.Load()
+	if err := httpx.ConfigureDNS(cfg.DNSServer); err != nil {
+		fmt.Fprintf(os.Stderr, "dns: %v\n", err)
+		return 1
+	}
+	if _, err := cfg.SellerEgressRoutes(); err != nil {
+		fmt.Fprintln(os.Stderr, "seller egress routes: invalid CLOUD_SELLER_EGRESS_ROUTES")
+		return 1
+	}
 	shutdown, err := observability.Init("podhub-api", cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "observability: %v\n", err)

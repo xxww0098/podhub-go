@@ -1,10 +1,6 @@
 package domain
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"sort"
 	"strings"
@@ -15,9 +11,6 @@ const (
 	maxPathLen   = 1024
 	maxCursorLen = 4096
 	maxGroups    = 100
-	schemaV1     = 1
-	configAAD    = "platform_integration_config|v1"
-	exampleKey   = "set-a-random-32-plus-character-server-secret"
 )
 
 var (
@@ -30,17 +23,13 @@ var (
 	ErrPrefixInside = errors.New("对象前缀必须位于账号前缀之内")
 	ErrPrefixBad    = errors.New("对象前缀无效")
 	ErrContentType  = errors.New("contentType 无效")
-	ErrKeyMissing   = errors.New("平台连接配置密钥未设置")
-	ErrKeyExample   = errors.New("平台连接配置密钥不能使用 .env.example 中的占位值")
-	ErrSnapshot     = errors.New("snapshot")
-	ErrSchema       = errors.New("已存储的连接配置 schema 版本不受支持")
 	ErrNoConfig     = errors.New("平台尚未配置媒体存储")
 	ErrAccount      = errors.New("媒体存储账号不存在")
 	ErrTransit      = errors.New("中转桶每天清空，不能写入长期对象")
 	ErrStageDir     = errors.New("该路径为上传暂存保留目录")
 )
 
-// CloudAccount is one decrypted storageBuckets row.
+// CloudAccount is one account injected from server storage configuration.
 type CloudAccount struct {
 	ID              string
 	Role            string
@@ -192,83 +181,6 @@ func headerOK(value string) bool {
 		}
 	}
 	return true
-}
-
-// OpenSnapshot decrypts a platform_integration_config row.
-// The key is SHA-256 of the trimmed secret. A legacy row without AAD is tried second.
-func OpenSnapshot(secret string, nonce, ciphertext []byte) ([]CloudAccount, error) {
-	secret = strings.TrimSpace(secret)
-	if len(secret) < 32 {
-		return nil, ErrKeyMissing
-	}
-	if secret == exampleKey {
-		return nil, ErrKeyExample
-	}
-	if len(nonce) != 12 {
-		return nil, ErrSnapshot
-	}
-	sum := sha256.Sum256([]byte(secret))
-	block, err := aes.NewCipher(sum[:])
-	if err != nil {
-		return nil, ErrSnapshot
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, ErrSnapshot
-	}
-	plain, err := gcm.Open(nil, nonce, ciphertext, []byte(configAAD))
-	if err != nil {
-		plain, err = gcm.Open(nil, nonce, ciphertext, nil)
-		if err != nil {
-			return nil, ErrSnapshot
-		}
-	}
-	return parseSnapshot(plain)
-}
-
-type storedSnapshot struct {
-	SchemaVersion int           `json:"schemaVersion"`
-	Buckets       []storedMedia `json:"storageBuckets"`
-}
-
-type storedMedia struct {
-	ID              string  `json:"id"`
-	Role            string  `json:"role"`
-	Provider        *string `json:"provider"`
-	Endpoint        string  `json:"endpoint"`
-	Region          string  `json:"region"`
-	Bucket          string  `json:"bucket"`
-	KeyPrefix       string  `json:"keyPrefix"`
-	PublicBaseURL   string  `json:"publicBaseUrl"`
-	ForcePathStyle  bool    `json:"forcePathStyle"`
-	AccessKeyID     string  `json:"accessKeyId"`
-	SecretAccessKey string  `json:"secretAccessKey"`
-	SessionToken    string  `json:"sessionToken"`
-	Active          bool    `json:"active"`
-}
-
-func parseSnapshot(plain []byte) ([]CloudAccount, error) {
-	var snap storedSnapshot
-	if err := json.Unmarshal(plain, &snap); err != nil {
-		return nil, ErrSnapshot
-	}
-	if snap.SchemaVersion != schemaV1 {
-		return nil, ErrSchema
-	}
-	out := make([]CloudAccount, 0, len(snap.Buckets))
-	for _, row := range snap.Buckets {
-		provider := "legacy_s3"
-		if row.Provider != nil && *row.Provider != "" {
-			provider = *row.Provider
-		}
-		out = append(out, CloudAccount{
-			ID: row.ID, Role: row.Role, Provider: provider, Endpoint: row.Endpoint, Region: row.Region,
-			Bucket: row.Bucket, KeyPrefix: row.KeyPrefix, PublicBaseURL: row.PublicBaseURL,
-			ForcePathStyle: row.ForcePathStyle, AccessKeyID: row.AccessKeyID,
-			SecretAccessKey: row.SecretAccessKey, SessionToken: row.SessionToken, Active: row.Active,
-		})
-	}
-	return out, nil
 }
 
 // ResolveAccount picks one account. id nil picks the single active bucket.
@@ -519,21 +431,4 @@ func hasUnicodeControl(s string) bool {
 
 func isASCIILetter(c byte) bool {
 	return c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z'
-}
-
-// SealSnapshot encrypts a snapshot for tests. AAD matches OpenSnapshot.
-func SealSnapshot(secret string, nonce []byte, plain []byte) ([]byte, error) {
-	sum := sha256.Sum256([]byte(strings.TrimSpace(secret)))
-	block, err := aes.NewCipher(sum[:])
-	if err != nil {
-		return nil, err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	if len(nonce) != gcm.NonceSize() {
-		return nil, ErrSnapshot
-	}
-	return gcm.Seal(nil, nonce, plain, []byte(configAAD)), nil
 }

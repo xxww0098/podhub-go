@@ -33,19 +33,18 @@ test("supplier catalog enters listing through the app navigation seam", () => {
   const start = source.indexOf('case "catalog"')
   const end = source.indexOf('case "supplier-dbs"', start)
   const catalog = source.slice(start, end)
-  assert.match(catalog, /onOpenListing=\{\(products\) =>/)
+  assert.match(catalog, /onOpenListing=\{async \(products\) =>/)
   // The seam landed: supplier products become listing cards, then the app
   // navigates to the listing surface.
   assert.match(catalog, /importCatalogProducts\(products, \{/)
   assert.match(catalog, /onNavigate\("listing"\)/)
-  // 绑定落地在导入例程里：建卡后按清单条目先店铺、后 PSD。
+  // 清单只导入商品，店铺和 PSD 留在上架页设置。
   const routine = source.slice(
     source.indexOf("export async function importCatalogProducts"),
     source.indexOf("function ScreenFallback"),
   )
   assert.match(routine, /listingCardCreateFromSupplier\(product\.productId\)/)
-  assert.match(routine, /listingCardSaveStore\(cardId, entry\.storeId\)/)
-  assert.match(routine, /listingCardSavePsd\(cardId, entry\.psd\.sha256, entry\.psd\.fileName\)/)
+  assert.doesNotMatch(routine, /listingCardSaveStore|listingCardSavePsd/)
 })
 
 test("「从商库添加」带选品意图进商库，壳层离开时收口", () => {
@@ -89,11 +88,9 @@ test("platform administration lives behind the settings page's super_admin gate"
   assert.match(sections, /group: "平台管理"/)
   for (const id of [
     "users",
-    "ocr",
-    "media",
+    "ai-accounts",
     "payment",
     "proxy",
-    "prompts",
     "banned-tags",
     "categories",
     "redeem-codes",

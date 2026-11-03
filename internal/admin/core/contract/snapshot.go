@@ -4,17 +4,43 @@ import "github.com/xxww0098/podhub-go/internal/platform/seal"
 
 // Snapshot is the decrypted platform integration document.
 // JSON names match seal.Snapshot and the stored camelCase document.
-//
-// Buckets is the whole storage configuration: transit, assets and private.
-// The older single-account fields (mediaAccounts, supplierDbStorage,
-// delegateAssetsStorage) are read only so an already-sealed document can be
-// upgraded in place; a write always produces the role list.
 type Snapshot struct {
 	SchemaVersion  int                       `json:"schemaVersion"`
 	AIAccounts     []StoredAI                `json:"aiAccounts"`
 	AIDefaultModel string                    `json:"aiDefaultModel"`
-	Buckets        []StoredBucket            `json:"storageBuckets"`
+	AIRuntime      AIRuntime                 `json:"aiRuntime"`
 	Payment        *seal.StoredPaymentConfig `json:"payment,omitempty"`
+}
+
+// AI account purposes. OCR serves recognition; image serves set generation;
+// chat serves the three text wire formats.
+const (
+	PurposeOCR   = "ocr"
+	PurposeImage = "image"
+	PurposeChat  = "chat"
+)
+
+// legacyImageModel is the one model that identified an image account before
+// accounts carried a purpose. Only the one-time document migration reads it.
+const legacyImageModel = "qwen-image-2.1-pro"
+
+// DefaultLeaseTTLSeconds is the AI lease lifetime when nothing is stored.
+const DefaultLeaseTTLSeconds = 90
+
+// AIRuntime is the platform AI ceilings and the public-endpoint switch.
+// Zero concurrency or rate turns that ceiling off.
+type AIRuntime struct {
+	MaxConcurrencyGlobal  int  `json:"maxConcurrencyGlobal"`
+	MaxConcurrencyUser    int  `json:"maxConcurrencyUser"`
+	MaxConcurrencyAccount int  `json:"maxConcurrencyAccount"`
+	UserRatePerMinute     int  `json:"userRatePerMinute"`
+	LeaseTTLSeconds       int  `json:"leaseTtlSeconds"`
+	AllowPublicEgress     bool `json:"allowPublicEgress"`
+}
+
+// DefaultAIRuntime is every ceiling off, a 90 second lease, public dial off.
+func DefaultAIRuntime() AIRuntime {
+	return AIRuntime{LeaseTTLSeconds: DefaultLeaseTTLSeconds}
 }
 
 // StoredAI is one sealed AI account, including the secret.
@@ -29,24 +55,5 @@ type StoredAI struct {
 	Thinking       string `json:"thinking"`
 	ThinkingFormat string `json:"thinkingFormat"`
 	Priority       int64  `json:"priority"`
-}
-
-// StoredBucket is one sealed storage account, including secrets.
-// Role is transit, assets or private; Bucket and PublicBaseURL must match
-// the role exactly, and the write path enforces that before sealing.
-type StoredBucket struct {
-	ID           string `json:"id"`
-	Label        string `json:"label"`
-	Role         string `json:"role"`
-	Provider     string `json:"provider"`
-	Endpoint     string `json:"endpoint"`
-	Region       string `json:"region"`
-	Bucket       string `json:"bucket"`
-	KeyPrefix    string `json:"keyPrefix"`
-	PublicBase   string `json:"publicBaseUrl"`
-	ForcePath    bool   `json:"forcePathStyle"`
-	AccessKey    string `json:"accessKeyId"`
-	SecretKey    string `json:"secretAccessKey"`
-	SessionToken string `json:"sessionToken"`
-	Active       bool   `json:"active"`
+	Purpose        string `json:"purpose"`
 }

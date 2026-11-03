@@ -2,9 +2,7 @@
  * 收藏与上架清单 — 卖家选品时的两本本地簿（localStorage，跨筛选/详情/刷新存活）。
  *
  * 货盘是平台级只读数据，收藏与清单是浏览器侧的「挑货草稿」：不入 Cloud 事实
- * 源，不产生任何写请求。每条清单还能攒下「目标店铺」与「PSD 模板」两笔绑定，
- * 同样是本机草稿；SC-06 adopt seam（商品 → 上架方案）导入时由调用方把它们
- * 落到新卡上——本模块只管收集与绑定，不管上架。
+ * 源，不产生任何写请求。清单只保存选中的商品；店铺和 PSD 在上架页设置。
  *
  * 存储是模块级 external store：detail / card / drawer 三个面读同一份快照，
  * useSyncExternalStore 保证一处改动处处同步；SSR 渲染回退空快照。
@@ -14,16 +12,6 @@ import { useMemo, useSyncExternalStore } from "react"
 import type { SellerSupplierDbRowData } from "@/bindings/http-supplier-dbs-catalog"
 
 import { listabilityOf } from "./gallery-model"
-
-/**
- * 清单里攒下的 PSD 模板绑定：asset_id 既是内容摘要也是本机 OPFS 的键
- * （renderOpfs.workflowPickTemplatePsd 的口径），所以导入时原样交给
- * listingCardSavePsd。
- */
-export type ListingQueuePsd = {
-  sha256: string
-  fileName: string
-}
 
 /** 清单条目：上架导航需要的最小身份 + 浮窗展示需要的快照字段。 */
 export type ListingQueueEntry = {
@@ -41,14 +29,6 @@ export type ListingQueueEntry = {
   /** 封面快照——行后来补图/换图不影响已加入时的那一瞥。 */
   coverUrl: string
   platformPriceCents: number | null
-  /**
-   * 目标店铺（cloud store uuid）；缺省 = 不绑定，导入时让新卡落在默认店铺。
-   * 与 PSD 一样是「挑货时先攒下、导入时再落卡」的草稿字段：老数据没有它们，
-   * 读回照常。
-   */
-  storeId?: string
-  /** PSD 模板覆盖；缺省 = 用商库默认模板。 */
-  psd?: ListingQueuePsd
   addedAtMs: number
 }
 
@@ -64,19 +44,7 @@ const EMPTY_COLLECTION: GalleryCollection = { queue: [], favorites: [] }
 const QUEUE_KEY = "podhub.supplier-dbs-gallery.listing-queue"
 const FAVORITES_KEY = "podhub.supplier-dbs-gallery.favorites"
 
-/** 存进来的 PSD 绑定：摘要缺失（或类型不对）就当没绑，不把坏值带上屏。 */
-function storedPsd(value: unknown): ListingQueuePsd | undefined {
-  if (!value || typeof value !== "object") return undefined
-  const psd = value as ListingQueuePsd
-  const sha256 = typeof psd.sha256 === "string" ? psd.sha256.trim() : ""
-  if (!sha256) return undefined
-  return { sha256, fileName: typeof psd.fileName === "string" ? psd.fileName : "" }
-}
-
-/**
- * 存储 → 清单条目。逐条校验而不是整表拒绝：商品身份在就算数，绑定字段
- * （storeId / psd）是后加的增量——老数据没有它们照样读回，坏值丢掉即可。
- */
+/** 逐条读取有效商品身份，忽略清单展示以外的字段。 */
 export function queueEntriesFromStored(value: unknown): ListingQueueEntry[] {
   if (!Array.isArray(value)) return []
   const entries: ListingQueueEntry[] = []
@@ -84,14 +52,16 @@ export function queueEntriesFromStored(value: unknown): ListingQueueEntry[] {
     if (!raw || typeof raw !== "object") continue
     const entry = raw as ListingQueueEntry
     if (typeof entry.productId !== "string" || !entry.productId) continue
-    const storeId = typeof entry.storeId === "string" ? entry.storeId.trim() : ""
-    const psd = storedPsd(entry.psd)
     const variantGroup = typeof entry.variantGroup === "string" ? entry.variantGroup.trim() : ""
-    const { storeId: _storedStore, psd: _storedPsd, variantGroup: _storedGroup, ...rest } = entry
     entries.push({
-      ...rest,
-      ...(storeId ? { storeId } : {}),
-      ...(psd ? { psd } : {}),
+      productId: entry.productId,
+      sourceId: entry.sourceId,
+      title: entry.title,
+      platformCode: entry.platformCode,
+      ...(entry.size ? { size: entry.size } : {}),
+      coverUrl: entry.coverUrl,
+      platformPriceCents: entry.platformPriceCents,
+      addedAtMs: entry.addedAtMs,
       ...(variantGroup ? { variantGroup } : {}),
     })
   }
@@ -214,48 +184,6 @@ export function clearQueue(): void {
   persist({ ...collection, queue: [] })
 }
 
-/** 只改一条已入清单的条目；不在清单里就什么也不做（不凭空补条目）。 */
-function updateQueueEntry(
-  productId: string,
-  update: (entry: ListingQueueEntry) => ListingQueueEntry,
-): void {
-  if (!collection.queue.some((entry) => entry.productId === productId)) return
-  persist({
-    ...collection,
-    queue: collection.queue.map((entry) =>
-      entry.productId === productId ? update(entry) : entry,
-    ),
-  })
-}
-
-/** 绑定/改绑/清除目标店铺——空串就是「不绑定」，导入时让新卡落回默认店铺。 */
-export function setQueuedStore(productId: string, storeId: string): void {
-  const next = storeId.trim()
-  updateQueueEntry(productId, (entry) => {
-    const { storeId: _previous, ...rest } = entry
-    return next ? { ...rest, storeId: next } : rest
-  })
-}
-
-/** 绑定/清除 PSD 模板——null 就是「恢复商库默认」。 */
-export function setQueuedPsd(productId: string, psd: ListingQueuePsd | null): void {
-  const next = psd
-    ? { sha256: psd.sha256.trim(), fileName: psd.fileName }
-    : undefined
-  updateQueueEntry(productId, (entry) => {
-    const { psd: _previous, ...rest } = entry
-    return next?.sha256 ? { ...rest, psd: next } : rest
-  })
-}
-
-/**
- * 导入时查这一件商品攒下的绑定。没有条目、或条目是加字段之前的老数据，
- * 都返回 undefined——调用方按「没有绑定」处理。
- */
-export function queueEntryById(productId: string): ListingQueueEntry | undefined {
-  return collection.queue.find((entry) => entry.productId === productId)
-}
-
 export function toggleFavorite(productId: string): void {
   persist({
     ...collection,
@@ -281,7 +209,6 @@ export function useGalleryCollection() {
       queue: state.queue,
       favorites: state.favorites,
       queueIds: new Set(state.queue.map((entry) => entry.productId)),
-      queueEntriesById: new Map(state.queue.map((entry) => [entry.productId, entry])),
       favoriteIds: new Set(state.favorites),
       isQueued,
       isFavorite,
@@ -289,8 +216,6 @@ export function useGalleryCollection() {
       toggleFavorite,
       removeQueued,
       clearQueue,
-      setQueuedStore,
-      setQueuedPsd,
     }),
     [state],
   )

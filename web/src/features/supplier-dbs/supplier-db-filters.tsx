@@ -1,13 +1,17 @@
 /** Row filtering, presets and pagination share the same readiness predicate. */
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Search, ChevronLeft, ChevronRight } from "lucide-react"
+import { Search, ChevronLeft, ChevronRight, SlidersHorizontal } from "lucide-react"
 import type { SupplierDbRow } from "@/bindings/http-supplier-dbs"
 import type { CategoryTreeNodeView } from "@/bindings/commands"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { missingReadiness } from "./supplier-readiness"
 import { categoryShortLabel } from "./supplier-prop-editors"
+import { productNeedsCompletion, supplierProductGroups } from "./supplier-product-groups"
 
 /** 状态筛选（就绪口径）：全部 / 就绪 / 待完善（缺项）/ 待复核（类目更新待人工）。 */
 export type SupplierDbRowStatus =
@@ -49,9 +53,9 @@ const PUBLISH_FILTERS: ReadonlyArray<{
   value: PublishFilter
   label: string
 }> = [
-  { value: "all", label: "全部上架状态" },
-  { value: "published", label: "已上架" },
-  { value: "unpublished", label: "未上架" },
+  { value: "all", label: "全部发布状态" },
+  { value: "published", label: "已发布" },
+  { value: "unpublished", label: "草稿" },
 ]
 
 /** 类目筛选值："none" = 未设类目，其余为 `descriptionCategoryId:typeId`。 */
@@ -89,16 +93,15 @@ export function useSupplierDbFilters(rows: SupplierDbRow[], categoryTree: Catego
   const searchRef = useRef<HTMLInputElement>(null)
   /** 非归档行 — 归档行不进商品表（docs §4）；统计页签与筛选都在这个口径上。 */
   const liveRows = useMemo(() => rows.filter((row) => !row.archived), [rows])
+  const groups = useMemo(() => supplierProductGroups(liveRows), [liveRows])
 
   const statCounts = useMemo(
     () => ({
-      all: liveRows.length,
-      published: liveRows.filter((row) => row.published).length,
-      incomplete: liveRows.filter(
-        (row) => missingReadiness(row).length > 0,
-      ).length,
+      all: groups.length,
+      published: groups.filter((group) => group.rows.some((row) => row.published)).length,
+      incomplete: groups.filter(productNeedsCompletion).length,
     }),
-    [liveRows],
+    [groups],
   )
 
   /** 类目筛选选项 = 库里实际出现的坐标，标签借类目树解析。 */
@@ -131,13 +134,14 @@ export function useSupplierDbFilters(rows: SupplierDbRow[], categoryTree: Catego
     [categoryOptions],
   )
 
-  const filteredRows = useMemo(() => {
+  const filteredGroups = useMemo(() => {
     const needle = query.trim().toLowerCase()
-    return liveRows.filter((row) => {
+    return groups.filter((group) => group.rows.some((row) => {
       if (
         needle &&
         !row.title.toLowerCase().includes(needle) &&
-        !row.platformCode.toLowerCase().includes(needle)
+        !row.platformCode.toLowerCase().includes(needle) &&
+        !row.size.toLowerCase().includes(needle)
       ) {
         return false
       }
@@ -148,20 +152,22 @@ export function useSupplierDbFilters(rows: SupplierDbRow[], categoryTree: Catego
         return false
       }
       return true
-    })
-  }, [liveRows, query, statusFilter, publishFilter, categoryFilter])
+    }))
+  }, [groups, query, statusFilter, publishFilter, categoryFilter])
+  const filteredRows = useMemo(() => filteredGroups.flatMap((group) => group.rows), [filteredGroups])
 
   // 任何收窄都回第一页——停在旧页码会落空或跳视角。
   useEffect(() => {
     setPage(1)
   }, [query, statusFilter, publishFilter, categoryFilter, pageSize])
 
-  const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize))
+  const pageCount = Math.max(1, Math.ceil(filteredGroups.length / pageSize))
   const safePage = Math.min(page, pageCount)
-  const pageRows = useMemo(
-    () => filteredRows.slice((safePage - 1) * pageSize, safePage * pageSize),
-    [filteredRows, safePage, pageSize],
+  const pageGroups = useMemo(
+    () => filteredGroups.slice((safePage - 1) * pageSize, safePage * pageSize),
+    [filteredGroups, safePage, pageSize],
   )
+  const pageRows = useMemo(() => pageGroups.flatMap((group) => group.rows), [pageGroups])
 
   /** 统计页签 = 行筛选预设：上架/就绪两轴一起摆到对应组合。 */
   const activeStat =
@@ -184,9 +190,16 @@ export function useSupplierDbFilters(rows: SupplierDbRow[], categoryTree: Catego
       setStatusFilter("all")
     }
   }
+  /** 空结果里的“清除筛选”只清行筛选，保留用户当前选择的工厂。 */
+  const resetFilters = () => {
+    setQuery("")
+    setStatusFilter("all")
+    setPublishFilter("all")
+    setCategoryFilter("all")
+  }
 
   return { query, setQuery, statusFilter, setStatusFilter, publishFilter, setPublishFilter, categoryFilter, setCategoryFilter,
-    pageSize, setPageSize, page: safePage, setPage, pageCount, pageRows, liveRows, filteredRows, categoryFilterItems, statCounts, activeStat, applyStat, searchRef }
+    pageSize, setPageSize, page: safePage, setPage, pageCount, pageRows, pageGroups, groups, filteredGroups, liveRows, filteredRows, categoryFilterItems, statCounts, activeStat, applyStat, resetFilters, searchRef }
 }
 type Filters = ReturnType<typeof useSupplierDbFilters>
 
@@ -241,63 +254,94 @@ function FilterSelect<T extends string>({
 }
 
 export function SupplierDbFilterBar({ filters }: { filters: Filters }) {
-  const { query, setQuery, statusFilter, setStatusFilter, publishFilter, setPublishFilter, categoryFilter, setCategoryFilter, categoryFilterItems, searchRef } = filters
+  const { query, setQuery, statusFilter, setStatusFilter, publishFilter, setPublishFilter, categoryFilter, setCategoryFilter, categoryFilterItems, searchRef, resetFilters } = filters
+  const advancedCount = Number(statusFilter !== "all") + Number(publishFilter !== "all")
+  const dirty = advancedCount > 0 || Boolean(query) || categoryFilter !== "all"
   return (
-      <div className="flex flex-wrap items-center gap-2 px-4 py-3">
-        <div className="w-full min-w-0 shrink-0 sm:w-56">
-          <InputGroup>
-            <InputGroupAddon><Search aria-hidden /></InputGroupAddon>
-            <InputGroupInput ref={searchRef} type="search" aria-label="搜索商品" placeholder="搜索商品名称或编号…" title="搜索名称或编号（/ 聚焦）" value={query} onChange={(event) => setQuery(event.target.value)} />
-          </InputGroup>
-        </div>
-        <FilterSelect
-          items={STATUS_FILTERS}
-          value={statusFilter}
-          onChange={setStatusFilter}
-          ariaLabel="状态筛选"
-          filterName="status"
-        />
-        <FilterSelect
-          items={categoryFilterItems}
-          value={categoryFilter}
-          onChange={setCategoryFilter}
-          ariaLabel="类目筛选"
-          filterName="category"
-          className="max-w-48 cursor-pointer"
-        />
-        <FilterSelect
-          items={PUBLISH_FILTERS}
-          value={publishFilter}
-          onChange={setPublishFilter}
-          ariaLabel="上架状态筛选"
-          filterName="publish"
-        />
+    <div className="supplier-db-filterbar flex min-w-[min(100%,28rem)] flex-1 flex-wrap items-center gap-1.5">
+      <div className="min-w-36 flex-1">
+        <InputGroup>
+          <InputGroupAddon><Search aria-hidden /></InputGroupAddon>
+          <InputGroupInput ref={searchRef} type="search" aria-label="搜索商品" placeholder="搜索商品名称或编号…" title="搜索名称或编号（/ 聚焦）" value={query} onChange={(event) => setQuery(event.target.value)} />
+        </InputGroup>
       </div>
-
+      <FilterSelect
+        items={categoryFilterItems}
+        value={categoryFilter}
+        onChange={setCategoryFilter}
+        ariaLabel="类目筛选"
+        filterName="category"
+        className="max-w-48 cursor-pointer"
+      />
+      <Popover>
+        <PopoverTrigger
+          render={
+            <Button
+              type="button"
+              variant={advancedCount ? "secondary" : "ghost"}
+              size="sm"
+              aria-label="更多筛选"
+              data-filter="more"
+            />
+          }
+        >
+          <SlidersHorizontal aria-hidden />
+          <span>筛选</span>
+          {advancedCount ? <Badge variant="brand" className="h-5 min-w-5">{advancedCount}</Badge> : null}
+        </PopoverTrigger>
+        <PopoverContent align="end" className="w-72 p-4" data-filter-panel="">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-compact font-medium">筛选条件</p>
+            <Button type="button" variant="ghost" size="xs" disabled={!dirty} onClick={resetFilters}>重置全部</Button>
+          </div>
+          <div className="mt-3 flex flex-col gap-3">
+            <div className="flex flex-col gap-1.5">
+              <span className="text-meta text-muted-foreground">状态</span>
+              <FilterSelect
+                items={STATUS_FILTERS}
+                value={statusFilter}
+                onChange={setStatusFilter}
+                ariaLabel="状态筛选"
+                filterName="status"
+                className="w-full cursor-pointer"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <span className="text-meta text-muted-foreground">发布状态</span>
+              <FilterSelect
+                items={PUBLISH_FILTERS}
+                value={publishFilter}
+                onChange={setPublishFilter}
+                ariaLabel="上架状态筛选"
+                filterName="publish"
+                className="w-full cursor-pointer"
+              />
+            </div>
+          </div>
+          <p className="mt-3 border-t border-border pt-3 text-meta text-faint-foreground">与上方视图页签叠加生效。</p>
+        </PopoverContent>
+      </Popover>
+    </div>
   )
 }
 export function SupplierDbPagination({ filters }: { filters: Filters }) {
-  const { filteredRows, liveRows, page: safePage, pageCount, setPage, pageSize, setPageSize } = filters
+  const { filteredRows, groups, filteredGroups, page: safePage, pageCount, setPage, pageSize, setPageSize } = filters
   return (
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-3 py-2">
           <span className="text-meta text-faint-foreground tabular-nums">
-            共 {filteredRows.length} 条
-            {filteredRows.length !== liveRows.length
-              ? `（全部 ${liveRows.length} 条）`
+            共 {filteredGroups.length} 款商品，{filteredRows.length} 个规格
+            {filteredGroups.length !== groups.length
+              ? `（全部 ${groups.length} 款）`
               : ""}
           </span>
           <div className="flex items-center gap-1.5">
-            <Button
-              type="button"
-              variant="ghost"
+            <IconButton
+              icon={ChevronLeft}
+              label="上一页"
               size="icon-sm"
-              aria-label="上一页"
               disabled={safePage <= 1}
-              className="cursor-pointer"
               onClick={() => setPage(safePage - 1)}
-            >
-              <ChevronLeft aria-hidden />
-            </Button>
+            />
             {pageList(safePage, pageCount).map((item, index) =>
               item === "…" ? (
                 <span
@@ -323,17 +367,13 @@ export function SupplierDbPagination({ filters }: { filters: Filters }) {
                 </Button>
               ),
             )}
-            <Button
-              type="button"
-              variant="ghost"
+            <IconButton
+              icon={ChevronRight}
+              label="下一页"
               size="icon-sm"
-              aria-label="下一页"
               disabled={safePage >= pageCount}
-              className="cursor-pointer"
               onClick={() => setPage(safePage + 1)}
-            >
-              <ChevronRight aria-hidden />
-            </Button>
+            />
             <FilterSelect
               items={PAGE_SIZE_ITEMS}
               value={String(pageSize)}

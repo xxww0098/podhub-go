@@ -13,12 +13,14 @@ type (
 )
 
 type (
-	SourceRef      = supcontract.SourceRef
+	FactoryRef     = supcontract.FactoryRef
+	Factory        = supcontract.Factory
+	FactoryInput   = supcontract.FactoryInput
 	Member         = supcontract.Member
 	AccountGroup   = supcontract.AccountGroup
 	Fulfiller      = supcontract.Fulfiller
 	CatalogManager = supcontract.CatalogManager
 )
 
-// GroupAccounts keeps adjacent rows that share a source id together.
+// GroupAccounts keeps adjacent rows that share a factory together.
 func GroupAccounts(rows []Member) []AccountGroup { return supcontract.GroupAccounts(rows) }

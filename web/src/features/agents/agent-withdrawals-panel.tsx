@@ -96,6 +96,7 @@ export function AgentWithdrawalsPanel() {
     <PlatformAdminSection
       title="提现审核"
       count={pendingCount}
+      className="min-h-full shrink-0"
       action={
         <Tabs
           value={tab}
@@ -112,19 +113,22 @@ export function AgentWithdrawalsPanel() {
         </Tabs>
       }
     >
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card">
       {loading ? (
-        <p className="flex items-center justify-center gap-2 px-4 py-8 text-sm text-muted-foreground">
+        <p className="flex flex-1 items-center justify-center gap-2 px-4 py-8 text-compact text-muted-foreground">
           <Spinner className="size-4" />
           正在读取提现…
         </p>
       ) : rows.length === 0 ? (
-        <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+        <p className="grid flex-1 place-items-center px-4 py-8 text-center text-compact text-muted-foreground">
           {tab === "pending" ? "没有在途提现申请。" : "暂无记录。"}
         </p>
       ) : (
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader>
+        <Table
+          containerClassName="min-h-0 flex-1 overflow-auto"
+          className="min-w-[820px] [&_td:first-child]:pl-4 [&_td:last-child]:pr-4 [&_th:first-child]:pl-4 [&_th:last-child]:pr-4"
+        >
+          <TableHeader className="sticky top-0 z-10">
               <TableRow className="hover:bg-transparent">
                 <TableHead>代理</TableHead>
                 <TableHead>单号</TableHead>
@@ -138,12 +142,12 @@ export function AgentWithdrawalsPanel() {
             <TableBody>
               {rows.map((row) => (
                 <TableRow key={row.public_id}>
-                  <TableCell className="text-xs">{row.agent_email}</TableCell>
-                  <TableCell className="font-mono text-xs">{row.public_id}</TableCell>
+                  <TableCell className="text-meta"><span className="block max-w-52 truncate" title={row.agent_email}>{row.agent_email}</span></TableCell>
+                  <TableCell className="font-mono text-meta tabular-nums"><span className="block max-w-40 truncate" title={row.public_id}>{row.public_id}</span></TableCell>
                   <TableCell>
                     <button
                       type="button"
-                      className="inline-flex items-center gap-1.5 rounded-md text-xs whitespace-nowrap hover:underline hover:underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                      className="inline-flex items-center gap-1.5 rounded-md text-compact whitespace-nowrap hover:underline hover:underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
                       aria-label={`复制 ${row.account}`}
                       onClick={() => void copyAccount(row.account)}
                     >
@@ -154,12 +158,12 @@ export function AgentWithdrawalsPanel() {
                         <Copy aria-hidden className="size-3.5 text-muted-foreground" />
                       )}
                     </button>
-                    <span className="block text-xs text-muted-foreground">{row.real_name}</span>
+                    <span className="block text-meta text-muted-foreground">{row.real_name}</span>
                   </TableCell>
                   <TableCell className="text-right font-mono tabular-nums">
                     {formatCents(row.amount_cents)}
                   </TableCell>
-                  <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                  <TableCell className="whitespace-nowrap font-mono text-meta tabular-nums text-muted-foreground">
                     {formatDateTimeShort(row.requested_at)}
                   </TableCell>
                   <TableCell>
@@ -196,9 +200,9 @@ export function AgentWithdrawalsPanel() {
                 </TableRow>
               ))}
             </TableBody>
-          </Table>
-        </div>
+        </Table>
       )}
+      </div>
 
       <WithdrawalPayDialog
         row={paying}

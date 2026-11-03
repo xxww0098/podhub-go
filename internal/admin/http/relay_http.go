@@ -34,7 +34,7 @@ func (h handler) relay(w http.ResponseWriter, r *http.Request, rt Route, s Sessi
 		body, err := svc.Delete(r.Context(), actor, chi.URLParam(r, "node_id"))
 		writeRelayResult(w, body, err)
 	case http.MethodPost + " /api/admin/seller-relay/probe":
-		body, err := svc.Probe()
+		body, err := svc.Probe(r.Context())
 		writeRelayResult(w, body, err)
 	default:
 		writeRelayErr(w, http.StatusNotImplemented, "not_ported", "not_ported")

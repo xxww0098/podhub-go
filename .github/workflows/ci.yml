@@ -23,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: native render and scheduler tests
-        run: cargo test --locked -p render -p psdx -p render-wasm
+        run: cargo test --locked -p listing-core -p listing-core-wasm -p render -p psdx -p render-wasm
 
   lint:
     runs-on: ubuntu-latest
@@ -112,8 +112,3 @@ jobs:
         # tests/parity compares bytes and does not open a database.
         # Every module is loaded from the committed dist.
         run: go test -timeout 25m ./...
-        env:
-          LISTING_TAGS_WASM: wasm/dist/server/listing-tags.wasm
-          WASM_HOST_PROBE: wasm/dist/test/host-probe.wasm
-          LISTING_CORE_WASM: wasm/dist/server/listing-core.wasm
-          LISTING_STATE_WASM: wasm/dist/browser/listing-state.wasm

@@ -4,7 +4,7 @@
 
 ## 和 Rust 同结果的部分
 
-- **五事实**（`internal/listing/facts.go`）：`content` / `media` / `validation` / `submission` 的映射与 `kernel/facts.rs` 的表驱动用例一致，包括 `cancelled`/`superseded` → `none`、`operator_attested` → `unknown`、候选列表空列表算结清。
+- **五事实**（`internal/listing/core/domain/facts.go`）：`content` / `media` / `validation` / `submission` 的映射与 `kernel/facts.rs` 的表驱动用例一致，包括 `cancelled`/`superseded` → `none`、`operator_attested` → `unknown`、候选列表空列表算结清。
 - **三处禁用标签**：行草稿拒绝、AI 写回、发送前剥离分别调用 wasm 的 `partition`、`partition`、`strip_text`。`ForbidSave` / `StripForAI` / `StripBeforeSend` 与已有 `Validate` 用同一次引擎、同一份规则。规则或 wasm 失败不放行。词干规则没有在 Go 里重写。
 - **卡片列表 / 单卡 GET**：SQL 与 `kernel/cards.rs` 的 `CARD_SELECT`、`(updated_at, id)` 倒序、游标 `micros:uuid`、`limit` 先夹到 1..100 再把 `limit+1` 夹回 100 相同。所以 `limit=100` 没有 `nextCursor`。`storeId` 非法 uuid 仍交给 SQL，失败是 500 `服务暂不可用`。响应字段顺序是 `id, title, storeId?, revision, payload, updatedAtMs`。列表不带 `ocrPromptSha256`。单卡 GET 从 payload 的 `aiPromptSha256` 填 `ocrPromptSha256`。供应商卡与普通卡走同一对列表 / GET，不再因为 `supplierProductId` 返回 501。
 - **卡片标题 / 仅 revision 的 CAS**：`cas_patch_card` 的 `UPDATE`（空标题保留原标题、`payload` 用 `'null'` 表示不改、`revision+1`、`updated_by`）。冲突文案是 `上架方案已被他人更新，请刷新后重试`，码 `conflict`。不存在是 `上架方案不存在`。
@@ -14,11 +14,11 @@
 - **行 PATCH 的搜索标签**：属性 `23171` 的 `text`/`url`/`text_list`/`url_list` 按空白切开，交给上面的 `ForbidSave`。规则表或 wasm 失败是 503，不保存。类目坐标或 `ozon_category_current` 缺失是 409 `该类目尚未同步，请先同步类目字段后重试`。
 - **行 PATCH 的草稿**：载荷能解成 lean row 时走 wasm `edit_row`（op 2），同一条 CAS 写入 payload、`validation_state`、可选店铺，`revision + 1`。解不出时 400，句子以「商品行载荷不是可校验的上架文档」开头，不写。
 - **`fromSupplier` 创建**：服务端用 `PrepareCard` 组装 payload。可上架则插入；同一 `(org_id, supplier_product_id)` 再次创建返回已有卡。缺失商品 404 `供应商商品不存在或当前不可上架`。拒绝码放在 `error` 与 `denial`，HTTP 码 `supplier_not_listable`。`prompt_text` 非空视为提示词有效。
-- **供应商卡 PATCH**：白名单是 `queue`、`targetStoreId`、`defaults`、`psdTemplateAssetId`、`psdTemplateSha256`、`psdTemplateFileName`。改标题 400 `供应商商品方案配置由在线平台货源管理，不能在方案中修改`。非供应商 payload 写入 `supplierProductId` 仍是 400 `请从平台货源选择规格创建方案`。PSD 字符串超过 512 是 400 `PSD 模板绑定过长`。
+- **供应商卡 PATCH**：白名单是 `queue`、`targetStoreId`、`defaults`、`psdTemplateAssetId`、`psdTemplateSha256`、`psdTemplateFileName`。改标题 400 `供应商商品方案配置由在线平台商品库管理，不能在方案中修改`。非供应商 payload 写入 `supplierProductId` 仍是 400 `请从平台商品库选择规格创建方案`。PSD 字符串超过 512 是 400 `PSD 模板绑定过长`。
 - **无 draft 的 `changes` / `payload`**：保护 `ai`、`fieldOrigins`、`handEditedKeys`、`supplierProductId` 和 `draft` 之后，用 `payload || patch` 做 revision CAS。`candidateDecisions` 独占，走 wasm op 4。`clearGeneratedContent` 在 `submission_state` 不是 `none`/`cancelled`/`rejected` 时 422 `已上架或待对账商品不能清空生成内容`；识别中、处理中或仍有活动作业时 422。`fillBlank: true` 且没有 `draft` 时走 `fill_blank`：只替换已有的 SQL NULL、JSON null 或正好是 `""` 的键，缺键照样插入，`build_state = 'stale'`，`revision + 1`，不写 `updated_by`。写入前删掉填充文档顶层的 `schemaSnapshot` 和 `schemaRevision`。`fill_blank` 为真时不追加 `ManualField`。类目、来源、店铺等触发器按导出的列覆盖各写一条 UPDATE。成功体是 `{data, issues}`，没有 `plan`，响应副本去掉 `schemaSnapshot`，不补快照。带 `draft` 时仍走原来的草稿编辑和标签闸。
 - **行视图回执与 hydrate**：`submissionReceiptStatus` 取该行最新 `submission_intents.submission_receipt`（`listing_rows` 没有这一列）。空为 `absent`，JSON 对象为 `valid`，其余为 `unreadable`。已有 `schemaSnapshot` 或没有 `schemaRevision` 时原样返回；否则按修订号补上快照。
 - **带 `storeId` 的类目树与 schema live fill**：缓存未命中或过期时回环补拉并写缓存。schema 成功体包含 `nativeMaterial`。详见 `docs/parity/listing-intents-catalog-parity.md`。
-- **行创建**：`createKey` 与 `requestFingerprint` 成对；`source.sha256` 为 64 位十六进制；卡不存在 404。类目缓存 `ozon_catalog_schema_cache` 未命中或超过 24 小时是 409 `该类目尚未同步，请先同步类目字段后重试`。`listing_schema_revisions` 没有该修订是 409 `类目字段版本尚未注册，请重新同步类目后重试`。种子是 wasm `seed_row`（op 1）。`(org_id, card_id, create_key)` 冲突且指纹相同返回 `created: false`；指纹不同 409 `该创建键已用于不同的创建内容，请刷新列表后用新的创建键重试`。
+- **行创建**：`createKey` 与 `requestFingerprint` 成对；`source.sha256` 为 64 位十六进制；卡不存在 404。类目当前行 `ozon_category_current` 未命中或超过 24 小时是 409 `该类目尚未同步，请先同步类目字段后重试`。行上的 `schema_revision` 与实时计算的版本不一致是 409 `类目字段版本已变化，请重新同步类目后重试`；`listing_schema_revisions` 没有该修订是 409 `类目字段版本尚未注册，请重新同步类目后重试`。种子是 wasm `seed_row`（op 1）。`(org_id, card_id, create_key)` 冲突且指纹相同返回 `created: false`；指纹不同 409 `该创建键已用于不同的创建内容，请刷新列表后用新的创建键重试`。
 - **行列表 / 单行 GET**：`cardId` 非法在鉴权前 400。无 `cardId` 时按 `(updated_at, id)` 倒序，游标 `micros:uuid`，`limit+1` 最多 101。有 `cardId` 时按 `queue_position, created_at, id` 做 offset。视图由存储列投影。不存在的行 404 `商品行不存在`。合法但不存在的 `cardId` 返回空列表。
 - **空白卡 / 复制卡**：`PrepareCard` 解码、去掉 `schemaRevision`、拒绝未知键、系统媒体、PSD 摘要。空白卡插入新 id、revision 1。`copyCard` 与 `POST /cards/{id}/copy` 复制源 payload 与店铺，不复制行；供应商卡 400 `供应商商品方案是唯一软链接，不能复制`。店铺可见性按 owner/manager/admin 或 assignee。
 - **卡片 payload / storeId**：非供应商整包 payload 经 `PrepareCard` 后 CAS。`storeId` 空白解绑。冲突 409，不存在 404。
@@ -53,7 +53,7 @@
 - **SSE `row.upsert`**。密封行要 hydration。遇到这种事件发 `reset` / `snapshot_required` 并关掉，不发半截行视图。`row.remove` 和 `card.invalidate` 会发。GET 与列表会 hydrate；`editDraft`、换店和创建行的扫描还不补快照。
 - **多卡 SSE 的交错**。按查询里的卡片顺序发完一张再发下一张。Rust 是轮询弹出。单卡字节不受影响。
 - **空闲补拉间隔**。`stream.rs` 写的是 `SSE_IDLE_POLL_SECS`，本轮没有打开定义它的文件。保活用已确认的 15 秒，空闲补拉用了同一个 15 秒。若那个常量不是 15，补拉频率不同，事件内容的判定不变。
-- **`/api/catalog/wb/subjects/{id}`、`/api/catalog/fetch-config`**。读路径已按意图文档接上。`fetch-config` 不查询 `wb_token_*` 密文。本文件不把它们再标成 501。
+- **`/api/catalog/wb/subjects/{id}`、`/api/admin/catalog/fetch-config`**。读路径已按意图文档接上。`fetch-config` 不查询 `wb_token_*` 密文。本文件不把它们再标成 501。
 - **带 `storeId` 的类目树**。缓存未命中或过期时回环补拉，见意图文档。无 `storeId` 的缓存读按上面的规则。
 - **字段值 `decimal` / `decimal_list`**。`f64` 的 JSON 字节没有对上 `serde_json`，字段包拒绝这种正文。
 - **字段包 404 文案、DELETE 的 204、字段库列表的排序** 没有在本轮打开 `field_packs/mod.rs` 的 HTTP 层。SQL 是从 `persist.rs` 抄的。
@@ -63,3 +63,13 @@
 ## 租户
 
 卡片、行、意图、事件回放都在事务里 `set_config('role','podhub_app')` 和 `app.current_org_id`。集成测试与身份对拍同一条策略：只切到 `podhub_app`、不设 GUC 时，`listing_cards` 的 SELECT 为 0，INSERT 被 RLS 拒绝。字段包和 `banned_tags`、类目缓存没有 RLS，按 Rust 用用户 id 或全局表，不设 GUC。
+
+## 浏览器切片与上传回写（2026-10-25）
+
+`POST /api/listing/rows/{id}/prepare` 的 `slice`、`upload` 通过显式传入的队列端口在商品行事务内创建 `media.render`、`media.upload`。任务固定原图摘要、PSD 模板摘要、渲染版本及上传清单；浏览器媒体任务不走 claim/heartbeat。`command_id` 在组织内重放原任务，换行或换输入复用会拒绝。识别准备、组合 `prepare` 与自动化准备仍明确返回 501。
+
+`/media` 只接受渲染完成或失败。成功渲染先调用已提交的 `listing-core` `RecordRender` 验证组序和摘要，再保存服务端生成的清单摘要；原图或模板变化会拒绝旧回写，普通字段编辑只需刷新行 CAS。`/prepare/cancel` 关闭活跃媒体任务，后续回写不再生效。
+
+`/media/images` 与 `/media/images/{index}` 只接收任务、图片索引、对象键和账户身份。逐图核对当前 TRANSIT 配置的存储修订、租户、完整 SHA-256、字节数、尺寸、有效期以及已验证的私有/公开读取证据。部分确认保持 `uploading`；全部完成时再次检查所有回执，并由 `RecordUpload` 重建草稿媒体字段与校验结果，之后才保存 `ready`。取消或已回收、过期、未验证、换账户的回执不能使商品行就绪。五条接口成功响应统一为 `data` 包裹。
+
+数据库写入重新检查并锁定当前登录会话、组织成员和工作空间，使用 `recipe` writer lease 与普通租户事务。真实浏览器与外部 R2 准入结果以 `docs/precision-listing-verification.md` 为准；本段描述实现，不能单独作为外部链路已验证的证据。

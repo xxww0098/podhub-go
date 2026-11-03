@@ -35,6 +35,7 @@ export type SupplierDbVideoItem = {
 // ---------- admin view ----------
 
 export type SupplierDb = {
+  factoryId?: string | null
   sourceId: string
   name: string
   /** `''` or an ISO-3166-1 alpha-2 code. */
@@ -50,8 +51,8 @@ export type SupplierDb = {
   publishedCount: number
   createdAtMs: number
   updatedAtMs: number
-  /** 最早绑定的厂家登录邮箱。没有成员时缺省。 */
-  accountEmail?: string | null
+  /** 已绑定的履约账号；成员邮箱本身不代表履约授权。 */
+  fulfillerEmail?: string | null
   /** 库创建人的公开账号 UUID；历史归属仅超级管理员可见。 */
   createdBy?: string
   /** 公开显示名，不含邮箱。 */
@@ -94,6 +95,12 @@ export type SupplierOzonConfigDenial =
   | "catalog_digest_mismatch"
   | "prompt_invalid"
 
+/** 一条追加式平台价版本，人民币分；列表按版本从新到旧。 */
+export type SupplierDbPriceVersion = {
+  priceCents: number
+  createdAtMs: number
+}
+
 export type SupplierDbRow = {
   productId: string
   skuId: string
@@ -111,10 +118,12 @@ export type SupplierDbRow = {
   ozonConfigDenial?: SupplierOzonConfigDenial | null
   /** 供货成本，人民币分 — admin only. */
   costCents: number | null
-  /** 供货运费，人民币分 — admin only. */
+  /** 供货运费，人民币分；同时用于平台商品库展示。 */
   shippingCostCents: number | null
   /** 当前平台价（sc_price_versions 最新一条），人民币分。 */
   platformPriceCents: number | null
+  /** 平台价版本，最新在前；首项即当前价。旧响应可以缺省。 */
+  priceHistory?: SupplierDbPriceVersion[]
   /** 建议零售价，人民币分。 */
   suggestedRetailCents: number | null
   /** 平台划线价，人民币分 — 平台价的划线锚点（平台优惠展示用），不是 Ozon old_price 建议值。 */
@@ -144,14 +153,10 @@ export type SupplierDbRow = {
   productVideos: SupplierDbVideoItem[]
   promptName: string
   promptFileName: string
-  /** Admin only — never on the seller DTO. Latest revision when one exists. */
+  /** Admin only — never on the seller DTO. Current confirmed facts. */
   promptContent: string
   /** 1–30 when set (validate_fixed_tags contract). */
   fixedTags: string[]
-  /** Latest prompt_revisions.revision. Absent until the first sealed brief. */
-  draftPromptRevision?: number | null
-  /** supplier_ozon_configs.published_revision. Jobs read this revision. */
-  publishedPromptRevision?: number | null
   description: string
   /** Admin only. */
   internalNote: string
@@ -164,58 +169,10 @@ export type SupplierDbRow = {
   creatorName?: string | null
 }
 
-export type SupplierPrompt = {
-  productId: string
-  sourceId: string
-  productTitle: string
-  descriptionCategoryId: number
-  typeId: number
-  promptName: string
-  promptFileName: string
-  promptContent: string
-  fixedTags: string[]
-  draftPromptRevision?: number | null
-  publishedPromptRevision?: number | null
-  revision: number
-}
-
 export type SupplierPromptPreview = {
   text: string
   sha256: string
   templateSha256: string
-}
-
-export type SupplierPromptDiffLine = {
-  label: string
-  published: string
-  draft: string
-  changed: boolean
-}
-
-export type SupplierPromptAiOutput = {
-  title: boolean
-  description: boolean
-  tags: boolean
-}
-
-export type SupplierPromptDiff = {
-  revision: number
-  publishedRevision?: number | null
-  lines: SupplierPromptDiffLine[]
-  publishedFixedTags: string[]
-  draftFixedTags: string[]
-  fixedTagsChanged: boolean
-  publishedAiOutput: SupplierPromptAiOutput
-  draftAiOutput: SupplierPromptAiOutput
-  aiOutputChanged: boolean
-}
-
-export type PublishSupplierPromptResult = {
-  productId: string
-  revision: number
-  publishedRevision: number
-  productRevision: number
-  configRevision: number
 }
 
 export type SupplierDbDetail = {
@@ -227,6 +184,7 @@ export type SupplierDbDetail = {
 // ---------- requests / responses ----------
 
 export type UpsertSupplierDbRequest = {
+  factoryId?: string
   name: string
   country: string
   contact: string
@@ -238,8 +196,6 @@ export type UpsertSupplierDbRequest = {
   /** Absent/undefined → blank database; a template id pre-seeds prop defs. */
   template?: string | null
   viewPrefs?: unknown
-  /** 厂家登录邮箱。创建时开通或绑定；更新时换成这个邮箱。缺省不改绑定。 */
-  accountEmail?: string | null
 }
 
 export type UpsertSupplierDbPropRequest = {
@@ -297,58 +253,7 @@ export type UpsertSupplierDbRowRequest = {
   expectedRevision?: number | null
 }
 
-export type PatchSupplierPromptRequest = {
-  promptName: string
-  promptFileName: string
-  promptContent: string
-  fixedTags: string[]
-  expectedRevision: number
-}
 
-/** 无匹配的两种原因：类目里没有这个文件名，或同名文件有多条。 */
-export type SupplierPromptSyncMissReason = "no_match" | "ambiguous"
-
-/** 四类结果计数；明细封顶时计数仍是精确值。 */
-export type SupplierPromptSyncCounts = {
-  updated: number
-  upToDate: number
-  unmatched: number
-  failed: number
-}
-
-/** 已同步（或本次改好）的一条供应商副本。 */
-export type SupplierPromptSyncEntry = {
-  productId: string
-  productTitle: string
-  promptFileName: string
-  revision: number
-}
-
-export type SupplierPromptSyncMiss = {
-  productId: string
-  productTitle: string
-  promptFileName: string
-  reason: SupplierPromptSyncMissReason
-}
-
-export type SupplierPromptSyncFailure = {
-  productId: string
-  productTitle: string
-  promptFileName: string
-  /** 可直接展示的原因；存储细节只在服务端日志里。 */
-  reason: string
-}
-
-/** 「按文件名从类目提示词同步供应商副本」的结果（wire: SupplierPromptSyncData）。 */
-export type SupplierPromptSync = {
-  counts: SupplierPromptSyncCounts
-  updated: SupplierPromptSyncEntry[]
-  upToDate: SupplierPromptSyncEntry[]
-  unmatched: SupplierPromptSyncMiss[]
-  failed: SupplierPromptSyncFailure[]
-  /** 服务端封顶了某一类明细（每类最多 200 条）。 */
-  detailsTruncated: boolean
-}
 
 /** 调价 → new sc_price_versions row (人民币分). */
 export type AdjustSupplierDbPriceRequest = {
@@ -364,7 +269,6 @@ export type PresignSupplierDbUploadRequest = {
   filename: string
   contentType: string
   bytes: number
-  resumeTicket?: string
 }
 
 export type SupplierDbUploadTarget = {
@@ -381,11 +285,9 @@ export type SupplierDbPropDeleteResult = {
 }
 
 export type SupplierDbListData = { dbs: SupplierDb[] }
-export type SupplierDbMutationData = { db: SupplierDb; initialPassword?: string | null }
+export type SupplierDbMutationData = { db: SupplierDb }
 export type SupplierDbPropMutationData = { prop: SupplierDbPropDef }
 export type SupplierDbRowMutationData = { row: SupplierDbRow }
-export type SupplierPromptListData = { prompts: SupplierPrompt[] }
-export type SupplierPromptMutationData = { prompt: SupplierPrompt }
 export type SupplierDbOkData = { sourceId: string }
 export type SupplierDbRowOkData = { productId: string }
 export type SupplierDbUploadData = { upload: SupplierDbUploadTarget }

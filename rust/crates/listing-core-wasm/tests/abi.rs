@@ -6,7 +6,7 @@
 //! is `web/tests/listing-core-wasm.test.ts`'s job (this crate's `[lib]`
 //! comment explains the split).
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 /// Copies `bytes` into a fresh `alloc`ation and returns `(ptr, len)`. Callers
 /// must `free` it (or hand it to a `call`/`schema_load` that consumes it).
@@ -222,12 +222,10 @@ fn record_render_and_values_equal_need_no_schema_handle() {
         &json!({"images": images, "rendererManifest": manifest}),
     )
     .expect("recordRender needs no schema handle");
-    assert!(
-        render["manifestDigest"]
-            .as_str()
-            .unwrap()
-            .starts_with("manifest:sha256:")
-    );
+    assert!(render["manifestDigest"]
+        .as_str()
+        .unwrap()
+        .starts_with("manifest:sha256:"));
 
     let equal = call(
         8,
@@ -280,7 +278,7 @@ fn plan_stage_needs_no_schema_and_keeps_an_admission_refusal_on_the_batch() {
                 "index": 0,
                 "digest": digest,
                 "extension": "jpg",
-                "objectKey": format!("images/teams/test-workspace/sha256/{digest}.jpg"),
+                "objectKey": format!("uploads/2026-10-15/1792094400000-22222222-2222-4222-8222-222222222222/{digest}.jpg"),
                 "byteLength": 4,
                 "storageRevision": 1,
                 "uploadTicket": "ticket",

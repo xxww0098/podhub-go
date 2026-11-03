@@ -224,3 +224,21 @@ test("delivered public images expose their own public URL in a new tab", () => {
   assert.match(html, /上传中/)
   assert.doesNotMatch(buttonMarkup(html, "重试第 4 张图片"), /\sdisabled=/)
 })
+
+test("ready rows expose compact media pickers, project overrides and lock unconfirmed sends", () => {
+  const target = row(1)
+  const product = instance(target, { ...idleLifecycle, stage: "ready_to_publish", ai: "ready", media: "ready", images: [
+    slice(0, { phase: "public_ready", public_url: "https://cdn.example.test/0.jpg" }),
+    slice(1, { phase: "public_ready", public_url: "https://cdn.example.test/1.jpg" }),
+  ] })
+  product.draft.values.images = { kind: "url_list", value: ["https://cdn.example.test/1.jpg"] }
+  const render = (locked: boolean) => renderToStaticMarkup(<FieldWorkbench {...workbenchProps} schema={schema} rows={[{ ...target, publishUnconfirmed: locked }]} productDrafts={{ [target.draftId]: product }} selectedRowIds={new Set()} />)
+  const open = render(false)
+  assert.doesNotMatch(buttonMarkup(open, "选择商品图片"), /\sdisabled=/)
+  assert.doesNotMatch(buttonMarkup(open, "选择商品主图"), /\sdisabled=/)
+  assert.match(open, /查看大图 商品图片（1 张）/)
+  assert.match(open, /1 张 · 本行设置/)
+  const locked = render(true)
+  assert.match(buttonMarkup(locked, "选择商品图片"), /\sdisabled=/)
+  assert.match(buttonMarkup(locked, "选择商品主图"), /\sdisabled=/)
+})

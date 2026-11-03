@@ -1,8 +1,8 @@
 // Package contract is the bucket model from docs/architecture/storage-common.md.
 //
-// Three physical buckets carry three roles: transit is the daily-cleared
+// Three separate buckets carry three roles: transit is the daily-cleared
 // wasm delivery target, assets is the public long-lived library, and private
-// is the org-owned long-lived store. A bucket role decides the public
+// is the org-owned long-lived store. A bucket role decides the default public
 // hostname, the accepted key shape, the dedupe scope and whether the object
 // registry applies. This package is pure: no clock, no I/O, no provider SDK.
 package contract
@@ -29,9 +29,9 @@ const (
 var (
 	// ErrRole is an unknown bucket role.
 	ErrRole = errors.New("存储桶角色无效")
-	// ErrBucket is a physical bucket name that does not match the role.
-	ErrBucket = errors.New("存储桶名称与角色不符")
-	// ErrPublicHost is a public hostname that is not the role's exact host.
+	// ErrBucket is an invalid name or a production bucket assigned to another role.
+	ErrBucket = errors.New("存储桶名称无效或与角色不符")
+	// ErrPublicHost is a public hostname that is not allowed for the bucket role.
 	ErrPublicHost = errors.New("存储桶公开域名与角色不符")
 	// ErrProvider is a provider other than the single supported one.
 	ErrProvider = errors.New("对象存储 provider 只支持 cloudflare")
@@ -49,17 +49,17 @@ var (
 	ErrPurpose = errors.New("上传用途无效")
 )
 
-// Physical bucket names. One role, one bucket, one host.
+// Production bucket names. Development buckets are configured explicitly.
 const (
 	BucketTransit = "podhub-transit"
-	BucketAssets  = "podhub-assets"
+	BucketAssets  = "podhub-supplier"
 	BucketPrivate = "podhub-private"
 )
 
 // Public hostnames. These are exact values, not patterns.
 const (
 	PublicHostTransit = "https://transit.podhub.si"
-	PublicHostAssets  = "https://assets.podhub.si"
+	PublicHostAssets  = "https://podhub-supplier.ozon-pod.com"
 )
 
 // r2APIHostSuffix is the only production egress target.
@@ -68,7 +68,7 @@ const r2APIHostSuffix = ".r2.cloudflarestorage.com"
 // AllRoles is the closed set, in delivery order.
 var AllRoles = []Role{RoleTransit, RoleAssets, RolePrivate}
 
-// BucketName is the physical bucket for a role; "" for an unknown role.
+// BucketName is the default production bucket for a role; "" for an unknown role.
 func BucketName(role Role) string {
 	switch role {
 	case RoleTransit:
@@ -82,7 +82,7 @@ func BucketName(role Role) string {
 	}
 }
 
-// PublicHost is the exact public hostname for a role; "" when the bucket is
+// PublicHost is the default production hostname for a role; "" when the bucket is
 // not public. The caller appends the encoded key directly: keys already carry
 // the environment prefix, so the URL is {host}/{key} and never {host}/{prefix}/{key}.
 func PublicHost(role Role) string {
@@ -103,7 +103,7 @@ func Public(role Role) bool { return PublicHost(role) != "" }
 // Transit objects live for one day and carry no business reference.
 func Registered(role Role) bool { return role == RoleAssets || role == RolePrivate }
 
-// Config is one decrypted bucket account.
+// Config is one bucket account bound to a storage role.
 type Config struct {
 	Role            Role
 	Provider        string

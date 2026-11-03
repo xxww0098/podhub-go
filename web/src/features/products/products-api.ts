@@ -4,7 +4,7 @@
  * Every call reads PostgreSQL only; `verifyStoreProducts` is the single
  * request that may reach Ozon (≤ 50 offer ids, deduplicated server-side).
  */
-import { api } from "@/api/client"
+import { getBytes, request } from "@/api/client"
 import { route } from "@/api/routes"
 import type { components } from "@/api/schema"
 
@@ -28,8 +28,18 @@ export type ProductsListQuery = {
   limit?: number
 }
 
+export async function exportFilteredProducts(query: Omit<ProductsListQuery, "cursor" | "limit">): Promise<Uint8Array<ArrayBuffer>> {
+  const params = new URLSearchParams()
+  if (query.storeId) params.set("storeId", query.storeId)
+  if (query.status) params.set("status", query.status)
+  if (query.q?.trim()) params.set("q", query.q.trim())
+  if (query.includeGone) params.set("includeGone", "true")
+  const suffix = params.size ? `?${params.toString()}` : ""
+  return (await getBytes(`${route("workspacesProductsExport")}${suffix}`, 60_000)).bytes
+}
+
 export async function loadProductsOverview(): Promise<StoreProductsOverviewData> {
-  return api.get<StoreProductsOverviewData>(route("workspacesProductsOverview"))
+  return request<StoreProductsOverviewData>("GET", route("workspacesProductsOverview"), undefined, {}, undefined, undefined, { responseBody: "json" })
 }
 
 export async function loadProducts(
@@ -43,16 +53,17 @@ export async function loadProducts(
   if (query.cursor) params.set("cursor", query.cursor)
   if (query.limit !== undefined) params.set("limit", String(query.limit))
   const suffix = params.size ? `?${params.toString()}` : ""
-  return api.get<StoreProductsListData>(`${route("workspacesProducts")}${suffix}`)
+  return request<StoreProductsListData>("GET", `${route("workspacesProducts")}${suffix}`, undefined, {}, undefined, undefined, { responseBody: "json" })
 }
 
 export async function verifyStoreProducts(
   storeId: string,
   offerIds: string[],
 ): Promise<StoreProductRow[]> {
-  const data = await api.post<components["schemas"]["StoreProductsVerifyData"]>(
+  const data = await request<components["schemas"]["StoreProductsVerifyData"]>(
+    "POST",
     route("workspacesStoresByUuidProductsVerify", { uuid: storeId }),
-    { offerIds },
+    { offer_ids: offerIds }, {}, undefined, undefined, { responseBody: "json" },
   )
   return data.rows
 }
@@ -62,9 +73,10 @@ export type StoreProductsSyncNowData =
 
 /** 202 queues a sync or attaches to one in flight. 429 carries the unlock moment; 409 the hold. */
 export async function syncNow(storeId: string): Promise<StoreProductsSyncNowData> {
-  const response = await api.post<StoreProductsSyncNowData>(
+  const response = await request<StoreProductsSyncNowData>(
+    "POST",
     route("workspacesStoresByUuidProductsSync", { uuid: storeId }),
-    {},
+    {}, {}, undefined, undefined, { responseBody: "json" },
   )
   return response
 }

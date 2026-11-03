@@ -137,13 +137,6 @@ export function buildDiscountMutation(
   }
 }
 
-/** 活动冻结后不能退出，也不能把活动价改高。 */
-export function promotionFrozen(freezeDate: string): boolean {
-  if (!freezeDate) return false
-  const at = Date.parse(freezeDate)
-  return Number.isFinite(at) && at <= Date.now()
-}
-
 /**
  * 活动起止日的短口径（`09/22`）；空值写「—」。详情抽屉与批量对话框共用。
  * 不能委托 `formatShortDay`：Ozon `/v1/actions` 的 date_start/date_end 由后端
@@ -153,108 +146,118 @@ export function shortDate(value: string): string {
   return value ? `${value.slice(5, 10).replace("-", "/")}` : "—"
 }
 
-/** 由折扣率或指定活动价得到将写入的活动价；高于 Ozon 上限时取上限。 */
+function promotionCents(amount: string): number | null {
+  if (!/^(0|[1-9]\d{0,9})(\.\d{1,2})?$/.test(amount)) return null
+  const [whole, fraction = ""] = amount.split(".")
+  return Number(whole) * 100 + Number(fraction.padEnd(2, "0"))
+}
+
+function promotionAmount(cents: number): string {
+  return `${Math.floor(cents / 100)}.${String(cents % 100).padStart(2, "0")}`
+}
+
+/** The preview is the requested amount. Never silently deepen a discount. */
 export function promotionWritePrice(
-  offer: Pick<ProductPromotionOfferView, "price" | "max_action_price">,
-  input: { kind: "percent"; percent: number } | { kind: "price"; price: number },
-): number | null {
-  const raw = input.kind === "percent" ? offer.price * (1 - input.percent / 100) : input.price
-  if (!Number.isFinite(raw) || raw <= 0) return null
-  const capped = offer.max_action_price > 0 ? Math.min(raw, offer.max_action_price) : raw
-  const price = Number(capped.toFixed(2))
-  return Number.isFinite(price) && price > 0 ? price : null
+  offer: Pick<ProductPromotionOfferView, "price" | "price_currency_code" | "currency_code">,
+  input: { kind: "percent"; percent: number } | { kind: "price"; price: string },
+): string | null {
+  if (input.kind === "price") {
+    const cents = promotionCents(input.price.trim())
+    return cents !== null && cents > 0 ? promotionAmount(cents) : null
+  }
+  if (offer.price_currency_code !== offer.currency_code || !Number.isFinite(input.percent) || input.percent < 0 || input.percent >= 100) return null
+  const base = promotionCents(offer.price)
+  const percentText = String(input.percent)
+  if (base === null || !/^\d{1,2}(\.\d{1,2})?$/.test(percentText)) return null
+  const [whole, fraction = ""] = percentText.split(".")
+  const basisPoints = BigInt(Number(whole) * 100 + Number(fraction.padEnd(2, "0")))
+  const cents = Number((BigInt(base) * (10_000n - basisPoints) + 5_000n) / 10_000n)
+  return cents > 0 ? promotionAmount(cents) : null
 }
 
-/** 活动价相对当前售价的折扣幅度，两位小数，与卖家后台活动页一致；活动价不低于售价时没有折扣。 */
-export function promotionDiscountPercent(price: number, actionPrice: number): number | null {
-  if (!(price > 0) || !(actionPrice > 0) || actionPrice >= price) return null
-  return Number((((price - actionPrice) / price) * 100).toFixed(2))
+export function promotionDiscountPercent(price: string, actionPrice: string): number | null {
+  const base = Number(price)
+  const target = Number(actionPrice)
+  if (!(base > 0) || !(target > 0) || target >= base) return null
+  return Number((((base - target) / base) * 100).toFixed(2))
 }
 
-// A platform promotion prices each product on its own terms: Ozon caps every
-// product at its own `max_action_price`, so one shared percentage is applied
-// per product against that product's own price and then clamped.
+export function promotionFrozen(freezeDate: string): boolean {
+  return freezeDate.trim() !== ""
+}
+
+export const PROMOTION_EXITABLE_TYPES: readonly string[] = ["PROMOCODE", "ELASTIC_BOOSTING", "STOCK_DISCOUNT"]
+
 export function buildPromotionJoinMutation(
   actionId: number,
+  actionType: string,
   offers: ProductPromotionOfferView[],
   products: readonly Pick<StoreProductRow, "product_id" | "offer_id">[],
-  actionPriceFor: (offer: ProductPromotionOfferView) => number,
+  actionPriceFor: (offer: ProductPromotionOfferView) => string,
 ): ProductMutationRequest {
-  if (!Number.isInteger(actionId) || actionId <= 0) {
-    throw new Error("请选择有效活动")
+  if (!Number.isSafeInteger(actionId) || actionId <= 0 || !PROMOTION_EXITABLE_TYPES.some((type) => type === actionType)) {
+    throw new Error("请选择支持的活动")
   }
   const offerIdByProduct = new Map(products.map((product) => [product.product_id, product.offer_id]))
-  const items = offers.map((offer) => {
-    const price = Number(actionPriceFor(offer).toFixed(2))
-    if (!Number.isFinite(price) || price <= 0) {
-      throw new Error("活动价必须大于 0")
+  const seen = new Set<number>()
+  const items = offers.flatMap((offer) => {
+    if (offer.action_id !== actionId || !Number.isSafeInteger(offer.product_id) || offer.product_id <= 0 || seen.has(offer.product_id)) throw new Error("活动商品身份无效，请重新读取")
+    seen.add(offer.product_id)
+    const cents = promotionCents(actionPriceFor(offer))
+    const cap = promotionCents(offer.max_action_price)
+    if (cents === null || cents <= 0) throw new Error("活动价必须大于 0，且最多两位小数")
+    if (cap === null || cap <= 0) throw new Error(`商品 ${offer.product_id} 缺少活动价上限，请重新读取`)
+    if (cents > cap) {
+      throw new Error(`活动价 ${promotionAmount(cents)} 超过商品 ${offerIdByProduct.get(offer.product_id) ?? offer.product_id} 的上限 ${offer.max_action_price}`)
     }
-    if (offer.max_action_price > 0 && price > offer.max_action_price) {
-      throw new Error(
-        `活动价 ${price} 超过商品 ${offerIdByProduct.get(offer.product_id) ?? offer.product_id} 的上限 ${offer.max_action_price}`,
-      )
+    if (!/^[A-Z]{3}$/.test(offer.currency_code)) throw new Error("缺少活动币种，请重新读取")
+    const current = promotionCents(offer.action_price)
+    if (offer.participating && current === cents) return []
+    let stock = 0
+    if (actionType === "PROMOCODE") {
+      if (offer.min_stock === null || (offer.participating && offer.stock === null)) throw new Error("活动承诺库存未知，请重新读取")
+      stock = Math.max(offer.min_stock, offer.participating ? offer.stock! : 0)
+      if (!Number.isSafeInteger(stock) || stock < 0) throw new Error("活动承诺库存无效")
     }
-    return {
+    return [{
       product_id: offer.product_id,
-      offer_id: offerIdByProduct.get(offer.product_id) ?? "",
-      action_price: price,
-      // 0 lets Ozon commit all available stock; Ozon rejects anything below
-      // the promotion's own minimum.
-      stock: offer.min_stock > 0 ? offer.min_stock : 0,
-    }
+      offer_id: offerIdByProduct.get(offer.product_id) ?? offer.offer_id ?? "",
+      action_price: promotionAmount(cents),
+      currency_code: offer.currency_code,
+      stock,
+    }]
   })
-  if (items.length === 0) {
-    throw new Error("没有可加入该活动的已选商品")
-  }
-  // Ozon answers an unchanged re-join with neither an acceptance nor a
-  // rejection, which would surface as an unexplained failure. Refuse the
-  // pointless write instead of sending it.
-  const unchanged = offers.every((offer, index) =>
-    offer.participating && offer.action_price === items[index]!.action_price,
-  )
-  if (unchanged) {
-    throw new Error("已选商品都已经以该活动价参加活动；请改动折扣率或改为退出活动")
-  }
-  return { kind: "promotion_join", action_id: actionId, items }
+  if (items.length === 0) throw new Error("没有需要加入或改价的商品；已参加商品的活动价未改变")
+  return { kind: "promotion_join", action_id: actionId, action_type: actionType as "PROMOCODE" | "ELASTIC_BOOSTING" | "STOCK_DISCOUNT", items }
 }
-
-// Leaving an Ozon promotion is routed by its type: PROMOCODE exits through a
-// dedicated method, ELASTIC_BOOSTING and STOCK_DISCOUNT exit by re-pricing
-// above the product's own limit. The exit price must be strictly above that
-// limit, so it is the higher of the product's prices plus one kopeck.
-export const PROMOTION_EXITABLE_TYPES: readonly string[] = ["PROMOCODE", "ELASTIC_BOOSTING", "STOCK_DISCOUNT"]
 
 export function buildPromotionLeaveMutation(
   actionId: number,
   actionType: string,
   offers: ProductPromotionOfferView[],
 ): ProductMutationRequest {
-  if (!Number.isInteger(actionId) || actionId <= 0) {
-    throw new Error("请选择有效活动")
-  }
+  if (!Number.isSafeInteger(actionId) || actionId <= 0 || !PROMOTION_EXITABLE_TYPES.some((type) => type === actionType)) throw new Error("请选择支持的活动")
   const leaving = offers.filter((offer) => offer.participating)
-  if (leaving.length === 0) {
-    throw new Error("已选商品都不在该活动中")
-  }
-  const productIds = leaving.map((offer) => offer.product_id)
-  const exitPrices = leaving.map((offer) => {
-    // Without a limit there is no price that is provably "above" it, and a
-    // blind price could re-price the product inside the promotion.
-    if (offer.max_action_price <= 0) {
-      throw new Error(
-        `商品 ${offer.product_id} 缺少活动价上限，无法构造退出价；请到 Ozon 卖家后台操作`,
-      )
-    }
-    const exit = Math.max(offer.price, offer.max_action_price) + 0.01
-    return { product_id: offer.product_id, exit_price: Number(exit.toFixed(2)) }
-  })
-  return {
-    kind: "promotion_leave",
+  if (leaving.length === 0) throw new Error("已选商品都不在该活动中")
+  if (new Set(leaving.map((offer) => offer.product_id)).size !== leaving.length || leaving.some((offer) => offer.action_id !== actionId || !Number.isSafeInteger(offer.product_id) || offer.product_id <= 0)) throw new Error("活动商品身份无效，请重新读取")
+  const base = {
+    kind: "promotion_leave" as const,
     action_id: actionId,
-    product_ids: productIds,
-    action_type: actionType,
-    exit_prices: exitPrices,
+    product_ids: leaving.map((offer) => offer.product_id),
+    action_type: actionType as "PROMOCODE" | "ELASTIC_BOOSTING" | "STOCK_DISCOUNT",
   }
+  if (actionType === "PROMOCODE") return base
+  const exitPrices = leaving.map((offer) => {
+    const cap = promotionCents(offer.max_action_price)
+    if (cap === null || cap <= 0) throw new Error(`商品 ${offer.product_id} 缺少活动价上限，无法构造退出价`)
+    if (offer.price_currency_code !== offer.currency_code) throw new Error(`商品 ${offer.product_id} 的售价与活动价币种不同，不能计算退出价`)
+    const current = promotionCents(offer.price)
+    if (current === null || current <= 0 || !/^[A-Z]{3}$/.test(offer.currency_code)) throw new Error("售价或币种无效，请重新读取")
+    const cents = Math.max(current, cap) + 1
+    if (cents >= 1_000_000_000_000) throw new Error("退出价格超出允许范围")
+    return { product_id: offer.product_id, exit_price: promotionAmount(cents), currency_code: offer.currency_code }
+  })
+  return { ...base, exit_prices: exitPrices }
 }
 
 export const STALE_UNSOLD_HINT = "近 30 天未出单，考虑归档并补充新款"
@@ -297,8 +300,8 @@ export function currentStockPresent(
 export function elasticPriceRange(
   offer: ProductPromotionOfferView,
 ): { low: number; high: number } | null {
-  const low = Math.min(offer.price_max_elastic, offer.price_min_elastic)
-  const high = Math.max(offer.price_max_elastic, offer.price_min_elastic)
+  const low = Math.min(Number(offer.price_max_elastic), Number(offer.price_min_elastic))
+  const high = Math.max(Number(offer.price_max_elastic), Number(offer.price_min_elastic))
   return low > 0 && high > low ? { low, high } : null
 }
 

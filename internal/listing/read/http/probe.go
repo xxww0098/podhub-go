@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -13,6 +12,7 @@ import (
 	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
 	"github.com/xxww0098/podhub-go/internal/platform/httpx/jsonwire"
 	"github.com/xxww0098/podhub-go/internal/platform/seal"
+	ozoncontract "github.com/xxww0098/podhub-go/internal/seller/ozon/contract"
 )
 
 const infoListPath = "/v3/product/info/list"
@@ -32,7 +32,7 @@ func (h Host) runProbe(w http.ResponseWriter, r *http.Request, org, user int64, 
 		observation string
 		rowID       string
 		revision    int64
-		claimed     bool
+		claimUntil  time.Time
 	)
 	err = tx.QueryRow(r.Context(), `
 		SELECT listing_row_id::text, row_revision,
@@ -54,22 +54,17 @@ func (h Host) runProbe(w http.ResponseWriter, r *http.Request, org, user int64, 
 		writeDB(w, err)
 		return
 	}
-	tag, err := tx.Exec(r.Context(), `
+	err = tx.QueryRow(r.Context(), `
 		UPDATE submission_intents
 		SET reconcile_claim_until = clock_timestamp() + interval '2 minutes',
 		    updated_at = clock_timestamp()
 		WHERE org_id = $1 AND id = $2::uuid AND state = 'unknown'
 		  AND last_error_code = 'OZON_RECONCILE_STILL_UNKNOWN'
-		  AND (reconcile_claim_until IS NULL OR reconcile_claim_until <= clock_timestamp())`, org, id)
+		  AND (reconcile_claim_until IS NULL OR reconcile_claim_until <= clock_timestamp())
+ RETURNING reconcile_claim_until`, org, id).Scan(&claimUntil)
 	if err != nil {
 		_ = tx.Rollback(r.Context())
 		writeDB(w, err)
-		return
-	}
-	claimed = tag.RowsAffected() == 1
-	if !claimed {
-		_ = tx.Rollback(r.Context())
-		h.probeRefused(w, r, org, user, id)
 		return
 	}
 	clientID, apiKey, opened := h.openStoreKey(r, tx, org, storeID)
@@ -89,7 +84,7 @@ func (h Host) runProbe(w http.ResponseWriter, r *http.Request, org, user int64, 
 	}
 	action := manualProbe(passes, observation, sight, productID, sku)
 	err = h.withOrg(r.Context(), org, func(tx pgx.Tx) error {
-		return applyManualProbe(r, tx, org, id, rowID, revision, action)
+		return applyManualProbe(r, tx, org, id, rowID, revision, claimUntil, action)
 	})
 	if !h.writeTx(w, err) {
 		return
@@ -170,32 +165,14 @@ const (
 )
 
 func readInfoList(raw []byte, offer string) (sight int, productID, sku int64) {
-	var parsed struct {
-		Items []struct {
-			ID      int64  `json:"id"`
-			OfferID string `json:"offer_id"`
-			Sources []struct {
-				SKU int64 `json:"sku"`
-			} `json:"sources"`
-		} `json:"items"`
-	}
-	if json.Unmarshal(raw, &parsed) != nil {
+	items, ok := ozoncontract.ParseProductInfoList(raw, []string{offer})
+	if !ok {
 		return sightUnreadable, 0, 0
 	}
-	for _, item := range parsed.Items {
-		if item.ID <= 0 || strings.TrimSpace(item.OfferID) == "" || item.OfferID != offer {
-			continue
-		}
-		var sku int64
-		for _, source := range item.Sources {
-			if source.SKU > 0 {
-				sku = source.SKU
-				break
-			}
-		}
-		return sightFound, item.ID, sku
+	if len(items) == 0 {
+		return sightAbsent, 0, 0
 	}
-	return sightAbsent, 0, 0
+	return sightFound, items[0].ProductID, items[0].SKU
 }
 
 type probeWrite struct {
@@ -229,23 +206,36 @@ func lingerProbe(passes int32, observation string) probeWrite {
 	return probeWrite{kind: "retry", passes: next, observation: observation}
 }
 
-func applyManualProbe(r *http.Request, tx pgx.Tx, org int64, id, rowID string, revision int64, action probeWrite) error {
+func applyManualProbe(r *http.Request, tx pgx.Tx, org int64, id, rowID string, revision int64, claimUntil time.Time, action probeWrite) error {
+	var owned bool
+	err := tx.QueryRow(r.Context(), `SELECT true FROM submission_intents
+ WHERE org_id=$1 AND id=$2::uuid AND state='unknown'
+   AND reconcile_claim_until=$3::timestamptz AND reconcile_claim_until>clock_timestamp()
+ FOR UPDATE`, org, id, claimUntil).Scan(&owned)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
 	switch action.kind {
 	case "accept":
-		tag, err := tx.Exec(r.Context(), stampAcceptSQL, org, id, action.productID, action.sku)
+		var count int64
+		err := tx.QueryRow(r.Context(), stampAcceptSQL, org, id, action.productID, action.sku).Scan(&count)
 		if err != nil {
 			return err
 		}
-		if tag.RowsAffected() > 0 {
+		if count > 0 {
 			_, err = tx.Exec(r.Context(), setRowStateSQL, org, rowID, revision, "accepted")
 		}
 		return err
 	case "release":
-		tag, err := tx.Exec(r.Context(), stampReleaseSQL, org, id, time.Now().UTC().UnixMilli(), action.passes)
+		var count int64
+		err := tx.QueryRow(r.Context(), stampReleaseSQL, org, id, time.Now().UTC().UnixMilli(), action.passes).Scan(&count)
 		if err != nil {
 			return err
 		}
-		if tag.RowsAffected() > 0 {
+		if count > 0 {
 			_, err = tx.Exec(r.Context(), setRowStateSQL, org, rowID, revision, "none")
 		}
 		return err
@@ -256,6 +246,7 @@ func applyManualProbe(r *http.Request, tx pgx.Tx, org int64, id, rowID string, r
 }
 
 const stampAcceptSQL = `
+WITH accepted AS (
 UPDATE submission_intents
 SET state = 'accepted',
     last_error_code = NULL,
@@ -267,9 +258,25 @@ SET state = 'accepted',
       jsonb_build_object('productId', $3::bigint, 'sku', $4::bigint),
       true),
     updated_at = clock_timestamp()
-WHERE org_id = $1 AND id = $2::uuid AND state = 'unknown'`
+WHERE org_id = $1 AND id = $2::uuid AND state = 'unknown'
+RETURNING id
+), writes AS (
+ UPDATE public.seller_upstream_writes
+ SET state='reconciled', reconcile_after=NULL, error_code=NULL,
+     last_observation=COALESCE(last_observation,'{}'::jsonb) || jsonb_build_object('outcome','found','productId',$3::bigint,'sku',$4::bigint),
+     updated_at=clock_timestamp()
+ WHERE org_id=$1 AND kind='import' AND idempotency_key IN (SELECT id::text FROM accepted)
+   AND state IN ('dispatching','result_unknown')
+), occupancies AS (
+ UPDATE public.seller_resource_occupancies
+ SET state='released',released_at_ms=(extract(epoch from clock_timestamp())*1000)::bigint,release_reason='relationship_confirmed'
+ WHERE org_id=$1 AND owner_kind='store_write' AND resource_kind='offer'
+   AND owner_ref IN (SELECT id::text FROM accepted) AND state='held'
+)
+SELECT count(*) FROM accepted`
 
 const stampReleaseSQL = `
+WITH released AS (
 UPDATE submission_intents
 SET state = 'superseded',
     last_error_code = NULL,
@@ -281,7 +288,22 @@ SET state = 'superseded',
       jsonb_build_object('atMs', $3::bigint, 'passes', $4::int),
       true),
     updated_at = clock_timestamp()
-WHERE org_id = $1 AND id = $2::uuid AND state = 'unknown'`
+WHERE org_id = $1 AND id = $2::uuid AND state = 'unknown'
+RETURNING id
+), writes AS (
+ UPDATE public.seller_upstream_writes
+ SET state='reconciled', reconcile_after=NULL, error_code='probe_absent',
+     last_observation=COALESCE(last_observation,'{}'::jsonb) || '{"outcome":"probe_absent"}'::jsonb,
+     updated_at=clock_timestamp()
+ WHERE org_id=$1 AND kind='import' AND idempotency_key IN (SELECT id::text FROM released)
+   AND state IN ('dispatching','result_unknown')
+), occupancies AS (
+ UPDATE public.seller_resource_occupancies
+ SET state='released',released_at_ms=$3,release_reason='rejected_no_pending'
+ WHERE org_id=$1 AND owner_kind='store_write' AND resource_kind='offer'
+   AND owner_ref IN (SELECT id::text FROM released) AND state='held'
+)
+SELECT count(*) FROM released`
 
 const stampRetrySQL = `
 UPDATE submission_intents

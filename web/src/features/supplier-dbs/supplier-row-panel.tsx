@@ -1,297 +1,174 @@
-/** 供应商商品详情：右侧非模态抽屉，沿用行 CAS 与平台配置保存路径。 */
 import { useCallback, useRef, useState } from "react"
-import {
-  Archive,
-  ChevronLeft,
-  ChevronRight,
-  Copy,
-  Ellipsis,
-  Trash2,
-  X,
-} from "lucide-react"
-
+import { Archive, Ellipsis, Trash2 } from "lucide-react"
+import { useTrailSegment } from "@/app/app-shell"
 import type { CategoryTreeNodeView } from "@/bindings/commands"
-import type {
-  SupplierDbPropDef,
-  SupplierDbRow,
-  UpsertSupplierDbPropRequest,
-} from "@/bindings/http-supplier-dbs"
+import type { SupplierDbPropDef, SupplierDbRow, UpsertSupplierDbPropRequest } from "@/bindings/http-supplier-dbs"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { notifyCommandError, notifyError, notifySuccess } from "@/lib/notify"
 import { warmCategorySchemaOnce } from "@/features/category-schema/schema-sync"
-
 import { PropEditorDialog } from "./supplier-prop-dialog"
 import { commandFailure } from "./supplier-dbs-errors"
-import { missingReadiness } from "./supplier-readiness"
-import { SupplierRowBody } from "./supplier-row-body"
+import { SupplierRowBody, type SupplierRowTab } from "./supplier-row-body"
 import type { SupplierDbsStore } from "./supplier-dbs-store"
 import type { Patch } from "./supplier-row-fields"
 
-export function SupplierRowPanel({
-  store,
-  sourceId,
-  row,
-  rows = [],
-  onSelectRow,
-  previousRowId,
-  nextRowId,
-  position,
-  total,
-  propDefs,
-  categoryTree = [],
-  categoryLoading,
-  onEnsureCategoryTree,
-  pending = false,
-  onClose,
-  onDuplicate,
-  onArchive,
-  onDelete,
-  onDirtyChange,
-}: {
+export function SupplierRowPanel({ store, sourceId, row, rows = [], onSelectRow, propDefs, categoryTree = [], categoryLoading, onEnsureCategoryTree, pending = false, onClose, onArchive, onDelete, onDirtyChange, mode = "product", initialTab = "info", canAdjustPrice = false, onAddVariant }: {
   store: SupplierDbsStore
   sourceId: string
   row: SupplierDbRow
   rows?: readonly SupplierDbRow[]
-  onSelectRow?: (productId: string) => void
-  previousRowId?: string
-  nextRowId?: string
-  position?: number
-  total?: number
+  onSelectRow?: (productId: string, tab?: SupplierRowTab) => void
   propDefs: SupplierDbPropDef[]
   categoryTree?: CategoryTreeNodeView[]
   categoryLoading?: boolean
-  /** 类目选择器空树开弹时补拉共享类目缓存（宿主接 GET /api/catalog/tree）。 */
   onEnsureCategoryTree?: () => Promise<boolean>
-  /** 行写在途 — 面板置灰，与表格行同步。 */
   pending?: boolean
   onClose: () => void
-  /** 行 ⋯ 菜单动作——复制/归档/删除由库页提供（确认对话框在库页）。 */
-  onDuplicate?: () => void
   onArchive?: () => void
   onDelete?: () => void
   onDirtyChange?: (dirty: boolean) => void
+  mode?: "product" | "variant"
+  initialTab?: SupplierRowTab
+  canAdjustPrice?: boolean
+  onAddVariant?: () => void
 }) {
   const [addPropOpen, setAddPropOpen] = useState(false)
-  const closeRef = useRef<HTMLButtonElement>(null)
-
   const [promptDirty, setPromptDirty] = useState(false)
-  const reportDirty = useCallback((dirty: boolean) => {
-    setPromptDirty(dirty)
-    onDirtyChange?.(dirty)
-  }, [onDirtyChange])
-  const [discardAction, setDiscardAction] = useState<(() => void) | null>(null)
-  const requestAction = (action: () => void) => {
-    if (promptDirty) setDiscardAction(() => action)
-    else action()
+  const [discardAction, setDiscardAction] = useState<(() => void | Promise<void>) | null>(null)
+  const [saving, setSaving] = useState(false)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const invalidInfo = () => panelRef.current?.querySelector<HTMLElement>('[data-supplier-row-info-tab] [aria-invalid="true"]')
+  const platformFlushRef = useRef<(() => Promise<boolean>) | null>(null)
+  const aiFlushRef = useRef<(() => Promise<boolean>) | null>(null)
+  const sharedDirty = useRef(false)
+  const group = rows.filter((item) => !item.archived && item.sourceId === row.sourceId && (item.productId === row.productId || Boolean(row.variantGroup?.trim()) && item.variantGroup?.trim() === row.variantGroup?.trim()))
+  const sharedRow = group[0] ?? row
+  const reportDirty = useCallback((dirty: boolean) => { setPromptDirty(dirty); onDirtyChange?.(dirty) }, [onDirtyChange])
+  const syncShared = async () => {
+    if (mode === "variant") {
+      // Ozon 配置保存会推进行版本，后续写入先回读。
+      await store.loadDetail(sourceId, { force: true })
+      const detail = store.getState().details[sourceId]
+      if (detail?.status !== "ready") { notifyCommandError(detail?.reason, "无法更新规格资料，请重试"); return false }
+      return true
+    }
+    if (!sharedDirty.current) return true
+    const result = await store.syncProductOzon(sourceId, sharedRow.productId)
+    if (!result.ok) { notifyCommandError(commandFailure(result), "Ozon 字段未全部同步，请重试"); return false }
+    sharedDirty.current = false
+    return true
   }
-
-  const patchRow = async (patch: Patch): Promise<boolean> => {
+  const saveShared = async () => {
+    if (platformFlushRef.current && !await platformFlushRef.current()) return false
+    return syncShared()
+  }
+  const requestAction = async (action: () => void | Promise<void>) => {
+    if (promptDirty || invalidInfo()) { setDiscardAction(() => action); return }
+    if (await saveShared()) await action()
+  }
+  // 详情标题只放在壳层面包屑里；返回也走面包屑模块段，离开前仍走未保存拦截。
+  const trailLabel = mode === "variant"
+    ? row.size || row.title || "新增规格"
+    : row.title || row.size || "新增商品"
+  const exitRef = useRef<() => void>(() => {})
+  exitRef.current = () => { if (!saving) void requestAction(onClose) }
+  const exitToLibrary = useCallback(() => exitRef.current(), [])
+  useTrailSegment(trailLabel, exitToLibrary)
+  const saveAndExit = async () => {
+    if (saving) return
+    const invalid = invalidInfo()
+    if (invalid) { invalid.focus(); notifyError("商品信息尚未保存，请重试标红字段"); return }
+    setSaving(true)
+    try {
+      if (aiFlushRef.current && !await aiFlushRef.current()) return
+      if (!await saveShared()) return
+      reportDirty(false)
+      onClose()
+    } finally { setSaving(false) }
+  }
+  const patchRow = async (patch: Patch) => {
+    if (("descriptionCategoryId" in patch || "typeId" in patch) && !await saveShared()) return false
     const result = await store.patchCell(sourceId, row.productId, patch)
-    if (!result.ok) {
-      notifyCommandError(commandFailure(result), "保存行失败")
-      return false
-    }
-    // 类目落盘即暖一次 schema 缓存——冷坐标借工作区店铺密钥自动同步。
-    warmCategorySchemaOnce(patch)
+    if (!result.ok) { notifyCommandError(commandFailure(result), "保存商品信息失败"); return false }
     return true
   }
-
-  const updateProp = async (
-    def: SupplierDbPropDef,
-    patch: Partial<UpsertSupplierDbPropRequest>,
-  ): Promise<boolean> => {
-    const result = await store.updateProp(sourceId, def.propId, {
-      name: def.name,
-      type: def.type,
-      options: def.options,
-      position: def.position,
-      sellerVisible: def.sellerVisible,
-      ...patch,
-    })
-    if (!result.ok) {
-      notifyCommandError(commandFailure(result), "保存属性失败")
-      return false
-    }
-    return true
-  }
-
-  const togglePublish = async () => {
-    if (pending) return
-    if (!row.published) {
-      const missing = missingReadiness(row)
-      if (missing.length) {
-        notifyError(`还差 ${missing.join("、")} 才能上架`)
-        return
-      }
-      const result = await store.publishRow(sourceId, row.productId)
-      if (result.ok) notifySuccess("已上架")
-      else notifyCommandError(commandFailure(result), "上架失败")
-    } else {
-      const result = await store.unpublishRow(sourceId, row.productId)
-      if (result.ok) notifySuccess("已下架")
-      else notifyCommandError(commandFailure(result), "下架失败")
-    }
-  }
-
-  const hasRowMenu = onDuplicate || onArchive || onDelete
-
-  return (
-    <>
-      <Sheet open modal={false} disablePointerDismissal onOpenChange={(open) => { if (!open) requestAction(onClose) }}>
-      <SheetContent size="detail" showOverlay={false} showCloseButton={false} initialFocus={closeRef} finalFocus={false}
-        aria-label={`商品详情 ${row.title.trim() || "未命名"}`}
-        aria-busy={pending || undefined}
-        data-supplier-row-panel=""
-      >
-        {/* 窄屏导航保留图标和可访问名称，避免标题与位置换行。 */}
-        <div className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-3">
-          <SheetTitle>商品详情</SheetTitle>
-          {onSelectRow && total !== undefined ? <div className="ml-auto flex items-center gap-1" aria-label="商品导航">
-            <Button type="button" variant="ghost" size="sm" aria-label="上一件" disabled={!previousRowId} title={previousRowId ? "上一件商品" : "已经是第一件"} onClick={() => previousRowId && requestAction(() => onSelectRow(previousRowId))}><ChevronLeft aria-hidden /><span className="hidden sm:inline">上一件</span></Button>
-            <span className="whitespace-nowrap font-mono text-meta text-muted-foreground tabular-nums">{position} / {total}</span>
-            <Button type="button" variant="ghost" size="sm" aria-label="下一件" disabled={!nextRowId} title={nextRowId ? "下一件商品" : "已经是最后一件"} onClick={() => nextRowId && requestAction(() => onSelectRow(nextRowId))}><span className="hidden sm:inline">下一件</span><ChevronRight aria-hidden /></Button>
-          </div> : null}
-          {hasRowMenu ? (
-            <RowMenu
-              title={row.title.trim() || "未命名"}
-              onDuplicate={onDuplicate ? () => requestAction(onDuplicate) : undefined}
-              onArchive={onArchive ? () => requestAction(onArchive) : undefined}
-              onDelete={onDelete ? () => requestAction(onDelete) : undefined}
-            />
-          ) : null}
-          <Button
-            ref={closeRef}
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label="关闭行详情"
-            className="ml-auto cursor-pointer"
-            onClick={() => requestAction(onClose)}
-          >
-            <X aria-hidden />
-          </Button>
-        </div>
-
-        <div className="flex min-h-0 flex-1 flex-col">
-          <SupplierRowBody
-            key={row.productId}
-            row={row}
-            onDirtyChange={reportDirty}
-            rows={rows}
-            onSelectRow={(productId) => { if(productId !== row.productId) requestAction(() => { setPromptDirty(false); onSelectRow?.(productId) }) }}
-            onCreateVariant={async (size) => {
-              if (promptDirty) { notifyError("请先保存当前规格的提示词草稿，再新增规格"); return false }
-              const variantGroup = row.variantGroup?.trim() || row.productId
-              if (!row.variantGroup?.trim() && !(await patchRow({ variantGroup }))) return false
-              const result = await store.createRow(sourceId, {
-                title: row.title,
-                size,
-                variantGroup,
-                descriptionCategoryId: row.descriptionCategoryId,
-                typeId: row.typeId,
-              })
-              if (!result.ok) {
-                notifyCommandError(commandFailure(result), "新增规格失败")
-                return false
-              }
-              onSelectRow?.(result.value.productId)
-              return true
-            }}
-            onDeleteVariant={onDelete ? () => requestAction(onDelete) : undefined}
-            propDefs={propDefs}
-            categoryTree={categoryTree}
-            categoryLoading={categoryLoading}
-            onEnsureCategoryTree={onEnsureCategoryTree}
-            onPatch={patchRow}
-            onPromptPublished={() => { void store.loadDetail(sourceId, { force: true }) }}
-            onUpdateProp={updateProp}
-            onAddProp={() => setAddPropOpen(true)}
-            onTogglePublish={togglePublish}
-            onAdjustPrice={async (priceCents, note) => {
-              const result = await store.adjustPrice(
-                sourceId,
-                row.productId,
-                priceCents,
-                note,
-              )
-              if (result.ok) {
-                notifySuccess("平台价已写入新版本")
-                return true
-              }
-              notifyCommandError(
-                commandFailure(result),
-                "调价失败",
-              )
-              return false
-            }}
-          />
-        </div>
-
-        <PropEditorDialog
-          store={store}
-          sourceId={sourceId}
-          target={addPropOpen ? { mode: "create" } : null}
-          onClose={() => setAddPropOpen(false)}
-        />
-        <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border px-5 py-3">
-          <span className="text-meta text-muted-foreground">{promptDirty ? "提示词草稿待保存" : pending ? "正在保存…" : "字段失焦保存 · 提示词单独保存"}</span>
-          <Button variant="outline" size="sm" onClick={() => requestAction(onClose)}>完成</Button>
-        </div>
-      </SheetContent>
-      </Sheet>
-      <ConfirmDialog open={discardAction !== null} onOpenChange={(open) => { if(!open) setDiscardAction(null) }}
-        title="提示词尚未保存" description="离开会丢弃当前规格未保存的提示词草稿。" confirmText="丢弃草稿并离开"
-        onConfirm={() => { const action = discardAction; setDiscardAction(null); reportDirty(false); action?.() }}
-      />
-    </>
-  )
+  return <div ref={panelRef} className="flex min-h-0 min-w-0 flex-1 flex-col" data-supplier-row-panel="" aria-label={`商品详情 ${row.title || "未命名"}`} aria-busy={pending || saving || undefined}>
+    <SupplierRowBody row={row} rows={rows} sharedRow={sharedRow} mode={mode} initialTab={initialTab} pending={pending || saving} canAdjustPrice={canAdjustPrice}
+      status={row.published
+        ? <Badge variant="good" className="shrink-0">已发布</Badge>
+        : <span className="inline-flex shrink-0 items-center gap-1.5 text-compact text-muted-foreground"><span aria-hidden className="size-1.5 rounded-full bg-border-strong" />草稿</span>}
+      trailing={<RowMenu title={row.title || "未命名"} onArchive={onArchive ? () => void requestAction(onArchive) : undefined} onDelete={onDelete ? () => void requestAction(onDelete) : undefined} />}
+      platformFlushRef={platformFlushRef} aiFlushRef={aiFlushRef} onDirtyChange={reportDirty} onExit={() => void saveAndExit()}
+      onSelectRow={(productId, tab) => void requestAction(() => onSelectRow?.(productId, tab))}
+      onAddVariant={onAddVariant ? () => void requestAction(onAddVariant) : undefined}
+      propDefs={propDefs} categoryTree={categoryTree} categoryLoading={categoryLoading} onEnsureCategoryTree={onEnsureCategoryTree} onPatch={patchRow}
+      onSharedConfigSaved={() => { sharedDirty.current = true; onDirtyChange?.(true) }} onSyncShared={async () => { const saved = await syncShared(); if (saved) onDirtyChange?.(promptDirty); return saved }}
+      onPatchShared={async (patch) => {
+        for (const item of group.length ? group : [row]) {
+          const result = await store.patchCell(sourceId, item.productId, patch)
+          if (!result.ok) { notifyCommandError(commandFailure(result), "类目未全部应用到规格，请重试"); return false }
+        }
+        warmCategorySchemaOnce(patch)
+        return true
+      }}
+      onAddProp={() => setAddPropOpen(true)}
+      onUpdateProp={async (def, patch: Partial<UpsertSupplierDbPropRequest>) => {
+        const result = await store.updateProp(sourceId, def.propId, { name: def.name, type: def.type, options: def.options, position: def.position, sellerVisible: def.sellerVisible, ...patch })
+        if (!result.ok) notifyCommandError(commandFailure(result), "保存属性失败")
+        return result.ok
+      }}
+      onAdjustPrice={async (priceCents, note) => {
+        if (!canAdjustPrice) return false
+        const result = await store.adjustPrice(sourceId, row.productId, priceCents, note)
+        if (!result.ok) notifyCommandError(commandFailure(result), "调价失败")
+        else notifySuccess("平台供货价已保存")
+        return result.ok
+      }}
+    />
+    <PropEditorDialog store={store} sourceId={sourceId} target={addPropOpen ? { mode: "create", position: propDefs.length } : null} onClose={() => setAddPropOpen(false)} />
+    <ConfirmDialog open={discardAction !== null} onOpenChange={(open) => { if (!open) setDiscardAction(null) }} title="配置尚未保存" description="离开会丢弃尚未保存的商品信息或 AI 识图配置。" confirmText="放弃修改并离开" onConfirm={async () => {
+      const action = discardAction; setDiscardAction(null)
+      if (!await saveShared()) return
+      reportDirty(false); await action?.()
+    }} />
+  </div>
 }
 
 function RowMenu({
   title,
-  onDuplicate,
   onArchive,
   onDelete,
 }: {
   title: string
-  onDuplicate?: () => void
   onArchive?: () => void
   onDelete?: () => void
 }) {
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label={`行操作 ${title}`}
-            className="cursor-pointer"
-          />
-        }
-      >
-        <Ellipsis aria-hidden />
-      </DropdownMenuTrigger>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={`规格操作 ${title}`}
+                />
+              }
+            />
+          }
+        >
+          <Ellipsis aria-hidden />
+        </TooltipTrigger>
+        <TooltipContent side="bottom" sideOffset={6}>规格操作</TooltipContent>
+      </Tooltip>
       <DropdownMenuContent align="end">
-        {onDuplicate ? (
-          <DropdownMenuItem
-            className="cursor-pointer"
-            data-row-menu="复制行"
-            onClick={onDuplicate}
-          >
-            <Copy aria-hidden />
-            复制行
-          </DropdownMenuItem>
-        ) : null}
         {onArchive ? (
           <DropdownMenuItem
             className="cursor-pointer"

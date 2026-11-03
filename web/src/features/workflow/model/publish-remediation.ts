@@ -5,6 +5,7 @@ import { contractSolution, offerBusySolution, psdSolutions } from "./publish-sol
 import { currentPublishRequestEvidence, requestEvidenceRemediation } from "./publish-request-evidence"
 import { brandRepairIssueCurrent } from "../brand-repair"
 import { wbLocationPresentation } from "./publish-wb-location"
+import { acceptedFailureIssue } from "./accepted-status"
 
 export { brandRepairRowIds } from "./legacy-publish-input"
 export type { PublishRemediation, PublishRemediationFacts } from "./publish-problem"
@@ -33,7 +34,18 @@ export function resolvePublishRemediation(facts: PublishRemediationFacts | Publi
       traceId: facts.traceId, reportable: solution.reportable, diagnosticCode: solution.diagnosticCode }
   }
   const { lifecycle } = facts
-  if (["queued", "submitting", "accepted"].includes(lifecycle.stage)) return undefined
+  if (["queued", "submitting"].includes(lifecycle.stage)) return undefined
+  if (lifecycle.stage === "accepted") {
+    const issue = acceptedFailureIssue(lifecycle)
+    if (!issue) return undefined
+    const solution = issueSolution(issue, facts.platform?.toLowerCase() ?? "ozon")
+    return {
+      cause: solution === contractSolution ? "contract_invalid" : "structured_issue",
+      reason: solution.reason, scope: "已受理的原提交；仅此商品行",
+      steps: ["在 Ozon 卖家后台核对并处理该商品，保留本次提交记录，勿重复发送。"],
+      traceId: issue.trace_id, reportable: solution.reportable, diagnosticCode: solution.diagnosticCode,
+    }
+  }
   const evidence = currentPublishRequestEvidence(facts.requestEvidence, facts.requestIdentity)
   const request = evidence && requestEvidenceRemediation(evidence)
   const fenced = (value: PublishRemediation | undefined) => value && request

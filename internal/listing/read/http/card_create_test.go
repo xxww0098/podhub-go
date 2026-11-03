@@ -22,7 +22,7 @@ func TestValidateCreateOrder(t *testing.T) {
 	if msg, ok := ValidateCreate(CreateCard{CreateMode: "blank", SupplierProductID: &product}); ok || msg.Message != "supplierProductId 仅用于 fromSupplier" {
 		t.Fatal(msg)
 	}
-	if msg, ok := ValidateCreate(CreateCard{CreateMode: "blank", Payload: json.RawMessage(`{"supplierProductId":"x"}`)}); ok || msg.Message != "请从平台货源选择规格创建方案" {
+	if msg, ok := ValidateCreate(CreateCard{CreateMode: "blank", Payload: json.RawMessage(`{"supplierProductId":"x"}`)}); ok || msg.Message != "请从平台商品库选择规格创建方案" {
 		t.Fatal(msg)
 	}
 	if msg, ok := ValidateCreate(CreateCard{CreateMode: "copyCard"}); ok || msg.Message != "copyCard 需要 sourceCardId" {

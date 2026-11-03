@@ -13,20 +13,20 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/xxww0098/podhub-go/internal/platform/jobsched"
+	"github.com/xxww0098/podhub-go/internal/queue/contract"
 )
 
 var (
 	// ErrLockBusy is a media_object_leases row this attempt could not lock.
 	// The seller receipt, when one exists, is already committed.
-	ErrLockBusy = jobsched.ErrLockBusy
+	ErrLockBusy = contract.ErrLockBusy
 	// ErrReceiptHeld means external_task_id is committed and a later write
 	// failed. The job must be retried without a new seller request and
 	// without consuming an attempt.
-	ErrReceiptHeld = jobsched.ErrReceiptHeld
+	ErrReceiptHeld = contract.ErrReceiptHeld
 	// ErrOrgCap means this organization already has OrgSubmitBatchLimit
 	// listing.submit.batch jobs running. Nothing was sent.
-	ErrOrgCap = jobsched.ErrOrgCap
+	ErrOrgCap = contract.ErrOrgCap
 )
 
 const (
@@ -134,20 +134,16 @@ func ClampLaneLimit(n int64) int64 {
 	return n
 }
 
-// RequeueReason matches settlement.rs. Every reason except SafeToRetry
-// withdraws the attempt the claim just counted.
-type RequeueReason string
+type RequeueReason = contract.RequeueReason
 
 const (
-	ReasonStoreBusy            RequeueReason = "store_busy"
-	ReasonQuotaExhausted       RequeueReason = "quota_exhausted"
-	ReasonRateLimited          RequeueReason = "rate_limited"
-	ReasonSafeToRetry          RequeueReason = "safe_to_retry"
-	ReasonAdmissionUnavailable RequeueReason = "admission_unavailable"
-	ReasonLockBusy             RequeueReason = "lock_busy"
+	ReasonStoreBusy            = contract.ReasonStoreBusy
+	ReasonQuotaExhausted       = contract.ReasonQuotaExhausted
+	ReasonRateLimited          = contract.ReasonRateLimited
+	ReasonSafeToRetry          = contract.ReasonSafeToRetry
+	ReasonAdmissionUnavailable = contract.ReasonAdmissionUnavailable
+	ReasonLockBusy             = contract.ReasonLockBusy
 )
-
-func (r RequeueReason) WithdrawAttempt() bool { return r != ReasonSafeToRetry }
 
 // WorkRequeue is the jobs reason for an error returned by listing submit.
 // Lock contention and a stored receipt withdraw the attempt the claim

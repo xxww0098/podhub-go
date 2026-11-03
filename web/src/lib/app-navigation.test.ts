@@ -20,25 +20,29 @@ import { SCREEN_LABELS } from "./app-screens"
 const PLAIN_ACCOUNT: NavAudience = { isAgent: false, isStaff: false }
 const STAFF_ACCOUNT: NavAudience = { isAgent: false, isStaff: true }
 
+test("source maintenance appears only for an active catalogue manager", () => {
+  const manager = { ...PLAIN_ACCOUNT, isCatalogManager: true }
+  assert.ok(navItemsFor("workbench", manager).some((item) => item.id === "supplier-catalog"))
+  assert.ok(isAddressableScreen("supplier-catalog", "workbench", manager))
+  assert.ok(!isAddressableScreen("supplier-catalog", "workbench", PLAIN_ACCOUNT))
+  assert.ok(!isAddressableScreen("supplier-catalog", "admin", manager))
+})
+
 test("sidebar shows all business groups in workflow order without duplicating or widening access", () => {
-  const groups = sidebarGroupsFor("workbench", PLAIN_ACCOUNT)
+  const groups = sidebarGroupsFor(PLAIN_ACCOUNT)
   assert.deepEqual(groups.map((group) => group.label), ["总览", "商品经营", "订单履约", "客户服务"])
   assert.deepEqual(groups.map((group) => group.items.map((item) => item.id)), [
-    ["console"],
-    ["catalog", "listing", "products"],
+    ["home", "console"],
+    ["catalog", "listing", "products", "task-records"],
     ["ops-shipping", "delegate-orders", "ops-returns", "ops-supply"],
     ["message-center", "ops-voice"],
   ])
   for (const audience of [PLAIN_ACCOUNT, STAFF_ACCOUNT, { isAgent: true, isStaff: true, isSuperAdmin: true }]) {
-    for (const surface of ["workbench", "admin"] as const) {
-      const painted = sidebarGroupsFor(surface, audience).flatMap((group) => group.items.map((item) => item.id))
-      const modes = surface === "admin" ? ["admin" as const] : navModesFor(audience)
-      const allowed = modes.flatMap((mode) => navItemsFor(mode, audience)).map((item) => item.id)
-      assert.deepEqual([...painted].sort(), [...allowed].sort())
-      assert.equal(painted.length, new Set(painted).size)
-    }
+    const painted = sidebarGroupsFor(audience).flatMap((group) => group.items.map((item) => item.id))
+    const allowed = navModesFor(audience).flatMap((mode) => navItemsFor(mode, audience)).map((item) => item.id)
+    assert.deepEqual([...painted].sort(), [...allowed].sort())
+    assert.equal(painted.length, new Set(painted).size)
   }
-  assert.deepEqual(sidebarGroupsFor("admin", PLAIN_ACCOUNT), [])
 })
 
 test("平台管理 is a staff-only mode: hidden from plain accounts, last for staff", () => {
@@ -52,10 +56,13 @@ test("平台管理 is a staff-only mode: hidden from plain accounts, last for st
   assert.equal(staff.at(-1), "admin", "平台管理 is the last mode")
 })
 
-test("平台管理 paints 列表管理 only for platform staff", () => {
+test("平台管理 paints staff destinations only for platform staff", () => {
   assert.deepEqual(navItemsFor("admin", PLAIN_ACCOUNT), [])
   const ids = navItemsFor("admin", STAFF_ACCOUNT).map((item) => item.id)
-  assert.deepEqual(ids, ["supplier-dbs"])
+  assert.deepEqual(ids, ["supplier-dbs", "admin-delegate-orders"])
+  const groups = sidebarGroupsFor(STAFF_ACCOUNT)
+  assert.ok(groups.find((group) => group.label === "订单履约")?.items.some((item) => item.id === "delegate-orders"))
+  assert.ok(groups.find((group) => group.label === "平台")?.items.some((item) => item.id === "admin-delegate-orders"))
 })
 
 test("列表管理 is no longer a workbench item for anyone", () => {
@@ -72,7 +79,7 @@ test("列表管理 is no longer a workbench item for anyone", () => {
 
 test("列表管理 belongs to the admin mode and carries its label", () => {
   assert.equal(modeOfScreen("supplier-dbs"), "admin")
-  assert.equal(SCREEN_LABELS["supplier-dbs"], "货源管理")
+  assert.equal(SCREEN_LABELS["supplier-dbs"], "平台商品库管理")
 })
 
 test("agentOnly still filters the Agent destination by account type", () => {
@@ -101,38 +108,38 @@ test("search parity: staff see 列表管理; plain accounts see neither it nor t
   assert.ok(!plain.includes("agent"))
 })
 
-test("the addressable workbench set is exactly what the nav paints", () => {
+test("the workbench excludes every platform destination from its routes", () => {
   const audiences: NavAudience[] = [
     PLAIN_ACCOUNT,
     STAFF_ACCOUNT,
     { isAgent: true, isStaff: false },
+    { isAgent: false, isStaff: true, isSuperAdmin: true },
   ]
   for (const audience of audiences) {
-    // The 平台 mode is part of the unified main nav, so for staff its 货源管理
-    // row is addressable on "/" too — not just on the admin surface.
     const painted = navModesFor(audience)
+      .filter((mode) => mode !== "admin")
       .flatMap((mode) => navItemsFor(mode, audience))
       .map((item) => item.id)
       .concat(spaceScreens())
     const addressable = addressableScreens("workbench", audience)
     assert.deepEqual([...addressable].sort(), [...new Set(painted)].sort())
-    assert.equal(defaultScreenFor("workbench", audience), "console")
+    assert.equal(defaultScreenFor("workbench", audience), "home")
   }
 })
 
 test("staff-only and Agent-only screens are addressable only where they belong", () => {
-  // 平台管理 is one tab of the unified main nav: staff reach 货源管理 from "/"
-  // in place the moment that tab is picked; a plain account never can.
-  assert.ok(addressableScreens("workbench", STAFF_ACCOUNT).includes("supplier-dbs"))
+  assert.ok(!addressableScreens("workbench", STAFF_ACCOUNT).includes("supplier-dbs"))
   assert.ok(!addressableScreens("workbench", PLAIN_ACCOUNT).includes("supplier-dbs"))
   // Per-screen rank is part of addressability, not only the outer surface gate.
   assert.deepEqual(addressableScreens("admin", PLAIN_ACCOUNT), [])
-  assert.deepEqual(addressableScreens("admin", STAFF_ACCOUNT), ["supplier-dbs", ...ADMIN_URL_ONLY_SCREENS])
+  assert.deepEqual(addressableScreens("admin", STAFF_ACCOUNT), ["supplier-dbs", "admin-delegate-orders", ...ADMIN_URL_ONLY_SCREENS])
+  assert.ok(!isAddressableScreen("admin-delegate-orders", "workbench", STAFF_ACCOUNT))
+  assert.ok(isAddressableScreen("delegate-orders", "workbench", STAFF_ACCOUNT))
+  assert.ok(!isAddressableScreen("admin-delegate-orders", "admin", PLAIN_ACCOUNT))
   assert.equal(defaultScreenFor("admin", STAFF_ACCOUNT), defaultAdminScreen())
   assert.ok(isAddressableScreen("stores", "workbench", PLAIN_ACCOUNT))
   assert.ok(!isAddressableScreen("agent", "workbench", PLAIN_ACCOUNT))
   assert.ok(isAddressableScreen("agent", "workbench", { isAgent: true, isStaff: false }))
-  assert.ok(!isAddressableScreen("console", "admin", STAFF_ACCOUNT))
 })
 
 test("workbench space screens have an address even without a nav row", () => {

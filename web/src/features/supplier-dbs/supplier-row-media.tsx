@@ -16,7 +16,7 @@
  *
  * 错误纪律：本地校验/读取失败 → `notifyError`；presign/PUT/写行失败 →
  * `notifyLive` 常驻（带「重试」action）；503 STORAGE_NOT_CONFIGURED →
- * 入口置灰 + title 提示 + notifyLive「去配置」跳「平台管理 → 对象存储」。
+ * 入口置灰并提示联系管理员恢复存储。
  * 页面上没有任何内联错误块。
  */
 import { useEffect, useRef, useState, type CSSProperties } from "react"
@@ -39,10 +39,10 @@ import {
   Download,
   FileText,
   GripVertical,
-  Image as ImageIcon,
   ImagePlus,
-  Plus,
+  LoaderCircle,
   Trash2,
+  Upload,
   Video,
 } from "lucide-react"
 
@@ -53,10 +53,8 @@ import type {
   SupplierDbUploadKind,
   UpsertSupplierDbRowRequest,
 } from "@/bindings/http-supplier-dbs"
-import { useOpenSettings } from "@/app/settings-page"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Spinner } from "@/components/ui/spinner"
+import { FieldMeta } from "@/components/field-meta"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { formatBytes } from "@/lib/format"
 import { commandErrorCode, errorMessage } from "@/lib/error-message"
@@ -79,12 +77,15 @@ import {
   uploadCountError,
   uploadFileError,
   useSupplierDbUpload,
+  type SupplierDbPresign,
+  type SupplierDbConfirm,
+  type SupplierDbAbort,
 } from "./supplier-db-upload"
 import { supplierDbs, type SupplierDbsStore } from "./supplier-dbs-store"
 import { commandFailure } from "./supplier-dbs-errors"
 
 const STORAGE_NOTICE_ID = "supplier-db-storage-missing"
-const STORAGE_HINT = "先在平台集成配置平台货源存储桶"
+const STORAGE_HINT = "文件存储暂不可用，请联系管理员"
 
 // ---------- 纯函数（可测） ----------
 
@@ -113,6 +114,10 @@ export function moveItem<T>(items: readonly T[], from: number, to: number): T[] 
 /** 点选封面：提到数组首位（首图即封面契约）。 */
 export function promoteToCover<T>(items: readonly T[], index: number): T[] {
   return moveItem(items, index, 0)
+}
+
+export function appendGalleryImage(items: SupplierDbGalleryItem[], image: SupplierDbGalleryItem): SupplierDbGalleryItem[] {
+  return items.some((item) => item.url === image.url) ? items : [...items, image]
 }
 
 /** `ms` → `m:ss`（视频列摘要）。 */
@@ -216,30 +221,33 @@ export function FieldNote({ text }: { text: string }) {
 /** 上传入口钮：置灰态需要 hover 出 title，disabled 按钮本身不冒指针事件——包一层 span。 */
 function UploadButton({
   label,
+  primary = false,
   disabled,
   blocked,
   busy,
   onClick,
 }: {
   label: string
+  primary?: boolean
   disabled?: boolean
   blocked: boolean
   busy: boolean
   onClick: () => void
 }) {
   const off = disabled || blocked || busy
+  const Icon = busy ? LoaderCircle : Upload
   return (
     <span title={blocked ? STORAGE_HINT : undefined} className="inline-flex">
       <Button
         type="button"
-        size="xs"
-        variant="outline"
+        aria-label={label}
+        size="sm"
+        variant={primary ? "brand" : "outline"}
         disabled={off}
-        className="cursor-pointer"
         onClick={onClick}
       >
-        {busy ? <Spinner data-icon="inline-start" /> : <Plus aria-hidden data-icon="inline-start" />}
-        {label}
+        <Icon aria-hidden className={busy ? "animate-spin" : undefined} />
+        {busy ? "上传中…" : label}
       </Button>
     </span>
   )
@@ -248,36 +256,30 @@ function UploadButton({
 function MediaGroup({
   name,
   label,
-  icon,
   requirement,
   action,
+  className,
   children,
 }: {
   /** data 属性用的固定名（测试锚点），不含计数。 */
   name: string
   label: string
-  icon: React.ReactNode
   /** 上传契约：图集必传，PSD / 视频选传。 */
   requirement: "required" | "optional"
   action: React.ReactNode
+  className?: string
   children: React.ReactNode
 }) {
   return (
     <div
       data-supplier-row-media={name}
-      className="flex flex-col gap-1.5 rounded-lg border border-border/60 bg-muted/20 p-2.5"
+      className={cn("flex min-w-0 flex-col gap-2", className)}
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="flex items-center gap-1.5 text-compact font-medium text-muted-foreground">
-          <span aria-hidden className="text-faint-foreground [&_svg]:size-3.5">
-            {icon}
-          </span>
+        <span className="flex min-w-0 flex-wrap items-center gap-1.5 text-compact font-medium text-muted-foreground">
           {label}
-          {requirement === "required" ? (
-            <Badge variant="brand">必传</Badge>
-          ) : (
-            <Badge variant="outline">选传</Badge>
-          )}
+          <FieldMeta name={name} required={requirement === "required"}
+            description={requirement === "required" ? "至少上传一张商品图，首张作为封面，可拖拽调整顺序。" : undefined} />
         </span>
         {action}
       </div>
@@ -394,15 +396,26 @@ function GalleryThumb({
 export function SupplierRowMedia({
   row,
   store = supplierDbs,
+  onPatch,
+  presign,
+  confirm,
+  abort,
+  onBusyChange,
 }: {
-  row: SupplierDbRow
+  row: Pick<SupplierDbRow, "sourceId" | "productId" | "gallery" | "psd" | "productVideos">
   /** 测试注入内存 store；缺省走生产单例（行页面不传 store 的历史包袱）。 */
   store?: SupplierDbsStore
+  onPatch?: (patch: Partial<Pick<UpsertSupplierDbRowRequest, "gallery" | "psd" | "productVideos">>) => Promise<boolean>
+  presign?: SupplierDbPresign
+  confirm?: SupplierDbConfirm
+  abort?: SupplierDbAbort
+  onBusyChange?: (busy: boolean) => void
 }) {
-  const openSettings = useOpenSettings()
   const uploader = useSupplierDbUpload(row.sourceId, {
-    presign: store.presignUpload,
+    presign: presign ?? store.presignUpload, confirm, abort,
   })
+  const rowRef = useRef(row)
+  rowRef.current = row
   /** 服务端 503 之后置灰全部上传入口（本会话内记住，重试无意义）。 */
   const [storageBlocked, setStorageBlocked] = useState(false)
   /** 保存期防抖：结构变更按泳道在途（上传并发已在 uploader.busyFor 拦）。 */
@@ -415,21 +428,26 @@ export function SupplierRowMedia({
   }, [row.sourceId, row.productId, uploader.cancelAll])
 
   /** 取 store 里该行的最新媒体数组——并发上传后避免拿旧数组覆盖。 */
-  const latestRow = (): SupplierDbRow =>
-    store
+  const latestRow = () => onPatch ? rowRef.current : store
       .getState()
       .details[row.sourceId]?.detail?.rows.find(
         (item) => item.productId === row.productId,
-      ) ?? row
+      ) ?? rowRef.current
+
+  const save = (patch: Partial<Pick<UpsertSupplierDbRowRequest, "gallery" | "psd" | "productVideos">>) =>
+    onPatch ? onPatch(patch) : saveRowMedia(store, row.sourceId, row.productId, patch)
 
   const blocked = storageBlocked
   /** 泳道忙：该道的上传在途或结构写在途；其他泳道的入口不跟着转。 */
   const laneBusy = (lane: SupplierDbUploadKind) =>
     savingLane === lane || uploader.busyFor(lane)
+  const busy = savingLane !== null || uploader.busyFor("gallery") || uploader.busyFor("psd") || uploader.busyFor("video")
+  useEffect(() => { onBusyChange?.(busy) }, [busy, onBusyChange])
+  useEffect(() => () => { onBusyChange?.(false) }, [onBusyChange])
 
   // ---------- notify 纪律 ----------
 
-  /** 503 → 置灰 + 常驻「去配置」（settings 路由存在：平台管理 → 对象存储）。 */
+  /** 存储不可用时禁用上传并保留错误提示。 */
   const surfaceStorageMissing = (reason?: unknown) => {
     setStorageBlocked(true)
     notifyLive({
@@ -437,11 +455,6 @@ export function SupplierRowMedia({
       type: "error",
       reason,
       title: STORAGE_HINT,
-      description: "平台货源文件走专用 R2 桶，配置在「平台管理 → 对象存储」。",
-      action: {
-        label: "去配置",
-        onClick: () => openSettings("media"),
-      },
     })
   }
 
@@ -454,8 +467,8 @@ export function SupplierRowMedia({
     kind: SupplierDbUploadKind,
     patch: (
       publicUrl: string,
-      current: SupplierDbRow,
-    ) => Partial<UpsertSupplierDbRowRequest>,
+      current: typeof row,
+    ) => Partial<Pick<UpsertSupplierDbRowRequest, "gallery" | "psd" | "productVideos">>,
     lane: SupplierDbUploadKind = kind,
   ): Promise<boolean> => {
     const generation = uploadGeneration.current
@@ -486,12 +499,7 @@ export function SupplierRowMedia({
         },
       })
       if (generation !== uploadGeneration.current) throw new DOMException("已取消", "AbortError")
-      const saved = await saveRowMedia(
-        store,
-        row.sourceId,
-        row.productId,
-        patch(result.publicUrl, latestRow()),
-      )
+      const saved = await save(patch(result.publicUrl, latestRow()))
       clearLive(noticeId)
       if (saved && generation === uploadGeneration.current) notifySuccess(`已上传 ${file.name}`)
       return saved
@@ -513,7 +521,7 @@ export function SupplierRowMedia({
         description: errorMessage(reason, "上传失败"),
         action: {
           label: "重试",
-          onClick: () => void runUpload(file, kind, patch, lane),
+          onClick: () => { clearLive(noticeId); void runUpload(file, kind, patch, lane) },
         },
       })
       return false
@@ -555,16 +563,13 @@ export function SupplierRowMedia({
       return
     }
     await runUpload(file, "gallery", (publicUrl, current) => ({
-      gallery: [
-        ...current.gallery,
-        { url: publicUrl, w: dims.w, h: dims.h },
-      ],
+      gallery: appendGalleryImage(current.gallery, { url: publicUrl, w: dims.w, h: dims.h }),
     }))
   }
 
   const applyGallery = async (next: SupplierDbGalleryItem[]) => {
     setSavingLane("gallery")
-    await saveRowMedia(store, row.sourceId, row.productId, { gallery: next })
+    await save({ gallery: next })
     setSavingLane(null)
   }
 
@@ -611,7 +616,7 @@ export function SupplierRowMedia({
 
   const removePsd = async (index: number) => {
     setSavingLane("psd")
-    await saveRowMedia(store, row.sourceId, row.productId, {
+    await save({
       psd: latestRow().psd.filter((_, i) => i !== index),
     })
     setSavingLane(null)
@@ -672,7 +677,7 @@ export function SupplierRowMedia({
 
   const removeVideo = async (index: number) => {
     setSavingLane("video")
-    await saveRowMedia(store, row.sourceId, row.productId, {
+    await save({
       productVideos: latestRow().productVideos.filter((_, i) => i !== index),
     })
     setSavingLane(null)
@@ -685,15 +690,16 @@ export function SupplierRowMedia({
   const videos = row.productVideos
 
   return (
-    <div className="flex flex-col gap-2" data-supplier-row-media-root="">
+    <div className="flex flex-col" data-supplier-row-media-root="">
       <MediaGroup
         name="图集"
         label={`图集${gallery.length ? ` · ${gallery.length}` : ""}`}
-        icon={<ImageIcon />}
         requirement="required"
+        className="pb-3"
         action={
           <UploadButton
             label="上传图片"
+            primary
             blocked={blocked}
             busy={laneBusy("gallery")}
             onClick={() => void pickGallery()}
@@ -747,155 +753,157 @@ export function SupplierRowMedia({
         )}
       </MediaGroup>
 
-      <MediaGroup
-        name="PSD"
-        label={`PSD${psd.length ? ` · ${psd.length}` : ""}`}
-        icon={<FileText />}
-        requirement="optional"
-        action={
-          <UploadButton
-            label="上传 PSD"
-            blocked={blocked}
-            busy={laneBusy("psd")}
-            onClick={() => void pickPsd()}
-          />
-        }
-      >
-        {psd.length ? (
-          <ul className="flex flex-col gap-1">
-            {psd.map((file, index) => (
-              <li
-                key={`${file.url}-${index}`}
-                className="flex items-center gap-2 text-compact"
-                data-supplier-psd-item=""
-              >
-                <FileText aria-hidden className="size-3.5 shrink-0 text-faint-foreground" />
-                <span className="min-w-0 flex-1 truncate font-mono text-muted-foreground">
-                  {file.name}
-                </span>
-                <span className="shrink-0 font-mono text-meta text-faint-foreground tabular-nums">
-                  {formatBytes(file.bytes)}
-                </span>
-                <a
-                  href={file.url}
-                  download={file.name}
-                  aria-label={`下载 ${file.name}`}
-                  className="inline-flex shrink-0 cursor-pointer items-center gap-0.5 text-meta text-brand-ink hover:underline"
+      <div className="flex min-w-0 flex-col border-t border-border pt-3">
+        <MediaGroup
+          name="PSD"
+          label={`PSD${psd.length ? ` · ${psd.length}` : ""}`}
+          requirement="optional"
+          className="pb-3"
+          action={
+            <UploadButton
+              label="上传 PSD"
+              blocked={blocked}
+              busy={laneBusy("psd")}
+              onClick={() => void pickPsd()}
+            />
+          }
+        >
+          {psd.length ? (
+            <ul className="flex flex-col gap-1">
+              {psd.map((file, index) => (
+                <li
+                  key={`${file.url}-${index}`}
+                  className="flex min-w-0 flex-wrap items-center gap-2 text-compact"
+                  data-supplier-psd-item=""
                 >
-                  <Download aria-hidden className="size-3" />
-                  下载
-                </a>
-                <button
-                  type="button"
-                  disabled={laneBusy("psd")}
-                  className="shrink-0 cursor-pointer text-meta text-muted-foreground hover:text-foreground"
-                  onClick={() => void pickPsd(index)}
-                >
-                  替换
-                </button>
-                <button
-                  type="button"
-                  aria-label={`删除 ${file.name}`}
-                  disabled={laneBusy("psd")}
-                  className="shrink-0 cursor-pointer text-meta text-muted-foreground hover:text-st-bad"
-                  onClick={() => void removePsd(index)}
-                >
-                  删除
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="flex items-center gap-1.5 text-meta text-faint-foreground">
-            <span>未上传</span>
-            <FieldNote text=".psd ≤500MB" />
-          </p>
-        )}
-      </MediaGroup>
-
-      <MediaGroup
-        name="视频"
-        label={`视频${videos.length ? ` · ${videos.length}` : ""}`}
-        icon={<Video />}
-        requirement="optional"
-        action={
-          <UploadButton
-            label="上传视频"
-            blocked={blocked}
-            busy={laneBusy("video")}
-            onClick={() => void pickVideo()}
-          />
-        }
-      >
-        {videos.length ? (
-          <ul className="flex flex-col gap-1.5">
-            {videos.map((video, index) => (
-              <li
-                key={`${video.url}-${index}`}
-                className="flex items-center gap-2"
-                data-supplier-video-item=""
-              >
-                {video.coverUrl ? (
-                  <img
-                    src={video.coverUrl}
-                    alt="视频封面"
-                    loading="lazy"
-                    decoding="async"
-                    className="size-10 shrink-0 rounded border border-border object-cover"
-                  />
-                ) : (
-                  <span
-                    aria-hidden
-                    className="grid size-10 shrink-0 place-items-center rounded border border-dashed border-border bg-muted/40 text-faint-foreground"
-                  >
-                    <Video className="size-4" />
+                  <FileText aria-hidden className="size-3.5 shrink-0 text-faint-foreground" />
+                  <span className="min-w-0 flex-1 truncate font-mono text-muted-foreground">
+                    {file.name}
                   </span>
-                )}
-                <span className="shrink-0 font-mono text-meta text-muted-foreground tabular-nums">
-                  {formatDurationMs(video.durationMs)}
-                </span>
-                <a
-                  href={video.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  aria-label={`打开第 ${index + 1} 个视频`}
-                  className="min-w-0 flex-1 cursor-pointer truncate text-meta text-brand-ink hover:underline"
-                >
-                  播放
-                </a>
-                <span
-                  title={blocked ? STORAGE_HINT : "上传一张图作为封面"}
-                  className="inline-flex shrink-0"
-                >
+                  <span className="shrink-0 font-mono text-meta text-faint-foreground tabular-nums">
+                    {formatBytes(file.bytes)}
+                  </span>
+                  <a
+                    href={file.url}
+                    download={file.name}
+                    aria-label={`下载 ${file.name}`}
+                    className="inline-flex shrink-0 cursor-pointer items-center gap-0.5 text-meta text-brand-ink hover:underline"
+                  >
+                    <Download aria-hidden className="size-3" />
+                    下载
+                  </a>
                   <button
                     type="button"
-                    disabled={laneBusy("video") || blocked}
-                    className="inline-flex cursor-pointer items-center gap-0.5 text-meta text-muted-foreground hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
-                    onClick={() => void pickVideoCover(index)}
+                    disabled={laneBusy("psd")}
+                    className="shrink-0 cursor-pointer text-meta text-muted-foreground hover:text-foreground"
+                    onClick={() => void pickPsd(index)}
                   >
-                    <ImagePlus aria-hidden className="size-3" />
-                    {video.coverUrl ? "换封面" : "设封面"}
+                    替换
                   </button>
-                </span>
-                <button
-                  type="button"
-                  aria-label={`删除第 ${index + 1} 个视频`}
-                  disabled={laneBusy("video")}
-                  className="shrink-0 cursor-pointer text-meta text-muted-foreground hover:text-st-bad"
-                  onClick={() => void removeVideo(index)}
+                  <button
+                    type="button"
+                    aria-label={`删除 ${file.name}`}
+                    disabled={laneBusy("psd")}
+                    className="shrink-0 cursor-pointer text-meta text-muted-foreground hover:text-st-bad"
+                    onClick={() => void removePsd(index)}
+                  >
+                    删除
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="flex items-center gap-1.5 text-meta text-faint-foreground">
+              <span>未上传</span>
+              <FieldNote text=".psd ≤500MB" />
+            </p>
+          )}
+        </MediaGroup>
+
+        <MediaGroup
+          name="视频"
+          label={`视频${videos.length ? ` · ${videos.length}` : ""}`}
+          requirement="optional"
+          className="border-t border-border pt-3"
+          action={
+            <UploadButton
+              label="上传视频"
+              blocked={blocked}
+              busy={laneBusy("video")}
+              onClick={() => void pickVideo()}
+            />
+          }
+        >
+          {videos.length ? (
+            <ul className="flex flex-col gap-1.5">
+              {videos.map((video, index) => (
+                <li
+                  key={`${video.url}-${index}`}
+                  className="flex min-w-0 flex-wrap items-center gap-2"
+                  data-supplier-video-item=""
                 >
-                  删除
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="flex items-center gap-1.5 text-meta text-faint-foreground">
-            <span>未上传</span>
-            <FieldNote text="mp4/mov ≤200MB" />
-          </p>
-        )}
-      </MediaGroup>
+                  {video.coverUrl ? (
+                    <img
+                      src={video.coverUrl}
+                      alt="视频封面"
+                      loading="lazy"
+                      decoding="async"
+                      className="size-10 shrink-0 rounded border border-border object-cover"
+                    />
+                  ) : (
+                    <span
+                      aria-hidden
+                      className="grid size-10 shrink-0 place-items-center rounded border border-dashed border-border bg-muted/40 text-faint-foreground"
+                    >
+                      <Video className="size-4" />
+                    </span>
+                  )}
+                  <span className="shrink-0 font-mono text-meta text-muted-foreground tabular-nums">
+                    {formatDurationMs(video.durationMs)}
+                  </span>
+                  <a
+                    href={video.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label={`打开第 ${index + 1} 个视频`}
+                    className="min-w-0 flex-1 cursor-pointer truncate text-meta text-brand-ink hover:underline"
+                  >
+                    播放
+                  </a>
+                  <span
+                    title={blocked ? STORAGE_HINT : "上传一张图作为封面"}
+                    className="inline-flex shrink-0"
+                  >
+                    <button
+                      type="button"
+                      disabled={laneBusy("video") || blocked}
+                      className="inline-flex cursor-pointer items-center gap-0.5 text-meta text-muted-foreground hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+                      onClick={() => void pickVideoCover(index)}
+                    >
+                      <ImagePlus aria-hidden className="size-3" />
+                      {video.coverUrl ? "换封面" : "设封面"}
+                    </button>
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={`删除第 ${index + 1} 个视频`}
+                    disabled={laneBusy("video")}
+                    className="shrink-0 cursor-pointer text-meta text-muted-foreground hover:text-st-bad"
+                    onClick={() => void removeVideo(index)}
+                  >
+                    删除
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="flex items-center gap-1.5 text-meta text-faint-foreground">
+              <span>未上传</span>
+              <FieldNote text="mp4/mov ≤200MB" />
+            </p>
+          )}
+        </MediaGroup>
+      </div>
     </div>
   )
 }

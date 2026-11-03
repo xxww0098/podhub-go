@@ -113,7 +113,7 @@ func (r Repo) sellerRows(ctx context.Context, tx pgx.Tx, visible map[string]map[
 	defer rows.Close()
 	out := []contract.CatalogRow{}
 	for rows.Next() {
-		row, err := scanSellerRow(rows, visible, nowMs)
+		row, err := r.scanSellerRow(rows, visible, nowMs)
 		if err != nil {
 			return nil, err
 		}
@@ -126,7 +126,7 @@ type scannable interface {
 	Scan(dest ...any) error
 }
 
-func scanSellerRow(rows scannable, visible map[string]map[string]struct{}, nowMs int64) (contract.CatalogRow, error) {
+func (r Repo) scanSellerRow(rows scannable, visible map[string]map[string]struct{}, nowMs int64) (contract.CatalogRow, error) {
 	var row contract.CatalogRow
 	var gallery, videos, tags, props []byte
 	var configState, validated, current *string
@@ -152,7 +152,7 @@ func scanSellerRow(rows scannable, visible map[string]map[string]struct{}, nowMs
 	}
 	denial := domain.Denial(domain.ListabilityFacts{
 		SourceListed: sourceListed, ProductArchived: archived, SKUPublished: skuPublished,
-		PromptValid: false, // ocr_prompt::validate_brief body is not in the spec.
+		PromptValid: r.profileValid != nil && r.profileValid(prompt),
 		ConfigState: domain.ConfigState(configState), ValidatedDigest: validated,
 		CurrentDigest: current, Freshness: fresh,
 	})
@@ -164,7 +164,6 @@ func scanSellerRow(rows scannable, visible map[string]map[string]struct{}, nowMs
 	row.ProductVideos = decodeVideos(videos)
 	row.FixedTags = decodeStrings(tags)
 	row.Props = filterProps(props, visible[row.SourceID])
-	_ = prompt
 	return row, nil
 }
 
@@ -172,7 +171,7 @@ const sellerRowSQL = `
 SELECT p.product_id, p.source_id, p.title, p.description, p.variant_group,
        COALESCE(m.prompt_text, ''),
        p.gallery, p.product_videos,
-       COALESCE(prompt_latest.fixed_tags, m.fixed_tags, '[]'::jsonb),
+       COALESCE(m.fixed_tags, '[]'::jsonb),
        p.props,
        c.state, c.validated_catalog_digest, cat.content_digest, cat.fetched_at_ms,
        src.listed,
@@ -187,10 +186,6 @@ FROM sc_products p
 JOIN sc_sources src ON src.source_id = p.source_id
 JOIN sc_skus s ON s.product_id = p.product_id
 LEFT JOIN supplier_ozon_configs m ON m.product_id = p.product_id
-LEFT JOIN LATERAL (
-    SELECT fixed_tags FROM prompt_revisions r
-    WHERE r.product_id = p.product_id ORDER BY r.revision DESC LIMIT 1
-) prompt_latest ON TRUE
 LEFT JOIN supplier_ozon_configs c
        ON c.product_id = p.product_id
       AND c.description_category_id = p.description_category_id

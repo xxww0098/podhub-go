@@ -44,7 +44,7 @@ const product: SellerPlatformProduct = {
 }
 
 const catalog: SellerSupplierDbCatalogData = {
-  dbs: [{ sourceId: "src_1", name: "美国3C厂", country: "US", icon: "🏭" }],
+  dbs: [{ source_id: "src_1", name: "美国3C厂", country: "US", icon: "🏭" }],
   propDefs: [],
   rows: [
     {
@@ -110,18 +110,18 @@ const shellOverview = (role: string) =>
     owned_limit: 1,
   }) as AccountOverview
 
-test("平台货源 is a workspace screen and not ops or suppliers", () => {
+test("平台商品库 is a workspace screen and not ops or suppliers", () => {
   const html = renderToStaticMarkup(
     <NotificationsProvider>
       <AppShell screen="catalog" onScreenChange={() => {}} onSignedOut={() => {}}>{null}</AppShell>
     </NotificationsProvider>,
   )
-  assert.match(html, /平台货源/)
+  assert.match(html, /平台商品库/)
   assert.match(html, /批量上架/)
   assert.match(html, /订单发货/)
   assert.match(html, /入仓供货/)
-  assert.doesNotMatch(html, new RegExp(SCREEN_LABELS["supplier-dbs"]))
-  // 工作台屏「平台货源」含管理模式文案「平台」子串，模式 tab 断言须锚定
+  assert.doesNotMatch(html, /data-screen="supplier-dbs"/)
+  // 工作台屏「平台商品库」含管理模式文案「平台」子串，模式 tab 断言须锚定
   // 分组的 aria-label 属性，不能拿裸标签当子串匹配。
   assert.doesNotMatch(html, new RegExp(`aria-label="${NAVIGATION.admin.label}"`))
 })
@@ -141,27 +141,28 @@ test("主菜单只给 staff 渲染「平台管理」模式，列表管理在其�
       </NotificationsProvider>,
     )
   // 模式与屏的名字归导航权威（app-navigation / app-screens），测试只读不拼。
-  // 模式 tab 断言锚定 aria-label：catalog 屏「平台货源」含「平台」子串。
+  // 模式 tab 断言锚定 aria-label：catalog 屏「平台商品库」含「平台」子串。
   const modeLabel = NAVIGATION.admin.label
   const modeTab = `aria-label="${modeLabel}"`
-  const screenLabel = SCREEN_LABELS["supplier-dbs"]
+  const adminItem = `data-screen="supplier-dbs"`
   for (const role of ["admin", "super_admin"]) {
     assert.match(shell(role), new RegExp(modeTab), `${role} 看不到平台管理模式`)
-    assert.match(shell(role), new RegExp(screenLabel), `${role} 应始终看到获准访问的管理条目`)
+    assert.match(shell(role), new RegExp(adminItem), `${role} 应始终看到获准访问的管理条目`)
+    assert.match(shell(role), new RegExp(SCREEN_LABELS["supplier-dbs"]), `${role} 应看到管理条目名称`)
   }
   for (const role of ["user", "owner", "manager"]) {
     assert.doesNotMatch(shell(role), new RegExp(modeTab), `${role} 不该看到平台管理模式`)
-    assert.doesNotMatch(shell(role), new RegExp(screenLabel), `${role} 不该看到管理屏条目`)
+    assert.doesNotMatch(shell(role), new RegExp(adminItem), `${role} 不该看到管理屏条目`)
   }
   // 管理条目和分组不再依赖当前选中的业务屏。
   const deepLink = shell("admin", "supplier-dbs")
-  assert.match(deepLink, new RegExp(screenLabel))
+  assert.match(deepLink, new RegExp(adminItem))
   assert.match(deepLink, new RegExp(modeTab))
   // 非 staff 深链同一屏：侧栏留在工作台，不出现平台管理模式。
   assert.doesNotMatch(shell("user", "supplier-dbs"), new RegExp(modeTab))
 })
 
-test("平台货源页面就是画廊：管理入口已迁到主菜单", () => {
+test("平台商品库页面就是画廊：管理入口已迁到主菜单", () => {
   const html = renderToStaticMarkup(
     <NotificationsProvider>
       <CatalogScreen http={http(unknown)} stores={[store]} onOpenListing={() => {}} />
@@ -170,7 +171,7 @@ test("平台货源页面就是画廊：管理入口已迁到主菜单", () => {
   // 画廊只有卖家面形态：没有视图切换、没有管理入口、没有目标店铺选择器。
   assert.doesNotMatch(
     html,
-    new RegExp(`${SCREEN_LABELS["supplier-dbs"]}|返回画廊|平台货源视图|role="tablist"`),
+    /返回画廊|平台商品库视图|role="tablist"/,
   )
   assert.doesNotMatch(html, /aria-label="目标店铺"/)
   // 管理面不再从画廊路由：没有 supplier-dbs 的入口/视图状态/面包屑段。
@@ -219,7 +220,7 @@ test("选品模式给模式条与回程：从「批量上架」进来不迷路",
   )
   assert.match(picking, /data-catalog-picking=""/)
   assert.match(picking, /选品模式：把商品加进「上架清单」，再一次批量导入。/)
-  assert.match(picking, /返回批量上架/)
+  assert.match(picking, /aria-label="返回批量上架"/)
   // 模式条不是错误面：不抢 role="alert"，也不另开一个工具行。
   assert.doesNotMatch(picking, /data-catalog-picking=""[^>]*role="alert"/)
 
@@ -248,18 +249,11 @@ test("选品模式的事实源是地址：屏读 ?pick=1，画廊据此摊开清
   assert.match(gallery, /useEffect\(\(\) => \{\s*setQueueOpen\(picking\)\s*\}, \[picking\]\)/)
 })
 
-test("清单行的店铺列表与「去店铺页添加」出口由屏透传给画廊", () => {
+test("选品清单不再要求先设置店铺和 PSD", () => {
   const screen = readFileSync(new URL("./catalog-screen.tsx", import.meta.url), "utf8")
-  // 画廊不自己读 roster、也不自己找路：店铺与出口都从屏上递下去。
-  assert.match(screen, /stores={configured}/)
-  assert.match(screen, /onOpenStores={onOpenStores}/)
-  const gallery = readFileSync(
-    new URL("./gallery/supplier-dbs-gallery.tsx", import.meta.url),
-    "utf8",
-  )
-  assert.match(gallery, /stores={stores}/)
-  assert.match(gallery, /onOpenStores={onOpenStores}/)
+  assert.doesNotMatch(screen, /stores={configured}|onOpenStores={onOpenStores}/)
 })
+
 
 test("product → shop inject snapshot stays leak-free", () => {
   const markup = renderToStaticMarkup(

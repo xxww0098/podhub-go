@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import test from "node:test"
+import { Children, isValidElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 
 import type {
@@ -21,7 +22,8 @@ import {
   statusLabel,
   type OpsListState,
 } from "./returns-model"
-import { ReturnsScreenView, type ReturnsScreenViewProps } from "./returns-screen"
+import { Button } from "@/components/ui/button"
+import { ListPageTail, ReturnsScreenView, type ReturnsScreenViewProps } from "./returns-screen"
 
 const store: OzonStoreView = {
   id: "store_01",
@@ -47,8 +49,8 @@ const store: OzonStoreView = {
   needs_reentry: false,
   can_manage: true,
   can_edit_credential: true,
-  permissions: { manage_store: true, edit_name: true, manage_key_grants: true, manage_tags: true, test_key: true, manage_key: true, delete_store: true },
-    assignee_key_manage: true,
+  permissions: { manage_store: true, edit_name: true, manage_tags: true, test_key: true, manage_key: true, delete_store: true },
+
 }
 
 const returnRow: OpsReturnRowView = {
@@ -93,6 +95,7 @@ function view(overrides: Partial<ReturnsScreenViewProps> = {}) {
     onApplyReturnFilters: () => {},
     onRefreshReturns: () => {},
     onLoadMoreReturns: () => {},
+    returnsFiltersDirty: false,
     returns: {
       loading: false,
       loadingMore: false,
@@ -108,6 +111,7 @@ function view(overrides: Partial<ReturnsScreenViewProps> = {}) {
     onApplyCancelFilters: () => {},
     onRefreshCancellations: () => {},
     onLoadMoreCancellations: () => {},
+    cancellationsFiltersDirty: false,
     cancellations: {
       loading: false,
       loadingMore: false,
@@ -132,13 +136,23 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
-test("ReturnsScreen mounts and 同意 stays in the tab order", () => {
+test("ReturnsScreen mounts with a keyboard-accessible read-only action for each list", () => {
   const source = readFileSync(
     new URL("./returns-screen.tsx", import.meta.url),
     "utf8",
   )
   assert.match(source, /export function ReturnsScreen/)
-  assert.match(source, /aria-label=\{`同意 \$\{row\.posting_number/)
+  const buttons = view().match(/<button\b[^>]*>/g) ?? []
+  for (const label of [
+    `查看 ${returnRow.posting_number}`,
+    `查看 ${cancellationRow.posting_number}`,
+    `查看退货单 ${returnRow.id}`,
+    `查看取消申请 ${cancellationRow.cancellation_id}`,
+  ]) {
+    const button = buttons.find((element) => element.includes(`aria-label="${label}"`))
+    assert.ok(button, `${label} must remain a named native button`)
+    assert.doesNotMatch(button, /\sdisabled(?:\s|=|>)|\saria-disabled="true"|\stabindex="-1"/)
+  }
   assert.doesNotMatch(source, /tabIndex=\{-1\}/)
   assert.match(source, /from "@\/components\/ui\/table"/)
   assert.match(source, /from "@\/components\/ui\/dialog"/)
@@ -163,8 +177,38 @@ test("the AppShell owns the page title and the two lists stay apart", () => {
   assert.match(html, /Ожидает решения продавца/)
   assert.match(html, /aria-label="刷新退货单"/)
   assert.match(html, /aria-label="刷新取消申请"/)
-  assert.match(html, /aria-label="同意 33920145-0021-1"/)
-  assert.match(html, /aria-label="拒绝 33920145-0021-1"/)
+  assert.match(html, /aria-label="筛选退货单"/)
+  assert.match(html, /aria-label="筛选取消申请"/)
+  assert.match(html, /aria-label="查看 33920145-0021-1"/)
+  assert.doesNotMatch(html, /aria-label="(?:同意|拒绝) /)
+})
+
+test("the lists identify the real return and cancellation records without inventing an order number or total", () => {
+  const html = view()
+  assert.match(html, /退货单号/)
+  assert.match(html, /申请单号/)
+  assert.match(html, /发货单号/)
+  assert.match(html, /88120011/)
+  assert.match(html, /91003/)
+  assert.match(html, /主店 · POD Wall Art/)
+  assert.match(html, /已加载 1 条/)
+  assert.doesNotMatch(html, /共 \d+ 条/)
+})
+
+test("missing claim identifiers do not create empty detail links", () => {
+  const html = view({
+    returns: {
+      loading: false, loadingMore: false, error: null,
+      view: { items: [{ ...returnRow, id: "" }], has_next: false, last_id: "" },
+    },
+    cancellations: {
+      loading: false, loadingMore: false, error: null,
+      view: { items: [{ ...cancellationRow, cancellation_id: "" }], last_id: "", counter: 0, has_next: false },
+    },
+  })
+  assert.doesNotMatch(html, /aria-label="查看(?:退货单|取消申请) /)
+  assert.match(html, /aria-label="查看 33920145-0018-1"/)
+  assert.match(html, /aria-label="查看 33920145-0021-1"/)
 })
 
 test("identifiers use the measured mono face and stay selectable", () => {
@@ -293,6 +337,28 @@ test("a refresh failure keeps the painted list and retries the same query", () =
   assert.doesNotMatch(html, /重试下一页/)
 })
 
+test("the tail loads the next cursor and retries the operation that failed", () => {
+  const calls: string[] = []
+  const base: Parameters<typeof ListPageTail>[0] = {
+    hasNext: true, hasRows: true, rowCount: 1, filtersDirty: false,
+    loading: false, loadingMore: false, error: null,
+    onRetry: () => calls.push("refresh"), onLoadMore: () => calls.push("next"),
+  }
+  const tailButton = (props: Parameters<typeof ListPageTail>[0]) => {
+    const tail = ListPageTail(props)
+    assert.ok(tail)
+    const child = Children.toArray(tail.props.children).find((item) => isValidElement(item) && item.type === Button)
+    assert.ok(isValidElement<{ onClick: () => void; disabled?: boolean }>(child))
+    return child.props
+  }
+
+  tailButton(base).onClick()
+  tailButton({ ...base, error: { code: "x", message: "x", retry: "append" } }).onClick()
+  tailButton({ ...base, error: { code: "x", message: "x", retry: "replace" } }).onClick()
+  assert.deepEqual(calls, ["next", "next", "refresh"])
+  assert.equal(tailButton({ ...base, filtersDirty: true }).disabled, true)
+})
+
 test("the list controller preserves committed rows and fences stale waves", async () => {
   let generation = 1
   let state: OpsListState<OpsReturnsListView> = {
@@ -399,6 +465,12 @@ test("loading names the list that is still in flight", () => {
   })
   assert.match(html, /正在读取退货单/)
   assert.match(html, /正在读取取消申请/)
+  for (const label of ["正在刷新退货单", "正在刷新取消申请"]) {
+    const button = (html.match(/<button\b[^>]*>/g) ?? []).find((element) => element.includes(`aria-label="${label}"`))
+    assert.ok(button, `${label} must remain named while loading`)
+    assert.match(button, /\sdisabled(?:\s|=|>)/)
+    assert.match(button, /aria-busy="true"/)
+  }
   assert.equal((html.match(/role="status"/g) ?? []).length, 2)
 })
 
@@ -474,6 +546,12 @@ test("pagination to the last page is offered only while Ozon says there is more"
     },
   })
   assert.doesNotMatch(lastPage, /加载下一页/)
+})
+
+test("editing filters prevents appending a different query to the visible rows", () => {
+  const html = view({ returnsFiltersDirty: true })
+  assert.match(html, /<button\b[^>]*disabled[^>]*>[^<]*请先筛选/)
+  assert.doesNotMatch(html, /加载下一页/)
 })
 
 test("model helpers keep Ozon text and do not invent a category", () => {

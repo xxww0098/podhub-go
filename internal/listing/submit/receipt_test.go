@@ -8,7 +8,7 @@ import (
 
 func TestImageDigestsMatchTheSharedUploadKey(t *testing.T) {
 	digest := strings.Repeat("a", 64)
-	url := "https://cdn.example/uploads/2023-11-14/1700000000000-22222222-2222-4222-8222-222222222222/images/teams/11111111-1111-4111-8111-111111111111/sha256/" + digest + ".jpg"
+	url := "https://cdn.example/uploads/2023-11-14/1700000000000-22222222-2222-4222-8222-222222222222/" + digest + ".jpg"
 	body := []byte(`{"items":[{"offer_id":"A","images":["` + url + `","` + url + `"],"primary_image":"` + url + `"}]}`)
 	other := []byte(`{"items":[{"offer_id":"B","primary_image":"https://media.example.invalid/hero.jpg"}]}`)
 	got := imageDigests(body, other, body)

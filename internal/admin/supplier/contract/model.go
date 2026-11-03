@@ -21,7 +21,36 @@ type NormalizedDb struct {
 	ViewPrefs       json.RawMessage
 	KeepViewPrefs   bool
 	Template        string
-	AccountEmail    *string
+	FactoryID       string
+}
+
+// Factory is independent from the product libraries that bind to it.
+type Factory struct {
+	FactoryID    string           `json:"factoryId"`
+	Name         string           `json:"name"`
+	Country      string           `json:"country"`
+	Contact      string           `json:"contact"`
+	InternalNote string           `json:"internalNote"`
+	Icon         string           `json:"icon"`
+	CreatedAtMs  int64            `json:"createdAtMs"`
+	UpdatedAtMs  int64            `json:"updatedAtMs"`
+	Libraries    []FactoryLibrary `json:"libraries"`
+}
+
+type FactoryLibrary struct {
+	SourceID string `json:"sourceId"`
+	Name     string `json:"name"`
+	Country  string `json:"country"`
+	Icon     string `json:"icon"`
+}
+
+type FactoryInput struct {
+	Name         string
+	Country      string
+	Contact      string
+	InternalNote string
+	Icon         string
+	AccountEmail string
 }
 
 // PropSeed is one factory attribute inserted with the new source.
@@ -87,42 +116,42 @@ func Bounded(raw string, max int, message string) (string, error) {
 	return value, nil
 }
 
-// SourceRef is SellerSupplierDbData.
-type SourceRef struct {
-	SourceID string `json:"sourceId"`
-	Name     string `json:"name"`
-	Country  string `json:"country"`
-	Icon     string `json:"icon"`
+type FactoryRef struct {
+	FactoryID string `json:"factoryId"`
+	Name      string `json:"name"`
+	Country   string `json:"country"`
+	Icon      string `json:"icon"`
 }
 
 // Member is one supplier account. Name is omitted when blank.
 type Member struct {
-	MemberID    string    `json:"memberId"`
-	Source      SourceRef `json:"source"`
-	Email       string    `json:"email"`
-	Name        *string   `json:"name,omitempty"`
-	Status      string    `json:"status"`
-	CreatedAtMs int64     `json:"createdAtMs"`
+	MemberID    string     `json:"memberId"`
+	AccountUUID string     `json:"accountUuid"`
+	Factory     FactoryRef `json:"factory"`
+	Email       string     `json:"email"`
+	Name        *string    `json:"name,omitempty"`
+	Status      string     `json:"status"`
+	CreatedAtMs int64      `json:"createdAtMs"`
 }
 
 // AccountGroup is one factory and its members, in SQL order.
 type AccountGroup struct {
-	Source  SourceRef `json:"source"`
-	Members []Member  `json:"members"`
+	Factory FactoryRef `json:"factory"`
+	Members []Member   `json:"members"`
 }
 
-// GroupAccounts keeps adjacent rows that share a source id together.
+// GroupAccounts keeps adjacent rows that share a factory together.
 func GroupAccounts(rows []Member) []AccountGroup {
 	if rows == nil {
 		rows = []Member{}
 	}
 	var groups []AccountGroup
 	for _, row := range rows {
-		if n := len(groups); n > 0 && groups[n-1].Source.SourceID == row.Source.SourceID {
+		if n := len(groups); n > 0 && groups[n-1].Factory.FactoryID == row.Factory.FactoryID {
 			groups[n-1].Members = append(groups[n-1].Members, row)
 			continue
 		}
-		groups = append(groups, AccountGroup{Source: row.Source, Members: []Member{row}})
+		groups = append(groups, AccountGroup{Factory: row.Factory, Members: []Member{row}})
 	}
 	if groups == nil {
 		groups = []AccountGroup{}
@@ -132,10 +161,10 @@ func GroupAccounts(rows []Member) []AccountGroup {
 
 // NormalizedAccount is a create-account body.
 type NormalizedAccount struct {
-	SourceID string
-	Email    string
-	Name     *string
-	Password *string
+	FactoryID string
+	Email     string
+	Name      *string
+	Password  *string
 }
 
 // AccountPatch is a status and/or password change.

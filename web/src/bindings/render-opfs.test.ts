@@ -3,11 +3,70 @@
  */
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
-import test from "node:test"
+import test, { afterEach } from "node:test"
 
 import { renderOpfs } from "./render-opfs"
 import { downloadSupplierTemplate } from "./http-media"
 import { route } from "@/api/routes"
+import { getTemplate, putTemplate } from "@/render/opfs"
+import { restoreOpfsTestGlobals, stubOpfs } from "@/render/opfs-test-support"
+
+afterEach(restoreOpfsTestGlobals)
+
+test("picking a user PSD commits local bytes before returning and never uploads them", async () => {
+  stubOpfs()
+  const bytes = new Uint8Array(readFileSync(new URL("../../../fixtures/psd/synthetic/tiny-smart-mask-warp-groups.psd", import.meta.url)))
+  const file = new File([bytes], "local.psd", { type: "image/vnd.adobe.photoshop" })
+  const picker = Object.getOwnPropertyDescriptor(globalThis, "showOpenFilePicker")
+  const original = globalThis.fetch
+  let requests = 0
+  Object.defineProperty(globalThis, "showOpenFilePicker", { configurable: true, value: async () => [{ getFile: async () => file }] })
+  globalThis.fetch = async () => { requests++; throw new Error("user PSD must stay local") }
+  try {
+    const picked = await renderOpfs.workflowPickTemplatePsd()
+    assert.equal(picked.asset.file_name, "local.psd")
+    assert.deepEqual(await getTemplate(picked.asset_id), bytes)
+    assert.equal(requests, 0)
+  } finally {
+    globalThis.fetch = original
+    if (picker) Object.defineProperty(globalThis, "showOpenFilePicker", picker)
+    else Reflect.deleteProperty(globalThis, "showOpenFilePicker")
+  }
+})
+
+test("a user PSD is restored from this device without a cloud request", async () => {
+  const fs = stubOpfs()
+  const bytes = new Uint8Array([1, 2, 3, 4])
+  const digest = await putTemplate(bytes)
+  const original = globalThis.fetch
+  let requests = 0
+  globalThis.fetch = async () => { requests++; throw new Error("user PSD must stay local") }
+  try {
+    const restored = await renderOpfs.workflowRestoreTemplatePsd(digest)
+    assert.equal(restored.asset_id, digest)
+    assert.deepEqual(await getTemplate(digest), bytes)
+    fs.written.delete(`templates/${digest}.psd`)
+    await assert.rejects(renderOpfs.workflowRestoreTemplatePsd(digest), { code: "workflow_template_missing" })
+    assert.equal(requests, 0, "a missing local PSD asks for the original file, never a cloud backup")
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
+test("a corrupt local user PSD is refused without downloading a replacement", async () => {
+  const fs = stubOpfs()
+  const digest = await putTemplate(new Uint8Array([1, 2, 3]))
+  fs.contents.set(`templates/${digest}.psd`, new Uint8Array([3, 2, 1]))
+  const original = globalThis.fetch
+  let requests = 0
+  globalThis.fetch = async () => { requests++; throw new Error("user PSD must stay local") }
+  try {
+    await assert.rejects(renderOpfs.workflowRestoreTemplatePsd(digest), { code: "workflow_template_missing" })
+    assert.equal(requests, 0)
+  } finally {
+    globalThis.fetch = original
+  }
+})
 
 test("supplier template download uses the product route and refuses a mismatched identity", async () => {
   const original = globalThis.fetch

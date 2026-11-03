@@ -1,4 +1,4 @@
-import { AlertTriangle, Inbox, MessageSquare, RefreshCw } from "lucide-react"
+import { AlertTriangle, Inbox, MessageSquare, RefreshCw, Reply } from "lucide-react"
 import { useState, type ReactNode } from "react"
 
 import type {
@@ -12,6 +12,7 @@ import { IdCode } from "@/components/id-code"
 import { Section } from "@/components/section"
 import { StateChip } from "@/components/state-chip"
 import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import {
   Empty,
@@ -163,7 +164,7 @@ function PageTail({
   return (
     <div
       aria-live="polite"
-      className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-4 py-2.5 text-compact text-muted-foreground"
+      className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border px-4 py-2.5 text-compact text-muted-foreground"
     >
       <span>
         已加载{" "}
@@ -205,13 +206,13 @@ function TableFrame({
   onLoadMore: () => void
 }) {
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-card">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card">
       <div
         role="region"
         aria-label={label}
         aria-busy={busy}
         tabIndex={0}
-        className="max-h-[32rem] overflow-auto"
+        className="min-h-0 flex-1 overflow-auto"
       >
         {children}
       </div>
@@ -242,6 +243,7 @@ export function ReviewsSection({
   return (
     <Section
       title="评价"
+      className="h-full min-h-0"
       action={
         read.hasSnapshot && isAvailable(view.kind) ? (
           <span className="font-mono text-xs tabular-nums text-muted-foreground">
@@ -308,18 +310,17 @@ export function ReviewsSection({
                     />
                   </TableCell>
                   <TableCell>
-                    <Button
-                      size="xs"
+                    <IconButton
+                      icon={Reply}
+                      label={`回复评价 ${item.review_id}`}
+                      size="icon-xs"
                       variant="outline"
-                      aria-label={`回复评价 ${item.review_id}`}
                       onClick={(event) => {
                         event.stopPropagation()
                         setDraft("")
                         setReply(item)
                       }}
-                    >
-                      回复
-                    </Button>
+                    />
                   </TableCell>
                 </TableRow>
               ))}
@@ -365,6 +366,7 @@ export function QuestionsSection({
   return (
     <Section
       title="提问"
+      className="h-full min-h-0"
       action={
         read.hasSnapshot && isAvailable(view.kind) ? (
           <span className="font-mono text-xs tabular-nums text-muted-foreground">
@@ -429,18 +431,17 @@ export function QuestionsSection({
                     />
                   </TableCell>
                   <TableCell>
-                    <Button
-                      size="xs"
+                    <IconButton
+                      icon={Reply}
+                      label={`回复提问 ${item.question_id}`}
+                      size="icon-xs"
                       variant="outline"
-                      aria-label={`回复提问 ${item.question_id}`}
                       onClick={(event) => {
                         event.stopPropagation()
                         setDraft("")
                         setReply(item)
                       }}
-                    >
-                      回复
-                    </Button>
+                    />
                   </TableCell>
                 </TableRow>
               ))}
@@ -532,6 +533,7 @@ export function ChatsSection({
   return (
     <Section
       title="聊天"
+      className="h-full min-h-0"
       action={
         read.hasSnapshot && isAvailable(view.kind) ? (
           <span className="font-mono text-xs tabular-nums text-muted-foreground">

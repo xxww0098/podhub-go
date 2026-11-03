@@ -1,3 +1,5 @@
+import { ImageSetButton } from "../image-sets/image-set-button"
+import { useRowImageSetURLs } from "../image-sets/image-set-cache"
 import { memo } from "react"
 import type { CategoryFieldView, WorkflowDraftView } from "@/bindings/commands"
 import { SaveStateChip, type SaveState } from "@/components/save-state-chip"
@@ -35,6 +37,7 @@ import { colIndexFor, typedCellRawValue } from "./workbench-grid-navigation"
 import { MediaRoleCell } from "./workbench-media-cell"
 import { PublishStateCell } from "./workbench-publish-state-cell"
 import { cellClass } from "./workbench-table-classes"
+import { mediaSelectionOpen } from "./media-selection"
 
 export const WorkbenchRow = memo(function WorkbenchRow({
   row,
@@ -50,7 +53,6 @@ export const WorkbenchRow = memo(function WorkbenchRow({
   cardPrice,
   cardOldPrice,
   cardTheme,
-  cardRichContent,
   activeColIndex,
   ripplingCells,
 }: {
@@ -67,9 +69,8 @@ export const WorkbenchRow = memo(function WorkbenchRow({
   /** 卡默认字段里的两个价格：本行留空时继承的兜底，只作占位提示。 */
   cardPrice: string
   cardOldPrice: string
-  /** 卡默认里的 主题 / JSON富内容 —— 与两列价格同一套 tableInput 兜底。 */
+  /** 卡默认里的主题 —— 与两列价格同一套 tableInput 兜底。 */
   cardTheme: string
-  cardRichContent: string
   activeColIndex: number | null
   ripplingCells: ReadonlySet<string>
 }) {
@@ -88,6 +89,7 @@ export const WorkbenchRow = memo(function WorkbenchRow({
   const { rowRef, inView } = useInTableView()
   const sourcePreview = useSourcePreview(row.source?.handle, inView)
   const sourceUrl = row.previewUrl ?? sourcePreview
+  const aiImageURLs = useRowImageSetURLs(row)
 
   const readCell = (field: CategoryFieldView | undefined) => {
     if (!draft || !field) return ""
@@ -338,31 +340,6 @@ export const WorkbenchRow = memo(function WorkbenchRow({
           />
         )}
       </TableCell>
-      <TableCell
-        className={cellClass("rich_content", undefined, activeColIndex === colIndexFor("rich_content"), ripplingCells.has(`${row.draftId}:rich_content`))}
-        onClick={() => actions.focusCell(index, colIndexFor("rich_content"))}
-      >
-        {fields.richContent ? (
-          <WorkbenchCellPreview
-            value={typedCell(fields.richContent)}
-            disabled={!editable}
-            placeholder={
-              cellCleared(fields.richContent)
-                ? PROSE_EDITOR.rich_content.placeholder
-                : cardRichContent || PROSE_EDITOR.rich_content.placeholder
-            }
-            ariaLabel={PROSE_EDITOR.rich_content.ariaLabel(row.imageName)}
-            onOpen={() =>
-              openProse("rich_content", typedCell(fields.richContent))
-            }
-            sourceLayer={row.sourceLayers?.[fields.richContent.key]}
-          />
-        ) : (
-          <span className="text-compact text-muted-foreground/60">
-            当前类目无 JSON富内容属性
-          </span>
-        )}
-      </TableCell>
       {MEDIA_ROLE_COLUMNS.map((role) => {
         const colIdx = colIndexFor(role)
         return (
@@ -375,6 +352,11 @@ export const WorkbenchRow = memo(function WorkbenchRow({
               draftId={row.draftId}
               role={role}
               lifecycle={lifecycle}
+              draft={draft}
+              aiImageURLs={role === "images" || role === "primary_image" ? aiImageURLs : undefined}
+              selectionDisabled={!mediaSelectionOpen(row, product)}
+              extraAction={role === "images" ? <ImageSetButton row={row} sourceReadable={Boolean(sourcePreview)} onApply={actions.editMedia} /> : undefined}
+              onSelect={(key, urls) => actions.editField(row.draftId, key, key === "images" ? { kind: "url_list", value: urls } : { kind: "text", value: urls[0]! }, {})}
               sourceLayer={row.sourceLayers?.[role]}
               onRetryMedia={() => actions.retryStage(row.id, mediaRetry(row.render, row.upload)?.verb ?? "deliver")}
             />

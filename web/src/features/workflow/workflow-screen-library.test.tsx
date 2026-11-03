@@ -5,7 +5,7 @@ import test from "node:test"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { route } from "@/api/routes"
-import { cardDraftView, cardSummaryView } from "@/bindings/http-listing"
+import { cardDraftView, cardSummaryView, listingHttp } from "@/bindings/http-listing"
 import { cardPayload, type ListingCardView } from "@/bindings/listing-projection"
 import { renderOpfs } from "@/bindings/render-opfs"
 import { refuse } from "@/bindings/refusal"
@@ -31,6 +31,51 @@ import { patchListingWorkbench, peekListingWorkbench } from "./workbench/listing
 function wireCard(card: ListingCardView): ListingCardView {
   return JSON.parse(JSON.stringify(card))
 }
+
+test("a failed library refresh retains saved forms and a successful retry clears the read error", async () => {
+  const originalList = listingHttp.listingCardListSavedDrafts
+  const originalToast = toast.add
+  invalidateAllSessionCaches()
+  let forms = [cardSummaryView({ id: "saved", title: "已保存方案", revision: 1, payload: {}, updated_at_ms: 1 })]
+  let loadError = false
+  const busy: boolean[] = []
+  let library!: ReturnType<typeof useWorkflowScreenLibrary>
+  function Capture() {
+    const state = useWorkflowScreenState(undefined, 1, true)
+    library = useWorkflowScreenLibrary({
+      state: { ...state,
+        setSavedForms(next) { forms = typeof next === "function" ? next(forms) : next },
+        setLibraryLoadError(next) { loadError = typeof next === "function" ? next(loadError) : next },
+        setLibraryBusy(next) { if (typeof next === "boolean") busy.push(next) },
+      },
+      workspaceId: 1, skipNextAutosave: { current: false }, setCustomStoreQuotas: () => {},
+      resetRowAutosaves: () => {}, projectQueueState: () => {}, restoreProductInstances: () => {}, leaveRunner: async () => {},
+    })
+    return null
+  }
+  renderToStaticMarkup(<Capture />)
+  toast.add = (() => "library-load-test") as typeof toast.add
+  let reads = 0
+  listingHttp.listingCardListSavedDrafts = async () => {
+    reads++
+    if (reads === 1) throw new Error("service unavailable")
+    return []
+  }
+  try {
+    await library.refreshSavedForms()
+    assert.deepEqual(forms.map((form) => form.draft_id), ["saved"])
+    assert.equal(loadError, true)
+    await library.refreshSavedForms({ force: true })
+    assert.deepEqual(forms, [])
+    assert.equal(loadError, false)
+    assert.equal(reads, 2)
+    assert.deepEqual(busy, [true, false, true, false])
+  } finally {
+    listingHttp.listingCardListSavedDrafts = originalList
+    toast.add = originalToast
+    invalidateAllSessionCaches()
+  }
+})
 
 async function fixture() {
   const fx = await publishRepairFixture()
@@ -116,7 +161,7 @@ test("normal screen entry primes the exact Cloud Card and reuses it for queue an
     assert.equal(method, "GET")
     if (url === route("listingCardsById", { id: "card" })) return raw
     if (url.startsWith(`${route("catalogSchema")}?`)) return { ...fx.schema,
-      nativeMaterial: { snapshot: fx.nativeSchema, searchMaterials: [] } }
+      native_material: { snapshot: fx.nativeSchema, search_materials: [] } }
     if (url.startsWith(`${route("listingRows")}?`)) return { items: [fx.raw], next_cursor: null }
     if (url.startsWith(`${route("listingIntents")}?`)) return { items: [intent], next_cursor: null }
     throw new Error(`unexpected screen entry request ${url}`)
@@ -226,7 +271,7 @@ test("supplier template recovery uses the primed Card and preserves verify-once 
   const cloud = serve(({ url, method }) => {
     if (url === route("listingCardsById", { id: "card" })) { assert.equal(method, "GET"); return raw }
     if (url.startsWith(`${route("catalogSchema")}?`)) return { ...fx.schema,
-      nativeMaterial: { snapshot: fx.nativeSchema, searchMaterials: [] } }
+      native_material: { snapshot: fx.nativeSchema, search_materials: [] } }
     assert.equal(url, route("mediaSupplierProductsByProductIdVerify", { product_id: "supplier-fixture" }))
     assert.equal(method, "POST")
     return { product_id: "supplier-fixture", psd_sha256: "template-fixture", psd_file_name: "supplier.psd", video_count: 0 }
@@ -270,7 +315,7 @@ test("a normal entry without a PSD binding retains manual template guidance and 
     assert.equal(method, "GET")
     if (url === route("listingCardsById", { id: "card" })) return raw
     assert.ok(url.startsWith(`${route("catalogSchema")}?`))
-    return { ...fx.schema, nativeMaterial: { snapshot: fx.nativeSchema, searchMaterials: [] } }
+    return { ...fx.schema, native_material: { snapshot: fx.nativeSchema, search_materials: [] } }
   })
   try {
     await fx.library.openRunner("card")
@@ -301,7 +346,7 @@ for (const phase of ["card", "schema"] as const) {
       opening = fx.library.openRunner("card")
       await requested
       invalidateAllSessionCaches()
-      finish(phase === "card" ? fx.card : { ...fx.schema, nativeMaterial: { snapshot: fx.nativeSchema, searchMaterials: [] } })
+      finish(phase === "card" ? fx.card : { ...fx.schema, native_material: { snapshot: fx.nativeSchema, search_materials: [] } })
       await opening
       assert.equal(peekCardSession("card"), undefined)
       assert.deepEqual(fx.restored, [])
@@ -313,7 +358,7 @@ for (const phase of ["card", "schema"] as const) {
       assert.equal(fx.state.runnerOpenLock.current, false)
     } finally {
       fx.state.runnerGeneration.current++
-      finish?.(phase === "card" ? fx.card : { ...fx.schema, nativeMaterial: { snapshot: fx.nativeSchema, searchMaterials: [] } })
+      finish?.(phase === "card" ? fx.card : { ...fx.schema, native_material: { snapshot: fx.nativeSchema, search_materials: [] } })
       try { await opening }
       finally { cloud.restore(); fx.restore() }
     }
@@ -336,7 +381,7 @@ test("normal entry cannot overwrite a replacement Card session that arrived whil
     opening = fx.library.openRunner("card")
     await requested
     const replacement = primeCardSession({ ...fx.card, revision: 12 })
-    finish({ ...fx.schema, nativeMaterial: { snapshot: fx.nativeSchema, searchMaterials: [] } })
+    finish({ ...fx.schema, native_material: { snapshot: fx.nativeSchema, search_materials: [] } })
     await opening
     assert.equal(peekCardSession("card"), replacement)
     assert.equal(peekCardSession("card")?.revision(), 12)
@@ -348,7 +393,7 @@ test("normal entry cannot overwrite a replacement Card session that arrived whil
     assert.equal(fx.state.runnerOpenLock.current, false)
   } finally {
     fx.state.runnerGeneration.current++
-    finish?.({ ...fx.schema, nativeMaterial: { snapshot: fx.nativeSchema, searchMaterials: [] } })
+    finish?.({ ...fx.schema, native_material: { snapshot: fx.nativeSchema, search_materials: [] } })
     try { await opening }
     finally { cloud.restore(); fx.restore() }
   }

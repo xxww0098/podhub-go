@@ -44,14 +44,11 @@ const (
 	MsgManagerOnly        = "需要主管权限"
 	MsgReassignManager    = "需要主管权限才能改派店铺"
 	MsgAssigneeForeign    = "指派对象不是本工作空间成员"
-	MsgAssigneeOther      = "不能把店铺指派给其他成员"
 	MsgClientIDDuplicate  = "同一 Workspace 内 Client ID 必须唯一"
 	MsgRevisionStale      = "Store revision 已过期，请刷新后重试"
 	MsgRevisionChanged    = "Store revision 已变化，请刷新后重试"
 	MsgStoreUpdatedElse   = "Store 已被其他人更新，请刷新后重试"
-	MsgPatchEmpty         = "至少需要修改名称、Client ID、指派人密钥管理、标签或分组"
-	MsgGrantOwnerOnly     = "只有工作空间所有者可以允许指派人管理密钥"
-	MsgGrantNeedsAssignee = "先指定指派人，再允许其管理密钥"
+	MsgPatchEmpty         = "至少需要修改名称、Client ID、标签或分组"
 	MsgNoPatchKeyGrant    = "没有修改该店铺凭据身份的权限"
 	MsgNoKeyPermission    = "没有管理该店铺密钥的权限"
 	MsgTagMissing         = "标签不存在或已删除"
@@ -149,6 +146,10 @@ func AsAPIError(err error) (*APIError, bool) {
 // Validation is HTTP 400 validation.
 func Validation(message string) *APIError {
 	return &APIError{Status: http.StatusBadRequest, Code: CodeValidation, Message: message}
+}
+
+func ProductExportTooLarge() *APIError {
+	return &APIError{Status: http.StatusRequestEntityTooLarge, Code: "EXPORT_TOO_LARGE", Message: "导出超过 5 万行或 64 MB，请缩小筛选范围"}
 }
 
 // Forbidden is HTTP 403 forbidden.

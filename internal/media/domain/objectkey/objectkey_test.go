@@ -31,7 +31,7 @@ func TestComposeAndParseRoundTrip(t *testing.T) {
 	}
 }
 
-func TestBatchedKeyMatchesRustShape(t *testing.T) {
+func TestBatchedKeyIsScopedByStorageAndBatch(t *testing.T) {
 	issued := time.Date(2026, 10, 15, 20, 0, 0, 0, time.UTC)
 	ms := issued.UnixMilli()
 	id := workspace
@@ -40,7 +40,7 @@ func TestBatchedKeyMatchesRustShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "uploads/2026-10-15/" + strconv.FormatInt(ms, 10) + "-" + id + "/images/teams/" + workspace + "/sha256/" + digest + ".png"
+	want := "uploads/2026-10-15/" + strconv.FormatInt(ms, 10) + "-" + id + "/" + digest + ".png"
 	if key != want {
 		t.Fatalf("got %s", key)
 	}
@@ -56,6 +56,9 @@ func TestBatchedKeyMatchesRustShape(t *testing.T) {
 	}
 	if _, ok := ParseUploadKey("images/teams/old/sha256/old.jpg"); ok {
 		t.Fatal("legacy key is not a batch key")
+	}
+	if _, ok := ParseUploadKey(strings.Replace(key, "2026-10-15", "2026-10-16", 1)); ok {
+		t.Fatal("date must match the batch timestamp")
 	}
 }
 

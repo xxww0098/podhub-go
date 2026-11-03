@@ -11,6 +11,19 @@ import (
 	"github.com/xxww0098/podhub-go/internal/suppliercatalog/contract"
 )
 
+// CanMaintain checks the current grant without loading the catalogue contents.
+func (r Repo) CanMaintain(ctx context.Context, userID int64, sourceID string) (bool, error) {
+	var allowed bool
+	err := r.read(ctx, userID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT EXISTS (
+			SELECT 1 FROM public.sc_catalog_managers m JOIN public.account_users u ON u.id=m.user_id
+			WHERE m.source_id=$1 AND m.user_id=$2 AND m.status='active'
+			  AND u.account_kind='platform' AND u.disabled_at IS NULL
+		)`, sourceID, userID).Scan(&allowed)
+	})
+	return allowed, err
+}
+
 // requireManaged refuses a source the caller does not actively manage.
 //
 // This is a SECOND fence, not the authorization. RLS already filters every
@@ -27,6 +40,18 @@ func (r Repo) requireManaged(ctx context.Context, tx pgx.Tx, userID int64, sourc
 	}
 	if !ok {
 		return contract.Forbidden()
+	}
+	return nil
+}
+
+func requireSuperAdmin(ctx context.Context, tx pgx.Tx, userID int64) error {
+	var allowed bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM public.account_users
+		WHERE id=$1 AND role='super_admin' AND account_kind='platform' AND disabled_at IS NULL)`, userID).Scan(&allowed); err != nil {
+		return constraint(err)
+	}
+	if !allowed {
+		return contract.SuperAdminRequired()
 	}
 	return nil
 }

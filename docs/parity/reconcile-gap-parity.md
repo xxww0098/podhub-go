@@ -2,11 +2,13 @@
 
 对照提交：Rust `a03d735`（v0.0.112）。本环境克隆 `github.com/xxww0098/podhub` 失败（匿名克隆与凭据改写都是 Repository not found，`gh api` 对该仓库 404）。下面凡是没有打开 Rust 函数体的 SQL、间隔、请求头和信封布局，都标了无法对照，不把自测生成的密文或推断的 SQL 写成 golden。
 
+2026-10-27 更新：下文 PR-G 的 `fetch_not_ported` 与固定随机窗口是历史行为。当前类目调度改为共享 `catalog.Fetcher`，手动与每日任务都实际读取类目树和已引用坐标，更新缓存、当前字段及 canonical 版本；固定时刻和随机窗口均持久化下次时间。任务使用现有 `lease_epoch`、90 秒租约和续租，旧任务与配置变更隔离；客户端断开继续执行，进程退出中止并记录，崩溃遗留租约到期后恢复。相关普通数据库角色回归同时覆盖未发布平台商品坐标、抢占、取消和重复执行边界；不代表 WB 流程或真实发布通过。
+
 ## 做了什么
 
-1. 对账进程的六个空转扫描接上了 tick。`UnknownImportsScan` 仍是 `seller.Attach` 里的 `submit.ProbeDue`，没有被换掉。单实例座位仍是 `pg_try_advisory_lock(0x6f7a6f6e5f72636c)`，锁在 dedicated 连接上。
+1. 对账进程的六个空转扫描接上了 tick。`UnknownImportsScan` 使用 `internal/app/worker` 中 `Attach` 装配的 `submit.ProbeDue`；2026-10-25 已改为装配层直接调用，删除原 `seller.Attach` 全局回填。单实例座位仍是 `pg_try_advisory_lock(0x6f7a6f6e5f72636c)`，锁在 dedicated 连接上。
 2. listing 作业在 worker 返回 nil 之后结算账单：成功且标价大于 0 时，把一条 `external_task_id` 抄进 `result_ref.taskId`，再调用已有的 `ChargeListingSubmit`。失败或取消且操作处于 `reserved` / `outcome_unknown` 时走已有的 `releaseOne`。已结算的不退。还在 `running` 的（发出后崩溃）不记账。
-3. API 进程按本地间隔跑这些已有函数：AI `SweepStranded` / `PruneBodies`，权益 `SweepEntitlements`（现在含店铺配额），`ReapReservations`，支付台账回放 `ReconcilePayments`，`event_inbox_events` 与 `client_listing_logs` 的保留删除，类目抓取时刻表 `TickFetch`。slice 清桶仍只在 media-gc 进程，这里不启动，也不删真实桶。
+3. API 进程按本地间隔跑这些已有函数：AI `SweepStranded` / `PruneBodies`，权益 `SweepEntitlements`（现在含店铺配额），`ReapReservations`，支付台账回放 `ReconcilePayments`，`event_inbox_events` 与 `client_listing_logs` 的保留删除，类目抓取时刻表 `TickFetch`。slice 清桶仍只在 media-gc 进程，这里不启动，也不删真实桶。跨组织的四个扫描（滞留、响应体清理、预留释放、客户端日志删除）走 00368 的 `db.Maintenance()`，权限只到各自那一条语句。
 4. 新迁移 `00292_podhub_app_ai_billing_grants.sql` 给 `podhub_app` 和 `podhub_worker` 补了 `ai_requests`、`payment_orders`、`redeem_codes`、`member_seat_lots` 的 `SELECT, INSERT, UPDATE` 以及对应序列的 `USAGE, SELECT`。没有改历史迁移，没有改 PL/pgSQL，没有加新的 RLS 策略。
 5. `internal/platform/seal` 按本地 AES-256-GCM 布局开关店铺信封。密钥只从 `config.Load` 读入。测试用测试密钥做往返。没有 `media_accounts` 表。
 6. `docs/parity/listing-submit-parity.md` 第 6、13 条改成当前状态：未知导入探测仍不带凭据头；六个扫描已有 tick，未证实的状态转移单独留下。
@@ -16,9 +18,9 @@
 
 Rust 仓库无法克隆，所以没有 Rust 进程、没有从 Rust 源码抄下来的新 golden。
 
-已跑（本环境 Postgres 16，`PODHUB_PARITY_DSN` 指向 127.0.0.1）：
+历史验证使用回环 Postgres 16（`PODHUB_PARITY_DSN` 指向 127.0.0.1）。下面命令已按当前包布局更新，本轮文档清理未重跑：
 
-- `go test ./internal/platform/seal/ ./internal/billing/ ./internal/catalog/ ./internal/config/ ./internal/app/scans/ ./tests/archtest/`
+- `go test ./internal/platform/seal/ ./internal/billing/... ./internal/catalog/... ./internal/platform/config/ ./internal/app/scans/ ./tests/archtest/`
 - `go test ./tests/integration/ -run 'TestReconcileGaps|TestResultConsistency'`
 
 `TestReconcileGaps` 在回环 Postgres 上核对：写授权、缺 GUC 时 `billing_operations` 不可见且不能插入、成功作业一条 hold 加一条 settle 且 `taskId` 为 `42`、失败作业把 `reserved` 释放到 held 为 0、店铺配额只暂停非手工且未删除的超额店、支付台账 `paid` 把充值单打成 `paid` 并加余额、席位单保持 `pending`、未知写保持 `result_unknown` 且 `reconcile_after` 推后、分组保持 `pending` 并写上租约、过期 pass page 被删、批量为 0 时不入队商品同步、显式 limit 入队一条、代发同一桶只入队一条且取消后订单仍是 `ready`、已接受探测带上 Client-Id 和 Api-Key 并保持 `accepted`、过期 inbox 行被删、类目 tick 写下 `fetch_not_ported` 且不改 `last_status` / `failure_streak`。
@@ -30,11 +32,11 @@ Rust 仓库无法克隆，所以没有 Rust 进程、没有从 Rust 源码抄下
 - 六个扫描以前固定返回空闲。现在未知写只把 `reconcile_after` 推后 60 秒，不把 `state` 写成 `reconciled` 或 `conflict`。分组只写观察租约，不改 `observation_state`，不拨号。商品同步清理只删 generation 不等于当前 `refresh_generation` 的 staging 页。这些都避免发明没有读到的业务终态。
 - 商品同步的生产 tick 在 `ProductSyncBatch == 0` 时立刻空闲，不入队。`ENQUEUE_BATCH_LIMIT` 仍未读到，队列测试锁着这个 0。显式传入正数 limit 的函数才会入队，幂等键是 `due:{storeUUID}:{nextDue}`。
 - 代发扫描入队 `delegate.posting_sync`，幂等键 `bucket:{unixMilli/interval}`。认领后 `Finish` 为 `cancelled`，`last_error_code` 为 `not_ported`，不标成功，不改 `delegate_orders`，不拨号。这样未移植的正文不会在认领循环里重试打满。`listing.reconcile` 仍返回 `ErrWorkNotPorted`。
-- 已接受扫描只处理 `state = 'accepted'`。命中则清空 `reconcile_after`，状态保持 `accepted`。缺失或读失败只退避。不调用会把 `unknown` 改成 `superseded` 的那几条 stamp SQL。非 loopback 的 Seller 源仍不拨号。
+- 已接受扫描只处理 `state = 'accepted'`。命中则清空 `reconcile_after`，状态保持 `accepted`。首次 5 秒，之后 15 秒翻倍、封顶 5 分钟；两次一致的缺失停止探测，八次读不到则放弃，都不改状态。异步任务带 error 级问题时写 `OZON_ROW_REJECTED` 和本行 issue，摘要带供应商 code；`currency_differs_from_contract` 另有中文币种说明。不调用会把 `unknown` 改成 `superseded` 的那几条 stamp SQL。非 loopback 的 Seller 源仍不拨号。
 - 账单沿用 `ChargeListingSubmit` / `HoldTx` / `SettleTx` / `ReleaseTx` 已经写下的账本行。worker 原来的 `result_ref` 只有 `outcome`，不抄 `taskId` 的话已有谓词永远不收费。抄入的是已经写在 `submission_intents.external_task_id` 上的十进制文本。标价仍是 `ListingSubmitPriceMicrofen`，不新增第二处读取。标价为 0 时不改 `result_ref`。
 - 店铺配额接在已有的 `projectOne` 里，成员席位的 SQL 没有改。暂停规则是纯函数 `PlanStoreSuspension`：手工停用和已删除的店不计数、不改；其余按 `create_order, id`，前 `limit` 家不暂停。`limit` 是 `store_limit_override`，否则是 `plans.max_stores`。
 - 支付回放使用和 HTTP `apply` 相同的 `pending → paid` 与 `TopupTx`。没有供应商 HTTP。席位单保持 `pending`，和现有「未履约」一致。
-- 两个开关仍只在 `internal/config` 解析一次。凭据材料是另外四个字段，读进去不会翻转开关。新代码没有第二处 `os.Getenv`，也没有 `pgxpool.New`。扫描和账单实现放在 `internal/app` 与各域自己的文件里，worker 只存函数指针。`internal/listing`、`internal/seller`、`internal/queue` 的已有文件没有改。
+- 两个开关仍只在 `internal/platform/config` 解析一次。凭据材料是另外四个字段，读进去不会翻转开关。新代码没有第二处 `os.Getenv`，也没有 `pgxpool.New`。扫描和账单实现放在 `internal/app` 与各域自己的文件里，worker 只存函数指针。`internal/listing`、`internal/seller`、`internal/queue` 的已有文件没有改。
 
 ## 需要用户决定
 
@@ -44,7 +46,7 @@ Rust 仓库无法克隆，所以没有 Rust 进程、没有从 Rust 源码抄下
 - 代发作业被取消而不是去同步订单。取消原因是 `body_not_ported`。
 - 未知写用 60 秒租约，不改 `state`。这不是已读到的 Rust 转移。
 - 分组用约 2 分钟的观察租约，不改 `observation_state`，不请求 Ozon。
-- 已接受扫描永远不离开 `accepted`，也不做 unknown 探测里的 release / supersede。
+- 已接受扫描永远不离开 `accepted`，也不做 unknown 探测里的 release / supersede；两次缺失或八次读失败只结束本轮探测。
 - 商品同步清理是按 unlogged staging 表推断的，不是 Rust 函数体。
 - 类目随机窗口没有读 RNG，钉在 `window_start_minute`。到点只写 `fetch_not_ported`，不改 `last_status` 和 `failure_streak`，不抓取。
 - 日志保留固定 14 天，没有读 `CLOUD_LOG_RETENTION_DAYS`。没有 `error_logs` 表。`client_listing_logs` 仍按龄整表删除。`event_inbox_events` 经 `prune_aged_inbox` 删除全部过龄 kind，见 `docs/parity/error-digest-parity.md`。

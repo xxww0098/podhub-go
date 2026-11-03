@@ -1,9 +1,8 @@
 /**
  * Browser-local render / OPFS execution infrastructure.
  *
- * Preview and ordinary restore talk to Origin Private File System. A verified
- * plan template is recovered by asking Cloud for a short-lived download grant,
- * then reading the object from storage. `web/src/render/opfs.ts` owns the
+ * User templates stay in Origin Private File System. Platform templates may
+ * be downloaded from the product library. `web/src/render/opfs.ts` owns the
  * storage layout; delivery and writeback stay in the workflow feature.
  */
 import {
@@ -18,10 +17,8 @@ import {
 } from "@/render/opfs"
 import { PSD_CONTENT_REFUSAL_COPY, psdFileStructuralRefusal } from "@/render/psd-admission"
 import { hashFile } from "./sha256-stream"
-import { noteTemplateHandle, rememberTemplateFile } from "./template-file"
 import { pickPsdFile, psdTemplateRefusal, stagedFile } from "./file-picker"
 import { downloadSupplierTemplate, verifySupplierProductMedia } from "./http-media"
-import { downloadCardTemplate } from "./http-templates"
 import { refuse } from "./refusal"
 import type { WorkflowRestoredProductInstance, WorkflowTemplatePsdAsset } from "./commands"
 
@@ -92,9 +89,8 @@ async function stageTemplatePsd(
     }
     throw reason
   }
-  rememberTemplateFile(sha256, file)
-  // Overlaps the cloud backup. getTemplate waits if a render needs the bytes first.
-  void putKnownTemplate(sha256, file).catch(() => {})
+  await putKnownTemplate(sha256, file)
+  if (options?.signal?.aborted) throw refuse("workflow_template_cancelled", "PSD 绑定已取消")
   return templatePsdAsset(sha256, file.name)
 }
 
@@ -108,7 +104,7 @@ async function stageSupplierTemplate(
     throw refuse(
       "workflow_template_missing",
       "本机没有该 PSD 模板，请在上架方案重新选择模板文件",
-      "此摘要不是平台货源当前的 PSD，不能从平台货源恢复。",
+      "此摘要不是平台商品库当前的 PSD，不能从平台商品库恢复。",
     )
   }
   const actual = await putTemplate(await downloadSupplierTemplate(productId, sha256))
@@ -124,20 +120,11 @@ async function stageSupplierTemplate(
 
 const restores = new Map<string, Promise<WorkflowTemplatePsdAsset>>()
 
-async function restoreTemplate(sha256: string, supplierProductId?: string, cardId?: string) {
+async function restoreTemplate(sha256: string, supplierProductId?: string) {
   const cached = await getTemplate(sha256)
   if (cached && await sha256Hex(cached) === sha256) return templatePsdAsset(sha256, "")
-  if (cardId) {
-    const bytes = await downloadCardTemplate(cardId, sha256)
-    // Check before writing: a corrupt download must not replace the local cache.
-    if (await sha256Hex(bytes) !== sha256) {
-      throw refuse("workflow_template_digest_mismatch", "云端 PSD 内容与固定版本摘要不一致，请重试")
-    }
-    await putTemplate(bytes)
-    return templatePsdAsset(sha256, "")
-  }
   if (supplierProductId) return stageSupplierTemplate(supplierProductId, sha256)
-  throw refuse("workflow_template_missing", "本机没有该 PSD 模板，请从上架方案重新打开或绑定文件")
+  throw refuse("workflow_template_missing", "本机没有该 PSD 模板，请重新选择原文件")
 }
 
 export const renderOpfs = {
@@ -196,19 +183,18 @@ export const renderOpfs = {
   }) => {
     const picked = await pickPsdFile()
     if (!picked.file) throw refuse("workflow_template_cancelled", "未选择 PSD 模板")
-    if (picked.handle) noteTemplateHandle(picked.file, picked.handle)
     options?.onFile?.(picked.file)
     return stageTemplatePsd(picked.file, options)
   },
   /**
-   * Verify cached bytes; on a miss recover the card's fixed, authorized version.
+   * Verify local bytes; only platform product templates can be downloaded again.
    * Concurrent calls share one recovery; a rejected call is retried explicitly.
    */
-  workflowRestoreTemplatePsd: (sha256: string, supplierProductId?: string, cardId?: string) => {
-    const key = `${cardId ?? ""}/${supplierProductId ?? ""}/${sha256}`
+  workflowRestoreTemplatePsd: (sha256: string, supplierProductId?: string) => {
+    const key = `${supplierProductId ?? ""}/${sha256}`
     const existing = restores.get(key)
     if (existing) return existing
-    const pending = restoreTemplate(sha256, supplierProductId, cardId)
+    const pending = restoreTemplate(sha256, supplierProductId)
       .finally(() => { if (restores.get(key) === pending) restores.delete(key) })
     restores.set(key, pending)
     return pending

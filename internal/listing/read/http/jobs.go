@@ -176,7 +176,7 @@ func (h Host) claimWindow(w http.ResponseWriter, r *http.Request) {
 	}
 	body := struct {
 		Data       []browserClaim  `json:"data"`
-		QueueLevel *queueLevelView `json:"queueLevel,omitempty"`
+		QueueLevel *queueLevelView `json:"queue_level,omitempty"`
 	}{Data: out, QueueLevel: level}
 	if body.Data == nil {
 		body.Data = []browserClaim{}
@@ -525,14 +525,14 @@ type leaseView struct {
 type browserClaim struct {
 	Job          runView   `json:"job"`
 	Lease        leaseView `json:"lease"`
-	LeaseSeconds int64     `json:"leaseSeconds"`
+	LeaseSeconds int64     `json:"lease_seconds"`
 }
 
 type queueLevelView struct {
 	Lane            string `json:"lane"`
-	QueuedCost      int64  `json:"queuedCost"`
-	QueuedCostLimit int64  `json:"queuedCostLimit"`
-	RunningCost     int64  `json:"runningCost"`
+	QueuedCost      int64  `json:"queued_cost"`
+	QueuedCostLimit int64  `json:"queued_cost_limit"`
+	RunningCost     int64  `json:"running_cost"`
 }
 
 func scanLease(row pgx.Row) (browserClaim, error) {
@@ -585,4 +585,27 @@ func writeClaim(w http.ResponseWriter, data *browserClaim) {
 	jsonwire.Write(w, http.StatusOK, struct {
 		Data *browserClaim `json:"data"`
 	}{Data: data})
+}
+
+func (h Host) getJob(w http.ResponseWriter, r *http.Request) {
+	p, ok := h.prepare(w, r)
+	if !ok {
+		return
+	}
+	id, ok := queryID(r)
+	if !ok {
+		writeErr(w, 400, "任务编号无效", "validation")
+		return
+	}
+	var run mediaRun
+	err := h.withOrg(r.Context(), p.OrgID, func(tx pgx.Tx) error {
+		var err error
+		run, err = scanMediaRun(tx.QueryRow(r.Context(), `SELECT `+mediaRunColumns+` FROM jobs WHERE org_id=$1 AND id=$2::uuid`, p.OrgID, id))
+		return err
+	})
+	if err != nil {
+		mediaError(w, err)
+		return
+	}
+	mediaData(w, run)
 }

@@ -147,7 +147,7 @@ func (r Repo) ListSources(ctx context.Context, orgID int64) ([]contract.Source, 
 
 // StoreGate is require_store_usable. Disabled and quota are not checked.
 func (r Repo) StoreGate(ctx context.Context, orgID, userID int64, canManage bool, storeID string) (string, error) {
-	id, ok := domain.NormalizeUUID(storeID)
+	id, ok := contract.NormalizeUUID(storeID)
 	if !ok {
 		return "", contract.NotFound("店铺不存在")
 	}
@@ -165,13 +165,14 @@ func (r Repo) StoreGate(ctx context.Context, orgID, userID int64, canManage bool
 func visibleStore(ctx context.Context, tx pgx.Tx, orgID, userID int64, canManage bool, storeUUID string) (string, error) {
 	var store string
 	var assignee, membership *int64
+	var manager bool
 	err := tx.QueryRow(ctx, `
-		SELECT s.uuid::text, s.assignee_membership_id, m.id
+		SELECT s.uuid::text, s.assignee_membership_id, m.id, COALESCE(m.role IN ('owner', 'manager'), false)
 		  FROM organization_stores s
 		  LEFT JOIN organization_members m
 		    ON m.org_id = s.org_id AND m.user_id = $3 AND `+usableMember+`
 		 WHERE s.org_id = $1 AND s.uuid = $2::uuid AND s.deleted_at_ms IS NULL
-		 LIMIT 1`, orgID, storeUUID, userID).Scan(&store, &assignee, &membership)
+		 LIMIT 1`, orgID, storeUUID, userID).Scan(&store, &assignee, &membership, &manager)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", contract.NotFound("店铺不存在")
 	}
@@ -181,7 +182,7 @@ func visibleStore(ctx context.Context, tx pgx.Tx, orgID, userID int64, canManage
 	if membership == nil {
 		return "", contract.Forbidden("工作空间成员当前不可用")
 	}
-	if !canManage && (assignee == nil || *assignee != *membership) {
+	if !(canManage && manager) && (assignee == nil || *assignee != *membership) {
 		return "", contract.NotFound("店铺不存在")
 	}
 	return strings.ToLower(store), nil
@@ -197,7 +198,7 @@ func (r Repo) VisibleStoreUUIDs(ctx context.Context, orgID, userID int64, canMan
 			  JOIN organization_members m
 			    ON m.org_id = s.org_id AND m.user_id = $2 AND `+usableMember+`
 			 WHERE s.org_id = $1 AND s.deleted_at_ms IS NULL
-			   AND ($3 OR s.assignee_membership_id = m.id)`, orgID, userID, canManage)
+			   AND (($3 AND m.role IN ('owner', 'manager')) OR s.assignee_membership_id = m.id)`, orgID, userID, canManage)
 		if err != nil {
 			return err
 		}
@@ -219,13 +220,13 @@ type SealedCredential = contract.SealedCredential
 
 // AdmitStore is the posting and create-order store check, including credential presence.
 func (r Repo) AdmitStore(ctx context.Context, orgID, userID int64, canManage bool, storeID string, nowMS int64) (SealedCredential, error) {
-	id, ok := domain.NormalizeUUID(storeID)
+	id, ok := contract.NormalizeUUID(storeID)
 	if !ok {
 		return SealedCredential{}, contract.NotFound("店铺不存在")
 	}
 	var cred SealedCredential
 	err := r.readTx(ctx, orgID, func(tx pgx.Tx) error {
-		var manual, quota bool
+		var manual, quota, manager bool
 		var assignee, membership *int64
 		var expires *int64
 		var keyID *string
@@ -233,7 +234,7 @@ func (r Repo) AdmitStore(ctx context.Context, orgID, userID int64, canManage boo
 		var revision *int64
 		err := tx.QueryRow(ctx, `
 			SELECT s.org_id, s.id, s.uuid::text, s.manual_disabled, s.quota_suspended, s.assignee_membership_id,
-			       m.id, c.credential_revision, c.client_id, c.key_id, c.nonce, c.ciphertext, c.wrapped_dek, c.dek_nonce,
+			       m.id, COALESCE(m.role IN ('owner', 'manager'), false), c.credential_revision, c.client_id, c.key_id, c.nonce, c.ciphertext, c.wrapped_dek, c.dek_nonce,
 			       c.key_fingerprint, c.envelope_version, c.key_expires_at_ms
 			  FROM organization_stores s
 			  LEFT JOIN organization_members m
@@ -241,7 +242,7 @@ func (r Repo) AdmitStore(ctx context.Context, orgID, userID int64, canManage boo
 			  LEFT JOIN store_seller_credentials c ON c.store_id = s.id AND c.org_id = s.org_id
 			 WHERE s.org_id = $1 AND s.uuid = $2::uuid AND s.deleted_at_ms IS NULL
 			 LIMIT 1`, orgID, id, userID).Scan(
-			&cred.OrgID, &cred.StorePK, &cred.StoreUUID, &manual, &quota, &assignee, &membership,
+			&cred.OrgID, &cred.StorePK, &cred.StoreUUID, &manual, &quota, &assignee, &membership, &manager,
 			&revision, &cred.ClientID, &keyID, &cred.Nonce, &cred.Ciphertext, &cred.WrappedDEK, &cred.DEKNonce,
 			&cred.KeyFingerprint, &version, &expires,
 		)
@@ -254,7 +255,7 @@ func (r Repo) AdmitStore(ctx context.Context, orgID, userID int64, canManage boo
 		if membership == nil {
 			return contract.Forbidden("工作空间成员当前不可用")
 		}
-		if !canManage && (assignee == nil || *assignee != *membership) {
+		if !(canManage && manager) && (assignee == nil || *assignee != *membership) {
 			return contract.NotFound("店铺不存在")
 		}
 		if manual {
@@ -378,7 +379,7 @@ func loadAssets(ctx context.Context, tx pgx.Tx, bindingIDs []string) ([]contract
 
 // BindingStore is binding_store_for_actor.
 func (r Repo) BindingStore(ctx context.Context, orgID, userID int64, canManage bool, bindingID string) (storeID, binding string, err error) {
-	binding, ok := domain.NormalizeUUID(bindingID)
+	binding, ok := contract.NormalizeUUID(bindingID)
 	if !ok {
 		return "", "", contract.NotFound("绑定不存在")
 	}
@@ -410,6 +411,9 @@ func bindingStore(ctx context.Context, tx pgx.Tx, orgID, userID int64, canManage
 func (r Repo) CreateBinding(ctx context.Context, orgID, userID int64, storeID, offerID, sourceID, note string, auto bool, nowMS int64) (contract.Binding, error) {
 	var out contract.Binding
 	err := r.writeTx(ctx, orgID, nowMS, func(tx pgx.Tx) error {
+		if _, err := visibleStore(ctx, tx, orgID, userID, true, storeID); err != nil {
+			return err
+		}
 		var existing *string
 		var active bool
 		err := tx.QueryRow(ctx, `
@@ -608,14 +612,6 @@ func (r Repo) CommitAsset(ctx context.Context, orgID, userID int64, canManage bo
 		}
 		if storeID != in.StoreID {
 			return contract.Conflict("绑定店铺已变化，请重新授权上传")
-		}
-		var revision int64
-		err = tx.QueryRow(ctx, `SELECT revision FROM platform_integration_config WHERE singleton = true FOR SHARE`).Scan(&revision)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return contract.Conflict("存储配置已变化，请重新授权上传")
-		}
-		if err != nil {
-			return err
 		}
 		if reload != nil {
 			if err := reload(); err != nil {

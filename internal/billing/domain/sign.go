@@ -124,7 +124,7 @@ func VerifyAlipay(key AlipayKey, values map[string]string, now time.Time) (Notic
 	if values["app_id"] != key.AppID || values["out_trade_no"] == "" {
 		return Notice{}, fmt.Errorf("invalid notification")
 	}
-	cents, err := yuanToCents(values["total_amount"])
+	cents, err := PaymentCents(values["total_amount"])
 	if err != nil || cents <= 0 || values["trade_no"] == "" {
 		return Notice{}, fmt.Errorf("invalid notification")
 	}
@@ -141,14 +141,14 @@ func VerifyAlipay(key AlipayKey, values map[string]string, now time.Time) (Notic
 	return notice, nil
 }
 
-func yuanToCents(raw string) (int64, error) {
+func PaymentCents(raw string) (int64, error) {
 	raw = strings.TrimSpace(raw)
 	rat, ok := new(big.Rat).SetString(raw)
 	if !ok || rat.Sign() < 0 {
 		return 0, fmt.Errorf("amount")
 	}
 	cents := new(big.Rat).Mul(rat, big.NewRat(100, 1))
-	if !cents.IsInt() {
+	if !cents.IsInt() || !cents.Num().IsInt64() {
 		return 0, fmt.Errorf("amount")
 	}
 	return cents.Num().Int64(), nil
@@ -179,7 +179,7 @@ func VerifyWechat(key WechatKey, header map[string]string, body []byte, now time
 	if err != nil {
 		return Notice{}, fmt.Errorf("invalid notification")
 	}
-	return parseWechatPlain(key, plain)
+	return ParseWechatTransaction(key, plain)
 }
 
 func decryptWechatResource(apiKey, body []byte) ([]byte, error) {
@@ -206,7 +206,7 @@ func decryptWechatResource(apiKey, body []byte) ([]byte, error) {
 	return openGCM(apiKey, []byte(envelope.Resource.Nonce), []byte(envelope.Resource.Associated), raw)
 }
 
-func parseWechatPlain(key WechatKey, plain []byte) (Notice, error) {
+func ParseWechatTransaction(key WechatKey, plain []byte) (Notice, error) {
 	var tx struct {
 		AppID   string `json:"appid"`
 		MchID   string `json:"mchid"`
@@ -221,7 +221,7 @@ func parseWechatPlain(key WechatKey, plain []byte) (Notice, error) {
 	if err := json.Unmarshal(plain, &tx); err != nil {
 		return Notice{}, err
 	}
-	if tx.AppID != key.AppID || tx.MchID != key.MchID || tx.OutNo == "" || tx.TradeID == "" || tx.Amount.Total == nil || *tx.Amount.Total <= 0 || tx.Amount.Currency == "" {
+	if tx.AppID != key.AppID || tx.MchID != key.MchID || tx.OutNo == "" || (tx.State == "SUCCESS" && tx.TradeID == "") || tx.Amount.Total == nil || *tx.Amount.Total <= 0 || tx.Amount.Currency == "" {
 		return Notice{}, fmt.Errorf("invalid notification")
 	}
 	notice := Notice{
@@ -274,10 +274,10 @@ func VerifyStripe(key StripeKey, header string, body []byte, now time.Time) (Not
 	if !matched {
 		return Notice{}, fmt.Errorf("invalid notification")
 	}
-	return parseStripe(body)
+	return ParseStripeEvent(body)
 }
 
-func parseStripe(body []byte) (Notice, error) {
+func ParseStripeEvent(body []byte) (Notice, error) {
 	var event struct {
 		Type string `json:"type"`
 		Data struct {
@@ -307,10 +307,10 @@ func parseStripe(body []byte) (Notice, error) {
 		publicID = obj.ClientRef
 	}
 	if event.Type == "checkout.session.expired" {
-		if publicID == "" {
+		if publicID == "" || obj.ID == "" || obj.AmountTotal == nil || *obj.AmountTotal <= 0 || obj.Currency == "" {
 			return Notice{}, fmt.Errorf("invalid notification")
 		}
-		return Notice{Provider: "stripe", PublicID: publicID, ProviderRef: obj.ID, Canceled: true, Currency: strings.ToUpper(obj.Currency)}, nil
+		return Notice{Provider: "stripe", PublicID: publicID, ProviderRef: obj.ID, AmountCents: *obj.AmountTotal, Canceled: true, Currency: strings.ToUpper(obj.Currency)}, nil
 	}
 	if publicID == "" || obj.ID == "" || obj.AmountTotal == nil || *obj.AmountTotal <= 0 || obj.Currency == "" {
 		return Notice{}, fmt.Errorf("invalid notification")
@@ -355,7 +355,7 @@ func VerifyEasyPay(pid, merchantKey string, values map[string]string, now time.T
 	if sign == "" || !strings.EqualFold(sign, EasyPayMD5(values, merchantKey)) || values["pid"] != pid {
 		return Notice{}, fmt.Errorf("invalid notification")
 	}
-	cents, err := yuanToCents(values["money"])
+	cents, err := PaymentCents(values["money"])
 	if err != nil || cents <= 0 || values["out_trade_no"] == "" || values["trade_no"] == "" {
 		return Notice{}, fmt.Errorf("invalid notification")
 	}

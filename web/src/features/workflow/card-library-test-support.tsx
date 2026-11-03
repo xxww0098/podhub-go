@@ -36,7 +36,9 @@ export function renderLibrary(
     bindStores?: boolean
     bindPsd?: boolean
     busy?: boolean
+    loadError?: boolean
     highlightDraftId?: string
+    savingPriceId?: string
   } = {},
 ) {
   return renderToStaticMarkup(
@@ -44,6 +46,8 @@ export function renderLibrary(
       forms={forms}
       videoUploads={videoUploads}
       busy={options.busy ?? false}
+      loadError={options.loadError}
+      onRetryLoad={noop}
       highlightDraftId={options.highlightDraftId}
       composing={false}
       composeBusy={false}
@@ -80,6 +84,7 @@ export function renderLibrary(
       onOpenCatalog={noop}
       onSavePrice={noopPriceSave}
       onSaveOldPrice={noopPriceSave}
+      savingPriceId={options.savingPriceId}
       onSaveDefaultField={noopPriceSave}
       onLoadCardSchema={noSchema}
       {...(options.bindStores

@@ -1,7 +1,6 @@
 /**
  * 管理面「委托单」屏 (ADR-0100；「全部委托单/派发账本/代录回执」=
- * admin+)。`/admin?screen=admin-delegate-orders`，URL-only 注册
- * （无侧边栏项，同「厂家账号」口径）。
+ * admin+)。`/admin?screen=admin-delegate-orders`，平台侧栏可进入。
  *
  * 队列（单级状态 / 厂家 / Workspace 过滤 + keyset 分页）→ 点行进详情
  * （行、派发包账本、物流快照、随单备注）+ 三个动作：手动派发（选厂家
@@ -9,8 +8,8 @@
  * 地址（`?order=`），刷新/分享停在同一个单上。错误文案只走 toast，不进
  * DOM；状态色沿用委托订单屏的中文口径与 tone 词汇。
  */
-import { useCallback, useEffect, useState } from "react"
-import { ArrowLeft, Send, Truck } from "lucide-react"
+import { useCallback, useEffect, useRef, useState } from "react"
+import { ArrowLeft, ClipboardList, Inbox, RefreshCw, Search, Send, Truck } from "lucide-react"
 
 import {
   cancelAdminDelegateOrder,
@@ -19,14 +18,17 @@ import {
   listAdminDelegateOrders,
   recordAdminDelegateReceipt,
   type AdminDelegateOrderDetailView,
+  type AdminDelegateOrderListData,
   type AdminDelegateOrderRow,
   type DelegateOrderLineView,
   type SellerSupplierDbData,
 } from "@/bindings/http-delegate-admin"
-import type { SupplierAccountsGroup } from "@/bindings/http-supplier-portal"
-import { listSupplierAccounts } from "@/bindings/http-supplier-portal"
+import { factoriesHttp } from "@/bindings/http-factories"
+import { CursorPagerFooter } from "@/components/cursor-pager-footer"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
+import { IconButton } from "@/components/ui/icon-button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import {
   Dialog,
@@ -39,6 +41,7 @@ import {
 import { Empty, EmptyContent, EmptyMedia } from "@/components/ui/empty"
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
 import {
   Select,
   SelectContent,
@@ -55,7 +58,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { ClipboardList, Inbox } from "lucide-react"
 import { KeyValue, KeyValueGrid } from "@/components/section"
 import { StateChip } from "@/components/state-chip"
 import { formatDateTimeShort } from "@/lib/format"
@@ -139,64 +141,102 @@ export function AdminDelegateOrdersScreen() {
 // ---------------------------------------------------------------------------
 
 function AdminDelegateQueue({ onOpen }: { onOpen: (orderId: string) => void }) {
-  const [rows, setRows] = useState<AdminDelegateOrderRow[]>()
+  const [pageData, setPageData] = useState<AdminDelegateOrderListData | null>(null)
   const [sources, setSources] = useState<SellerSupplierDbData[]>([])
+  const [sourcesFailed, setSourcesFailed] = useState(false)
   const [state, setState] = useState<string>("")
   const [sourceId, setSourceId] = useState<string>("")
   const [orgId, setOrgId] = useState<string>("")
-  const [cursor, setCursor] = useState<string>("")
-  const [hasNext, setHasNext] = useState(false)
-  const [loading, setLoading] = useState(false)
+  const [search, setSearch] = useState("")
+  const [pageSize, setPageSize] = useState(10)
+  const [cursors, setCursors] = useState([""])
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
+  const [loading, setLoading] = useState(true)
+  const [failed, setFailed] = useState(false)
+  const requestSequence = useRef(0)
+  const sourceSequence = useRef(0)
 
   const refresh = useCallback(
-    async (nextCursor?: string) => {
+    async (nextCursors: string[], advancing = false) => {
+      const sequence = ++requestSequence.current
       setLoading(true)
       try {
         const data = await listAdminDelegateOrders({
           state: state === "" ? undefined : state,
           sourceId: sourceId === "" ? undefined : sourceId,
-          orgId: orgId.trim() === "" ? undefined : Number(orgId.trim()),
-          cursor: nextCursor,
+          orgId: orgId.trim() || undefined,
+          cursor: nextCursors.at(-1) || undefined,
+          limit: pageSize,
         })
-        setRows(data.orders)
-        setHasNext(data.has_next)
-        setCursor(data.cursor)
+        if (sequence !== requestSequence.current) return
+        if (advancing && data.orders.length === 0) {
+          setPageData((current) => current ? { ...current, has_next: false, cursor: "" } : data)
+        } else {
+          setPageData(data)
+          setCursors(nextCursors)
+          const visibleIds = new Set(data.orders.map((order) => order.order_id))
+          setSelectedIds((current) => new Set([...current].filter((id) => visibleIds.has(id))))
+        }
+        setFailed(false)
       } catch (reason) {
-        notifyCommandError(reason, "委托单队列读取失败，请稍后重试。")
-        setRows((current) => current ?? [])
+        if (sequence === requestSequence.current) {
+          setFailed(true)
+          notifyCommandError(reason, "委托单队列读取失败，请稍后重试。")
+        }
       } finally {
-        setLoading(false)
+        if (sequence === requestSequence.current) setLoading(false)
       }
     },
-    [state, sourceId, orgId],
+    [state, sourceId, orgId, pageSize],
   )
 
   useEffect(() => {
-    void refresh()
+    requestSequence.current += 1
+    setCursors([""])
+    setSelectedIds(new Set())
+    setPageData(null)
+    setFailed(false)
+    void refresh([""])
+    return () => { requestSequence.current += 1 }
   }, [refresh])
 
-  useEffect(() => {
-    // 厂家过滤器候选 = 全部厂家（厂家账号管理面的分组视图，admin 可读）。
-    listSupplierAccounts()
-      .then((data) =>
-        setSources(
-          data.groups.map((group: SupplierAccountsGroup) => group.source),
-        ),
-      )
-      .catch(() => setSources([]))
+  const loadSources = useCallback(async () => {
+    // 管理员可筛选所有工厂的商品库；目录只返回库的公开标识和名称。
+    const sequence = ++sourceSequence.current
+    try {
+      const data = await factoriesHttp.list()
+      if (sequence === sourceSequence.current) {
+        setSources(data.factories.flatMap((factory) => (factory.libraries ?? []).map((db) => ({ source_id: db.sourceId, name: db.name, country: db.country, icon: db.icon }))))
+        setSourcesFailed(false)
+      }
+    } catch {
+      if (sequence === sourceSequence.current) setSourcesFailed(true)
+    }
   }, [])
+
+  useEffect(() => {
+    void loadSources()
+    return () => { sourceSequence.current += 1 }
+  }, [loadSources])
+
+  const rows = pageData?.orders ?? []
+  const term = search.trim().toLocaleLowerCase()
+  const visibleRows = term ? rows.filter((row) => row.posting_number.toLocaleLowerCase().includes(term)) : rows
+  const selectedRows = visibleRows.filter((row) => selectedIds.has(row.order_id))
+  const copySelected = async () => {
+    try {
+      await navigator.clipboard.writeText(selectedRows.map((row) => row.posting_number).join("\n"))
+      notifySuccess(`已复制 ${selectedRows.length} 条物流单号`)
+    } catch {
+      notifyError("无法复制物流单号，请检查浏览器剪贴板权限。")
+    }
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
-      <div>
-        <h1 className="text-md font-semibold tracking-[-0.01em]">委托单</h1>
-        <p className="text-compact text-muted-foreground">
-          全部 Workspace 的委托单队列与派发包账本；可手动派发、代厂家录回执、
-          撤单。
-        </p>
-      </div>
-      <div className="flex flex-wrap items-end gap-3">
-        <Field className="w-40">
+      <h1 className="sr-only">委托单</h1>
+      <div className="grid grid-cols-2 items-end gap-4 rounded-xl border border-border bg-card p-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
+        <Field className="min-w-0">
           <FieldLabel htmlFor="admin-delegate-state">状态</FieldLabel>
           <Select
             value={state}
@@ -219,24 +259,24 @@ function AdminDelegateQueue({ onOpen }: { onOpen: (orderId: string) => void }) {
             </SelectContent>
           </Select>
         </Field>
-        <Field className="w-48">
-          <FieldLabel htmlFor="admin-delegate-source">厂家</FieldLabel>
+        <Field className="min-w-0">
+          <FieldLabel htmlFor="admin-delegate-source">商品库</FieldLabel>
           <Select
             value={sourceId}
             onValueChange={(next) => {
               if (typeof next === "string") setSourceId(next)
             }}
           >
-            <SelectTrigger id="admin-delegate-source" aria-label="按厂家过滤">
+            <SelectTrigger id="admin-delegate-source" aria-label="按商品库过滤" disabled={sourcesFailed && sources.length === 0}>
               <SelectValue>
                 {() =>
                   sources.find((source) => source.source_id === sourceId)?.name ??
-                  "全部厂家"
+                  "全部商品库"
                 }
               </SelectValue>
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">全部厂家</SelectItem>
+              <SelectItem value="">全部商品库</SelectItem>
               {sources.map((source) => (
                 <SelectItem key={source.source_id} value={source.source_id}>
                   {source.name || source.source_id}
@@ -244,100 +284,143 @@ function AdminDelegateQueue({ onOpen }: { onOpen: (orderId: string) => void }) {
               ))}
             </SelectContent>
           </Select>
+          {sourcesFailed ? <p role="status" className="text-compact text-st-bad">商品库列表读取失败，请刷新重试。</p> : null}
         </Field>
-        <Field className="w-36">
-          <FieldLabel htmlFor="admin-delegate-org">Workspace ID</FieldLabel>
+        <Field className="min-w-0">
+          <FieldLabel htmlFor="admin-delegate-org">工作空间 ID</FieldLabel>
           <Input
             id="admin-delegate-org"
             inputMode="numeric"
             value={orgId}
-            placeholder="全部"
+            placeholder="全部工作空间"
+            className="max-md:min-h-11"
             onChange={(event) =>
               setOrgId(event.target.value.replace(/[^\d]/g, ""))
             }
           />
         </Field>
+        <Button type="button" variant="outline" size="lg" className="justify-self-end" aria-label={loading ? "正在刷新委托单" : "刷新委托单"} aria-busy={loading} disabled={loading} onClick={() => { void refresh(cursors); void loadSources() }}>
+          {loading ? <Spinner data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />}刷新
+        </Button>
       </div>
-      {rows === undefined ? (
-        <div className="flex min-h-40 items-center justify-center">
+      {failed && !pageData ? (
+        <Empty className="min-h-40">
+          <EmptyContent>
+            <p>无法读取委托单，请重试。</p>
+            <Button type="button" size="sm" variant="outline" onClick={() => void refresh([""])}>重试</Button>
+          </EmptyContent>
+        </Empty>
+      ) : pageData ? (
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card" aria-busy={loading}>
+          {failed ? <p role="status" className="px-3 py-2 text-compact text-muted-foreground">读取失败，显示上次结果。</p> : null}
+          <div className="flex flex-wrap items-center justify-between gap-3 p-4">
+            <div className="flex items-center gap-2">
+              <ClipboardList aria-hidden className="size-6" />
+              <h2 className="text-2xl font-semibold">委托单</h2>
+              <Badge variant="brand">本页 {rows.length} 单</Badge>
+            </div>
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+            {selectedRows.length > 0 ? <Button type="button" variant="outline" size="sm" disabled={loading || failed} onClick={() => void copySelected()}>复制已选单号（{selectedRows.length}）</Button> : null}
+            <InputGroup className="w-64 max-w-full max-md:h-11">
+              <InputGroupAddon><Search aria-hidden /></InputGroupAddon>
+              <InputGroupInput
+                type="search"
+                aria-label="搜索本页物流单号"
+                placeholder="搜索本页物流单号"
+                className="max-md:min-h-11"
+                value={search}
+                onChange={(event) => { setSearch(event.target.value); setSelectedIds(new Set()) }}
+              />
+            </InputGroup>
+            </div>
+          </div>
+          <AdminDelegateOrdersTable rows={visibleRows} onOpen={onOpen} selectedIds={selectedIds} onSelectedIds={setSelectedIds} selectionDisabled={loading || failed} emptyText={term ? "本页没有匹配的物流单号。" : "没有符合条件的委托单。"} />
+          <div className="flex flex-wrap items-center gap-3 px-4">
+          <Select value={String(pageSize)} onValueChange={(next) => {
+            if (next === "10" || next === "20" || next === "50") setPageSize(Number(next))
+          }}>
+            <SelectTrigger size="sm" aria-label="每页条数" className="w-28 max-md:h-11"><SelectValue>{`${pageSize} 条/页`}</SelectValue></SelectTrigger>
+            <SelectContent>{[10, 20, 50].map((size) => <SelectItem key={size} value={String(size)}>{size} 条/页</SelectItem>)}</SelectContent>
+          </Select>
+          <div className="min-w-0 flex-1">
+          <CursorPagerFooter
+            page={cursors.length}
+            count={rows.length}
+            hasNext={pageData.has_next}
+            cursor={pageData.cursor}
+            busy={loading}
+            onPrevious={() => void refresh(cursors.slice(0, -1))}
+            onNext={() => void refresh([...cursors, pageData.cursor], true)}
+          />
+          </div>
+          </div>
+        </div>
+      ) : null}
+      {loading && !pageData ? (
+        <div className="flex min-h-40 items-center justify-center" role="status">
           <Spinner className="size-5" aria-label="正在读取委托单队列" />
         </div>
-      ) : rows.length === 0 ? (
-        <Empty>
-          <EmptyMedia variant="icon">
-            <Inbox />
-          </EmptyMedia>
-          <EmptyContent>还没有委托单。卖家委托出单后会出现在这里。</EmptyContent>
-        </Empty>
-      ) : (
-        <>
-          <Table aria-label="委托单队列">
-            <TableHeader>
-              <TableRow className="hover:bg-transparent">
-                <TableHead>物流单号</TableHead>
-                <TableHead>Workspace</TableHead>
-                <TableHead>状态</TableHead>
-                <TableHead>行数</TableHead>
-                <TableHead>厂家</TableHead>
-                <TableHead>建单时间</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((row) => (
-                <TableRow
-                  key={row.order_id}
-                  className="cursor-pointer"
-                  onClick={() => onOpen(row.order_id)}
-                >
-                  <TableCell className="font-mono text-compact">
-                    <span className="flex items-center gap-2">
-                      {row.posting_number}
-                      {row.cancel_requested ? (
-                        <Badge variant="outline">请求取消</Badge>
-                      ) : null}
-                    </span>
-                  </TableCell>
-                  <TableCell className="text-compact tabular-nums">
-                    {row.org_id}
-                  </TableCell>
-                  <TableCell>
-                    <StateChip
-                      status={row.state}
-                      tone={orderStateTone(row.state)}
-                      label={orderStateLabel(row.state)}
-                    />
-                  </TableCell>
-                  <TableCell className="text-compact tabular-nums">
-                    {row.line_count}
-                  </TableCell>
-                  <TableCell className="text-compact">
-                    {row.source_names.length > 0
-                      ? row.source_names.join("、")
-                      : "—"}
-                  </TableCell>
-                  <TableCell className="text-meta whitespace-nowrap text-muted-foreground">
-                    {formatDateTimeShort(row.created_at_ms)}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-          <div className="flex items-center justify-end gap-2">
-            {loading ? <Spinner className="size-4" aria-label="加载中" /> : null}
-            {hasNext ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => void refresh(cursor)}
-              >
-                下一页
-              </Button>
-            ) : null}
-          </div>
-        </>
-      )}
+      ) : null}
     </div>
+  )
+}
+
+export function AdminDelegateOrdersTable({ rows, onOpen, selectedIds = new Set(), onSelectedIds = () => {}, selectionDisabled, emptyText = "没有符合条件的委托单。" }: {
+  rows: AdminDelegateOrderRow[]
+  onOpen: (orderId: string) => void
+  selectedIds?: ReadonlySet<string>
+  onSelectedIds?: (ids: Set<string>) => void
+  selectionDisabled?: boolean
+  emptyText?: string
+}) {
+  const selectedCount = rows.filter((row) => selectedIds.has(row.order_id)).length
+  const allSelected = rows.length > 0 && selectedCount === rows.length
+  return (
+    <Table aria-label="委托单队列" className="min-w-[720px]" containerClassName="@container min-h-0 max-w-full flex-1 overflow-auto">
+      <TableHeader className="sticky top-0 z-10 bg-muted">
+        <TableRow className="hover:bg-transparent">
+          <TableHead className="w-12"><Checkbox aria-label="选择本页显示的委托单" checked={allSelected} indeterminate={selectedCount > 0 && !allSelected} disabled={selectionDisabled || rows.length === 0} onCheckedChange={(checked) => onSelectedIds(checked ? new Set(rows.map((row) => row.order_id)) : new Set())} /></TableHead>
+          <TableHead className="text-lg text-foreground">物流单号</TableHead>
+          <TableHead className="text-lg text-foreground">工作空间 ID</TableHead>
+          <TableHead className="text-lg text-foreground">厂家</TableHead>
+          <TableHead className="text-lg text-foreground">状态</TableHead>
+          <TableHead className="text-lg text-foreground">建单时间</TableHead>
+          <TableHead className="text-lg text-foreground">操作</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.length ? rows.map((row) => (
+          <TableRow key={row.order_id} data-state={selectedIds.has(row.order_id) ? "selected" : undefined} className="h-16 cursor-pointer" onClick={() => onOpen(row.order_id)}>
+            <TableCell><Checkbox aria-label={`选择委托单 ${row.posting_number}`} checked={selectedIds.has(row.order_id)} disabled={selectionDisabled} onClick={(event) => event.stopPropagation()} onCheckedChange={(checked) => {
+              const next = new Set(selectedIds)
+              if (checked) next.add(row.order_id)
+              else next.delete(row.order_id)
+              onSelectedIds(next)
+            }} /></TableCell>
+            <TableCell className="font-mono text-lg">
+              <span className="flex items-center gap-2">
+                {row.posting_number}
+                {row.cancel_requested ? <Badge variant="outline">请求取消</Badge> : null}
+              </span>
+            </TableCell>
+            <TableCell className="text-lg tabular-nums">{row.org_id}</TableCell>
+            <TableCell className="text-lg">{row.source_names.length ? row.source_names.join("、") : "—"}</TableCell>
+            <TableCell><StateChip status={row.state} tone={orderStateTone(row.state)} label={orderStateLabel(row.state)} className="h-8 px-3 text-lg" /></TableCell>
+            <TableCell className="text-lg whitespace-nowrap text-muted-foreground">{formatDateTimeShort(row.created_at_ms)}</TableCell>
+            <TableCell>
+              <Button type="button" size="lg" variant="outline" aria-label={`查看委托单 ${row.posting_number}`} onClick={(event) => { event.stopPropagation(); onOpen(row.order_id) }}><span className="text-brand">查看</span></Button>
+            </TableCell>
+          </TableRow>
+        )) : <TableRow><TableCell colSpan={7} className="p-0">
+          <div className="sticky left-0 w-[100cqw] max-w-full">
+            <Empty className="min-h-40">
+              <EmptyMedia variant="icon"><Inbox aria-hidden /></EmptyMedia>
+              <EmptyContent>{emptyText}</EmptyContent>
+            </Empty>
+          </div>
+        </TableCell></TableRow>}
+      </TableBody>
+    </Table>
   )
 }
 
@@ -353,15 +436,18 @@ function AdminDelegateOrderDetail({
   onBack: () => void
 }) {
   const [detail, setDetail] = useState<AdminDelegateOrderDetailView>()
+  const [readFailed, setReadFailed] = useState(false)
   const [busy, setBusy] = useState(false)
   const [dispatchOpen, setDispatchOpen] = useState(false)
   const [receiptOpen, setReceiptOpen] = useState(false)
   const [cancelOpen, setCancelOpen] = useState(false)
 
   const refresh = useCallback(async () => {
+    setReadFailed(false)
     try {
       setDetail(await getAdminDelegateOrder(orderId))
     } catch (reason) {
+      setReadFailed(true)
       notifyCommandError(reason, "委托单详情读取失败，请稍后重试。")
     }
   }, [orderId])
@@ -386,8 +472,14 @@ function AdminDelegateOrderDetail({
 
   if (detail === undefined) {
     return (
-      <div className="flex min-h-40 items-center justify-center">
-        <Spinner className="size-5" aria-label="正在读取委托单详情" />
+      <div className="flex min-h-40 flex-col items-center justify-center gap-3" role="status">
+        {readFailed ? <>
+          <p>无法读取委托单详情。</p>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={onBack}>返回队列</Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => void refresh()}>重试</Button>
+          </div>
+        </> : <Spinner className="size-5" aria-label="正在读取委托单详情" />}
       </div>
     )
   }
@@ -397,18 +489,14 @@ function AdminDelegateOrderDetail({
   const dispatchable = !terminal && order.state !== "shipped"
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4">
+    <div className="flex min-h-0 flex-1 flex-col gap-2">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label="返回队列"
+          <IconButton
+            icon={ArrowLeft}
+            label="返回队列"
             onClick={onBack}
-          >
-            <ArrowLeft aria-hidden />
-          </Button>
+          />
           <h1 className="font-mono text-md font-semibold tracking-[-0.01em] break-all">
             {order.posting_number}
           </h1>

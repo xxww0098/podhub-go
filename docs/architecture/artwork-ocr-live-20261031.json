@@ -1,0 +1,440 @@
+{
+  "date": "2026-10-31",
+  "model": "qwen3.7-flash",
+  "scope": "Local supplier authoring, current OCR configuration, private artwork, real model and workspace settlement, persistent listing copy, browser WASM PSD render, public image uploads/readback. No Seller publication or remote deployment.",
+  "source_file": {
+    "name": "SZ-9BXIE0610-0071.jpg",
+    "sha256": "0db971bce095d1e9c5a534b3d0d803c4e7a09fe65ff86ff1d2455c46be472d5c"
+  },
+  "ocr_tab_paid_tests": [
+    {
+      "case": "mug-api",
+      "test_id": "a91d39a7-39ce-4035-88db-908dbf934c63",
+      "request_id": "air_ffa87ee1d3607e47d7bb8d07fd19ba34",
+      "profile": {
+        "product_type_ru": "Кружка",
+        "facts_ru": "керамическая 330 мл",
+        "description_ru": "Керамическая кружка объемом 330 мл."
+      },
+      "fixed_tags": [
+        "#кружка",
+        "#керамика",
+        "#330мл"
+      ],
+      "uploaded_image": {
+        "bytes": 109565,
+        "sha256": "977e0de32430572a85e7f336fc05808af13a083835d6d9202a7bca17849904b9",
+        "content_type": "image/jpeg"
+      },
+      "answer": {
+        "ru": "Кружка керамическая 330 мл \"Кот с кружкой\"",
+        "description": "Керамическая кружка объемом 330 мл. Сюжет: Кот с кружкой.",
+        "tags": [
+          "#кружка",
+          "#керамика",
+          "#330мл",
+          "#кот_с_кружкой"
+        ],
+        "candidates": []
+      },
+      "status": "succeeded",
+      "charged_microfen": 15400,
+      "total_microfen": 55480,
+      "absorbed_microfen": 40080,
+      "upstream_response_id": "chatcmpl-50d3dc0c-7e77-9116-a906-8371e1c38fc2",
+      "settlements": 1,
+      "consecutive_clicks": 1
+    },
+    {
+      "case": "mug-ui",
+      "test_id": "b6ce08c0-a0f8-4cae-9048-e3ff6f1e2168",
+      "request_id": "air_54d96c8a03e8434698ef4f0e893657d0",
+      "profile": {
+        "product_type_ru": "Кружка",
+        "facts_ru": "керамическая 330 мл",
+        "description_ru": "Керамическая кружка объемом 330 мл."
+      },
+      "fixed_tags": [
+        "#кружка",
+        "#керамика",
+        "#330мл"
+      ],
+      "uploaded_image": {
+        "bytes": 75082,
+        "sha256": "b08e9d1e52a08d86d81b668e03026ef627345a674a58762ee411514f8650a3f7",
+        "content_type": "image/jpeg"
+      },
+      "answer": {
+        "ru": "Кружка керамическая 330 мл \"Кот с чашкой\"",
+        "description": "Керамическая кружка объемом 330 мл. Сюжет: Кот с чашкой.",
+        "tags": [
+          "#кружка",
+          "#керамика",
+          "#330мл",
+          "#кот_с_чашкой"
+        ],
+        "candidates": []
+      },
+      "status": "succeeded",
+      "charged_microfen": 15400,
+      "total_microfen": 55640,
+      "absorbed_microfen": 40240,
+      "upstream_response_id": "chatcmpl-474c32f2-c8bb-9fbd-a9f4-b591a2b896ca",
+      "settlements": 1,
+      "consecutive_clicks": 1
+    },
+    {
+      "case": "mousepad-ui",
+      "test_id": "1afecba8-b078-48c0-a255-3a71c8d352a2",
+      "request_id": "air_48b36cd4d9eec26dc6ffe8ccb8b99773",
+      "profile": {
+        "product_type_ru": "Коврик для мыши",
+        "facts_ru": "800×300 мм",
+        "description_ru": "Коврик для мыши размером 800×300 мм."
+      },
+      "fixed_tags": [
+        "#коврик",
+        "#для_мыши"
+      ],
+      "uploaded_image": {
+        "bytes": 75082,
+        "sha256": "b08e9d1e52a08d86d81b668e03026ef627345a674a58762ee411514f8650a3f7",
+        "content_type": "image/jpeg"
+      },
+      "answer": {
+        "ru": "Коврик для мыши 800×300 мм \"Кот с чашкой\"",
+        "description": "Коврик для мыши размером 800×300 мм. Сюжет: Кот с чашкой.",
+        "tags": [
+          "#коврик",
+          "#для_мыши",
+          "#кот_с_чашкой"
+        ],
+        "candidates": []
+      },
+      "status": "succeeded",
+      "charged_microfen": 15400,
+      "total_microfen": 55600,
+      "absorbed_microfen": 40200,
+      "upstream_response_id": "chatcmpl-a997431c-d07a-9878-9a12-fe3850250f91",
+      "settlements": 1,
+      "consecutive_clicks": 2
+    }
+  ],
+  "normal_workflow": {
+    "supplier_product_id": "scp_f042e9698c8a4683939f0ffae8d48be8",
+    "category": {
+      "description_category_id": 17028964,
+      "type_id": 94897
+    },
+    "card_id": "4c760867-c109-4fe9-8b0f-5be3882bf315",
+    "row_id": "04658229-36e6-4da0-8103-22173ed10cb8",
+    "content_state": "ready",
+    "media_state": "ready",
+    "submission_state": "none",
+    "validation_state": "blocked",
+    "validation_issues": [
+      {
+        "code": "dictionary_material_required",
+        "address": {
+          "kind": "plain",
+          "field_key": "attribute_85"
+        },
+        "message": "品牌：需要该类目属性的字典材料",
+        "severity": "blocking",
+        "field_key": "attribute_85",
+        "parameters": {
+          "id": {
+            "kind": "text",
+            "value": "126745801"
+          },
+          "value_index": {
+            "kind": "integer",
+            "value": 0
+          }
+        },
+        "remediation": "为「品牌」选择一个字典值"
+      },
+      {
+        "code": "required",
+        "address": {
+          "kind": "plain",
+          "field_key": "price"
+        },
+        "message": "Price 为必填项",
+        "severity": "blocking",
+        "field_key": "price",
+        "parameters": {},
+        "remediation": "填写「Price」后再校验"
+      }
+    ],
+    "title": "Картина по номерам 40×50 см \"Кот с чашкой\"",
+    "description": "Картина по номерам размером 40×50 см. Сюжет: Кот с чашкой.",
+    "tags": [
+      "#картина",
+      "#по_номерам",
+      "#кот_с_чашкой"
+    ],
+    "request": {
+      "id": "air_aa1e02559ffe4ab56402229a903c3c48",
+      "status": "settled",
+      "upstream_response_id": "chatcmpl-7dc28f6e-6465-9b85-a733-9fd27bf16b89",
+      "charged_microfen": 15480,
+      "total_microfen": 55560,
+      "absorbed_microfen": 40080,
+      "job_id": "4650deb4-2fa6-42b3-9a61-301de96fa8ce",
+      "input_fingerprint": "1dab420083ed8b9f55c8f2617bcb0ac3ec6c1f8f654aca8949ab79a87d356f6a"
+    },
+    "refresh_preserved": true,
+    "supplier_template": {
+      "grantStatus": 200,
+      "objectStatus": 200,
+      "bytes": 93243996,
+      "sha256": "22990c6e485e6b607e6f12a9917b5f09d20d502a342159235fd0150c79f05fb8",
+      "wrongDigestStatus": 404
+    },
+    "images": [
+      {
+        "index": 0,
+        "status": 200,
+        "bytes": 201180,
+        "sha256": "882ce34dd432d294be7ca0c9bf5cb15992d0f84271ff2c4e9a98f35f43b03f3d",
+        "width": 1085,
+        "height": 1448
+      },
+      {
+        "index": 1,
+        "status": 200,
+        "bytes": 148072,
+        "sha256": "f055546b891fc32190544c337b816cbff0e664e8c4a430c85b46f90c9fb02c1e",
+        "width": 1086,
+        "height": 1447
+      },
+      {
+        "index": 2,
+        "status": 200,
+        "bytes": 250030,
+        "sha256": "fe0e7f876b332b74a53b529697e89b71593761beddb71e71452b0779c13f7a4b",
+        "width": 1085,
+        "height": 1448
+      },
+      {
+        "index": 3,
+        "status": 200,
+        "bytes": 208596,
+        "sha256": "cfe12a42a5faf2a4c6236e8674d23dd7d90822b961319eba7cb81e6560372c55",
+        "width": 1085,
+        "height": 1448
+      },
+      {
+        "index": 4,
+        "status": 200,
+        "bytes": 212231,
+        "sha256": "9d94df695ee1564b3c04885ff16e902bf6c51d25c3527b52002060dcc08b79d4",
+        "width": 1085,
+        "height": 1448
+      },
+      {
+        "index": 5,
+        "status": 200,
+        "bytes": 164153,
+        "sha256": "fee28a58c9223db32ee74face18556f1c1b5a2a6cf0285a6ad9184482315a65c",
+        "width": 1085,
+        "height": 1448
+      },
+      {
+        "index": 6,
+        "status": 200,
+        "bytes": 126142,
+        "sha256": "fa24a2c3ac704085e66ded3cf932865c5da08a424038637eca59310516d2fade",
+        "width": 1085,
+        "height": 1448
+      },
+      {
+        "index": 7,
+        "status": 200,
+        "bytes": 247571,
+        "sha256": "de23c437069b3154fab56babe304351969737e52b575c4f86a4cf4e1f40f71b8",
+        "width": 1085,
+        "height": 1448
+      },
+      {
+        "index": 8,
+        "status": 200,
+        "bytes": 222994,
+        "sha256": "43b2505d621d37dfbf8fd0454cf6dc55fc1b5976e3b2752b80bb34f89e1cf103",
+        "width": 1085,
+        "height": 1448
+      }
+    ],
+    "scope_checks": [
+      {
+        "case": "unlinked-workspace-POST",
+        "status": 404
+      },
+      {
+        "case": "unlinked-workspace-GET",
+        "status": 404
+      }
+    ]
+  },
+  "first_normal_workflow_failure": {
+    "row_id": "9ed326e7-a652-4392-9213-0ea5de9a4476",
+    "request": {
+      "id": "air_288af42d039ab98e92845ae722f842a1",
+      "status": "settled",
+      "upstream_response_id": "chatcmpl-917c7970-845c-987b-9eee-bda4a738c1a9",
+      "charged_microfen": 15480,
+      "total_microfen": 55240,
+      "absorbed_microfen": 39760,
+      "job_id": "373516a5-8f98-4aaf-a407-65b9cc9c4905",
+      "input_fingerprint": "c3b30920183349acb69437fed0249152e4e54fc7eaa16434bd02d596afd921e4"
+    },
+    "result": "Valid paid model answer but no copy applied because supplier output policy was empty. Fixed the projection, deleted only this controlled test draft through the real UI, and imported the same unmodified artwork again. Jobs and billing retained."
+  },
+  "normal_workflow_ledger": [
+    {
+      "request_id": "air_288af42d039ab98e92845ae722f842a1",
+      "entries": [
+        {
+          "type": "hold",
+          "amount_microfen": 0,
+          "held_delta_microfen": 15480
+        },
+        {
+          "type": "settle",
+          "amount_microfen": -15480,
+          "held_delta_microfen": -15480
+        }
+      ]
+    },
+    {
+      "request_id": "air_aa1e02559ffe4ab56402229a903c3c48",
+      "entries": [
+        {
+          "type": "hold",
+          "amount_microfen": 0,
+          "held_delta_microfen": 15480
+        },
+        {
+          "type": "settle",
+          "amount_microfen": -15480,
+          "held_delta_microfen": -15480
+        }
+      ]
+    }
+  ],
+  "wallet": {
+    "org_id": 6,
+    "before_microfen": 496140840,
+    "after_microfen": 496063680,
+    "held_microfen": 0,
+    "charged_delta_microfen": 77160,
+    "charged_delta_cny": "0.00077160",
+    "ledger_matches": true
+  },
+  "final_configuration_state": [
+    {
+      "source_id": "src_9433a55db515419f9a88382c8ddc552c",
+      "listed": false
+    },
+    {
+      "product_id": "scp_0b36d54c83c841e4967b41420f192c67",
+      "published": false,
+      "profile": "{\"product_type_ru\":\"Кружка\",\"facts_ru\":\"керамическая 330 мл\",\"description_ru\":\"Керамическая кружка объемом 330 мл.\"}",
+      "fixed_tags": [
+        "#кружка",
+        "#керамика",
+        "#330мл"
+      ],
+      "ai_output": {
+        "tags": true,
+        "title": true,
+        "description": true
+      }
+    },
+    {
+      "product_id": "scp_f042e9698c8a4683939f0ffae8d48be8",
+      "published": false,
+      "profile": "{\"product_type_ru\":\"Картина по номерам\",\"facts_ru\":\"40×50 см\",\"description_ru\":\"Картина по номерам размером 40×50 см.\"}",
+      "fixed_tags": [
+        "#картина",
+        "#по_номерам"
+      ],
+      "ai_output": {
+        "tags": true,
+        "title": true,
+        "description": true
+      }
+    },
+    {
+      "history_table": null,
+      "configuration_rows": 1,
+      "wallet": {
+        "balance_microfen": 496063680,
+        "held_microfen": 0
+      }
+    }
+  ],
+  "boundaries": [
+    "Controlled dimensions and packaging are QA inputs, not asserted physical product facts.",
+    "Seller write kill switch remained on. Row still needs seller price and brand dictionary materials.",
+    "Existing image-token prepayment estimate omits visual tokens; the platform absorbs amounts above the authorized ceiling. No pricing semantics changed.",
+    "No remote deployment or real payment transaction."
+  ],
+  "configuration_contract": {
+    "history_table_exists": false,
+    "rows_per_product": 1,
+    "save": "replace_current",
+    "version_ui": false,
+    "revision": "concurrency token only; no history stored",
+    "database_migration": 16
+  },
+  "ui_checks": {
+    "main_screens": 15,
+    "settings_sections": 19,
+    "local_roles": 5,
+    "member_browser_regressions": 30,
+    "notifications": "passed",
+    "free_preview_desktop": "passed",
+    "free_preview_mobile": {
+      "width": 390,
+      "document_width": 390,
+      "dialog_width": 390,
+      "horizontal_overflow": false
+    },
+    "paid_mug_ui": "passed",
+    "paid_mousepad_ui": "passed",
+    "remove_own_test_row": "passed"
+  },
+  "automatic_checks": {
+    "frontend_full": {
+      "passed": 3313,
+      "failed": 0,
+      "files": 462
+    },
+    "frontend_affected_after_final_contract": {
+      "passed": 65,
+      "failed": 0,
+      "files": 6
+    },
+    "typescript_and_build": "passed",
+    "api_schema_consistency": "passed",
+    "deadcode": "passed",
+    "lint": {
+      "errors": 0,
+      "warnings": 727,
+      "unchanged_ceiling": 818
+    },
+    "architecture": "passed",
+    "go_all": "passed",
+    "go_build": "passed",
+    "migration_guard": "passed",
+    "live_api": {
+      "health": "ok",
+      "db": "available",
+      "ozon_writes": false,
+      "media_gc_delete": false
+    },
+    "go_integration": "ok  \tgithub.com/xxww0098/podhub-go/tests/integration\t267.648s"
+  }
+}

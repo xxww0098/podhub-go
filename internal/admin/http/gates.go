@@ -9,8 +9,8 @@ import (
 	"github.com/xxww0098/podhub-go/internal/admin/domain"
 )
 
-// gateSuper is the admin write-gate ladder: signed in, super admin, TOTP
-// enrolled, and step-up elevated. The status triple is writeShippingErr's.
+// gateSuper is the admin write-gate ladder: signed in and super admin. The
+// status triple is writeShippingErr's.
 func gateSuper(s Session) (int, string, string) {
 	if s.UserID == 0 {
 		return http.StatusUnauthorized, "未登录", "AUTH_INVALID"
@@ -18,18 +18,7 @@ func gateSuper(s Session) (int, string, string) {
 	if !strings.EqualFold(strings.TrimSpace(s.PlatformRole), "super_admin") {
 		return http.StatusForbidden, "需要超级管理员权限", "FORBIDDEN"
 	}
-	if !sessionBool(s, "TotpEnrolled") {
-		return http.StatusForbidden, "请先绑定验证器", "FORBIDDEN"
-	}
-	if !sessionBool(s, "StepUpElevated") {
-		return http.StatusForbidden, "管理操作需要重新验证", "FORBIDDEN"
-	}
 	return 0, "", ""
-}
-
-func sessionBool(s Session, name string) bool {
-	f := reflect.ValueOf(s).FieldByName(name)
-	return f.IsValid() && f.Kind() == reflect.Bool && f.Bool()
 }
 
 func sessionString(s Session, name string) string {

@@ -49,15 +49,17 @@ export function useWorkflowScreenLibrary({ state, workspaceId, skipNextAutosave,
 }) {
   const { cardTemplateId, runnerOpenLock, stopCardStream, runnerGeneration, dispatchedRunnerGeneration,
     handledAddressCardId, preparationTracks, guidedPreparationLock, psdAssetTemplateIdRef,
-    setLibraryBusy, setSavedForms, setBusy, setSchema, setDraft, setDraftId, setSupplierProductId,
+    setLibraryBusy, setLibraryLoadError, setSavedForms, setBusy, setSchema, setDraft, setDraftId, setSupplierProductId,
     setCardTemplateId, setFormName, setIssues, setAiPromptId, setAiPrompt, setAiPromptFileName,
     setPsdTemplateAssetId, setPsdTemplateFileName, setPsdAsset, setTargetStoreId,
     setAiAllowedFieldKeys, setCardFieldOrigins, setMode, setRestoringCard } = state
-  async function refreshSavedForms() {
+  async function refreshSavedForms(options?: { force?: boolean }) {
     setLibraryBusy(true)
     try {
-      setSavedForms(await loadListingCardList())
+      setSavedForms(await loadListingCardList(options))
+      setLibraryLoadError(false)
     } catch (reason) {
+      setLibraryLoadError(true)
       notifyCommandError(reason, "无法读取已保存的上架方案，请稍后重试。")
     } finally {
       setLibraryBusy(false)
@@ -220,7 +222,7 @@ export function useWorkflowScreenLibrary({ state, workspaceId, skipNextAutosave,
       if (!currentId) {
         throw refuse("workflow_template_missing", "上架方案没有可用的 PSD 模板")
       }
-      const managed = await renderOpfs.workflowRestoreTemplatePsd(currentId, productId, cardId)
+      const managed = await renderOpfs.workflowRestoreTemplatePsd(currentId, productId)
       if (!current() || managed.asset_id !== currentId) return false
       fileName ||= managed.asset.file_name
       setPsdAsset({ ...managed.asset, file_name: fileName })

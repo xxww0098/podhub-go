@@ -22,7 +22,7 @@ const NO_REPORT: WorkflowReadinessReport = {
   ready_to_publish: false, can_start_publish_attempt: false, blockers: [], allowed_actions: [],
 }
 
-const PSD_UNBOUND = /PSD.*(云端保存|未绑定|重新绑定)/
+const PSD_UNBOUND = /PSD.*(不可用|未绑定|重新绑定)/
 const STORE_REFUSAL = /(店铺|密钥)/
 const STALE_REFUSAL = /商品已更新，请刷新后再发送/
 const CANDIDATE_REFUSAL = /AI 候选/

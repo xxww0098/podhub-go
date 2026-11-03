@@ -179,10 +179,10 @@ func (s *Service) writeBack(res domain.WriteResult, err error) (domain.WriteResu
 	return res, nil
 }
 
-// ListGrants returns every workspace grant for this user, including revoked rows
+// ListGrants returns every grant in this user's selected scope, including revoked rows
 // that were not deleted. This route deletes on revoke, so those rows are absent.
-func (s *Service) ListGrants(ctx context.Context, userID, orgID int64) ([]domain.GrantView, error) {
-	grants, err := s.store.ListGrants(ctx, userID, orgID)
+func (s *Service) ListGrants(ctx context.Context, userID, orgID int64, scope string) ([]domain.GrantView, error) {
+	grants, err := s.store.ListGrants(ctx, userID, orgID, scope)
 	if err != nil {
 		return nil, s.fail(err)
 	}
@@ -194,14 +194,17 @@ func (s *Service) ListGrants(ctx context.Context, userID, orgID int64) ([]domain
 
 // CreateGrant mints a token, locks the live role, and inserts one row.
 // The token is returned only when the insert commits.
-func (s *Service) CreateGrant(ctx context.Context, userID, orgID int64, role, name string, actions []string, expires *int64) (domain.GrantView, string, error) {
+func (s *Service) CreateGrant(ctx context.Context, userID, orgID int64, role, scope, name string, actions []string, expires *int64) (domain.GrantView, string, error) {
 	name, fault := domain.CleanName(name)
 	if fault != nil {
 		return domain.GrantView{}, "", fault
 	}
-	kept, fault := domain.Delegate(role, actions)
+	kept, fault := domain.Delegate(scope, role, actions)
 	if fault != nil {
 		return domain.GrantView{}, "", fault
+	}
+	if err := (domain.Grant{Scope: scope, OrgID: orgID, Actions: kept}).Valid(); err != nil {
+		return domain.GrantView{}, "", contract.Validation("动作与授权范围不匹配")
 	}
 	if fault = domain.CleanExpiry(expires); fault != nil {
 		return domain.GrantView{}, "", fault
@@ -210,7 +213,7 @@ func (s *Service) CreateGrant(ctx context.Context, userID, orgID int64, role, na
 	if err != nil {
 		return domain.GrantView{}, "", contract.Unavailable()
 	}
-	view, err := s.store.CreateGrant(ctx, userID, orgID, name, hash, prefix, kept, expires)
+	view, err := s.store.CreateGrant(ctx, userID, orgID, name, hash, prefix, scope, kept, expires)
 	if err != nil {
 		return domain.GrantView{}, "", s.fail(err)
 	}
@@ -221,12 +224,12 @@ func (s *Service) CreateGrant(ctx context.Context, userID, orgID int64, role, na
 }
 
 // RevokeGrant deletes the grant and the rows that point at it.
-func (s *Service) RevokeGrant(ctx context.Context, userID, orgID int64, id string) (string, error) {
+func (s *Service) RevokeGrant(ctx context.Context, userID, orgID int64, id, scope string) (string, error) {
 	parsed, ok := domain.ParseID(id)
 	if !ok {
 		return "", contract.NotFound(contract.MsgGrantMissing)
 	}
-	got, err := s.store.RevokeGrant(ctx, userID, orgID, parsed)
+	got, err := s.store.RevokeGrant(ctx, userID, orgID, parsed, scope)
 	if errors.Is(err, contract.ErrMissing) {
 		return "", contract.NotFound(contract.MsgGrantMissing)
 	}

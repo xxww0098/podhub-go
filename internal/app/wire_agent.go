@@ -15,7 +15,7 @@ import (
 
 // mountAgent wires the seven agent routes.
 // The agent tables have no RLS and these handlers do not call tenant.BeginApp.
-// user_wallets is the only statement that sets podhub_app, and only inside
+// workspace_wallets is the only statement that sets podhub_app, and only inside
 // the transfer that credits it.
 func mountAgent(r chi.Router, pool *pgxpool.Pool, resolve access.Resolver) {
 	agenthttp.Mount(r, agenthttp.Deps{

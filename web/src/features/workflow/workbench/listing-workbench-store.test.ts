@@ -20,6 +20,7 @@ import type { WorkflowDraftView } from "@/bindings/commands"
 import { workflowActions } from "../workflow-actions"
 import { rowStatusView } from "../model/row-state"
 import { refreshProductStatus } from "./product-status"
+import { writeWorkflowValue } from "../workflow-draft"
 
 function row(draftId: string, status: ListingRow["status"] = "pending"): ListingRow {
   return {
@@ -33,6 +34,26 @@ function row(draftId: string, status: ListingRow["status"] = "pending"): Listing
     log: "",
   }
 }
+
+test("a local clear overlay preserves unrelated remote clears and a refill removes its own marker", () => {
+  const product = {
+    draft_id: "a", target_store_id: "store-1",
+    draft: { values: {}, complex_values: [] }, lifecycle: { revision: 1, view_revision: 1 },
+  } as unknown as WorkflowDraftView
+  resetListingWorkbench()
+  projectListingProducts(() => ({ a: product }))
+  try {
+    editListingProduct("a", { ...product, draft: writeWorkflowValue(product.draft, "name", undefined) })
+    projectListingProducts(() => ({ a: { ...product, draft: writeWorkflowValue(product.draft, "price", undefined),
+      lifecycle: { ...product.lifecycle, revision: 2, view_revision: 2 } } }))
+    const cleared = peekListingWorkbench().productDrafts.a!
+    assert.deepEqual(new Set(cleared.draft.cleared), new Set(["name", "price"]))
+    editListingProduct("a", { ...cleared, draft: writeWorkflowValue(cleared.draft, "name", { kind: "text", value: "typed" }) })
+    const refilled = peekListingWorkbench().productDrafts.a!
+    assert.deepEqual(refilled.draft.cleared, ["price"])
+    assert.equal(refilled.draft.values.name?.value, "typed")
+  } finally { resetListingWorkbench() }
+})
 
 test("a row patch does not invent a new queue progress snapshot", () => {
   resetListingWorkbench()

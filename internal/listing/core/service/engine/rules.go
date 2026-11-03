@@ -1,6 +1,6 @@
 // Package engine is the server-side home of listing rules.
 //
-// The matcher is the Rust functions in rust/crates/listing-tags, loaded with wazero.
+// The matcher is listing-core's banned_tags, called as op 20 of the listing-core wasm.
 // This package does not reimplement stemming, lookalike folding, or separator
 // folding. A browser hint is not a pass. A wasm or rule-table failure is not
 // a pass.

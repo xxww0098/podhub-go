@@ -3,8 +3,6 @@ import { Eraser, Send, Trash2 } from "lucide-react"
 import type {
   CategorySchemaView,
   FieldValueOrigin,
-  SkuImportCandidate,
-  SkuImportPreview,
   WorkflowCategoryDraft,
   WorkflowDraftValue,
   WorkflowDraftView,
@@ -102,8 +100,6 @@ export function WorkbenchDialogs({
   onUpdateCardDefault,
   onAddComplexItem,
   onRemoveComplexItem,
-  onPreviewSkuImport,
-  onApplySkuImport,
   onFetchCategorySchema,
 }: {
   state: WorkbenchDialogState
@@ -145,8 +141,6 @@ export function WorkbenchDialogs({
   ) => void
   onAddComplexItem?: (complexId: number) => void
   onRemoveComplexItem?: (complexId: number, itemIndex: number) => void
-  onPreviewSkuImport?: (sku: string) => Promise<SkuImportPreview>
-  onApplySkuImport?: (candidates: SkuImportCandidate[], sourceSku: number) => void
   onFetchCategorySchema: () => Promise<void>
 }) {
   const {
@@ -269,8 +263,6 @@ export function WorkbenchDialogs({
         onRemoveComplexItem={onRemoveComplexItem}
         aiAllowedFieldKeys={aiAllowedFieldKeys}
         aiProtectedFieldKeys={aiProtectedFieldKeys}
-        onPreviewSkuImport={onPreviewSkuImport}
-        onApplySkuImport={onApplySkuImport}
         onFetchSchema={onFetchCategorySchema}
         busy={busy}
         queueLocked={queueDispatching}

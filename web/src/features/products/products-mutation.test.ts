@@ -21,6 +21,7 @@ import {
   primaryStoreGroup,
   rowKey,
   shiftOverviewForArchive,
+  stockSku,
   writableFor,
   LIFECYCLE_MUTATION_LIMIT,
   PRICE_MUTATION_LIMIT,
@@ -38,7 +39,7 @@ function row(over: Partial<StoreProductRow> = {}): StoreProductRow {
     store_name: "测试店",
     product_id: 101,
     offer_id: "OF-1",
-    sku: 777,
+    sku: "777",
     name: "测试商品",
     price: "199.00",
     old_price: "299.00",
@@ -53,14 +54,24 @@ test("stock writes drop gone rows and rows without a numeric sku/productId", () 
   const { ok, dropped } = writableFor("stock", [
     row(),
     row({ offer_id: "gone", gone: true }),
-    row({ offer_id: "no-sku", sku: 0 }),
+    row({ offer_id: "no-sku", sku: null }),
+    row({ offer_id: "long-sku", sku: "1234567890123456789" }),
     row({ offer_id: "no-id", product_id: 0 }),
   ])
   assert.deepEqual(
     ok.map((item) => item.offer_id),
     ["OF-1"],
   )
-  assert.equal(dropped.length, 3)
+  assert.equal(dropped.length, 4)
+})
+
+test("numeric stock APIs accept only exact positive SKU integers", () => {
+  assert.equal(stockSku("777"), 777)
+  assert.equal(stockSku("9007199254740991"), Number.MAX_SAFE_INTEGER)
+  for (const sku of [null, undefined, "", "0", "-1", "1.5", "1e3", "9007199254740992", "1234567890123456789"]) {
+    assert.equal(stockSku(sku), 0, String(sku))
+  }
+  assert.equal(actionBlockReason("stock", row({ sku: "1234567890123456789" })), "此 SKU 暂不支持修改库存")
 })
 
 test("price writes drop rows whose price cannot be priced", () => {
@@ -163,7 +174,7 @@ test("archive blocks on unknown or remaining stock; unarchive only takes archive
 
 test("delete only takes archived rows that never got a SKU", () => {
   assert.equal(actionBlockReason("delete", row({ state: "archived", sku: null })), null)
-  assert.match(actionBlockReason("delete", row({ state: "archived", sku: 9 })) ?? "", /SKU/)
+  assert.match(actionBlockReason("delete", row({ state: "archived", sku: "9" })) ?? "", /SKU/)
   assert.match(actionBlockReason("delete", row({ state: "on_sale", sku: null })) ?? "", /已归档/)
 })
 

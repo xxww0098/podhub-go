@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -9,10 +10,15 @@ import (
 
 	"github.com/xxww0098/podhub-go/internal/platform/config"
 	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
+	"github.com/xxww0098/podhub-go/internal/queue/domain"
 )
+
+// ErrWorkNotPorted withdraws a claimed attempt when no handler can execute it.
+var ErrWorkNotPorted = errors.New("job handler is unavailable; no request was sent")
 
 // Options is one worker process's claim loop.
 type Options struct {
+	Repo    Repository
 	Role    string
 	Owner   string
 	Kinds   []string
@@ -23,7 +29,7 @@ type Options struct {
 	// lock before it claims or scans. A missed seat waits until ctx ends.
 	Seat bool
 	// Work owns one claimed job, including its jobs-row settlement. Nil
-	// keeps Execute, which does not dial. Listing submit sets this. Calls
+	// withdraws the attempt without sending. Listing submit sets this. Calls
 	// may overlap up to Limit; listing.submit.batch stays serial per org.
 	// Callbacks must stop when their context is cancelled.
 	Work func(context.Context, *pgxpool.Pool, Claimed) error
@@ -49,13 +55,15 @@ func KindsForRole(role string) []string {
 
 // Run claims, renews, and sweeps until ctx is cancelled.
 //
-// The job body is Work when set, and Execute otherwise. Execute does not
-// dial. A not-ported or writes-disabled result from Execute is requeued
-// with admission_unavailable, which withdraws the attempt. Work settles
-// the jobs row itself and must return nil after it has done so.
+// Work settles the jobs row itself and must return nil after it has done so.
+// A missing handler or ErrWorkNotPorted requeues with admission_unavailable
+// and withdraws the attempt; no external request or success is implied.
 func Run(ctx context.Context, pool *pgxpool.Pool, opts Options) error {
+	if opts.Repo.Claim == nil || opts.Repo.FormatOwner == nil || opts.Repo.ReclaimExpiredRows == nil || opts.Repo.RunningOwned == nil || opts.Repo.RequeueJob == nil {
+		return errors.New("queue repository is unavailable")
+	}
 	if opts.Owner == "" {
-		opts.Owner = FormatOwner(opts.Role, "")
+		opts.Owner = opts.Repo.FormatOwner(opts.Role, "")
 	}
 	if opts.Limit <= 0 {
 		opts.Limit = 1
@@ -171,7 +179,7 @@ func runLoop(ctx context.Context, pool *pgxpool.Pool, opts Options) error {
 			poke(wake)
 		case <-sweep.C:
 			for _, kind := range opts.Kinds {
-				if _, err := ReclaimExpiredRows(ctx, pool, kind); err != nil && ctx.Err() == nil {
+				if _, err := opts.Repo.ReclaimExpiredRows(ctx, pool, kind); err != nil && ctx.Err() == nil {
 					slog.Error("lease sweep", "kind", kind, "err", err)
 				}
 			}
@@ -217,7 +225,7 @@ func claimReady(ctx context.Context, pool *pgxpool.Pool, opts Options, available
 	if available <= 0 || ctx.Err() != nil {
 		return
 	}
-	running, err := RunningOwned(ctx, pool, opts.Owner, opts.Kinds)
+	running, err := opts.Repo.RunningOwned(ctx, pool, opts.Owner, opts.Kinds)
 	if err != nil {
 		if ctx.Err() == nil {
 			slog.Error("running count", "err", err)
@@ -232,7 +240,7 @@ func claimReady(ctx context.Context, pool *pgxpool.Pool, opts Options, available
 		if space <= 0 || ctx.Err() != nil {
 			return
 		}
-		claimed, err := Claim(ctx, pool, kind, opts.Owner, space)
+		claimed, err := opts.Repo.Claim(ctx, pool, kind, opts.Owner, space)
 		if err != nil {
 			if ctx.Err() == nil {
 				slog.Error("claim", "kind", kind, "err", err)
@@ -252,30 +260,20 @@ func claimReady(ctx context.Context, pool *pgxpool.Pool, opts Options, available
 }
 
 func finishClaimed(ctx context.Context, pool *pgxpool.Pool, opts Options, job Claimed) {
+	err := ErrWorkNotPorted
 	if opts.Work != nil {
-		err := opts.Work(ctx, pool, job)
-		if err != nil && ctx.Err() == nil {
-			slog.Error("job body", "kind", job.Kind, "id", job.ID.String(), "err", err)
-			if _, rerr := RequeueJob(ctx, pool, job.Lease(), WorkRequeue(err), 0); rerr != nil {
-				slog.Error("requeue", "kind", job.Kind, "id", job.ID.String(), "err", rerr)
-			}
-		}
+		err = opts.Work(ctx, pool, job)
+	}
+	if err == nil || ctx.Err() != nil {
 		return
 	}
-	err := Execute(opts.Config, job.Kind)
-	if err == nil {
-		if _, rerr := Settle(ctx, pool, job.Lease(), StateSucceeded, nil); rerr != nil && ctx.Err() == nil {
-			slog.Error("settle", "kind", job.Kind, "id", job.ID.String(), "err", rerr)
-		}
-		return
-	}
-	reason := ReasonSafeToRetry
-	if NotPorted(err) {
+	reason := domain.WorkRequeue(err)
+	if errors.Is(err, ErrWorkNotPorted) {
 		reason = ReasonAdmissionUnavailable
-	} else if ctx.Err() == nil {
+	} else {
 		slog.Error("job body", "kind", job.Kind, "id", job.ID.String(), "err", err)
 	}
-	if _, rerr := RequeueJob(ctx, pool, job.Lease(), reason, 0); rerr != nil && ctx.Err() == nil {
+	if _, rerr := opts.Repo.RequeueJob(ctx, pool, job.Lease(), reason, 0); rerr != nil && ctx.Err() == nil {
 		slog.Error("requeue", "kind", job.Kind, "id", job.ID.String(), "err", rerr)
 	}
 }

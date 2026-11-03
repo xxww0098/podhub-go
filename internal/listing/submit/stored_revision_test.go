@@ -2,7 +2,6 @@ package submit
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -24,9 +23,12 @@ func TestSendStoredRejectsStalePinsAndEnqueuesCurrentRows(t *testing.T) {
 	current := f.row(t, 1, "approved-content")
 	mod := &storedRevisionModule{}
 	f.bind(t, mod)
+	if _, err := f.pool.Exec(f.ctx, `INSERT INTO catalog_dictionary_search_material(description_category_id,type_id,language,attribute_id,dictionary_id,option_id,value) VALUES($1,$2,'default',85,5,7,'Verified'),($1,$2,'ru',85,5,8,'Other language')`, 100000+f.user, f.user); err != nil {
+		t.Fatal(err)
+	}
 	before := f.projection(t, stale)
 	req := f.request(t, []string{stale, current}, map[string]int64{stale: 1, current: 1})
-	result, err := SendStored(f.ctx, f.pool, f.org, f.user, req, time.Now())
+	result, err := testSubmit().SendStored(f.ctx, f.pool, f.org, f.user, req, time.Now())
 	if err != nil || len(result.Items) != 2 {
 		t.Fatalf("batch result: %+v err=%v", result, err)
 	}
@@ -45,6 +47,9 @@ func TestSendStoredRejectsStalePinsAndEnqueuesCurrentRows(t *testing.T) {
 	}
 	if len(mod.calls) != 1 || mod.calls[0] != current {
 		t.Errorf("stale row reached the freeze module: calls=%v", mod.calls)
+	}
+	if !bytes.Contains(mod.schema, []byte(`"valueId":7`)) || bytes.Contains(mod.schema, []byte(`"valueId":8`)) {
+		t.Fatalf("stored freeze lost or mixed dictionary material: %s", mod.schema)
 	}
 	var intents, jobs, queued int
 	if err := f.pool.QueryRow(f.ctx, `SELECT count(*) FROM submission_intents WHERE org_id = $1`, f.org).Scan(&intents); err != nil {
@@ -84,7 +89,7 @@ func TestSendStoredConcurrentEditRollsBackWholeBatch(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		data, err := SendStored(ctx, f.pool, f.org, f.user, req, time.Now())
+		data, err := testSubmit().SendStored(ctx, f.pool, f.org, f.user, req, time.Now())
 		result <- response{data: data, err: err}
 	}()
 	t.Cleanup(func() {
@@ -159,20 +164,12 @@ func newStoredRevisionFixture(t *testing.T, userID int64) storedRevisionFixture 
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM listing_cards WHERE org_id = $1`, org)
 		purgeDraft(context.Background(), pool, org, user)
-		_, _ = pool.Exec(context.Background(), `DELETE FROM ozon_catalog_schema_cache WHERE description_category_id = $1 AND type_id = $2`, category, userID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM ozon_category_current WHERE description_category_id = $1 AND type_id = $2`, category, userID)
 	})
 	if _, err := pool.Exec(ctx, `INSERT INTO listing_cards (id, org_id, payload) VALUES ($1::uuid, $2, $3::jsonb)`, card, org, fmt.Sprintf(`{"descriptionCategoryId":%d,"typeId":%d}`, category, userID)); err != nil {
 		t.Fatal(err)
 	}
-	var compressed bytes.Buffer
-	zw := gzip.NewWriter(&compressed)
-	if _, err := zw.Write([]byte(`[]`)); err != nil {
-		t.Fatal(err)
-	}
-	if err := zw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `INSERT INTO ozon_catalog_schema_cache (description_category_id, type_id, language, payload, fetched_at_ms, byte_size) VALUES ($1, $2, 'default', $3, $4, $5)`, category, userID, compressed.Bytes(), time.Now().UnixMilli(), compressed.Len()); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO ozon_category_current (description_category_id, type_id, language, fields, content_digest, fetched_at_ms) VALUES ($1, $2, 'default', '[]'::jsonb, $3, $4)`, category, userID, fmt.Sprintf("sha256:%064x", 0), time.Now().UnixMilli()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO organization_stores(org_id,uuid,create_order,name) VALUES($1,$2::uuid,1,'Draft')`, org, store); err != nil {
@@ -235,12 +232,14 @@ type storedRevisionModule struct {
 	pauseRow         string
 	entered, release chan struct{}
 	calls            []string
+	schema           json.RawMessage
 }
 
-func (m *storedRevisionModule) Call(ctx context.Context, op uint32, _, body []byte) ([]byte, error) {
+func (m *storedRevisionModule) Call(ctx context.Context, op uint32, schema, body []byte) ([]byte, error) {
 	if op != contract.OpFreezeListing {
 		return nil, fmt.Errorf("unexpected op %d", op)
 	}
+	m.schema = append(json.RawMessage(nil), schema...)
 	var input struct {
 		RowID string `json:"rowId"`
 		Row   struct {

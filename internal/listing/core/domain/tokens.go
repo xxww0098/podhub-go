@@ -12,10 +12,6 @@ import (
 // SearchTagsAttributeID is listing_core::SEARCH_TAGS_ATTRIBUTE_ID (23171).
 const SearchTagsAttributeID = contract.SearchTagsAttributeID
 
-func init() {
-	contract.SearchTagTokens = SearchTagTokens
-}
-
 // SearchTagTokens is reject_banned_search_tags without the database.
 // schemaFields is the category field array. draft is a WorkflowCategoryDraft.
 // A valid schema without search-tag fields allows the draft. Invalid schemas

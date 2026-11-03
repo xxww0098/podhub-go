@@ -51,13 +51,11 @@ import type {
   CategorySchemaView,
   CategoryTreeRequest,
   FieldValueOrigin,
-  ListingCardSkuImportPreviewRequest,
   ListingCardSummary,
   OperationStatus,
   SaveCategoryPromptRequest,
   SaveCategoryVideoRequest,
   SaveWorkflowDraftRequest,
-  SkuImportPreview,
   SubmitDraftResponse,
   WorkflowCategoryPrompt,
   WorkflowCategoryVideo,
@@ -271,34 +269,6 @@ export function fieldValuesEqual(
   })
 }
 
-/**
- * The operator vouches that these rows' unanswered sends never reached Ozon.
- * Cloud retires their `unknown` Intents so the rows become sendable again and
- * answers with the rows it actually released (a row still held by a running
- * dispatch stays unknown).
- */
-export async function releaseUnknownListingRows(rowIds: string[]): Promise<string[]> {
-  const data = await api.post<components["schemas"]["ReleaseUnknownListingRowsData"]>(
-    route("listingRowsReleaseUnknown"),
-    { rowIds },
-  )
-  return data.released_row_ids
-}
-
-/** Clear the server-owned brand hashtag conflict and enqueue this row atomically. */
-export async function repairAndSubmitListingRow(
-  rowId: string,
-  expectedRevision: number,
-): Promise<components["schemas"]["SubmitListingBatchItemData"]> {
-  const data = await api.post<components["schemas"]["SubmitListingBatchData"]>(
-    `${rowPath(rowId)}/repair-and-submit`,
-    { expectedRevision },
-  )
-  const item = data.items[0]
-  if (!item) throw new Error("修复发送未返回商品状态")
-  return item
-}
-
 // --- listing cards ----------------------------------------------------------
 
 const LISTING_CARDS = route("listingCards")
@@ -319,11 +289,6 @@ export function createListingCardFromSupplier(supplierProductId: string): Promis
     createMode: "fromSupplier",
     supplierProductId: productId,
   })
-}
-
-/** Schedule this Card's unknown/accepted intents for read-only probes. */
-export function reconcileListingCard(cardId: string): Promise<{ scheduledCount: number }> {
-  return api.post<{ scheduledCount: number }>(cardPath(cardId, "/reconcile"))
 }
 
 /** Fail closed: an unknown state is never silently painted as queued. */
@@ -707,10 +672,15 @@ export const listingHttp = {
     return { attempted: draftIds.length, cancelled }
   },
   listingCardLoadCategorySchema: loadCategorySchema,
-  listingCardLoadCategoryTree: async (request: CategoryTreeRequest) => {
-    const data = await retryWhenBusy(() => api.get<components["schemas"]["CatalogTreeResponse"]>(
-      `${route("catalogTree")}?language=${request.language ?? "default"}` +
-        filterQuery({ store_id: request.target_store_id }),
+  listingCardLoadCategoryTree: async (query: CategoryTreeRequest) => {
+    // The catalog reads answer the DTO itself, `null` included; there is no
+    // `data` envelope on this route, so an enveloped read would report every
+    // legitimate empty cache as an unreadable response.
+    const data = await retryWhenBusy(() => request<components["schemas"]["CatalogTreeResponse"]>(
+      "GET",
+      `${route("catalogTree")}?language=${query.language ?? "default"}` +
+        filterQuery({ store_id: query.target_store_id }),
+      undefined, {}, undefined, undefined, { responseBody: "json" },
     ), CATALOG_FILL_RETRY)
     return catalogTreeNodes(data?.items ?? [])
   },
@@ -747,17 +717,24 @@ export const listingHttp = {
       picture: option.picture ?? "",
     }))
   },
-  // The Seller SKU read and the projection onto this card's Schema both happen
-  // in Cloud; the browser sends the SKU and gets a preview back. Nothing is
-  // written, here or on Ozon.
-  listingCardPreviewSkuImport: (request: ListingCardSkuImportPreviewRequest) =>
-    api.post<SkuImportPreview>(cardPath(request.draft_id, "/sku-import/preview"), {
-      sku: request.sku,
-    }),
-  listingCardListSavedDrafts: async () =>
-    (await api.get<{ items: CloudListingCardView[] }>(`${LISTING_CARDS}?limit=100`)).items.map(
-      cardSummaryView,
-    ),
+  listingCardListSavedDrafts: async () => {
+    const cards: ListingCardSummary[] = []
+    const scope = rowCacheScope()
+    const seen = new Set<string>()
+    let cursor: string | undefined
+    do {
+      if (!scope.current()) throw refuse("workflow_card_list_stale", "账号或工作区已切换，请重新读取上架方案")
+      const page = await api.get<{ items: CloudListingCardView[], nextCursor?: string }>(
+        `${LISTING_CARDS}?limit=100` + (cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""),
+      )
+      if (!scope.current()) throw refuse("workflow_card_list_stale", "账号或工作区已切换，请重新读取上架方案")
+      cards.push(...page.items.map(cardSummaryView))
+      cursor = page.nextCursor
+      if (cursor && seen.has(cursor)) throw refuse("workflow_card_list_cursor", "上架方案分页异常，请重新读取")
+      if (cursor) seen.add(cursor)
+    } while (cursor)
+    return cards
+  },
   listingCardLoadCard: async (draftId: string) => {
     const card = await readListingCard(draftId)
     return cardDraftView(card, await cardCategorySchema(cardPayload(card)))
@@ -777,7 +754,7 @@ export const listingHttp = {
   },
   /** One Product Instance. Always deleted; Intents and Jobs stay. */
   listingRowDelete: async (rowId: string) => {
-    await api.del<{ id: string, deletedRows: number }>(rowPath(rowId))
+    await api.del<{ id: string }>(rowPath(rowId))
     forgetListingRows([rowId])
   },
   listingCardListCategoryPrompts: async (descriptionCategoryId: number, typeId: number) =>

@@ -410,7 +410,7 @@ test("a Worker transport failure finishes the row and stops renewing its browser
     assert.equal(stub.calls.filter(call => call.url.endsWith("/ai/fail")).length, 3)
     assert.equal(stub.calls.some(call => call.url.endsWith("/ocr/completions")), false)
     assert.deepEqual(stub.calls.find(call => call.url.endsWith("/ai/fail"))?.body, {
-      job_id: "worker-failed-ai", lease: { owner: "tab-worker-failed-ai", epoch: 1 },
+      job_id: "worker-failed-ai", lease: { owner: "tab-worker-failed-ai", epoch: 1 }, error_code: "RENDER_WORKER_ERROR",
     })
     t.mock.timers.tick(30_000)
     await new Promise(resolve => setImmediate(resolve))

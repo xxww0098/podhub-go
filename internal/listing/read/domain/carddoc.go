@@ -31,7 +31,7 @@ var cardFields = map[string]bool{
 }
 
 var annotationKeys = []string{
-	"aiPrompt", "aiPromptFileName", "targetStoreId", "supplierUnavailable", "size",
+	"aiPrompt", "aiPromptFileName", "targetStoreId", "supplierUnavailable", "size", "pricingAssumptions",
 }
 
 var systemMediaKeys = map[string]bool{
@@ -54,6 +54,13 @@ func PrepareCard(raw json.RawMessage, storedDefaults json.RawMessage) ([]byte, e
 	annotations := map[string]json.RawMessage{}
 	for _, key := range annotationKeys {
 		if v, exists := vals[key]; exists {
+			if key == "pricingAssumptions" {
+				var err error
+				v, err = normalizePricingAssumptions(v)
+				if err != nil {
+					return nil, DocError{Kind: "validation", Message: "利润试算参数无效：" + err.Error()}
+				}
+			}
 			annotations[key] = v
 			delete(vals, key)
 		}

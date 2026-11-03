@@ -12,7 +12,6 @@ import (
 	"sync/atomic"
 
 	"github.com/xxww0098/podhub-go/internal/listing/core/contract"
-	_ "github.com/xxww0098/podhub-go/internal/listing/core/service/engine"
 	"github.com/xxww0098/podhub-go/internal/platform/wasm"
 	wasmembed "github.com/xxww0098/podhub-go/wasm"
 )
@@ -39,6 +38,7 @@ const (
 	OpFreezeListing      = contract.OpFreezeListing
 	OpProjectSubmitDraft = contract.OpProjectSubmitDraft
 	OpIssueManifest      = contract.OpIssueManifest
+	OpSeedAssociatedRow  = contract.OpSeedAssociatedRow
 )
 
 // Module is a compiled listing-core module plus a bounded guest pool.

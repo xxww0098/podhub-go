@@ -66,8 +66,9 @@ func TestDispatchActionsMatchSQLFunction(t *testing.T) {
 	pool, ctx := parityDB(t)
 	member := int64(880011)
 	other := int64(880012)
+	seedSupplierUser(t, ctx, pool, member, "actions")
 	orgID := seedOrg(t, ctx, pool, member, "actions")
-	seedUser(t, ctx, pool, other, "actions-other")
+	seedSupplierUser(t, ctx, pool, other, "actions-other")
 	sourceID := "src_actions_880011"
 	seedSource(t, ctx, pool, sourceID, "actions-880011")
 	seedMember(t, ctx, pool, sourceID, member, "active")

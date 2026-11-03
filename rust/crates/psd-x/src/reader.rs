@@ -98,7 +98,7 @@ pub enum ReadError {
     /// `warnOrThrow` in strict mode (`Exceeded section limits` / `Unread section data`).
     #[error("{0}")]
     StrictViolation(String),
-    /// ZIP-compressed channel data the caller was going to consume could not
+    /// Compressed channel data the caller was going to consume could not
     /// be decoded, and `ReadOptions::corrupt_channel_is_fatal` asked for that
     /// to be fatal instead of silently leaving the channel zeroed.
     #[error("corrupt channel {channel} data: {detail}")]
@@ -1345,23 +1345,43 @@ pub fn read_psd_from_reader(reader: &mut PsdReader) -> ReadResult<crate::psd::Ps
 
     // image resources
     let mut image_resources = ImageResources::default();
+    let mut unread_resource_bytes = 0;
     read_section(
         reader,
         1,
         |reader, left| {
-            while left(reader) > 0 {
+            let resources_end = reader.offset + left(reader);
+            while left(reader) >= 12 {
                 realign_with_signature(reader, is_valid_image_resource_signature)?;
                 let id = read_uint16(reader)?;
-                read_pascal_string(reader, 2)?; // name
+                let name_len = usize::from(read_uint8(reader)?);
+                let padded_name_len = name_len + (name_len + 1) % 2;
+                if padded_name_len + 4 > resources_end.saturating_sub(reader.offset) {
+                    return Err(ReadError::SectionExceedsFileSize);
+                }
+                read_bytes_slice(reader, padded_name_len)?;
 
                 read_section(
                     reader,
                     2,
                     |reader, left| {
-                        let skip = id == 1036 && reader.options.skip_thumbnail == Some(true);
+                        let block_len = left(reader);
+                        let padded_len = block_len
+                            .checked_add(block_len % 2)
+                            .ok_or(ReadError::SizeTooLarge)?;
+                        if padded_len > resources_end.saturating_sub(reader.offset) {
+                            return Err(ReadError::SectionExceedsFileSize);
+                        }
+                        // These resources participate in layer/composite interpretation.
+                        let required = matches!(id, 1006 | 1026 | 1045 | 1047 | 1072);
+                        let skip = (id == 1036 && reader.options.skip_thumbnail == Some(true))
+                            || reader
+                                .options
+                                .image_resources_whitelist
+                                .as_ref()
+                                .is_some_and(|ids| !required && !ids.contains(&id));
                         let throw_for_missing =
                             reader.options.throw_for_missing_features == Some(true);
-                        let block_len = left(reader);
                         if !skip {
                             match read_image_resource(id, reader, &mut image_resources, block_len) {
                                 Ok(()) => {}
@@ -1381,11 +1401,19 @@ pub fn read_psd_from_reader(reader: &mut PsdReader) -> ReadResult<crate::psd::Ps
                     false,
                 )?;
             }
+            unread_resource_bytes = left(reader);
+            skip_bytes(reader, unread_resource_bytes);
             Ok(())
         },
         true,
         false,
     )?;
+    if unread_resource_bytes > 0
+        && !section_fits(reader, reader.offset)
+        && section_fits(reader, reader.offset - unread_resource_bytes)
+    {
+        reader.offset -= unread_resource_bytes;
+    }
     psd.image_resources = Some(image_resources);
 
     // layer and mask info
@@ -1459,6 +1487,25 @@ pub fn read_psd_from_reader(reader: &mut PsdReader) -> ReadResult<crate::psd::Ps
 
 fn is_valid_image_resource_signature(sig: &str) -> bool {
     sig == "8BIM" || sig == "MeSa" || sig == "AgHg" || sig == "PHUT" || sig == "DCSR"
+}
+
+fn section_fits(reader: &PsdReader<'_>, offset: usize) -> bool {
+    let header_len = if reader.large { 8 } else { 4 };
+    let mut header = [0; 8];
+    if reader
+        .read_exact_at(offset, &mut header[8 - header_len..])
+        .is_err()
+    {
+        return false;
+    }
+    let length = u64::from_be_bytes(header);
+    length <= u64::from(u32::MAX)
+        && usize::try_from(length).ok().is_some_and(|length| {
+            offset
+                .checked_add(header_len)
+                .and_then(|start| start.checked_add(length))
+                .is_some_and(|end| end <= reader.len())
+        })
 }
 
 // ---------------------------------------------------------------------------
@@ -1741,7 +1788,10 @@ fn read_layer_record(
         reader,
         1,
         |reader, left| {
-            read_layer_mask_data(reader, &mut info)?;
+            let has_real_mask = channels
+                .iter()
+                .any(|channel| channel.id == ChannelId::RealUserMask as i16);
+            read_layer_mask_data(reader, &mut info, has_real_mask)?;
 
             if let Some(ranges) = read_layer_blending_ranges(reader)? {
                 info.blending_ranges = Some(ranges);
@@ -1772,13 +1822,51 @@ fn read_layer_record(
     Ok((layer, channels))
 }
 
-fn read_layer_mask_data(reader: &mut PsdReader, info: &mut LayerAdditionalInfo) -> ReadResult<()> {
+fn mask_parameters_size(params: u8) -> usize {
+    1 + [
+        (MaskParams::UserMaskDensity, 1),
+        (MaskParams::UserMaskFeather, 8),
+        (MaskParams::VectorMaskDensity, 1),
+        (MaskParams::VectorMaskFeather, 8),
+    ]
+    .into_iter()
+    .filter(|(flag, _)| params & *flag as u8 != 0)
+    .map(|(_, bytes)| bytes)
+    .sum::<usize>()
+}
+
+fn mask_parameters_only(reader: &PsdReader<'_>, remaining: usize) -> bool {
+    let Some(data) = reader
+        .input
+        .get(reader.offset..)
+        .and_then(|data| data.get(..remaining))
+    else {
+        return false;
+    };
+    let Some(&params) = data.first() else {
+        return false;
+    };
+    if params == 0 || params & !0x0f != 0 {
+        return false;
+    }
+    let size = mask_parameters_size(params);
+    remaining >= size && remaining - size <= 3 && data[size..].iter().all(|&byte| byte == 0)
+}
+
+fn read_layer_mask_data(
+    reader: &mut PsdReader,
+    info: &mut LayerAdditionalInfo,
+    has_real_mask: bool,
+) -> ReadResult<()> {
     read_section(
         reader,
         1,
         |reader, left| {
             if left(reader) == 0 {
                 return Ok(());
+            }
+            if left(reader) < 18 {
+                return Err(ReadError::UnexpectedEndOfBuffer);
             }
             let mut mask = LayerMaskData::default();
             mask.top = Some(read_int32(reader)? as f64);
@@ -1803,7 +1891,12 @@ fn read_layer_mask_data(reader: &mut PsdReader, info: &mut LayerAdditionalInfo) 
             mask.from_vector_data =
                 Some((flags & LayerMaskFlags::LayerMaskFromRenderingOtherData as u8) != 0);
 
-            if left(reader) >= 18 {
+            // Density/feather parameters alone can exceed the real-mask header's 18 bytes.
+            if left(reader) >= 18
+                && (has_real_mask
+                    || flags & LayerMaskFlags::MaskHasParametersAppliedToIt as u8 == 0
+                    || !mask_parameters_only(reader, left(reader)))
+            {
                 let mut real_mask = LayerMaskData::default();
                 let real_flags = read_uint8(reader)?;
                 real_mask.position_relative_to_layer =
@@ -1832,7 +1925,13 @@ fn read_layer_mask_data(reader: &mut PsdReader, info: &mut LayerAdditionalInfo) 
             }
 
             if flags & LayerMaskFlags::MaskHasParametersAppliedToIt as u8 != 0 {
+                if left(reader) == 0 {
+                    return Err(ReadError::UnexpectedEndOfBuffer);
+                }
                 let params = read_uint8(reader)?;
+                if mask_parameters_size(params) - 1 > left(reader) {
+                    return Err(ReadError::UnexpectedEndOfBuffer);
+                }
                 if params & MaskParams::UserMaskDensity as u8 != 0 {
                     mask.user_mask_density = Some(read_uint8(reader)? as f64 / 0xff as f64);
                 }
@@ -2346,9 +2445,7 @@ fn decode_layer_image_data(
 
 /// Mirror `readData` dispatch.
 ///
-/// `channel` and `fatal` only feed the ZIP path, which is the only codec that
-/// can report *undecodable* bytes instead of merely short ones; they let a
-/// renderer turn a channel it was going to consume into
+/// `channel` and `fatal` let a renderer turn an undecodable channel into
 /// [`ReadError::CorruptChannel`] instead of silently rendering it black.
 #[allow(clippy::too_many_arguments)]
 fn read_data(
@@ -2374,16 +2471,30 @@ fn read_data(
             read_data_raw(&data, pixels, bit_depth, step, offset);
             Ok(())
         }
-        Compression::RleCompressed => read_data_rle(
-            reader,
-            pixels,
-            width,
-            height,
-            bit_depth,
-            step,
-            &[offset],
-            large,
-        ),
+        Compression::RleCompressed => {
+            let consuming = pixels.is_some() && offset < step && width != 0 && height != 0;
+            read_data_rle(
+                reader,
+                pixels,
+                width,
+                height,
+                bit_depth,
+                step,
+                &[offset],
+                large,
+            )
+            .map_err(|error| match error {
+                ReadError::UnexpectedEndOfBuffer | ReadError::StrictViolation(_)
+                    if fatal && consuming =>
+                {
+                    ReadError::CorruptChannel {
+                        channel,
+                        detail: error.to_string(),
+                    }
+                }
+                other => other,
+            })
+        }
         Compression::ZipWithoutPrediction => {
             let data = read_bytes(reader, length)?;
             read_data_zip(
@@ -2515,6 +2626,13 @@ pub fn read_data_zip(
     use flate2::read::ZlibDecoder;
     use std::io::Read;
 
+    let Some(pixel_data) = pixel_data else {
+        return Ok(());
+    };
+    if offset >= step || width == 0 || height == 0 {
+        return Ok(());
+    }
+
     let bytes_per_sample = match bit_depth {
         16 => 2usize,
         32 => 4usize,
@@ -2540,11 +2658,8 @@ pub fn read_data_zip(
             requested: max_out,
             category: AllocationCategory::Channel,
         })?;
-    // Only a channel whose samples are about to be consumed may be reported as
-    // corrupt; every other failure keeps the historical recover-and-zero path.
-    let consuming = pixel_data.is_some() && offset < step && expected_len != 0;
     if let Err(error) = decoder.read_to_end(&mut decompressed) {
-        if fatal && consuming {
+        if fatal {
             return Err(ReadError::CorruptChannel {
                 channel,
                 detail: format!("zlib stream is not decodable: {error}"),
@@ -2553,7 +2668,7 @@ pub fn read_data_zip(
         return Ok(());
     }
     if decompressed.len() > max_out {
-        if fatal && consuming {
+        if fatal {
             return Err(ReadError::CorruptChannel {
                 channel,
                 detail: format!(
@@ -2563,17 +2678,6 @@ pub fn read_data_zip(
                 ),
             });
         }
-        return Ok(());
-    }
-    if expected_len == 0 {
-        return Ok(());
-    }
-
-    let pixel_data = match pixel_data {
-        Some(p) => p,
-        None => return Ok(()),
-    };
-    if offset >= step {
         return Ok(());
     }
     // Prediction indexes every declared sample, including partially encoded rows.
@@ -2682,6 +2786,10 @@ pub fn read_data_rle(
     offsets: &[usize],
     large: bool,
 ) -> ReadResult<()> {
+    let row_stride = width.checked_mul(step).ok_or(ReadError::SizeTooLarge)?;
+    height
+        .checked_mul(row_stride)
+        .ok_or(ReadError::SizeTooLarge)?;
     let length_count = offsets
         .len()
         .checked_mul(height)
@@ -2729,15 +2837,15 @@ pub fn read_data_rle(
             continue;
         }
 
-        let mut p = offset;
-        for _ in 0..height {
+        for y in 0..height {
+            let mut p = y * row_stride + offset;
             let length = lengths[li];
             li += 1;
-            let buffer = read_bytes_category(reader, length, AllocationCategory::Channel)?;
+            let buffer = read_bytes_slice(reader, length)?;
 
             let mut i = 0usize;
             let mut x = 0usize;
-            while i < length {
+            while i < length && x < width {
                 let header = buffer[i];
                 if header > 128 {
                     i += 1;
@@ -2780,8 +2888,13 @@ pub fn read_data_rle(
                 }
                 i += 1;
             }
+            if x < width && (reader.strict || reader.options.corrupt_channel_is_fatal == Some(true))
+            {
+                return Err(ReadError::StrictViolation(format!(
+                    "RLE row {y} decoded {x} of {width} samples"
+                )));
+            }
         }
-        let _ = p;
     }
 
     drop(lengths_lease);

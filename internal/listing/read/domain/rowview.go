@@ -3,6 +3,7 @@ package domain
 import (
 	"bytes"
 	"encoding/json"
+	"strconv"
 )
 
 // StoredRow is the listing_rows columns a view is built from.
@@ -24,6 +25,9 @@ type StoredRow struct {
 	// Receipt is the newest submission_intents.submission_receipt for this row.
 	// listing_rows has no receipt column. Null and empty are absent.
 	Receipt []byte
+	// LatestIntent is the newest input revision's durable intent evidence.
+	// It must match Revision before any issue is projected onto this row.
+	LatestIntent []byte
 	// RecognizeJob, UploadJob, and SliceJob are non-terminal browser jobs
 	// whose cancel has not been requested. Stage uses them after the
 	// submission column.
@@ -35,39 +39,46 @@ type StoredRow struct {
 // RowView is ListingRowView in serde field order.
 type RowView struct {
 	ID               string          `json:"id"`
-	CardID           string          `json:"cardId"`
-	StoreID          *string         `json:"storeId,omitempty"`
+	CardID           string          `json:"card_id"`
+	StoreID          *string         `json:"store_id,omitempty"`
 	Revision         int64           `json:"revision"`
-	ViewRevision     int64           `json:"viewRevision"`
+	ViewRevision     int64           `json:"view_revision"`
 	Projection       Projection      `json:"projection"`
-	ContentState     string          `json:"contentState"`
-	MediaState       string          `json:"mediaState"`
-	ValidationState  string          `json:"validationState"`
-	SubmissionState  string          `json:"submissionState"`
+	ContentState     string          `json:"content_state"`
+	MediaState       string          `json:"media_state"`
+	ValidationState  string          `json:"validation_state"`
+	SubmissionState  string          `json:"submission_state"`
 	Draft            json.RawMessage `json:"draft"`
-	ValidationIssues json.RawMessage `json:"validationIssues"`
+	ValidationIssues json.RawMessage `json:"validation_issues"`
 	Media            json.RawMessage `json:"media"`
-	RenderEvidence   json.RawMessage `json:"renderEvidence,omitempty"`
+	RenderEvidence   json.RawMessage `json:"render_evidence,omitempty"`
 	AI               json.RawMessage `json:"ai"`
 	Source           json.RawMessage `json:"source"`
 	Payload          json.RawMessage `json:"payload"`
-	UpdatedAtMs      int64           `json:"updatedAtMs"`
+	UpdatedAtMs      int64           `json:"updated_at_ms"`
 	Build            BuildView       `json:"build"`
 }
 
-// Projection is ListingRowProjection. Readiness keys stay snake_case.
+// Projection is ListingRowProjection at the declared HTTP boundary.
 type Projection struct {
-	ReceiptStatus string    `json:"submissionReceiptStatus"`
-	IssueStatus   string    `json:"currentIssueStatus"`
-	CanResume     bool      `json:"canResume"`
-	Stage         string    `json:"stage"`
-	AI            string    `json:"ai"`
-	Media         string    `json:"media"`
-	MediaFailure  string    `json:"mediaFailureStage,omitempty"`
-	Fields        string    `json:"fields"`
-	Readiness     Readiness `json:"readiness"`
-	ImageTotal    uint32    `json:"imageTotal"`
-	ImageDone     uint32    `json:"imageCompleted"`
+	ReceiptStatus     string          `json:"submission_receipt_status"`
+	IssueStatus       string          `json:"current_issue_status"`
+	CanResume         bool            `json:"can_resume"`
+	Stage             string          `json:"stage"`
+	AI                string          `json:"ai"`
+	Media             string          `json:"media"`
+	MediaFailure      string          `json:"media_failure_stage,omitempty"`
+	Fields            string          `json:"fields"`
+	Readiness         Readiness       `json:"readiness"`
+	ImageTotal        uint32          `json:"image_total"`
+	ImageDone         uint32          `json:"image_completed"`
+	ErrorCode         *string         `json:"error_code,omitempty"`
+	ErrorDetail       *string         `json:"error_detail,omitempty"`
+	SubmissionIssue   json.RawMessage `json:"submission_issue,omitempty"`
+	SubmissionReceipt json.RawMessage `json:"submission_receipt,omitempty"`
+	TaskID            *string         `json:"task_id,omitempty"`
+	SKU               *int64          `json:"sku,omitempty"`
+	ProductID         *int64          `json:"product_id,omitempty"`
 }
 
 // Readiness is WorkflowReadinessReport. It has no rename_all.
@@ -129,7 +140,7 @@ func ProjectRow(row StoredRow) RowView {
 	if store != nil && *store == "" {
 		store = nil
 	}
-	return RowView{
+	view := RowView{
 		ID: row.ID, CardID: row.CardID, StoreID: store,
 		Revision: row.Revision, ViewRevision: row.ViewRevision,
 		Projection: Projection{
@@ -145,6 +156,67 @@ func ProjectRow(row StoredRow) RowView {
 		AI: ai, Source: source, Payload: payload, UpdatedAtMs: row.UpdatedAtMs,
 		Build: BuildView{State: buildState, Sources: sources},
 	}
+	_, view.Projection.SubmissionReceipt = receiptOf(row.Receipt)
+	projectLatestIntent(row, &view.Projection)
+	return view
+}
+
+func projectLatestIntent(row StoredRow, projection *Projection) {
+	var stored struct {
+		Revision int64           `json:"row_revision"`
+		State    string          `json:"state"`
+		Error    *string         `json:"last_error_code"`
+		Issues   json.RawMessage `json:"submission_issues"`
+		Outcome  json.RawMessage `json:"reconciliation_outcome"`
+		TaskID   *string         `json:"external_task_id"`
+	}
+	if json.Unmarshal(row.LatestIntent, &stored) != nil || stored.Revision != row.Revision {
+		return
+	}
+	if stored.TaskID != nil {
+		if task, err := strconv.ParseInt(*stored.TaskID, 10, 64); err == nil && task > 0 {
+			projection.TaskID = stored.TaskID
+		}
+	}
+	// The accepted receipt keeps the identifiers Ozon returned. They belong to
+	// the row only while the intent revision matches the current input.
+	var found struct {
+		Found *struct {
+			ProductID int64 `json:"productId"`
+			SKU       int64 `json:"sku"`
+		} `json:"found"`
+	}
+	if len(stored.Outcome) > 0 && json.Unmarshal(stored.Outcome, &found) == nil && found.Found != nil {
+		if found.Found.ProductID > 0 {
+			productID := found.Found.ProductID
+			projection.ProductID = &productID
+		}
+		if found.Found.SKU > 0 {
+			sku := found.Found.SKU
+			projection.SKU = &sku
+		}
+	}
+	src := IntentSource{State: stored.State, RowRevision: stored.Revision, LastErrorCode: stored.Error, SubmissionIssues: stored.Issues, ReconciliationOutcome: stored.Outcome}
+	if row.Submission != "accepted" || !acceptedTaskFailed(src) {
+		return
+	}
+	intent := ProjectIntent(src)
+	projection.IssueStatus = intent.CurrentIssueStatus
+	if intent.CurrentIssueStatus != IssuePresent {
+		return
+	}
+	var issue struct {
+		InputRevision int64  `json:"input_revision"`
+		Summary       string `json:"summary"`
+	}
+	if json.Unmarshal(intent.CurrentIssue, &issue) != nil || issue.InputRevision != row.Revision {
+		projection.IssueStatus = IssueAbsent
+		return
+	}
+	projection.SubmissionIssue = intent.CurrentIssue
+	projection.ErrorCode = stored.Error
+	projection.ErrorDetail = &issue.Summary
+	projection.CanResume = false
 }
 
 // SummaryOf counts prepare buckets from stage names.
@@ -314,13 +386,14 @@ func readiness(stage string, row StoredRow) Readiness {
 		blockers = []string{}
 	}
 	allowed := []string{}
-	if stage == "ready_to_publish" {
+	ready := stage == "ready_to_publish"
+	canStart := ready || stage == "build_stale"
+	if canStart {
 		allowed = append(allowed, "publish")
-	} else {
+	} else if stage != "accepted" {
 		allowed = append(allowed, "prepare", "edit_fields")
 	}
-	ready := stage == "ready_to_publish"
-	return Readiness{Ready: ready, CanStart: ready, Blockers: blockers, Allowed: allowed}
+	return Readiness{Ready: ready, CanStart: canStart, Blockers: blockers, Allowed: allowed}
 }
 
 func objectOrEmpty(raw []byte) map[string]json.RawMessage {

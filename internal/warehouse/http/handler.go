@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
+	"github.com/xxww0098/podhub-go/internal/platform/httpx/jsonwire"
 	"github.com/xxww0098/podhub-go/internal/warehouse/contract"
 	"github.com/xxww0098/podhub-go/internal/warehouse/domain"
 	"github.com/xxww0098/podhub-go/internal/warehouse/service"
@@ -251,15 +252,15 @@ func (h handler) actor(w http.ResponseWriter, r *http.Request, write bool) (serv
 		if status == 0 {
 			status = http.StatusForbidden
 		}
-		writeJSON(w, status, errBody{Error: refusal.Message, Code: code})
+		jsonwire.Write(w, status, errBody{Error: refusal.Message, Code: code})
 		return service.Actor{}, false
 	}
 	if p == nil || p.UserID == 0 {
-		writeJSON(w, http.StatusUnauthorized, errBody{Error: access.MsgUnauthenticated, Code: "AUTH_REQUIRED"})
+		jsonwire.Write(w, http.StatusUnauthorized, errBody{Error: access.MsgUnauthenticated, Code: "AUTH_REQUIRED"})
 		return service.Actor{}, false
 	}
 	if p.OrgID <= 0 || p.WorkspaceRole == "" {
-		writeJSON(w, http.StatusForbidden, errBody{Error: access.MsgNoWorkspace, Code: "forbidden"})
+		jsonwire.Write(w, http.StatusForbidden, errBody{Error: access.MsgNoWorkspace, Code: "forbidden"})
 		return service.Actor{}, false
 	}
 	allow := h.deps.Read
@@ -267,7 +268,7 @@ func (h handler) actor(w http.ResponseWriter, r *http.Request, write bool) (serv
 		allow = h.deps.Write
 	}
 	if allow == nil || !allow(p.WorkspaceRole) {
-		writeJSON(w, http.StatusForbidden, errBody{Error: access.MsgListingForbidden, Code: "forbidden"})
+		jsonwire.Write(w, http.StatusForbidden, errBody{Error: access.MsgListingForbidden, Code: "forbidden"})
 		return service.Actor{}, false
 	}
 	return service.Actor{OrgID: p.OrgID, UserID: p.UserID, Role: p.WorkspaceRole}, true
@@ -293,28 +294,17 @@ func writeAPI(w http.ResponseWriter, err error) bool {
 	}
 	var fail *contract.Fail
 	if errors.As(err, &fail) {
-		writeJSON(w, fail.Status, errBody{Error: fail.Message, Code: fail.Code})
+		jsonwire.Write(w, fail.Status, errBody{Error: fail.Message, Code: fail.Code})
 		return true
 	}
-	writeJSON(w, http.StatusInternalServerError, errBody{Error: "服务暂不可用", Code: "internal"})
+	jsonwire.Write(w, http.StatusInternalServerError, errBody{Error: "服务暂不可用", Code: "internal"})
 	return true
 }
 
 func writeData(w http.ResponseWriter, status int, data any) {
-	writeJSON(w, status, struct {
+	jsonwire.Write(w, status, struct {
 		Data any `json:"data"`
 	}{Data: data})
-}
-
-func writeJSON(w http.ResponseWriter, status int, body any) {
-	raw, err := json.Marshal(body)
-	if err != nil {
-		status = http.StatusInternalServerError
-		raw = []byte(`{"error":"服务暂不可用","code":"internal"}`)
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_, _ = w.Write(raw)
 }
 
 type warehouseJSON struct {

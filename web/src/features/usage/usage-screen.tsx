@@ -23,7 +23,7 @@ export function UsageScreen({
   const [rechargeOpen, setRechargeOpen] = useState(false)
   const canRecharge = activeWorkspace?.role === "owner"
   return (
-    <div className="flex w-full flex-col gap-4">
+    <div className="flex w-full flex-col gap-2">
       <h1 className="sr-only">用量</h1>
       <UsageStatsPanel
         workspaceId={activeWorkspace?.id}

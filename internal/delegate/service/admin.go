@@ -29,7 +29,7 @@ func (a Admin) Dispatch(ctx context.Context, userID int64, orderID string, body 
 	if err != nil {
 		return nil, err
 	}
-	id, ok := domain.NormalizeUUID(orderID)
+	id, ok := contract.NormalizeUUID(orderID)
 	if !ok {
 		return nil, contract.NotFound("委托单不存在")
 	}
@@ -45,7 +45,7 @@ func (a Admin) Receipt(ctx context.Context, userID int64, orderID string, body [
 	if err != nil {
 		return nil, err
 	}
-	id, ok := domain.NormalizeUUID(orderID)
+	id, ok := contract.NormalizeUUID(orderID)
 	if !ok {
 		return nil, contract.NotFound("委托单不存在")
 	}
@@ -54,7 +54,7 @@ func (a Admin) Receipt(ctx context.Context, userID int64, orderID string, body [
 
 // Cancel has no body. A terminal order is a conflict.
 func (a Admin) Cancel(ctx context.Context, userID int64, orderID string, nowMS int64) (json.RawMessage, error) {
-	id, ok := domain.NormalizeUUID(orderID)
+	id, ok := contract.NormalizeUUID(orderID)
 	if !ok {
 		return nil, contract.NotFound("委托单不存在")
 	}

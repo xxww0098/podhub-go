@@ -113,13 +113,13 @@ func SameBucket(delegate, supplier *BucketKey, media []BucketKey) string {
 			}
 		}
 		if supplier != nil && delegate.Equal(*supplier) {
-			return "委托原图存储桶不得与平台货源存储桶共用"
+			return "委托原图存储桶不得与供应商商品库存储桶共用"
 		}
 	}
 	if supplier != nil {
 		for _, row := range media {
 			if supplier.Equal(row) {
-				return "平台货源存储桶不得与切片媒体桶共用"
+				return "供应商商品库存储桶不得与切片媒体桶共用"
 			}
 		}
 	}

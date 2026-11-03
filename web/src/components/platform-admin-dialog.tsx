@@ -1,4 +1,4 @@
-import type { ReactNode } from "react"
+import type { ComponentProps, ReactNode } from "react"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
 
@@ -18,6 +18,7 @@ export function PlatformAdminDialog({
   width = "sm:max-w-lg",
   className,
   showCloseButton = true,
+  finalFocus,
   children,
 }: {
   open: boolean
@@ -40,6 +41,7 @@ export function PlatformAdminDialog({
    * actions it renders itself (an unsaved one-time secret, say).
    */
   showCloseButton?: boolean
+  finalFocus?: ComponentProps<typeof DialogContent>["finalFocus"]
   children: ReactNode
 }) {
   const widthClass =
@@ -58,6 +60,7 @@ export function PlatformAdminDialog({
       <DialogContent
         layout="panel"
         showCloseButton={showCloseButton}
+        finalFocus={finalFocus}
         className={cn(
           "w-full",
           widthClass,

@@ -28,9 +28,14 @@ func Write(w http.ResponseWriter, status int, body any) {
 		http.Error(w, "服务暂不可用", http.StatusInternalServerError)
 		return
 	}
+	WritePayload(w, status, raw)
+}
+
+// WritePayload sets application/json and writes already-encoded bytes.
+func WritePayload(w http.ResponseWriter, status int, payload []byte) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	if _, err := w.Write(raw); err != nil {
+	if _, err := w.Write(payload); err != nil {
 		slog.Error("json write", "err", err)
 	}
 }

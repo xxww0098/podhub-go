@@ -12,21 +12,24 @@ import (
 
 // Store is the database port. HTTP does not import the repo.
 type Store interface {
+	ListFactories(ctx context.Context, actor contract.Actor) ([]domain.Factory, error)
+	CreateFactory(ctx context.Context, actor contract.Actor, in domain.FactoryInput, factoryID string, nowMs int64, password, passwordHash string) (domain.Factory, *string, error)
+	UpdateFactory(ctx context.Context, actor contract.Actor, factoryID string, in domain.FactoryInput, nowMs int64) (domain.Factory, error)
+	DeleteFactory(ctx context.Context, actor contract.Actor, factoryID string) error
 	ListDbs(ctx context.Context, actor contract.Actor) ([]domain.SupplierDb, error)
-	CreateDb(ctx context.Context, actor contract.Actor, in domain.NormalizedDb, sourceID string, props []domain.PropSeed, nowMs int64, password string) (domain.SupplierDb, *string, error)
-	UpdateDb(ctx context.Context, actor contract.Actor, sourceID string, in domain.NormalizedDb, nowMs int64, password string) (domain.SupplierDb, *string, error)
+	CreateDb(ctx context.Context, actor contract.Actor, in domain.NormalizedDb, sourceID string, props []domain.PropSeed, nowMs int64) (domain.SupplierDb, error)
+	UpdateDb(ctx context.Context, actor contract.Actor, sourceID string, in domain.NormalizedDb, nowMs int64) (domain.SupplierDb, error)
 	DeleteDb(ctx context.Context, actor contract.Actor, sourceID string) error
 	CreateProp(ctx context.Context, actor contract.Actor, sourceID, propID string, in domain.NormalizedProp, nowMs int64) (domain.Prop, error)
 	UpdateProp(ctx context.Context, actor contract.Actor, sourceID, propID string, in domain.NormalizedProp, nowMs int64) (domain.Prop, error)
 	DeleteProp(ctx context.Context, actor contract.Actor, sourceID, propID string) (int64, error)
 	DeleteRow(ctx context.Context, actor contract.Actor, sourceID, productID string, nowMs int64) error
 	ListAccounts(ctx context.Context, actor contract.Actor) ([]domain.Member, error)
-	CreateAccount(ctx context.Context, actor contract.Actor, in domain.NormalizedAccount, publicID string, nowMs int64, password string) (domain.Member, *string, error)
-	PatchAccount(ctx context.Context, actor contract.Actor, memberID string, in domain.AccountPatch, passwordHash string) (domain.Member, *string, error)
+	CreateAccount(ctx context.Context, actor contract.Actor, in domain.NormalizedAccount, nowMs int64, password, passwordHash string) (domain.Member, *string, error)
+	PatchAccount(ctx context.Context, actor contract.Actor, memberID string, in domain.AccountPatch, passwordHash string, nowMs int64) (domain.Member, *string, error)
 	DeleteAccount(ctx context.Context, actor contract.Actor, memberID string, nowMs int64) error
 	// AccountStaff reads account_users. Missing and disabled are found=false.
 	AccountStaff(ctx context.Context, userID int64) (found, staff bool, err error)
-	ListPrompts(ctx context.Context, actor contract.Actor) ([]domain.Prompt, error)
 	ListWithdrawals(ctx context.Context, actor contract.Actor, status string) ([]domain.Withdrawal, error)
 	PayWithdrawal(ctx context.Context, actor contract.Actor, id, reference string, nowMs int64) (domain.Withdrawal, error)
 	RejectWithdrawal(ctx context.Context, actor contract.Actor, id, reason string, nowMs int64) (domain.Withdrawal, error)
@@ -36,10 +39,10 @@ type Store interface {
 	// SourceRoleStore is the two staff-side authorization tables. Fulfiller is
 	// the supplier-portal role; catalog manager is the /api/catalog role.
 	ListFulfillers(ctx context.Context, actor contract.Actor, sourceID string) ([]domain.Fulfiller, error)
-	GrantFulfiller(ctx context.Context, actor contract.Actor, sourceID string, userID, nowMs int64) (domain.Fulfiller, error)
+	GrantFulfiller(ctx context.Context, actor contract.Actor, sourceID, accountUUID string, nowMs int64) (domain.Fulfiller, error)
 	RevokeFulfiller(ctx context.Context, actor contract.Actor, sourceID, fulfillerID string, nowMs int64) error
 	ListCatalogManagers(ctx context.Context, actor contract.Actor, sourceID string) ([]domain.CatalogManager, error)
-	GrantCatalogManager(ctx context.Context, actor contract.Actor, sourceID string, userID, nowMs int64) (domain.CatalogManager, error)
+	GrantCatalogManager(ctx context.Context, actor contract.Actor, sourceID, accountUUID string, nowMs int64) (domain.CatalogManager, error)
 	RevokeCatalogManager(ctx context.Context, actor contract.Actor, sourceID, managerID string, nowMs int64) error
 }
 
@@ -53,22 +56,20 @@ type Rows interface {
 	SetPublished(ctx context.Context, actor contract.Actor, sourceID, productID string, on bool, now int64) (domain.RowData, error)
 	LoadOzon(ctx context.Context, actor contract.Actor, sourceID, productID string, now int64) (domain.OzonConfig, error)
 	SaveOzon(ctx context.Context, actor contract.Actor, sourceID, productID string, in domain.OzonPut, now int64) (domain.OzonConfig, error)
-	PromptDiff(ctx context.Context, actor contract.Actor, sourceID, productID string, revision *int32) (domain.PromptDiff, error)
-	PublishPrompt(ctx context.Context, actor contract.Actor, sourceID, productID string, revision int32, now int64) (domain.PromptPublish, error)
-	PatchPrompt(ctx context.Context, actor contract.Actor, productID string, in domain.PromptPatchInput, now int64) (domain.Prompt, error)
-	SyncPrompts(ctx context.Context, actor contract.Actor, now int64) (domain.SyncReport, error)
 	Referenced(ctx context.Context, actor contract.Actor, suffixes []string) (bool, error)
 	Banned(ctx context.Context, actor contract.Actor) ([]string, error)
 }
 
 // ObjectRequest is one server-side call to the storage origin.
-// The service never imports net/http. The HTTP adapter refuses non-loopback hosts.
+// The service never imports net/http. The HTTP adapter checks the configured origin.
 type ObjectRequest struct {
-	Method  string
-	URL     string
-	Headers map[string]string
-	Body    []byte
-	Timeout time.Duration
+	Account  sign.Account
+	Method   string
+	URL      string
+	Headers  map[string]string
+	Body     []byte
+	Timeout  time.Duration
+	MaxBytes int64
 }
 
 // ObjectResponse is the origin status, lower-cased headers, and body.
@@ -86,14 +87,19 @@ type Origin interface {
 // AccountLoader returns the supplier bucket. ok false means it is not configured.
 type AccountLoader func(ctx context.Context) (sign.Account, bool, error)
 
+type CatalogSourceAccess interface {
+	CanMaintain(context.Context, int64, string) (bool, error)
+}
+
 // Service validates input and mints ids. It does not speak HTTP.
 type Service struct {
-	Store    Store
-	Cat      Rows
-	Origin   Origin
-	Accounts AccountLoader
-	Now      func() time.Time
-	PublicID func() (string, error)
+	Store         Store
+	Cat           Rows
+	Origin        Origin
+	Accounts      AccountLoader
+	CatalogAccess CatalogSourceAccess
+	Now           func() time.Time
+	PublicID      func() (string, error)
 }
 
 func New(store Store) Service {

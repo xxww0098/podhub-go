@@ -3,6 +3,7 @@
  * 打款和拒绝都要确认。收款账号只在这张工作表上给打款的人看，不进成功提示。
  */
 import { useCallback, useEffect, useState } from "react"
+import { RotateCcw, X } from "lucide-react"
 
 import {
   listFactoryWithdrawals,
@@ -12,6 +13,7 @@ import {
 } from "@/bindings/http-supplier-portal"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import {
   Dialog,
@@ -110,20 +112,23 @@ export function AdminSupplierWithdrawals() {
   }
 
   return (
-    <section className="flex flex-col gap-4 border-t border-border pt-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-md font-semibold">厂家提现</h2>
-          <p className="text-compact text-muted-foreground">打款后不可退回。拒绝会把冻结退回厂家可提现余额。</p>
+    <section className="shrink-0 overflow-hidden rounded-xl border border-border bg-card">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-border bg-muted/40 px-4 py-2.5">
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5">
+          <h2 className="text-compact font-medium">厂家提现</h2>
+          <p className="text-meta text-muted-foreground">打款后不可退回。拒绝会把冻结退回厂家可提现余额。</p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div role="group" aria-label="提现状态" className="inline-flex w-fit shrink-0 items-center gap-0.5 rounded-lg border border-border bg-muted/50 p-0.5">
           {FILTERS.map((filter) => (
             <Button
               key={filter || "all"}
               type="button"
               size="sm"
-              variant={status === filter ? "default" : "outline"}
+              variant="ghost"
               aria-pressed={status === filter}
+              className={status === filter
+                ? "h-7 cursor-pointer rounded-md bg-card px-2 text-compact text-foreground hover:bg-card"
+                : "h-7 cursor-pointer rounded-md px-2 text-compact text-muted-foreground hover:text-foreground"}
               onClick={() => setStatus(filter)}
             >
               {filter ? withdrawalStatusLabel(filter) : "全部"}
@@ -133,33 +138,33 @@ export function AdminSupplierWithdrawals() {
       </div>
       {rows === undefined ? (
         loadFailed ? (
-          <Button type="button" variant="outline" size="sm" onClick={() => void refresh()}>
-            重试读取提现
-          </Button>
+          <div className="flex justify-center p-4">
+            <IconButton icon={RotateCcw} label="重试读取提现" variant="outline" size="icon-sm" onClick={() => void refresh()} />
+          </div>
         ) : (
-          <Spinner className="size-4" aria-label="正在读取提现" />
+          <div className="flex justify-center p-4"><Spinner className="size-4" aria-label="正在读取提现" /></div>
         )
       ) : rows.length === 0 ? (
-        <p className="text-compact text-faint-foreground">没有符合筛选的提现。</p>
+        <p className="px-4 py-6 text-center text-compact text-faint-foreground">没有符合筛选的提现。</p>
       ) : (
-        <ul className="flex flex-col divide-y divide-border rounded-xl border border-border">
+        <ul className="flex flex-col divide-y divide-border">
           {rows.map((row) => (
-            <li key={row.withdrawal_id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+            <li key={row.withdrawal_id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-muted/60">
               <span className="flex min-w-0 flex-col gap-1">
                 <span className="flex flex-wrap items-center gap-2">
-                  <span className="font-medium">{row.name}</span>
+                  <span className="text-compact font-medium">{row.name}</span>
                   <Badge variant={withdrawalBadgeVariant(row.status)}>
                     {withdrawalStatusLabel(row.status)}
                   </Badge>
-                  <span className="font-mono tabular-nums">{formatCents(row.amount_cents)}</span>
+                  <span className="font-mono text-compact font-medium tabular-nums">{formatCents(row.amount_cents)}</span>
                 </span>
-                <span className="break-all text-compact text-muted-foreground">
-                  {channelLabel(row.channel)} · {row.account} · {row.real_name} · {formatDateTimeShort(row.requested_at_ms)}
+                <span className="break-all text-meta text-muted-foreground">
+                  {channelLabel(row.channel)} · {row.account} · {row.real_name} · <span className="font-mono tabular-nums">{formatDateTimeShort(row.requested_at_ms)}</span>
                 </span>
               </span>
               {row.status === "requested" ? (
                 <span className="flex items-center gap-2">
-                  <Button type="button" size="sm" variant="outline" onClick={() => { setRejectTarget(row); setReason(""); setInvalid(false) }}>拒绝</Button>
+                  <IconButton icon={X} label={`拒绝 ${row.name}`} tip="拒绝" size="icon-sm" variant="outline" tooltipSide="top" onClick={() => { setRejectTarget(row); setReason(""); setInvalid(false) }} />
                   <Button type="button" size="sm" onClick={() => { setPayTarget(row); setReference(""); setInvalid(false) }}>打款</Button>
                 </span>
               ) : null}

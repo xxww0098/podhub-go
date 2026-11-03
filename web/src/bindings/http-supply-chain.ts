@@ -21,7 +21,7 @@ export async function getShippingReadiness(
   storeUuid: string,
   skuId: string,
 ): Promise<SellerShippingReadiness> {
-  const query = new URLSearchParams({ skuId })
+  const query = new URLSearchParams({ sku_id: skuId })
   const data = await api.get<components["schemas"]["SellerShippingReadinessViewData"]>(
     `${route("workspacesStoresByUuidShippingReadiness", { uuid: storeUuid })}?${query}`,
   )
@@ -34,7 +34,7 @@ export async function ensureShipping(
 ): Promise<SellerShippingReadiness> {
   const data = await api.post<components["schemas"]["SellerShippingEnsureViewData"]>(
     route("workspacesStoresByUuidShippingEnsure", { uuid: storeUuid }),
-    { skuId },
+    { sku_id: skuId },
   )
   return data.inject
 }

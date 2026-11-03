@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/oapi-codegen/runtime"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
 // Defines values for AccountMode.
@@ -39,7 +40,6 @@ const (
 	INTERNAL              AuthErrorCode = "INTERNAL"
 	QUOTAEXCEEDED         AuthErrorCode = "QUOTA_EXCEEDED"
 	RATELIMITED           AuthErrorCode = "RATE_LIMITED"
-	TOTPREQUIRED          AuthErrorCode = "TOTP_REQUIRED"
 	VALIDATION            AuthErrorCode = "VALIDATION"
 	WORKSPACELIMITREACHED AuthErrorCode = "WORKSPACE_LIMIT_REACHED"
 	WRITESDISABLED        AuthErrorCode = "WRITES_DISABLED"
@@ -57,8 +57,6 @@ func (e AuthErrorCode) Valid() bool {
 	case QUOTAEXCEEDED:
 		return true
 	case RATELIMITED:
-		return true
-	case TOTPREQUIRED:
 		return true
 	case VALIDATION:
 		return true
@@ -205,6 +203,23 @@ type WorkspacesData struct {
 	Workspaces []WorkspaceSummary `json:"workspaces"`
 }
 
+// PostAuthEmailChangeJSONBody defines parameters for PostAuthEmailChange.
+type PostAuthEmailChangeJSONBody struct {
+	CurrentPassword string              `json:"current_password"`
+	Email           openapi_types.Email `json:"email"`
+}
+
+// PostAuthEmailConfirmJSONBody defines parameters for PostAuthEmailConfirm.
+type PostAuthEmailConfirmJSONBody struct {
+	Token string `json:"token"`
+}
+
+// PostAuthEmailChangeJSONRequestBody defines body for PostAuthEmailChange for application/json ContentType.
+type PostAuthEmailChangeJSONRequestBody PostAuthEmailChangeJSONBody
+
+// PostAuthEmailConfirmJSONRequestBody defines body for PostAuthEmailConfirm for application/json ContentType.
+type PostAuthEmailConfirmJSONRequestBody PostAuthEmailConfirmJSONBody
+
 // CreateInviteJSONRequestBody defines body for CreateInvite for application/json ContentType.
 type CreateInviteJSONRequestBody = CreateInvitationRequest
 
@@ -232,8 +247,11 @@ type RenameWorkspaceJSONRequestBody = CreateWorkspaceRequest
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 
-	// (DELETE /api/auth/accounts/{uuid})
-	DeleteAuthAccount(w http.ResponseWriter, r *http.Request, uuid string)
+	// (POST /api/auth/email/change)
+	PostAuthEmailChange(w http.ResponseWriter, r *http.Request)
+
+	// (POST /api/auth/email/confirm)
+	PostAuthEmailConfirm(w http.ResponseWriter, r *http.Request)
 
 	// (POST /api/auth/forgot)
 	PostAuthForgot(w http.ResponseWriter, r *http.Request)
@@ -258,15 +276,6 @@ type ServerInterface interface {
 
 	// (GET /api/auth/session)
 	GetAuthSession(w http.ResponseWriter, r *http.Request)
-
-	// (POST /api/auth/switch)
-	PostAuthSwitch(w http.ResponseWriter, r *http.Request)
-
-	// (POST /api/auth/verify)
-	PostAuthVerify(w http.ResponseWriter, r *http.Request)
-
-	// (POST /api/auth/verify/resend)
-	PostAuthVerifyResend(w http.ResponseWriter, r *http.Request)
 
 	// (POST /api/invitations)
 	CreateInvite(w http.ResponseWriter, r *http.Request)
@@ -312,8 +321,13 @@ type ServerInterface interface {
 
 type Unimplemented struct{}
 
-// (DELETE /api/auth/accounts/{uuid})
-func (_ Unimplemented) DeleteAuthAccount(w http.ResponseWriter, r *http.Request, uuid string) {
+// (POST /api/auth/email/change)
+func (_ Unimplemented) PostAuthEmailChange(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /api/auth/email/confirm)
+func (_ Unimplemented) PostAuthEmailConfirm(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -354,21 +368,6 @@ func (_ Unimplemented) PostAuthReset(w http.ResponseWriter, r *http.Request) {
 
 // (GET /api/auth/session)
 func (_ Unimplemented) GetAuthSession(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// (POST /api/auth/switch)
-func (_ Unimplemented) PostAuthSwitch(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// (POST /api/auth/verify)
-func (_ Unimplemented) PostAuthVerify(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// (POST /api/auth/verify/resend)
-func (_ Unimplemented) PostAuthVerifyResend(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -446,23 +445,25 @@ type ServerInterfaceWrapper struct {
 
 type MiddlewareFunc func(http.Handler) http.Handler
 
-// DeleteAuthAccount operation middleware
-func (siw *ServerInterfaceWrapper) DeleteAuthAccount(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "uuid" -------------
-	var uuid string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "uuid", chi.URLParam(r, "uuid"), &uuid, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "uuid", Err: err})
-		return
-	}
+// PostAuthEmailChange operation middleware
+func (siw *ServerInterfaceWrapper) PostAuthEmailChange(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteAuthAccount(w, r, uuid)
+		siw.Handler.PostAuthEmailChange(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostAuthEmailConfirm operation middleware
+func (siw *ServerInterfaceWrapper) PostAuthEmailConfirm(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostAuthEmailConfirm(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -575,48 +576,6 @@ func (siw *ServerInterfaceWrapper) GetAuthSession(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetAuthSession(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// PostAuthSwitch operation middleware
-func (siw *ServerInterfaceWrapper) PostAuthSwitch(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PostAuthSwitch(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// PostAuthVerify operation middleware
-func (siw *ServerInterfaceWrapper) PostAuthVerify(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PostAuthVerify(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// PostAuthVerifyResend operation middleware
-func (siw *ServerInterfaceWrapper) PostAuthVerifyResend(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PostAuthVerifyResend(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -991,31 +950,25 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Post(options.BaseURL+"/api/auth/logout", wrapper.PostAuthLogout)
 	})
 	r.Group(func(r chi.Router) {
-		r.Post(options.BaseURL+"/api/auth/switch", wrapper.PostAuthSwitch)
-	})
-	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/auth/password", wrapper.PostAuthPassword)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/auth/forgot", wrapper.PostAuthForgot)
 	})
 	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/auth/email/change", wrapper.PostAuthEmailChange)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/auth/email/confirm", wrapper.PostAuthEmailConfirm)
+	})
+	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/auth/reset", wrapper.PostAuthReset)
-	})
-	r.Group(func(r chi.Router) {
-		r.Post(options.BaseURL+"/api/auth/verify", wrapper.PostAuthVerify)
-	})
-	r.Group(func(r chi.Router) {
-		r.Post(options.BaseURL+"/api/auth/verify/resend", wrapper.PostAuthVerifyResend)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/auth/session", wrapper.GetAuthSession)
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/api/auth/name", wrapper.PutAuthName)
-	})
-	r.Group(func(r chi.Router) {
-		r.Delete(options.BaseURL+"/api/auth/accounts/{uuid}", wrapper.DeleteAuthAccount)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/workspaces/members", wrapper.GetWorkspaceMembers)

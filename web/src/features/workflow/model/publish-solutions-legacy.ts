@@ -105,7 +105,7 @@ function sendRefusal(kind: LegacyRefusalKind, refusal: string, facts: PublishRem
       steps: [
         "返回「上架方案」列表，找到此行所属的上架方案",
         "点该方案的 PSD 绑定，重新选择此前使用的同一个原始 PSD 文件（不要换成其他 PSD）",
-        "等待页面确认 PSD 已在云端保存，再回到此工作台",
+        "等待本机 PSD 校验和绑定完成，再回到此工作台",
         RESEND_WHEN_READY,
       ],
     }

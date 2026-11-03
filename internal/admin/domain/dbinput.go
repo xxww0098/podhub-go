@@ -14,12 +14,12 @@ import (
 type NormalizedDb = supcontract.NormalizedDb
 
 // DecodeSupplierDb requires the fields that have no serde default.
-// acceptsDelegate and accountEmail may be omitted.
+// acceptsDelegate and factoryId may be omitted for updates.
 func DecodeSupplierDb(body []byte) (NormalizedDb, error) {
 	raw, err := strictObject(body)
 	if err != nil || !hasOnly(raw, []string{
 		"name", "country", "contact", "internalNote", "listed", "icon",
-		"acceptsDelegate", "template", "viewPrefs", "accountEmail",
+		"acceptsDelegate", "template", "viewPrefs", "factoryId",
 	}) || !requireKeys(raw, []string{
 		"name", "country", "contact", "internalNote", "listed", "icon", "template", "viewPrefs",
 	}) {
@@ -55,17 +55,13 @@ func DecodeSupplierDb(body []byte) (NormalizedDb, error) {
 		}
 		out.ViewPrefs = append(json.RawMessage(nil), raw["viewPrefs"]...)
 	}
-	if raw["accountEmail"] != nil && !bytes.Equal(bytes.TrimSpace(raw["accountEmail"]), []byte("null")) {
-		var email string
-		if !unmarshal(raw["accountEmail"], &email) {
+	if raw["factoryId"] != nil && !bytes.Equal(bytes.TrimSpace(raw["factoryId"]), []byte("null")) {
+		if !unmarshal(raw["factoryId"], &out.FactoryID) {
 			return NormalizedDb{}, invalid()
 		}
-		email = strings.ToLower(strings.TrimSpace(email))
-		if email != "" {
-			if len(email) > MaxEmailChars || !EmailShaped(email) {
-				return NormalizedDb{}, fail(contract.KindValidation, "厂家登录邮箱无效")
-			}
-			out.AccountEmail = &email
+		out.FactoryID = strings.TrimSpace(out.FactoryID)
+		if out.FactoryID == "" || len(out.FactoryID) > 256 {
+			return NormalizedDb{}, fail(contract.KindValidation, "请选择工厂")
 		}
 	}
 	name = strings.TrimSpace(name)

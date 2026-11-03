@@ -13,16 +13,23 @@ import (
 	corecontract "github.com/xxww0098/podhub-go/internal/admin/core/contract"
 	corerepo "github.com/xxww0098/podhub-go/internal/admin/core/repo"
 	"github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
+	"github.com/xxww0098/podhub-go/internal/platform/uuidx"
 )
 
-func withWallet(ctx context.Context, tx pgx.Tx, orgID int64, fn func(owner int64) error) error {
-	var owner int64
-	if err := tx.QueryRow(ctx, `SELECT owner_user_id FROM organizations WHERE id = $1`, orgID).Scan(&owner); err != nil {
-		return err
+func (r *Entitlement) beginWalletTx(ctx context.Context) (pgx.Tx, error) {
+	tx, err := r.beginTx(ctx)
+	if err != nil {
+		return nil, err
 	}
-	if _, err := tx.Exec(ctx,
-		`SELECT set_config($1, $2, true), set_config('app.current_wallet_user_id', $3, true)`,
-		tenantx.GUCCurrentOrgID, strconv.FormatInt(orgID, 10), strconv.FormatInt(owner, 10)); err != nil {
+	if err := tenantx.EnterAppRole(ctx, tx); err != nil {
+		_ = tx.Rollback(ctx)
+		return nil, err
+	}
+	return tx, nil
+}
+
+func withWallet(ctx context.Context, tx pgx.Tx, orgID int64, fn func() error) error {
+	if _, err := tx.Exec(ctx, `SELECT set_config($1, $2, true)`, tenantx.GUCCurrentOrgID, strconv.FormatInt(orgID, 10)); err != nil {
 		return err
 	}
 	var previous string
@@ -32,7 +39,7 @@ func withWallet(ctx context.Context, tx pgx.Tx, orgID int64, fn func(owner int64
 	if _, err := tx.Exec(ctx, `SELECT set_config('role', $1, true)`, tenantx.RoleApp); err != nil {
 		return err
 	}
-	err := fn(owner)
+	err := fn()
 	var resetErr error
 	if previous == tenantx.RoleApp {
 		_, resetErr = tx.Exec(ctx, `SELECT set_config('role', $1, true)`, tenantx.RoleApp)
@@ -45,25 +52,25 @@ func withWallet(ctx context.Context, tx pgx.Tx, orgID int64, fn func(owner int64
 	return err
 }
 
-func ensureWallet(ctx context.Context, tx pgx.Tx, owner int64) error {
-	_, err := tx.Exec(ctx, `INSERT INTO user_wallets (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`, owner)
+func ensureWallet(ctx context.Context, tx pgx.Tx, orgID int64) error {
+	_, err := tx.Exec(ctx, `INSERT INTO workspace_wallets (org_id) VALUES ($1) ON CONFLICT (org_id) DO NOTHING`, orgID)
 	return err
 }
 
-func lockWallet(ctx context.Context, tx pgx.Tx, owner int64) (balance, held int64, err error) {
-	if err = ensureWallet(ctx, tx, owner); err != nil {
+func lockWallet(ctx context.Context, tx pgx.Tx, orgID int64) (balance, held int64, err error) {
+	if err = ensureWallet(ctx, tx, orgID); err != nil {
 		return 0, 0, err
 	}
 	err = tx.QueryRow(ctx, `
-		SELECT balance_microfen, held_microfen FROM user_wallets WHERE user_id = $1 FOR UPDATE`, owner).Scan(&balance, &held)
+		SELECT balance_microfen, held_microfen FROM workspace_wallets WHERE org_id = $1 FOR UPDATE`, orgID).Scan(&balance, &held)
 	return balance, held, err
 }
 
 func applyWallet(ctx context.Context, tx pgx.Tx, orgID, balance, held int64) error {
 	tag, err := tx.Exec(ctx, `
-		UPDATE user_wallets
+		UPDATE workspace_wallets
 		   SET balance_microfen = $2, held_microfen = $3, version = version + 1, updated_at = clock_timestamp()
-		 WHERE user_id = (SELECT owner_user_id FROM organizations WHERE id = $1)`, orgID, balance, held)
+		 WHERE org_id = $1`, orgID, balance, held)
 	if err != nil {
 		return err
 	}
@@ -76,11 +83,10 @@ func applyWallet(ctx context.Context, tx pgx.Tx, orgID, balance, held int64) err
 func recordWallet(ctx context.Context, tx pgx.Tx, orgID int64, entry, key string, amount, heldDelta, beforeBal, afterBal, beforeHeld, afterHeld int64, payment *int64, note string) error {
 	_, err := tx.Exec(ctx, `
 		INSERT INTO wallet_ledger
-		    (org_id, user_id, entry_type, idempotency_key, amount_microfen, held_delta_microfen,
+		    (org_id, entry_type, idempotency_key, amount_microfen, held_delta_microfen,
 		     balance_before_microfen, balance_after_microfen, held_before_microfen, held_after_microfen,
 		     ai_request_id, payment_order_id, note)
-		VALUES ($1, (SELECT owner_user_id FROM organizations WHERE id = $1),
-		        $2, $3, $4, $5, $6, $7, $8, $9, NULL, $10, $11)`,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULL, $10, $11)`,
 		orgID, entry, key, amount, heldDelta, beforeBal, afterBal, beforeHeld, afterHeld, payment, note)
 	return err
 }
@@ -88,8 +94,8 @@ func recordWallet(ctx context.Context, tx pgx.Tx, orgID int64, entry, key string
 // creditWallet settles a paid wallet order. A duplicate key fails the unique constraint
 // and rolls the whole confirm back. It does not replay an earlier topup.
 func creditWallet(ctx context.Context, tx pgx.Tx, orgID int64, key string, orderID, amount int64, entry, note string) error {
-	return withWallet(ctx, tx, orgID, func(owner int64) error {
-		balance, held, err := lockWallet(ctx, tx, owner)
+	return withWallet(ctx, tx, orgID, func() error {
+		balance, held, err := lockWallet(ctx, tx, orgID)
 		if err != nil {
 			return err
 		}
@@ -130,17 +136,17 @@ type walletView struct {
 
 func readWallet(ctx context.Context, tx pgx.Tx, orgID int64) (walletView, error) {
 	var view walletView
-	err := withWallet(ctx, tx, orgID, func(owner int64) error {
-		if err := ensureWallet(ctx, tx, owner); err != nil {
+	err := withWallet(ctx, tx, orgID, func() error {
+		if err := ensureWallet(ctx, tx, orgID); err != nil {
 			return err
 		}
 		var balance, held, spent int64
 		if err := tx.QueryRow(ctx, `
 			SELECT w.balance_microfen, w.held_microfen,
 			       COALESCE((SELECT -SUM(l.amount_microfen) FROM wallet_ledger l
-			                  WHERE l.user_id = w.user_id AND l.entry_type = 'settle'), 0)::bigint
-			  FROM user_wallets w
-			 WHERE w.user_id = (SELECT owner_user_id FROM organizations WHERE id = $1)`, orgID).Scan(&balance, &held, &spent); err != nil {
+			                  WHERE l.org_id = w.org_id AND l.entry_type = 'settle'), 0)::bigint
+			  FROM workspace_wallets w
+			 WHERE w.org_id = $1`, orgID).Scan(&balance, &held, &spent); err != nil {
 			return err
 		}
 		_ = spent
@@ -181,10 +187,10 @@ func readWallet(ctx context.Context, tx pgx.Tx, orgID int64) (walletView, error)
 
 func (r *Entitlement) Wallet(ctx context.Context, actor corecontract.Actor, workspace string) ([]byte, error) {
 	_ = actor
-	if _, ok := corecontract.NormalizeUUID(workspace); !ok {
+	if _, ok := uuidx.StrictUUID(workspace); !ok {
 		return nil, corecontract.NotFound("NOT_FOUND", "工作空间不存在")
 	}
-	tx, err := r.beginTx(ctx)
+	tx, err := r.beginWalletTx(ctx)
 	if err != nil {
 		return nil, corerepo.MapBill(err, "INTERNAL", false)
 	}
@@ -210,7 +216,7 @@ func uniqueViolation(err error) bool {
 }
 
 func (r *Entitlement) GrantTopup(ctx context.Context, actor corecontract.Actor, grant billingcontract.TopupGrant) ([]byte, error) {
-	tx, err := r.beginTx(ctx)
+	tx, err := r.beginWalletTx(ctx)
 	if err != nil {
 		return nil, corerepo.MapBill(err, "INTERNAL", false)
 	}
@@ -227,8 +233,8 @@ func (r *Entitlement) GrantTopup(ctx context.Context, actor corecontract.Actor, 
 	key := "manual:" + grant.OperationID
 	amount := grant.AmountCents * 1_000_000
 	replay := false
-	err = withWallet(ctx, tx, orgID, func(owner int64) error {
-		if _, _, err := lockWallet(ctx, tx, owner); err != nil {
+	err = withWallet(ctx, tx, orgID, func() error {
+		if _, _, err := lockWallet(ctx, tx, orgID); err != nil {
 			return err
 		}
 		var priorAmount int64
@@ -246,7 +252,7 @@ func (r *Entitlement) GrantTopup(ctx context.Context, actor corecontract.Actor, 
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
-		balance, heldBal, err := lockWallet(ctx, tx, owner)
+		balance, heldBal, err := lockWallet(ctx, tx, orgID)
 		if err != nil {
 			return err
 		}
@@ -287,7 +293,7 @@ func (r *Entitlement) GrantTopup(ctx context.Context, actor corecontract.Actor, 
 }
 
 func (r *Entitlement) RevokeTopup(ctx context.Context, actor corecontract.Actor, workspace, topupID string) ([]byte, error) {
-	tx, err := r.beginTx(ctx)
+	tx, err := r.beginWalletTx(ctx)
 	if err != nil {
 		return nil, corerepo.MapBill(err, "INTERNAL", false)
 	}
@@ -301,20 +307,21 @@ func (r *Entitlement) RevokeTopup(ctx context.Context, actor corecontract.Actor,
 	if err != nil {
 		return nil, corerepo.MapBill(err, "INTERNAL", false)
 	}
-	var granted int64
-	err = tx.QueryRow(ctx, `
+	var amount int64
+	err = withWallet(ctx, tx, orgID, func() error {
+		var granted int64
+		err := tx.QueryRow(ctx, `
 		SELECT amount_microfen FROM wallet_ledger
 		 WHERE org_id = $1 AND entry_type = 'adjustment' AND idempotency_key = $2 LIMIT 1`,
-		orgID, "manual:"+topupID).Scan(&granted)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, corecontract.NotFound("NOT_FOUND", "充值记录不存在")
-	}
-	if err != nil {
-		return nil, corerepo.MapBill(err, "INTERNAL", false)
-	}
-	amount := -granted
-	err = withWallet(ctx, tx, orgID, func(owner int64) error {
-		balance, heldBal, err := lockWallet(ctx, tx, owner)
+			orgID, "manual:"+topupID).Scan(&granted)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return corecontract.NotFound("NOT_FOUND", "充值记录不存在")
+		}
+		if err != nil {
+			return err
+		}
+		amount = -granted
+		balance, heldBal, err := lockWallet(ctx, tx, orgID)
 		if err != nil {
 			return err
 		}

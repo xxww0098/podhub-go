@@ -82,7 +82,7 @@ test("concurrent misses share one request and a force fences the slower write", 
   assert.equal(joinedA, joinedB)
   assert.equal(joinedA[0]?.type_name, "T恤")
   assert.equal(refreshed[0]?.type_name, "卫衣")
-  const raw = window.localStorage.getItem("podhub.workflow.category-tree.v1")
+  const raw = window.localStorage.getItem("podhub.workflow.category-tree.v2")
   assert.match(raw ?? "", /卫衣/)
   assert.doesNotMatch(raw ?? "", /T恤/)
 })

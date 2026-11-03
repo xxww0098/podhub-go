@@ -41,6 +41,7 @@ import { createPublishDiagnosticAction } from "./queue/diagnostics"
 import { diagnosticReferenceFrom } from "../model/publish-diagnostic"
 import { captureWorkbenchPublishDiagnostics } from "../workbench/publish-diagnostic-producer"
 import { cohortInFlight, watchQueueDrain } from "./queue-drain"
+import type { AutomationTarget } from "./send-rows"
 
 /** True when the tab refuses the send; says why, focusing the row that must change. */
 function refusePublish(verdict: PublishPreflight): verdict is PublishRefusal {
@@ -137,7 +138,7 @@ export function usePublishQueue({
   refreshQueue.current = refreshQueueRunning
   useEffect(() => watchQueueDrain((scope) => refreshQueue.current(scope)), [])
 
-  async function startPublish(rowIds?: string[]) {
+  async function startPublish(rowIds?: string[], expectedTargets?: ReadonlyMap<string, AutomationTarget>) {
     const scope = listingWorkbenchScope()
     const currentSession = rowCacheScope().current
     const current = () => currentSession() && listingScopeCurrent(scope)
@@ -291,6 +292,7 @@ export function usePublishQueue({
           workflowRowsActionRequest(frozenRows, workbench.productDrafts),
           (rowId) => !current() || flight.stopped || flight.cancelledRows.has(rowId),
           diagnosticAction.current.owner.context,
+          expectedTargets,
         )
         results = await flight.send
         flight.pending = false

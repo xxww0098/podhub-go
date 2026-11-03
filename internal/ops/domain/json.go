@@ -109,27 +109,6 @@ func PositiveI64(s string) (int64, bool) {
 	return n, true
 }
 
-// NormalizeUUID is the 36-character hex form. Anything else is "store missing".
-func NormalizeUUID(s string) (string, bool) {
-	s = strings.ToLower(strings.TrimSpace(s))
-	if len(s) != 36 {
-		return "", false
-	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if i == 8 || i == 13 || i == 18 || i == 23 {
-			if c != '-' {
-				return "", false
-			}
-			continue
-		}
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
-			return "", false
-		}
-	}
-	return s, true
-}
-
 func compact(v any) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)

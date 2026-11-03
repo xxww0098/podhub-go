@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/xxww0098/podhub-go/internal/delegate/contract"
 	"github.com/xxww0098/podhub-go/internal/delegate/domain"
@@ -17,6 +18,7 @@ type DB interface {
 	StoreGate(ctx context.Context, orgID, userID int64, canManage bool, storeID string) (string, error)
 	VisibleStoreUUIDs(ctx context.Context, orgID, userID int64, canManage bool) ([]string, error)
 	AdmitStore(ctx context.Context, orgID, userID int64, canManage bool, storeID string, nowMS int64) (contract.SealedCredential, error)
+	PostingCredential(ctx context.Context, orgID int64, target contract.SyncTarget, nowMS int64) (contract.SealedCredential, error)
 	ListBindings(ctx context.Context, orgID int64, storeID string) ([]contract.Binding, error)
 	BindingStore(ctx context.Context, orgID, userID int64, canManage bool, bindingID string) (string, string, error)
 	CreateBinding(ctx context.Context, orgID, userID int64, storeID, offerID, sourceID, note string, auto bool, nowMS int64) (contract.Binding, error)
@@ -156,11 +158,11 @@ func (s Seller) CreateBinding(ctx context.Context, actor Actor, storeID, offerID
 }
 
 func (s Seller) PatchBinding(ctx context.Context, actor Actor, bindingID string, expected int64, sourceID, note *string, active *bool) (contract.Binding, error) {
-	if _, ok := domain.NormalizeUUID(bindingID); !ok {
+	if _, ok := contract.NormalizeUUID(bindingID); !ok {
 		return contract.Binding{}, contract.NotFound("绑定不存在")
 	}
 	if expected < 1 {
-		return contract.Binding{}, contract.Validation("expectedRevision 无效")
+		return contract.Binding{}, contract.Validation("绑定版本无效")
 	}
 	if note != nil {
 		normalized, err := domain.BindingNote(*note)
@@ -185,14 +187,14 @@ func (s Seller) PatchBinding(ctx context.Context, actor Actor, bindingID string,
 }
 
 func (s Seller) DeleteBinding(ctx context.Context, actor Actor, bindingID string) error {
-	if _, ok := domain.NormalizeUUID(bindingID); !ok {
+	if _, ok := contract.NormalizeUUID(bindingID); !ok {
 		return contract.NotFound("绑定不存在")
 	}
 	return asAPI(s.DB.DeleteBinding(ctx, actor.OrgID, actor.UserID, actor.CanManage, bindingID, s.millis()))
 }
 
 func (s Seller) Presign(ctx context.Context, actor Actor, bindingID, sha, mime, fileName string, bytes int64, checksum bool) (contract.UploadTarget, error) {
-	id, ok := domain.NormalizeUUID(bindingID)
+	id, ok := contract.NormalizeUUID(bindingID)
 	if !ok {
 		return contract.UploadTarget{}, contract.NotFound("绑定不存在")
 	}
@@ -225,7 +227,7 @@ func (s Seller) Presign(ctx context.Context, actor Actor, bindingID, sha, mime, 
 }
 
 func (s Seller) Finalize(ctx context.Context, actor Actor, bindingID, ticket, fileName string, position int32) (contract.Asset, error) {
-	id, ok := domain.NormalizeUUID(bindingID)
+	id, ok := contract.NormalizeUUID(bindingID)
 	if !ok {
 		return contract.Asset{}, contract.NotFound("绑定不存在")
 	}
@@ -283,7 +285,7 @@ func (s Seller) Finalize(ctx context.Context, actor Actor, bindingID, ticket, fi
 }
 
 func (s Seller) DeleteAsset(ctx context.Context, actor Actor, assetID string) (string, bool, error) {
-	id, ok := domain.NormalizeUUID(assetID)
+	id, ok := contract.NormalizeUUID(assetID)
 	if !ok {
 		return "", false, contract.NotFound("素材不存在")
 	}
@@ -305,10 +307,14 @@ func (s Seller) DeleteAsset(ctx context.Context, actor Actor, assetID string) (s
 	return deleted.AssetID, deleted.Reclaimed, nil
 }
 
-func (s Seller) Orders(ctx context.Context, actor Actor, storeID, state, cursor string, limit *int64) ([]contract.Order, bool, string, error) {
-	q := contract.OrderQuery{State: strings.TrimSpace(state), Limit: domain.PageLimit(limit)}
+func (s Seller) Orders(ctx context.Context, actor Actor, storeID, state, search, cursor string, limit *int64) ([]contract.Order, bool, string, error) {
+	search = strings.TrimSpace(search)
+	if !utf8.ValidString(search) || strings.ContainsRune(search, '\x00') || utf8.RuneCountInString(search) > 120 {
+		return nil, false, "", contract.Validation("搜索内容无效或超过 120 个字符")
+	}
+	q := contract.OrderQuery{State: strings.TrimSpace(state), Search: search, Limit: domain.PageLimit(limit)}
 	if strings.TrimSpace(cursor) != "" {
-		ms, id, ok := domain.DecodeCursor(strings.TrimSpace(cursor))
+		ms, id, ok := contract.DecodeCursor(strings.TrimSpace(cursor))
 		if !ok {
 			return nil, false, "", contract.Validation("cursor 无效")
 		}
@@ -321,10 +327,8 @@ func (s Seller) Orders(ctx context.Context, actor Actor, storeID, state, cursor 
 			return nil, false, "", asAPI(err)
 		}
 		q.Stores = []string{store}
-	} else if actor.CanManage {
-		q.AllStores = true
 	} else {
-		stores, err := s.DB.VisibleStoreUUIDs(ctx, actor.OrgID, actor.UserID, false)
+		stores, err := s.DB.VisibleStoreUUIDs(ctx, actor.OrgID, actor.UserID, actor.CanManage)
 		if err != nil {
 			return nil, false, "", asAPI(err)
 		}
@@ -338,7 +342,7 @@ func (s Seller) Orders(ctx context.Context, actor Actor, storeID, state, cursor 
 }
 
 func (s Seller) Order(ctx context.Context, actor Actor, orderID string) (contract.Order, error) {
-	id, ok := domain.NormalizeUUID(orderID)
+	id, ok := contract.NormalizeUUID(orderID)
 	if !ok {
 		return contract.Order{}, contract.NotFound("委托单不存在")
 	}
@@ -537,7 +541,7 @@ func (s Seller) PostingStates(ctx context.Context, actor Actor, storeID, numbers
 }
 
 func (s Seller) Cancel(ctx context.Context, actor Actor, orderID string) (contract.Order, error) {
-	id, ok := domain.NormalizeUUID(orderID)
+	id, ok := contract.NormalizeUUID(orderID)
 	if !ok {
 		return contract.Order{}, contract.NotFound("委托单不存在")
 	}
@@ -546,7 +550,7 @@ func (s Seller) Cancel(ctx context.Context, actor Actor, orderID string) (contra
 }
 
 func (s Seller) Close(ctx context.Context, actor Actor, orderID string) (contract.Order, error) {
-	id, ok := domain.NormalizeUUID(orderID)
+	id, ok := contract.NormalizeUUID(orderID)
 	if !ok {
 		return contract.Order{}, contract.NotFound("委托单不存在")
 	}
@@ -555,7 +559,7 @@ func (s Seller) Close(ctx context.Context, actor Actor, orderID string) (contrac
 }
 
 func (s Seller) Nudge(ctx context.Context, actor Actor, orderID string) (contract.Order, error) {
-	id, ok := domain.NormalizeUUID(orderID)
+	id, ok := contract.NormalizeUUID(orderID)
 	if !ok {
 		return contract.Order{}, contract.NotFound("委托单不存在")
 	}
@@ -587,7 +591,7 @@ func (s Seller) seller(ctx context.Context, clientID, apiKey, path string, body 
 	if status == 429 {
 		return nil, contract.RateLimited()
 	}
-	if status >= 400 {
+	if status < 200 || status >= 300 {
 		return nil, contract.Upstream(domain.SellerReadMessage(operation, path, status, "http"))
 	}
 	return resp, nil

@@ -58,31 +58,3 @@ func snippet(s string, i int) string {
 	}
 	return s[a:b]
 }
-
-func TestDiffSixLines(t *testing.T) {
-	raw, err := os.ReadFile("testdata/x1/hand/get-prompt-diff-revision-2.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var doc struct {
-		Response struct {
-			Data PromptDiff `json:"data"`
-		} `json:"response"`
-	}
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatal(err)
-	}
-	brief, err := os.ReadFile("testdata/x1/brief-minimal.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	draft := strings.Replace(string(brief), "Товар: ", "Товар: ЧЕРНОВИК ", 1)
-	draft = strings.TrimSpace(draft)
-	pubRev := int32(1)
-	got := BuildDiff(2, &pubRev, strings.TrimSpace(string(brief)), []string{"#кружка"}, DefaultAI(), draft, []string{"#новый"}, DefaultAI())
-	gb, _ := json.Marshal(got)
-	wb, _ := json.Marshal(doc.Response.Data)
-	if string(gb) != string(wb) {
-		t.Fatalf("diff\n got %s\nwant %s", gb, wb)
-	}
-}

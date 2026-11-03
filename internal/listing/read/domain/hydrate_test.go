@@ -97,3 +97,20 @@ func TestRowStageAndReceipt(t *testing.T) {
 		t.Fatal("stale is attention")
 	}
 }
+
+func TestStaleBuildCanStartPublishWithoutClaimingItIsBuilt(t *testing.T) {
+	base := StoredRow{Content: "ready", Media: "ready", Validation: "passed", BuildState: "stale", Submission: "none", CandidatesSettled: true}
+	for _, submission := range []string{"none", "queued", "submitting", "accepted", "unknown", "rejected"} {
+		row := base
+		row.Submission = submission
+		got := readiness(rowStage(row), row)
+		want := submission == "none"
+		if got.CanStart != want || strings.Contains(strings.Join(got.Allowed, ","), "publish") != want || got.Ready {
+			t.Fatalf("submission %s: %+v", submission, got)
+		}
+	}
+	base.Validation = "blocked"
+	if got := readiness(rowStage(base), base); got.CanStart {
+		t.Fatalf("invalid fields enabled publishing: %+v", got)
+	}
+}

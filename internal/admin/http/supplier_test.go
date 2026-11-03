@@ -91,12 +91,9 @@ func TestSupplierValidationAndAuthBytes(t *testing.T) {
 	if rec.Code != http.StatusOK || rec.Body.String() != `{"data":{"withdrawals":[]}}` {
 		t.Fatalf("withdrawal list %d %s", rec.Code, rec.Body.String())
 	}
-	rec = call(super, http.MethodGet, "/api/admin/supplier-prompts", "")
-	if rec.Code != http.StatusOK || rec.Body.String() != `{"data":{"prompts":[]}}` || rec.Header().Get("Cache-Control") != "private, no-store" {
-		t.Fatalf("prompts %d %s %v", rec.Code, rec.Body.String(), rec.Header())
-	}
+
 	rec = call(super, http.MethodGet, "/api/admin/supplier-db-storage/objects", "")
-	if rec.Code != http.StatusServiceUnavailable || rec.Body.String() != `{"error":"先配置平台货源存储桶","code":"STORAGE_NOT_CONFIGURED"}` {
+	if rec.Code != http.StatusServiceUnavailable || rec.Body.String() != `{"error":"先配置供应商商品库存储桶","code":"STORAGE_NOT_CONFIGURED"}` {
 		t.Fatalf("storage %d %s", rec.Code, rec.Body.String())
 	}
 	anonPay := chi.NewRouter()
@@ -106,7 +103,7 @@ func TestSupplierValidationAndAuthBytes(t *testing.T) {
 		t.Fatalf("pay json %d %s", rec.Code, rec.Body.String())
 	}
 	rec = call(staff, http.MethodGet, "/api/admin/supplier-automation/grants", "")
-	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "需要超级管理员权限") {
+	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), "登录已失效") {
 		t.Fatalf("grant guard %d %s", rec.Code, rec.Body.String())
 	}
 	rec = call(super, http.MethodGet, "/api/admin/supplier-automation/grants", "")
@@ -136,17 +133,28 @@ type fakeStore struct {
 	dbs []domain.SupplierDb
 }
 
+func (f fakeStore) ListFactories(context.Context, contract.Actor) ([]domain.Factory, error) {
+	return []domain.Factory{}, nil
+}
+func (f fakeStore) CreateFactory(context.Context, contract.Actor, domain.FactoryInput, string, int64, string, string) (domain.Factory, *string, error) {
+	return domain.Factory{}, nil, nil
+}
+func (f fakeStore) UpdateFactory(context.Context, contract.Actor, string, domain.FactoryInput, int64) (domain.Factory, error) {
+	return domain.Factory{}, nil
+}
+func (f fakeStore) DeleteFactory(context.Context, contract.Actor, string) error { return nil }
+
 func (f fakeStore) ListDbs(context.Context, contract.Actor) ([]domain.SupplierDb, error) {
 	if f.dbs == nil {
 		return []domain.SupplierDb{}, nil
 	}
 	return f.dbs, nil
 }
-func (f fakeStore) CreateDb(context.Context, contract.Actor, domain.NormalizedDb, string, []domain.PropSeed, int64, string) (domain.SupplierDb, *string, error) {
-	return domain.SupplierDb{}, nil, nil
+func (f fakeStore) CreateDb(context.Context, contract.Actor, domain.NormalizedDb, string, []domain.PropSeed, int64) (domain.SupplierDb, error) {
+	return domain.SupplierDb{}, nil
 }
-func (f fakeStore) UpdateDb(context.Context, contract.Actor, string, domain.NormalizedDb, int64, string) (domain.SupplierDb, *string, error) {
-	return domain.SupplierDb{}, nil, nil
+func (f fakeStore) UpdateDb(context.Context, contract.Actor, string, domain.NormalizedDb, int64) (domain.SupplierDb, error) {
+	return domain.SupplierDb{}, nil
 }
 func (f fakeStore) DeleteDb(context.Context, contract.Actor, string) error { return nil }
 func (f fakeStore) CreateProp(context.Context, contract.Actor, string, string, domain.NormalizedProp, int64) (domain.Prop, error) {
@@ -164,18 +172,15 @@ func (f fakeStore) DeleteRow(context.Context, contract.Actor, string, string, in
 func (f fakeStore) ListAccounts(context.Context, contract.Actor) ([]domain.Member, error) {
 	return nil, nil
 }
-func (f fakeStore) CreateAccount(context.Context, contract.Actor, domain.NormalizedAccount, string, int64, string) (domain.Member, *string, error) {
+func (f fakeStore) CreateAccount(context.Context, contract.Actor, domain.NormalizedAccount, int64, string, string) (domain.Member, *string, error) {
 	return domain.Member{}, nil, nil
 }
-func (f fakeStore) PatchAccount(context.Context, contract.Actor, string, domain.AccountPatch, string) (domain.Member, *string, error) {
+func (f fakeStore) PatchAccount(context.Context, contract.Actor, string, domain.AccountPatch, string, int64) (domain.Member, *string, error) {
 	return domain.Member{}, nil, nil
 }
 func (f fakeStore) DeleteAccount(context.Context, contract.Actor, string, int64) error { return nil }
 func (f fakeStore) AccountStaff(context.Context, int64) (bool, bool, error) {
 	return false, false, nil
-}
-func (f fakeStore) ListPrompts(context.Context, contract.Actor) ([]domain.Prompt, error) {
-	return nil, nil
 }
 func (f fakeStore) ListWithdrawals(context.Context, contract.Actor, string) ([]domain.Withdrawal, error) {
 	return nil, nil
@@ -198,7 +203,7 @@ func (f fakeStore) RevokeGrant(context.Context, contract.Actor, string) (string,
 func (f fakeStore) ListFulfillers(context.Context, contract.Actor, string) ([]domain.Fulfiller, error) {
 	return nil, nil
 }
-func (f fakeStore) GrantFulfiller(context.Context, contract.Actor, string, int64, int64) (domain.Fulfiller, error) {
+func (f fakeStore) GrantFulfiller(context.Context, contract.Actor, string, string, int64) (domain.Fulfiller, error) {
 	return domain.Fulfiller{}, nil
 }
 func (f fakeStore) RevokeFulfiller(context.Context, contract.Actor, string, string, int64) error {
@@ -207,7 +212,7 @@ func (f fakeStore) RevokeFulfiller(context.Context, contract.Actor, string, stri
 func (f fakeStore) ListCatalogManagers(context.Context, contract.Actor, string) ([]domain.CatalogManager, error) {
 	return nil, nil
 }
-func (f fakeStore) GrantCatalogManager(context.Context, contract.Actor, string, int64, int64) (domain.CatalogManager, error) {
+func (f fakeStore) GrantCatalogManager(context.Context, contract.Actor, string, string, int64) (domain.CatalogManager, error) {
 	return domain.CatalogManager{}, nil
 }
 func (f fakeStore) RevokeCatalogManager(context.Context, contract.Actor, string, string, int64) error {

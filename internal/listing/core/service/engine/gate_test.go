@@ -6,11 +6,7 @@ import (
 )
 
 func TestThreeGatesShareOneWasmCall(t *testing.T) {
-	engine, err := OpenEmbedded(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = engine.Close(context.Background()) })
+	engine := openTags(t)
 	rules := []Rule{{Term: "сигарета", MatchMode: "stem"}}
 	version, err := RulesVersion(rules)
 	if err != nil {

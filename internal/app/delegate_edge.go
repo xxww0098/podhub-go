@@ -1,7 +1,6 @@
 package app
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/xxww0098/podhub-go/internal/delegate/contract"
@@ -21,42 +19,41 @@ import (
 	"github.com/xxww0098/podhub-go/internal/media/domain/checksum"
 	"github.com/xxww0098/podhub-go/internal/media/domain/receipt"
 	"github.com/xxww0098/podhub-go/internal/platform/config"
-	"github.com/xxww0098/podhub-go/internal/platform/httpx"
 	"github.com/xxww0098/podhub-go/internal/platform/r2"
 	sign "github.com/xxww0098/podhub-go/internal/platform/r2/sigv4"
 	"github.com/xxww0098/podhub-go/internal/platform/seal"
-	sellerdomain "github.com/xxww0098/podhub-go/internal/seller/domain"
+	seller "github.com/xxww0098/podhub-go/internal/seller/ozon"
 )
 
-// delegateEdge wires loopback Seller reads and the delegate asset bucket.
+// delegateEdge wires the controlled Seller read port and the delegate asset bucket.
 // Presign does not take a writer lease. Finalize and delete do, in the repository.
-// Object deletes run only when the parsed media-delete switch is on, and only
-// through the loopback origin client.
-func delegateEdge(pool *pgxpool.Pool, cfg config.Config) delegatesvc.Edge {
+// Object deletes require the parsed media-delete switch and the configured storage origin.
+func delegateEdge(cfg config.Config, pool *pgxpool.Pool) delegatesvc.Edge {
+	eg := seller.New(cfg).WithPool(pool)
 	return delegatesvc.Edge{
 		Storage: func(ctx context.Context) (string, int64, error) {
-			account, revision, err := loadDelegateStorage(ctx, pool, cfg.IntegrationConfigKey)
+			account, revision, err := loadDelegateStorage(cfg)
 			if err != nil {
 				return "", 0, err
 			}
 			return account.KeyPrefix, revision, nil
 		},
 		Issue: func(ctx context.Context, in delegatesvc.Issue) (contract.UploadTarget, error) {
-			account, _, err := loadDelegateStorage(ctx, pool, cfg.IntegrationConfigKey)
+			account, _, err := loadDelegateStorage(cfg)
 			if err != nil {
 				return contract.UploadTarget{}, err
 			}
 			return issueDelegate(account, in, time.Now().UTC())
 		},
 		Confirm: func(ctx context.Context, purpose string, actorID, orgID int64, token string) (delegatesvc.Confirmed, error) {
-			account, _, err := loadDelegateStorage(ctx, pool, cfg.IntegrationConfigKey)
+			account, _, err := loadDelegateStorage(cfg)
 			if err != nil {
 				return delegatesvc.Confirmed{}, err
 			}
 			return confirmDelegate(ctx, account, purpose, actorID, orgID, token, time.Now().UTC())
 		},
 		Delete: func(ctx context.Context, key string) error {
-			account, _, err := loadDelegateStorage(ctx, pool, cfg.IntegrationConfigKey)
+			account, _, err := loadDelegateStorage(cfg)
 			if err != nil {
 				return err
 			}
@@ -64,7 +61,19 @@ func delegateEdge(pool *pgxpool.Pool, cfg config.Config) delegatesvc.Edge {
 			return nil
 		},
 		Seller: func(ctx context.Context, clientID, apiKey, path string, body []byte) (int, []byte, string, error) {
-			return postDelegateSeller(ctx, sellerdomain.ResolveBaseURL(cfg.SellerBaseURL()), clientID, apiKey, path, body)
+			reply, err := eg.SellerReadCall(ctx, http.MethodPost, path, body, false, true, clientID, apiKey)
+			if err != nil {
+				kind := "connect"
+				var timeout interface{ Timeout() bool }
+				if errors.Is(err, context.DeadlineExceeded) || errors.As(err, &timeout) && timeout.Timeout() {
+					kind = "timeout"
+				}
+				return reply.Status, nil, kind, err
+			}
+			if reply.Status >= 300 && reply.Status < 400 {
+				return reply.Status, nil, "connect", errors.New("Seller read refused redirect")
+			}
+			return reply.Status, []byte(reply.Body), "", nil
 		},
 		Open: func(cred contract.SealedCredential) (string, string, error) {
 			return openDelegateCredential(cfg, cred)
@@ -72,59 +81,13 @@ func delegateEdge(pool *pgxpool.Pool, cfg config.Config) delegatesvc.Edge {
 	}
 }
 
-func loadDelegateStorage(ctx context.Context, pool *pgxpool.Pool, key string) (sign.Account, int64, error) {
-	if pool == nil {
+func loadDelegateStorage(cfg config.Config) (sign.Account, int64, error) {
+	account, err := configuredR2Account(cfg, mediacontract.RolePrivate)
+	if err != nil {
 		return sign.Account{}, 0, contract.StorageUnavailable(contract.MsgStorageMissing)
 	}
-	var revision int64
-	var nonce, ciphertext []byte
-	err := pool.QueryRow(ctx, `
-		SELECT revision, nonce, ciphertext
-		  FROM public.platform_integration_config
-		 WHERE singleton = true`).Scan(&revision, &nonce, &ciphertext)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return sign.Account{}, 0, contract.StorageUnavailable(contract.MsgStorageMissing)
-	}
-	if err != nil {
-		return sign.Account{}, 0, contract.Internal()
-	}
-	account, err := accountFromSnapshot(key, nonce, ciphertext)
-	if err != nil {
-		return sign.Account{}, 0, err
-	}
-	return account, revision, nil
-}
-
-func accountFromSnapshot(key string, nonce, ciphertext []byte) (sign.Account, error) {
-	kek, err := seal.IntegrationKEK(key)
-	if err != nil {
-		var keyErr *seal.KeyError
-		if errors.As(err, &keyErr) {
-			return sign.Account{}, contract.StorageUnavailable(keyErr.Message)
-		}
-		return sign.Account{}, contract.Internal()
-	}
-	plain, err := seal.OpenIntegration(kek, nonce, ciphertext)
-	if err != nil {
-		return sign.Account{}, contract.Internal()
-	}
-	stored, err := seal.ParseSnapshot(plain)
-	if err != nil {
-		return sign.Account{}, contract.Internal()
-	}
-	for _, section := range stored.Buckets {
-		if section.Role != string(mediacontract.RolePrivate) || !section.Active {
-			continue
-		}
-		return sign.Account{
-			ID: section.ID, Provider: sign.Provider(section.Provider), Endpoint: section.Endpoint,
-			Region: section.Region, Bucket: section.Bucket, KeyPrefix: section.KeyPrefix,
-			PublicBaseURL: section.PublicBaseURL, ForcePathStyle: section.ForcePathStyle,
-			AccessKeyID: section.AccessKeyID, SecretAccessKey: section.SecretAccessKey,
-			SessionToken: section.SessionToken,
-		}, nil
-	}
-	return sign.Account{}, contract.StorageUnavailable(contract.MsgStorageMissing)
+	// Environment configuration is immutable for the lifetime of this handler.
+	return account, 1, nil
 }
 
 func issueDelegate(account sign.Account, in delegatesvc.Issue, now time.Time) (contract.UploadTarget, error) {
@@ -181,7 +144,7 @@ func confirmDelegate(ctx context.Context, account sign.Account, purpose string, 
 	if err != nil {
 		return delegatesvc.Confirmed{}, contract.StorageUnavailable("对象存储确认暂不可用，请稍后重试确认")
 	}
-	resp, err := r2.Exchange(ctx, r2.Request{
+	resp, err := r2.ExchangeAccount(ctx, account, r2.Request{
 		Method: http.MethodGet, URL: rawURL, Timeout: 30 * time.Second,
 		NoCompress: true, StrictRead: true, MaxBytes: int64(body.ByteLength),
 	})
@@ -227,7 +190,7 @@ func confirmChecksumHead(ctx context.Context, account sign.Account, body receipt
 	if err != nil {
 		return false, contract.StorageUnavailable("对象存储确认暂不可用，请稍后重试确认")
 	}
-	resp, err := r2.Exchange(ctx, r2.Request{
+	resp, err := r2.ExchangeAccount(ctx, account, r2.Request{
 		Method: http.MethodHead, URL: rawURL, Timeout: 30 * time.Second, NoCompress: true,
 	})
 	if err != nil {
@@ -279,7 +242,7 @@ func deleteDelegate(ctx context.Context, account sign.Account, key string, allow
 		slog.Warn("delegate asset reclaim signing failed", "key", key, "err", err)
 		return
 	}
-	resp, err := r2.Exchange(ctx, r2.Request{Method: http.MethodDelete, URL: rawURL, Timeout: 30 * time.Second})
+	resp, err := r2.ExchangeAccount(ctx, account, r2.Request{Method: http.MethodDelete, URL: rawURL, Timeout: 30 * time.Second})
 	if err != nil {
 		slog.Warn("delegate asset reclaim unreachable", "key", key, "err", err)
 		return
@@ -325,20 +288,22 @@ func headerOne(header map[string][]string, name string) string {
 }
 
 func openDelegateCredential(cfg config.Config, cred contract.SealedCredential) (string, string, error) {
-	kek, err := seal.SellerKEK(cfg.SellerCredentialKey)
+	_, err := seal.SellerKEK(cfg.SellerCredentialKey)
 	if err != nil {
 		return "", "", contract.Internal()
 	}
+	kek := seal.DeriveKEK(cfg.SellerCredentialKey)
 	currentID := strings.TrimSpace(cfg.SellerCredentialKeyID)
 	if currentID == "" {
 		currentID = seal.DefaultSellerKeyID
 	}
 	var previous []byte
 	if cred.KeyID != currentID && strings.TrimSpace(cfg.SellerCredentialKeyPrevious) != "" {
-		previous, err = seal.SellerKEK(cfg.SellerCredentialKeyPrevious)
+		_, err = seal.SellerKEK(cfg.SellerCredentialKeyPrevious)
 		if err != nil {
 			return "", "", contract.Internal()
 		}
+		previous = seal.DeriveKEK(cfg.SellerCredentialKeyPrevious)
 	}
 	clientID, apiKey, err := seal.OpenStored(
 		currentID, cred.KeyID, kek, previous,
@@ -349,46 +314,4 @@ func openDelegateCredential(cfg config.Config, cred contract.SealedCredential) (
 		return "", "", contract.Internal()
 	}
 	return clientID, apiKey, nil
-}
-
-// delegateSellerClient does not follow redirects and does not use a proxy.
-// The 30s limit sits on the request context. This client has no Timeout.
-// A 3xx is a connect failure: the body is not returned as a successful
-// Seller payload. It is discarded so the connection can be reused.
-var delegateSellerClient = httpx.OzonClient()
-
-func postDelegateSeller(ctx context.Context, base, clientID, apiKey, path string, body []byte) (int, []byte, string, error) {
-	if !sellerdomain.LoopbackOrigin(base + "/") {
-		return 0, nil, "connect", errors.New("seller base url is not loopback")
-	}
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+path, bytes.NewReader(body))
-	if err != nil {
-		return 0, nil, "connect", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Client-Id", clientID)
-	req.Header.Set("Api-Key", apiKey)
-	resp, err := delegateSellerClient.Do(req)
-	if err != nil {
-		kind := "connect"
-		var netErr interface{ Timeout() bool }
-		if errors.As(err, &netErr) && netErr.Timeout() || errors.Is(err, context.DeadlineExceeded) {
-			kind = "timeout"
-		}
-		return 0, nil, kind, err
-	}
-	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
-		httpx.Discard(resp.Body)
-		return 0, nil, "connect", errors.New("redirect left loopback")
-	}
-	raw, err := httpx.ReadLimit(resp.Body, 1<<20)
-	if err != nil {
-		return resp.StatusCode, nil, "decode", err
-	}
-	return resp.StatusCode, raw, "", nil
 }

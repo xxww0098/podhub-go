@@ -15,6 +15,7 @@ import (
 	delegatecontract "github.com/xxww0098/podhub-go/internal/admin/delegate/contract"
 	"github.com/xxww0098/podhub-go/internal/platform/config"
 	"github.com/xxww0098/podhub-go/internal/platform/db"
+	"github.com/xxww0098/podhub-go/tests/testkit"
 )
 
 var (
@@ -27,7 +28,7 @@ func parityDB(t *testing.T) (*pgxpool.Pool, context.Context) {
 	t.Helper()
 	dsn := os.Getenv("PODHUB_PARITY_DSN")
 	if dsn == "" {
-		if _, err := os.Stat("/var/run/docker.sock"); err != nil {
+		if !testkit.DockerAvailable() {
 			t.Skip("docker daemon is not available")
 		}
 	}

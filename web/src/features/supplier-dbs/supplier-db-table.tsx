@@ -1,51 +1,52 @@
-/** Library products controller: filters, commands and the nonmodal row editor. */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { Plus, RotateCcw } from "lucide-react"
 import type { CategoryTreeNodeView } from "@/bindings/commands"
-import type { SupplierDbDetail } from "@/bindings/http-supplier-dbs"
+import type { SupplierDb, SupplierDbDetail } from "@/bindings/http-supplier-dbs"
+import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Field, FieldLabel } from "@/components/ui/field"
+import { Input } from "@/components/ui/input"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Spinner } from "@/components/ui/spinner"
 import { useScreenActive } from "@/components/screen-pane"
-import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { loadCategoryTree as loadSharedCategoryTree } from "@/features/category-schema/category-tree-load"
 import { readCategoryTreeCache, writeCategoryTreeCache } from "@/features/category-schema/category-tree-cache"
-import { SupplierPropManagerDialog } from "./supplier-props-manager"
+import { notifyCommandError } from "@/lib/notify"
 import { SupplierRowPanel } from "./supplier-row-panel"
+import type { SupplierRowTab } from "./supplier-row-body"
+import { SupplierVariantCreate } from "./supplier-variant-create"
 import { useSupplierDbsStore, type SupplierDbsStore } from "./supplier-dbs-store"
-import { SupplierDbFilterBar, SupplierDbPagination, useSupplierDbFilters } from "./supplier-db-filters"
 import { SupplierDbProductsTable } from "./supplier-db-products-table"
-import { SupplierDbHeader, SupplierDbStats } from "./supplier-db-header"
+import { SupplierDbFilterBar, SupplierDbPagination, useSupplierDbFilters } from "./supplier-db-filters"
+import { SupplierDbStats } from "./supplier-db-header"
 import { useSupplierDbRowActions, SupplierDbRowConfirmations } from "./supplier-db-row-actions"
 import { useSupplierDbActions, SupplierDbBulkBar, SupplierDbConfirmations } from "./supplier-db-actions"
 
 const defaultLoadCategoryTree = () => loadSharedCategoryTree()
-export function SupplierDbDetailView({ store, detail, onExit, onEditDb, onOpenAccounts, showCreator = false, onDirtyChange, loadCategoryTree = defaultLoadCategoryTree }: {
+export function SupplierProductsView({ store, dbs, details, onManageFactories, showCreator = false, loading = false, failedFactories = [], onRetry, loadCategoryTree = defaultLoadCategoryTree }: {
   store: SupplierDbsStore
-  detail: SupplierDbDetail
-  onExit: () => void
-  onEditDb: () => void
-  onOpenAccounts: () => void
+  dbs: SupplierDb[]
+  details: SupplierDbDetail[]
+  onManageFactories: () => void
   showCreator?: boolean
-  onDirtyChange?: (dirty: boolean) => void
+  loading?: boolean
+  failedFactories?: SupplierDb[]
+  onRetry?: () => void
   loadCategoryTree?: () => Promise<CategoryTreeNodeView[]>
 }) {
-  const { db, propDefs, rows } = detail
-  const storeState = useSupplierDbsStore(store)
+  const state = useSupplierDbsStore(store)
   const screenActive = useScreenActive()
-  const pendingSet = useMemo(() => new Set(storeState.pendingRows), [storeState.pendingRows])
-  const sortedPropDefs = useMemo(() => [...propDefs].sort((a, b) => a.position - b.position), [propDefs])
+  const pendingSet = useMemo(() => new Set(state.pendingRows), [state.pendingRows])
+  const [factoryId, setFactoryId] = useState("all")
+  const [newFactoryId, setNewFactoryId] = useState<string | null>(null)
+  const [newSpecName, setNewSpecName] = useState("")
+  const [openRowId, setOpenRowId] = useState<string | null>(null)
+  const [editorMode, setEditorMode] = useState<"product" | "variant">("product")
+  const [initialTab, setInitialTab] = useState<SupplierRowTab>("info")
+  const [variantParentId, setVariantParentId] = useState<string | null>(null)
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set())
   const [categoryTree, setCategoryTree] = useState<CategoryTreeNodeView[]>(() => readCategoryTreeCache() ?? [])
   const [categoryLoading, setCategoryLoading] = useState(false)
-  const [propsManagerOpen, setPropsManagerOpen] = useState(false)
-  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set())
-  const [openRowId, setOpenRowId] = useState<string | null>(null)
-  const [promptDirty, setPromptDirty] = useState(false)
-  const [requestedRowId, setRequestedRowId] = useState<string | null>(null)
-  const requestOpenRow = (productId: string) => {
-    if (productId !== openRowId && promptDirty) setRequestedRowId(productId)
-    else setOpenRowId(productId)
-  }
-  useEffect(() => { setPromptDirty(false) }, [openRowId])
-  useEffect(() => { onDirtyChange?.(promptDirty) }, [promptDirty, onDirtyChange])
-  // 类目树回答「类目」列标签与筛选选项 — best-effort，有缓存就不抢网络；
-  // 行面板选择器开弹经同一回调直调共享缓存（GET /api/catalog/tree），不留死面板。
   const categoryInFlight = useRef(false)
   const ensureCategoryTree = useCallback(async (): Promise<boolean> => {
     if (categoryInFlight.current) return true
@@ -53,27 +54,20 @@ export function SupplierDbDetailView({ store, detail, onExit, onEditDb, onOpenAc
     setCategoryLoading(true)
     try {
       const tree = await loadCategoryTree()
-      if (tree.length === 0) return false
-      setCategoryTree(tree)
-      writeCategoryTreeCache(tree)
+      if (!tree.length) return false
+      setCategoryTree(tree); writeCategoryTreeCache(tree)
       return true
-    } catch {
-      return false
-    } finally {
-      categoryInFlight.current = false
-      setCategoryLoading(false)
-    }
+    } catch { return false }
+    finally { categoryInFlight.current = false; setCategoryLoading(false) }
   }, [loadCategoryTree])
+  useEffect(() => { if (!categoryTree.length && screenActive) void ensureCategoryTree() }, [screenActive, categoryTree.length, ensureCategoryTree])
 
-  useEffect(() => {
-    if (categoryTree.length > 0 || !screenActive) return
-    void ensureCategoryTree()
-  }, [screenActive, categoryTree.length, ensureCategoryTree])
-
+  const currentFactory = dbs.some((db) => db.sourceId === factoryId) ? factoryId : "all"
+  const allRows = useMemo(() => details.flatMap((detail) => detail.rows), [details])
+  const rows = useMemo(() => currentFactory === "all" ? allRows : allRows.filter((row) => row.sourceId === currentFactory), [allRows, currentFactory])
   const filters = useSupplierDbFilters(rows, categoryTree)
-  const { pageRows, liveRows, filteredRows, searchRef } = filters
-  // Selection never carries hidden rows into a bulk action after filtering or paging.
-  useEffect(() => { setSelectedIds(new Set()) }, [filters.query, filters.statusFilter, filters.publishFilter, filters.categoryFilter, filters.page, filters.pageSize])
+  const { pageRows, liveRows, searchRef } = filters
+  useEffect(() => { setSelectedIds(new Set()) }, [currentFactory, filters.query, filters.statusFilter, filters.publishFilter, filters.categoryFilter, filters.page, filters.pageSize])
   useEffect(() => {
     const visible = new Set(pageRows.map((row) => row.productId))
     setSelectedIds((current) => {
@@ -83,57 +77,80 @@ export function SupplierDbDetailView({ store, detail, onExit, onEditDb, onOpenAc
   }, [pageRows])
   const toggleSelectRow = (productId: string, checked: boolean) => setSelectedIds((current) => {
     const next = new Set(current)
-    if (checked) next.add(productId)
-    else next.delete(productId)
+    if (checked) next.add(productId); else next.delete(productId)
     return next
   })
-  const toggleSelectAll = (checked: boolean) => setSelectedIds(checked ? new Set(pageRows.map((row) => row.productId)) : new Set())
-  const actions = useSupplierDbActions({ db, store, selectedIds, setSelectedIds, onExit })
-  const rowActions = useSupplierDbRowActions({ store, sourceId: db.sourceId, rows, openRowId, setOpenRowId, requestOpenRow })
-  const openRow = liveRows.find((row) => row.productId === openRowId) ?? null
-  const navigationRows = filteredRows.some((row) => row.productId === openRowId) ? filteredRows : liveRows
-  const rowIndex = navigationRows.findIndex((row) => row.productId === openRowId)
-  const previousRowId = navigationRows[rowIndex - 1]?.productId
-  const nextRowId = navigationRows[rowIndex + 1]?.productId
-  const closeSheet = () => {
-    const closingId = openRowId
+  const actions = useSupplierDbActions({ rows: allRows, store, selectedIds, setSelectedIds, canPublish: showCreator })
+  const rowActions = useSupplierDbRowActions({ store, rows: allRows, openRowId, setOpenRowId, requestOpenRow: setOpenRowId, canPublish: showCreator })
+  const openRow = allRows.find((row) => row.productId === openRowId && !row.archived)
+  const rowDetail = details.find((detail) => detail.db.sourceId === openRow?.sourceId)
+  const variantParent = allRows.find((row) => row.productId === variantParentId && !row.archived)
+  const openProduct = (productId: string, tab?: "defaults") => { setEditorMode("product"); setInitialTab(tab ?? "info"); setOpenRowId(productId) }
+  const closeEditor = () => {
+    const productId = openRowId
     setOpenRowId(null)
-    // 关面板后焦点回到当前商品的编辑入口。
-    const trigger =
-      (closingId
-        ? document.querySelector<HTMLElement>(
-            `[data-supplier-db-open="${closingId}"]`,
-          )
-        : null)
-    if (trigger) requestAnimationFrame(() => trigger.focus())
+    if (productId) requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-supplier-db-open="${productId}"]`)?.focus())
+  }
+  const addVariant = (productId: string) => setVariantParentId(productId)
+  const factoryItems = dbs.map((db) => ({ value: db.sourceId, label: db.name || "未命名商品库" }))
+  const filterItems = [{ value: "all", label: "全部商品库" }, ...factoryItems]
+  const openNewProduct = () => {
+    setNewSpecName("")
+    setNewFactoryId(currentFactory === "all" ? "" : currentFactory)
   }
 
-  return (
-    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-supplier-dbs="detail" onKeyDown={(event) => {
-      const target = event.target as HTMLElement
-      const typing = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target.isContentEditable
-      if (event.key === "/" && !typing) { event.preventDefault(); searchRef.current?.focus() }
-    }}>
-      <SupplierDbHeader db={db} listed={actions.listed} listedBusy={actions.listedBusy} setListed={actions.setListed}
-        showCreator={showCreator} onEditDb={onEditDb} onOpenAccounts={onOpenAccounts} onOpenProps={() => setPropsManagerOpen(true)} onDeleteDb={() => actions.setDeleteDbOpen(true)} />
-      <SupplierDbStats counts={filters.statCounts} activeStat={filters.activeStat} applyStat={filters.applyStat} creating={rowActions.creating} newPage={rowActions.newPage} />
-      <SupplierDbFilterBar filters={filters} />
-      <SupplierDbBulkBar actions={actions} />
-      <div className="relative mx-4 mb-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card">
-        <SupplierDbProductsTable db={db} pageRows={pageRows} liveRows={liveRows} categoryTree={categoryTree} pendingSet={pendingSet} openRowId={openRowId} selectedIds={selectedIds}
-          rowBusyId={rowActions.rowBusyId} showCreator={showCreator} toggleSelectAll={toggleSelectAll} toggleSelectRow={toggleSelectRow} onOpen={requestOpenRow}
-          toggleStatus={rowActions.toggleStatus} onToggleFromMenu={rowActions.toggleStatusFromMenu} onDuplicate={rowActions.duplicateRow} onArchive={rowActions.setArchiveRowId} onDelete={rowActions.setDeleteRowId} />
-        <SupplierDbPagination filters={filters} />
+  return <div className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-supplier-products="" onKeyDown={(event) => {
+    const target = event.target as HTMLElement
+    if (event.key === "/" && !(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target.isContentEditable)) { event.preventDefault(); searchRef.current?.focus() }
+  }}>
+    {openRow && rowDetail ? <SupplierRowPanel key={`${editorMode}:${openRow.productId}:${initialTab}`} mode={editorMode} initialTab={initialTab} canAdjustPrice={showCreator}
+      store={store} sourceId={openRow.sourceId} row={openRow} rows={allRows} propDefs={[...rowDetail.propDefs].sort((a, b) => a.position - b.position)}
+      categoryTree={categoryTree} categoryLoading={categoryLoading} onEnsureCategoryTree={ensureCategoryTree} pending={pendingSet.has(openRow.productId)}
+      onSelectRow={(productId, tab) => { setInitialTab(tab ?? "info"); setOpenRowId(productId) }} onClose={closeEditor}
+      onArchive={!openRow.published || showCreator ? () => rowActions.setArchiveRowId(openRow.productId) : undefined} onDelete={!openRow.published || showCreator ? () => rowActions.setDeleteRowId(openRow.productId) : undefined} onAddVariant={() => addVariant(openRow.productId)} /> : <>
+      <div className="supplier-db-toolbar flex min-w-0 flex-wrap items-center gap-2 border-b border-border px-3 py-2.5">
+        {!loading ? <SupplierDbStats counts={filters.statCounts} activeStat={filters.activeStat} applyStat={filters.applyStat} /> : null}
+        <SupplierDbFilterBar filters={filters} />
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
+          <Button variant="outline" size="sm" onClick={onManageFactories}>工厂绑定</Button>
+          <Select items={filterItems} value={currentFactory} onValueChange={(next) => { if (next) { setFactoryId(next); filters.setPage(1) } }}><SelectTrigger size="sm" aria-label="按商品库筛选"><SelectValue /></SelectTrigger><SelectContent>{filterItems.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent></Select>
+          <Button variant="brand" size="sm" disabled={!dbs.length || rowActions.creating} aria-label="新增商品" onClick={openNewProduct}><Plus aria-hidden />新增商品</Button>
+        </div>
       </div>
-      {openRow ? <SupplierRowPanel key={openRow.productId} onDirtyChange={setPromptDirty} store={store} sourceId={db.sourceId} row={openRow} rows={rows}
-        onSelectRow={setOpenRowId} previousRowId={previousRowId} nextRowId={nextRowId} position={rowIndex + 1} total={navigationRows.length}
-        propDefs={sortedPropDefs} categoryTree={categoryTree} categoryLoading={categoryLoading} onEnsureCategoryTree={ensureCategoryTree} pending={pendingSet.has(openRow.productId)}
-        onClose={closeSheet} onDuplicate={() => void rowActions.duplicateRow(openRow)} onArchive={() => rowActions.setArchiveRowId(openRow.productId)} onDelete={() => rowActions.setDeleteRowId(openRow.productId)} /> : null}
-      <ConfirmDialog open={requestedRowId !== null} onOpenChange={(open) => { if (!open) setRequestedRowId(null) }} title="提示词尚未保存"
-        description="切换商品会丢弃当前规格未保存的提示词草稿。" confirmText="丢弃草稿并切换" onConfirm={() => { setOpenRowId(requestedRowId); setRequestedRowId(null) }} />
-      <SupplierPropManagerDialog store={store} sourceId={db.sourceId} propDefs={sortedPropDefs} rows={rows} open={propsManagerOpen} onOpenChange={setPropsManagerOpen} />
-      <SupplierDbRowConfirmations actions={rowActions} />
-      <SupplierDbConfirmations actions={actions} />
-    </div>
-  )
+      <SupplierDbBulkBar actions={actions} />
+      {failedFactories.length ? <div role="alert" className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2 text-compact text-destructive">{failedFactories.map((db) => db.name).join("、")} 的商品读取失败<Button variant="outline" size="sm" onClick={onRetry}><RotateCcw aria-hidden />重试</Button></div> : null}
+      {loading ? <div className="flex flex-1 items-center justify-center gap-2 text-muted-foreground" role="status"><Spinner />正在读取商品库…</div>
+        : <div className="supplier-db-products relative flex min-h-0 flex-1 flex-col overflow-hidden border-t border-border">
+          <SupplierDbProductsTable dbs={dbs} pageRows={pageRows} liveRows={liveRows} categoryTree={categoryTree} pendingSet={pendingSet} selectedIds={selectedIds} showCreator={showCreator} canPublish={showCreator}
+            toggleSelectAll={(checked) => setSelectedIds(checked ? new Set(pageRows.map((row) => row.productId)) : new Set())} toggleSelectRow={toggleSelectRow}
+            onOpen={(productId, tab) => { setEditorMode("variant"); setInitialTab(tab ?? "info"); setOpenRowId(productId) }} onOpenProduct={openProduct} onAddVariant={(row) => addVariant(row.productId)}
+            toggleStatus={rowActions.toggleStatus} onToggleFromMenu={rowActions.toggleStatusFromMenu} onArchive={rowActions.setArchiveRowId} onDelete={rowActions.setDeleteRowId}
+            onCreateProduct={openNewProduct} onClearFilters={filters.resetFilters} onManageFactories={onManageFactories} />
+          <SupplierDbPagination filters={filters} />
+        </div>}
+    </>}
+    {variantParent ? <SupplierVariantCreate key={variantParent.productId} row={variantParent} rows={allRows} store={store} onBack={() => setVariantParentId(null)} onCreated={(productId) => {
+      setVariantParentId(null); setEditorMode("variant"); setInitialTab("info"); setOpenRowId(productId)
+    }} /> : null}
+    <Dialog open={newFactoryId !== null} onOpenChange={(open) => { if (!open && !rowActions.creating) setNewFactoryId(null) }}>
+      <DialogContent><DialogHeader><DialogTitle>新增商品</DialogTitle><DialogDescription>选择商品库并命名首个规格，再填写商品资料。</DialogDescription></DialogHeader>
+        <form onSubmit={async (event) => {
+          event.preventDefault()
+          if (!newFactoryId || !newSpecName.trim() || rowActions.creating || !dbs.some((db) => db.sourceId === newFactoryId)) return
+          await store.loadDetail(newFactoryId)
+          const detail = store.getState().details[newFactoryId]
+          if (!detail?.detail || detail.status !== "ready") { notifyCommandError(detail?.reason, "商品库资料未读到，请重试"); return }
+          setEditorMode("product"); setInitialTab("info")
+          if (await rowActions.newPage(newFactoryId, newSpecName)) setNewFactoryId(null)
+        }}>
+          <Field><FieldLabel htmlFor="supplier-new-product-factory">商品库</FieldLabel><Select items={factoryItems} value={newFactoryId || null} onValueChange={(next) => setNewFactoryId(next ?? "")} disabled={rowActions.creating}>
+            <SelectTrigger id="supplier-new-product-factory" aria-label="选择商品库"><SelectValue placeholder="选择商品库" /></SelectTrigger><SelectContent>{factoryItems.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent>
+          </Select></Field>
+          <Field className="mt-4"><FieldLabel htmlFor="supplier-new-product-spec">规格名称</FieldLabel><Input id="supplier-new-product-spec" name="size" required value={newSpecName} placeholder="如 40×50 cm" disabled={rowActions.creating} onChange={(event) => setNewSpecName(event.target.value)} /></Field>
+          <DialogFooter><Button type="button" variant="outline" disabled={rowActions.creating} onClick={() => setNewFactoryId(null)}>取消</Button><Button type="submit" variant="brand" disabled={!newFactoryId || !newSpecName.trim() || rowActions.creating}>{rowActions.creating ? <Spinner /> : null}创建并填写</Button></DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+    <SupplierDbRowConfirmations actions={rowActions} /><SupplierDbConfirmations actions={actions} />
+  </div>
 }

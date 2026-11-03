@@ -44,6 +44,8 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
+#[cfg(not(feature = "browser"))]
+mod banned_tags;
 mod dispatch;
 mod error;
 mod ids;

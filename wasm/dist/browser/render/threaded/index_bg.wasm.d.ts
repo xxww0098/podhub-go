@@ -1,15 +1,6 @@
 /* tslint:disable */
 /* eslint-disable */
 export const __wbg_renderruntime_free: (a: number, b: number) => void;
-export const alloc: (a: number) => number;
-export const drop_result: (a: number) => void;
-export const drop_template: (a: number) => void;
-export const free: (a: number, b: number) => void;
-export const last_error_len: () => number;
-export const last_error_ptr: () => number;
-export const load_template: (a: number, b: number) => number;
-export const prepare_ai_image: (a: number, b: number) => number;
-export const render_product: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => number;
 export const renderruntime_acquire: (a: number, b: number, c: number, d: number) => number;
 export const renderruntime_dispose_owner: (a: number, b: number) => void;
 export const renderruntime_measure: (a: number, b: number) => void;
@@ -20,9 +11,6 @@ export const renderruntime_release: (a: number, b: number) => void;
 export const renderruntime_render: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => number;
 export const renderruntime_retain_template: (a: number, b: number, c: number, d: number) => number;
 export const renderruntime_set_external_bytes: (a: number, b: number, c: number) => void;
-export const result_len: (a: number) => number;
-export const result_ptr: (a: number) => number;
-export const take_stage_timings: () => number;
 export const __wbg_wbg_rayon_poolbuilder_free: (a: number, b: number) => void;
 export const initThreadPool: (a: number) => number;
 export const wbg_rayon_poolbuilder_build: (a: number) => void;
@@ -32,7 +20,7 @@ export const wbg_rayon_start_worker: (a: number) => void;
 export const __wasm_bindgen_func_elem_455: (a: number, b: number, c: number, d: number) => void;
 export const __wasm_bindgen_func_elem_461: (a: number, b: number, c: number, d: number) => void;
 export const __wasm_bindgen_func_elem_457: (a: number, b: number, c: number) => void;
-export const __wasm_bindgen_func_elem_2451: (a: number, b: number, c: number) => void;
+export const __wasm_bindgen_func_elem_2444: (a: number, b: number, c: number) => void;
 export const memory: WebAssembly.Memory;
 export const __wbindgen_export: (a: number) => void;
 export const __wbindgen_export2: (a: number, b: number) => void;

@@ -42,18 +42,17 @@ func CreateStore(ctx context.Context, tx pgx.Tx, orgID int64, actor domain.Actor
 	if api := ensureAssigneeInWorkspace(ctx, tx, orgID, assignee); api != nil {
 		return domain.Row{}, domain.QuotaChanges{}, api
 	}
-	// A self-assigned create opens the grant so the creator can register the
-	// first key. Unassigned stores and stores assigned to someone else stay
-	// closed.
-	grant := actor.IsAssigneeOf(assignee)
+	name, source := input.Name, domain.SourceManual
+	if name == "" {
+		name, source = "新店铺", domain.SourceAuto
+	}
 	var uuid string
 	err = tx.QueryRow(ctx, `
 		INSERT INTO public.organization_stores
-		       (org_id, create_order, name, client_id, assignee_membership_id,
-		        assignee_key_manage, assignee_key_read, assignee_key_write, assignee_key_edit)
-		VALUES ($1, $2, $3, $4, $5, $6, $6, $6, $6)
+		       (org_id, create_order, name, client_id, assignee_membership_id, name_source)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING lower(uuid::text)`,
-		orgID, order, input.Name, input.ClientID, assignee, grant).Scan(&uuid)
+		orgID, order, name, input.ClientID, assignee, source).Scan(&uuid)
 	if err != nil {
 		if mapped := mapConflict(err); mapped != err {
 			return domain.Row{}, domain.QuotaChanges{}, mapped
@@ -65,7 +64,7 @@ func CreateStore(ctx context.Context, tx pgx.Tx, orgID int64, actor domain.Actor
   ARRAY(SELECT s.uuid FROM public.organization_stores s WHERE s.org_id=$1 AND s.uuid=ANY(p.keep_store_ids) AND s.deleted_at_ms IS NULL) || $2::uuid
   WHERE p.org_id=$1 AND p.starts_at<=clock_timestamp() AND clock_timestamp()<p.ends_at AND p.keep_store_ids IS NOT NULL
    AND NOT($2::uuid=ANY(p.keep_store_ids))
-   AND (SELECT count(*) FROM public.organization_stores s WHERE s.org_id=$1 AND s.uuid=ANY(p.keep_store_ids) AND s.deleted_at_ms IS NULL)<p.plan_stores+p.extra_stores`, orgID, uuid)
+   AND (SELECT count(*) FROM public.organization_stores s WHERE s.org_id=$1 AND s.uuid=ANY(p.keep_store_ids) AND s.deleted_at_ms IS NULL)<p.stores`, orgID, uuid)
 	if err != nil {
 		return domain.Row{}, domain.QuotaChanges{}, err
 	}
@@ -95,7 +94,6 @@ type UpdateInput struct {
 	Name        *string
 	ClientID    *string
 	ClientIDSet bool
-	KeyManage   *bool
 	TagUUIDs    *[]string
 	GroupUUID   *string
 	Revision    int64
@@ -138,15 +136,8 @@ func UpdateStore(ctx context.Context, tx pgx.Tx, orgID int64, actor domain.Actor
 	if !actor.Visible(current.AssigneeMembershipID) {
 		return UpdateResult{}, contract.NotFound(contract.MsgStoreMissing)
 	}
-	isOwner := actor.IsOwner()
-	if input.ClientIDSet && !actor.MayManageKey(current.AssigneeKeyManage, current.AssigneeMembershipID) {
+	if input.ClientIDSet && !actor.CanManageAll() {
 		return UpdateResult{}, contract.Forbidden(contract.MsgNoPatchKeyGrant)
-	}
-	if input.KeyManage != nil && !isOwner {
-		return UpdateResult{}, contract.Forbidden(contract.MsgGrantOwnerOnly)
-	}
-	if input.KeyManage != nil && *input.KeyManage && current.AssigneeMembershipID == nil {
-		return UpdateResult{}, contract.Validation(contract.MsgGrantNeedsAssignee)
 	}
 	if api := domain.EnsureRevision(current, input.Revision); api != nil {
 		return UpdateResult{}, api
@@ -166,10 +157,6 @@ func UpdateStore(ctx context.Context, tx pgx.Tx, orgID int64, actor domain.Actor
 			return UpdateResult{}, api
 		}
 		nextClientID = normalized
-	}
-	nextKeyManage := current.AssigneeKeyManage
-	if input.KeyManage != nil {
-		nextKeyManage = *input.KeyManage
 	}
 	var result UpdateResult
 	if input.TagUUIDs != nil {
@@ -210,15 +197,14 @@ func UpdateStore(ctx context.Context, tx pgx.Tx, orgID int64, actor domain.Actor
 	if _, err := tx.Exec(ctx, `
 		UPDATE public.organization_stores
 		   SET name = $1, client_id = $2,
-		       assignee_key_manage = $6,
-		       assignee_key_read = $6, assignee_key_write = $6, assignee_key_edit = $6,
+		       name_source = CASE WHEN $8 THEN 'manual' ELSE name_source END,
 		       credential_revision = credential_revision + $5,
 		       revision = revision + 1,
 		       updated_at = clock_timestamp(),
-		       group_id = CASE WHEN $7 THEN $8 ELSE group_id END
+		       group_id = CASE WHEN $6 THEN $7 ELSE group_id END
 		 WHERE id = $3 AND revision = $4 AND deleted_at_ms IS NULL`,
 		nextName, nextClientID, current.ID, input.Revision,
-		rotated, nextKeyManage, touchGroup, nextGroupID); err != nil {
+		rotated, touchGroup, nextGroupID, nextName != current.Name); err != nil {
 		if mapped := mapConflict(err); mapped != err {
 			return UpdateResult{}, mapped
 		}

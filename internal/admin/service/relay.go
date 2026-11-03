@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/xxww0098/podhub-go/internal/admin/domain"
 )
@@ -124,14 +125,19 @@ func (s *Relay) Delete(ctx context.Context, actor domain.Actor, id string) (doma
 	return domain.RelayResponse{Data: domain.RelayView(nodes, true, s.opt.Route)}, nil
 }
 
-// Probe does not dial. No socks5h route is the spec's unreachable body.
-// A present route is not ported: this process must not open a real proxy.
-func (s *Relay) Probe() (domain.ProbeResponse, error) {
-	if !strings.HasPrefix(s.opt.Route, "socks5h://") {
+// Probe checks the proxy itself; a successful direct fallback is not a probe.
+func (s *Relay) Probe(ctx context.Context) (domain.ProbeResponse, error) {
+	if s == nil || !strings.HasPrefix(s.opt.Route, "socks5h://") || s.opt.Probe == nil {
 		return domain.ProbeResponse{Data: domain.ProbeData{Reachable: false}}, nil
 	}
-	// unconfirmed: reqwest Proxy::all on socks5h is not proven in this binary, and a real proxy must not be dialed.
-	return domain.ProbeResponse{}, domain.NotPorted()
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	started := time.Now()
+	if err := s.opt.Probe(ctx, s.opt.Route); err != nil {
+		return domain.ProbeResponse{Data: domain.ProbeData{Reachable: false}}, nil
+	}
+	latency := uint64(time.Since(started).Milliseconds())
+	return domain.ProbeResponse{Data: domain.ProbeData{Reachable: true, LatencyMs: &latency}}, nil
 }
 
 func (s *Relay) load() (domain.Nodes, error) {

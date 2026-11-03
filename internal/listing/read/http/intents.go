@@ -44,7 +44,7 @@ func (h Host) submit(w http.ResponseWriter, r *http.Request) (access.Principal, 
 	if !ok {
 		return access.Principal{}, false
 	}
-	if status, message, allowed := access.ListingSubmit(p); !allowed {
+	if status, message, allowed := access.OrgMember(p); !allowed {
 		writeErr(w, status, message, "forbidden")
 		return access.Principal{}, false
 	}
@@ -354,6 +354,7 @@ func (h Host) releaseUnknown(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		rel, err := tx.Query(r.Context(), `
+ WITH released AS (
 			UPDATE submission_intents i
 			SET state = 'superseded',
 			    reconciliation_outcome = COALESCE(i.reconciliation_outcome, '{}'::jsonb)
@@ -380,7 +381,21 @@ func (h Host) releaseUnknown(w http.ResponseWriter, r *http.Request) {
 			       AND j.state IN ('queued', 'running', 'retry_wait', 'uncertain')
 			       AND j.payload->'intents' @> jsonb_build_array(jsonb_build_object('intentId', i.id::text))
 			  )
-			RETURNING i.id::text`, p.OrgID, loaded, p.UserID, stores)
+			RETURNING i.id
+ ), writes AS (
+  UPDATE public.seller_upstream_writes
+  SET state='reconciled',reconcile_after=NULL,error_code='operator_released',
+      last_observation=COALESCE(last_observation,'{}'::jsonb) || jsonb_build_object('outcome','operator_released','byUserId',$3::bigint),
+      updated_at=clock_timestamp()
+  WHERE org_id=$1 AND kind='import' AND idempotency_key IN (SELECT id::text FROM released)
+    AND state IN ('dispatching','result_unknown')
+ ), occupancies AS (
+  UPDATE public.seller_resource_occupancies
+  SET state='released',released_at_ms=(extract(epoch from clock_timestamp())*1000)::bigint,release_reason='partial_settled'
+  WHERE org_id=$1 AND owner_kind='store_write' AND resource_kind='offer'
+    AND owner_ref IN (SELECT id::text FROM released) AND state='held'
+ )
+ SELECT id::text FROM released`, p.OrgID, loaded, p.UserID, stores)
 		if err != nil {
 			return err
 		}

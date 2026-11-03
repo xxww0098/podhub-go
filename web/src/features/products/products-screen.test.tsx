@@ -1,7 +1,5 @@
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
 import test from "node:test"
-import { fileURLToPath } from "node:url"
 import { renderToStaticMarkup } from "react-dom/server"
 
 import { TableExpandedRow } from "@/components/ui/table"
@@ -9,10 +7,9 @@ import { TableExpandedRow } from "@/components/ui/table"
 import { ProductExpand, verdictCopy } from "./product-expand"
 import { ProductRow } from "./product-row"
 import { ACTION_LABEL, SelectionActions } from "./products-actions"
-import { VARIANT_PRODUCT_ACTIONS } from "./products-variant-model"
 import { manualSyncNotice } from "./products-screen"
 import { CoverageNote, FunnelNote, StatusTabs } from "./products-status"
-import { StoreSyncActions } from "./store-sync-actions"
+import { nextScheduleUnlockAt, scheduleBlockedReason, StoreSyncActions } from "./store-sync-actions"
 import type {
   StoreProductMetrics,
   StoreProductOverviewRow,
@@ -124,7 +121,7 @@ test("status tabs render the Ozon-style buckets plus the coverage line", () => {
   assert.match(markup, />4</)
   assert.match(markup, />1</)
   // 页签文案对齐 Ozon 后台词汇。
-  for (const label of ["所有", "销售中", "准备销售", "错误", "待修改", "商品已下架", "档案"]) {
+  for (const label of ["全部商品", "在售", "处理中", "审核失败", "隐藏", "已下架", "已归档"]) {
     assert.match(markup, new RegExp(`>${label}<`))
   }
   const note = renderToStaticMarkup(<CoverageNote overview={overview} />)
@@ -178,6 +175,18 @@ test("a press inside the manual interval shows the unlock clock", () => {
   )
   assert.match(markup, /\d{2}:\d{2} 可再次更新/)
   assert.doesNotMatch(markup, /今晚|夜间|加入同步窗口/)
+})
+
+test("sync buttons wake at each hold and cooldown deadline, then become available", () => {
+  const stores = [
+    storeRow({ manual_next_allowed_at_ms: NOW + 600_000 }),
+    storeRow({ hold: "cooldown", hold_until_ms: NOW + 30_000, manual_next_allowed_at_ms: NOW + 90_000 }),
+  ]
+  assert.equal(nextScheduleUnlockAt(stores, NOW), NOW + 30_000)
+  assert.equal(nextScheduleUnlockAt(stores, NOW + 30_000), NOW + 90_000)
+  assert.equal(nextScheduleUnlockAt(stores, NOW + 90_000), NOW + 600_000)
+  assert.equal(nextScheduleUnlockAt(stores, NOW + 600_000), null)
+  assert.deepEqual(stores.map((store) => scheduleBlockedReason(store, false, NOW + 600_000)), [null, null])
 })
 
 test("立即更新 says whether the press started a walk or joined one", () => {
@@ -246,7 +255,7 @@ function productRow(over: Partial<StoreProductRow> = {}): StoreProductRow {
     product_id: 101,
     offer_id: "A-1",
     name: "杯垫",
-    sku: 7,
+    sku: "7",
     state: "on_sale",
     status_name: "продается",
     price: "199.0000",
@@ -282,8 +291,8 @@ function rowMarkup(
   )
 }
 
-test("a row renders the primary image and the funnel numbers", () => {
-  const funnelRow = productRow({
+test("the compact row renders identity, store and price while the detail preserves funnel metrics", () => {
+  const item = productRow({
     image_url: "https://cdn.ozon.test/p.jpg",
     metrics: {
       hits_view: 12340,
@@ -298,71 +307,17 @@ test("a row renders the primary image and the funnel numbers", () => {
       fetched_at_ms: NOW,
     },
   })
-  const markup = rowMarkup(funnelRow)
-  assert.match(markup, /src="https:\/\/cdn\.ozon\.test\/p\.jpg"/)
-  // 货号与 SKU 分列：货号是纯文本，SKU 数字本身打开 Ozon。
+  const markup = rowMarkup(item, "RUB", undefined, undefined, true)
+  assert.match(markup, /src="https:\/\/cdn\.ozon\.test\/p.jpg"/)
   assert.match(markup, /A-1/)
-  assert.doesNotMatch(markup, /A-1 ·/)
-  assert.match(markup, /<a href="https:\/\/www\.ozon\.ru\/product\/7\/"[^>]*>7<\/a>/)
-  assert.match(rowMarkup(funnelRow, null, undefined, undefined, true), /测试店/)
-  assert.match(markup, />12,340</)
-  assert.match(markup, /访客 5,678/)
-  assert.match(markup, />42</)
-  assert.match(markup, /7\.5%/)
-  assert.match(markup, /出单 3/)
-  // 漏斗销售额是卢布，不跟店铺合同币种走。没汇率时标成 ₽，不套 CNY。
-  assert.match(rowMarkup(funnelRow, "RUB"), /5[\s ]*400/)
-  assert.match(markup, /5[\s ]*400/)
-  assert.match(markup, /₽/)
-  const cnyPrice = rowMarkup(
-    productRow({
-      price: "90.00",
-      metrics: {
-        hits_view: 10,
-        session_view: 4,
-        hits_tocart: 1,
-        conv_tocart: 10,
-        ordered_units: 1,
-        revenue: 500,
-        revenue_currency: "RUB",
-        period_days: 14,
-        through_day: "2026-10-12",
-        fetched_at_ms: NOW,
-      },
-    }),
-    "CNY",
-  )
-  assert.match(cnyPrice, /90 CNY/)
-  assert.doesNotMatch(cnyPrice, /500 CNY/)
-  assert.match(cnyPrice, /₽/)
-  const converted = rowMarkup(
-    productRow({
-      price: "90.00",
-      metrics: {
-        hits_view: 10,
-        session_view: 4,
-        hits_tocart: 1,
-        conv_tocart: 10,
-        ordered_units: 1,
-        revenue: 500,
-        revenue_currency: "RUB",
-        fx_quote: "CNY",
-        fx_rate: 10,
-        fx_as_of: "2026-10-12",
-        period_days: 14,
-        through_day: "2026-10-12",
-        fetched_at_ms: NOW,
-      },
-    }),
-    "CNY",
-  )
-  assert.match(converted, /90 CNY/)
-  assert.match(converted, /50 CNY/)
-  assert.doesNotMatch(converted, /500 CNY/)
-  assert.match(converted, /原销售额/)
-  assert.match(converted, /1 CNY = 10 RUB/)
-  assert.match(converted, /2026-10-12/)
-  assert.match(converted, /俄罗斯央行/)
+  assert.match(markup, /https:\/\/www\.ozon\.ru\/product\/7\//)
+  assert.match(markup, /测试店/)
+  assert.match(markup, /199/)
+  assert.doesNotMatch(markup, /12,340/)
+  const detail = renderToStaticMarkup(<ProductExpand row={item} currency="RUB" />)
+  assert.match(detail, /12,340/)
+  assert.match(detail, /5[\s ]*400/)
+  assert.match(detail, /₽/)
 })
 
 test("the row thumbnail is a focusable hover-preview trigger", () => {
@@ -439,7 +394,7 @@ test("每一行单独展开详情，不接回调时仍是单行", () => {
   assert.match(stalled, /一步没留下：加购 0 次/)
   assert.doesNotMatch(stalled, /留下 0%/)
   assert.doesNotMatch(detail, /促销|保存库存/)
-  assert.match(rowMarkup(productRow()), /aria-label="修改 A-1 的促销"/)
+  assert.match(rowMarkup(productRow(), undefined, () => {}), /aria-label="打开 杯垫 的促销活动"/)
   assert.match(rowMarkup(productRow()), /aria-label="修改 A-1 的库存"/)
   const empty = renderToStaticMarkup(
     <ProductExpand row={productRow({ metrics: null })} currency={null} />,
@@ -574,12 +529,16 @@ test("展开行是滚动抽屉：轨道包裹内容，收起态打 data-closing"
 })
 
 test("行内 SKU 是指向 Ozon 商品页的外链 — 没有 SKU 就没有链接", () => {
-  const markup = rowMarkup(productRow({ sku: 4467036608 }))
+  const markup = rowMarkup(productRow({ sku: "4467036608" }))
   assert.match(markup, /href="https:\/\/www\.ozon\.ru\/product\/4467036608\/"/)
   assert.match(markup, /target="_blank"/)
   assert.match(markup, /rel="noreferrer"/)
-  assert.match(markup, />4467036608<\/a>/)
+  assert.match(markup, /SKU：4467036608<\/a>/)
   assert.doesNotMatch(rowMarkup(productRow({ sku: null })), /ozon\.ru/)
+  const long = rowMarkup(productRow({ sku: "1234567890123456789" }))
+  assert.match(long, /href="https:\/\/www\.ozon\.ru\/product\/1234567890123456789\/"/)
+  assert.match(long, /SKU：1234567890123456789<\/a>/)
+  assert.doesNotMatch(long, /aria-label="修改 A-1 的库存"/)
 })
 
 test("a row without a funnel page reads as missing — never as zero", () => {
@@ -629,18 +588,10 @@ test("批量栏露出改价格/改库存/促销活动，其余收进「更多」
   assert.doesNotMatch(markup, /清除选择/)
 })
 
-test("批量栏把三个同款规格动作收进「更多」，共用同一份动作词表", () => {
-  assert.equal(ACTION_LABEL["variant-merge"], "合并为同款")
-  assert.equal(ACTION_LABEL["variant-split"], "拆出规格")
-  assert.equal(ACTION_LABEL["variant-move"], "移入已有同款")
-  assert.deepEqual([...VARIANT_PRODUCT_ACTIONS], ["variant-merge", "variant-split", "variant-move"])
-  // 菜单项由同一份词表渲染，删除/改名只改一处。
-  const source = readFileSync(
-    fileURLToPath(new URL("./products-actions.tsx", import.meta.url)),
-    "utf8",
-  )
-  assert.match(source, /VARIANT_PRODUCT_ACTIONS\.map\(\(action\) => \(/)
-  assert.match(source, /onClick=\{\(\) => onAction\(action\)\}/)
+test("商品动作词表不包含未经验证的同款分组写入", () => {
+  assert.deepEqual(Object.keys(ACTION_LABEL).sort(), [
+    "archive", "delete", "price", "promotion", "stock", "unarchive", "verify",
+  ])
 })
 
 test("the funnel note names the window, or the refusal when there is one", () => {

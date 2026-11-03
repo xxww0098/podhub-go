@@ -26,14 +26,14 @@ func (s Service) ListFulfillers(ctx context.Context, actor contract.Actor, sourc
 // A source holds at most one active fulfiller; the repo turns the unique
 // index violation into a conflict.
 func (s Service) GrantFulfiller(ctx context.Context, actor contract.Actor, sourceID string, body []byte) (domain.Fulfiller, error) {
-	in, err := domain.DecodeSourceRoleGrant(body)
+	accountUUID, err := domain.DecodeSourceAccountGrant(body)
 	if err != nil {
 		return domain.Fulfiller{}, err
 	}
 	if s.Store == nil {
 		return domain.Fulfiller{}, unavailable(nil)
 	}
-	row, err := s.Store.GrantFulfiller(ctx, actor, sourceID, in.UserID, s.nowMs())
+	row, err := s.Store.GrantFulfiller(ctx, actor, sourceID, accountUUID, s.nowMs())
 	return row, fillDisabled(err, msgDbWrites)
 }
 
@@ -67,14 +67,14 @@ func (s Service) ListCatalogManagers(ctx context.Context, actor contract.Actor, 
 // GrantCatalogManager authorizes one platform account to maintain the
 // source's catalog. A source may have several active managers.
 func (s Service) GrantCatalogManager(ctx context.Context, actor contract.Actor, sourceID string, body []byte) (domain.CatalogManager, error) {
-	in, err := domain.DecodeSourceRoleGrant(body)
+	accountUUID, err := domain.DecodeSourceAccountGrant(body)
 	if err != nil {
 		return domain.CatalogManager{}, err
 	}
 	if s.Store == nil {
 		return domain.CatalogManager{}, unavailable(nil)
 	}
-	row, err := s.Store.GrantCatalogManager(ctx, actor, sourceID, in.UserID, s.nowMs())
+	row, err := s.Store.GrantCatalogManager(ctx, actor, sourceID, accountUUID, s.nowMs())
 	return row, fillDisabled(err, msgDbWrites)
 }
 

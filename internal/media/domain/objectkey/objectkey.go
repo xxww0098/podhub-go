@@ -1,9 +1,7 @@
 // Package objectkey is the media-core object-key algebra from a03d735.
 //
-// The stored shape is {prefix}{class}/teams/{workspace}/sha256/{digest}.{ext}.
-// Composition and parsing do no I/O. Cloud and the browser agree on this
-// string; a second implementation that drifts is not noticed until a picture
-// is already gone.
+// Non-batched media and workspace slice uploads have distinct key shapes.
+// Composition and parsing do no I/O.
 package objectkey
 
 import (
@@ -65,11 +63,10 @@ type Ref struct {
 
 // UploadKey is the canonical batch shape compose emits.
 type UploadKey struct {
-	Workspace string
-	BatchMS   int64
-	BatchID   string
-	Digest    string
-	Ext       string
+	BatchMS int64
+	BatchID string
+	Digest  string
+	Ext     string
 }
 
 // healthcheckPNG is the 1x1 probe the browser uploads. Cloud recognises it
@@ -118,14 +115,12 @@ func ComposeKey(prefix string, class Class, workspace, digest, ext string) (stri
 }
 
 // ComposeBatchedKey builds an image key inside a server-issued upload directory.
-// batch is "{unixMillis}.{uuid}". The path joins those fields with a hyphen,
-// which is what parse_upload_key reads back (compose.rs splitn on '.').
+// batch is "{unixMillis}.{uuid}". The path joins those fields with a hyphen.
 func ComposeBatchedKey(prefix, workspace, digest, ext, batch string) (string, error) {
-	workspace, err := NormalizeWorkspace(workspace)
-	if err != nil {
+	if _, err := NormalizeWorkspace(workspace); err != nil {
 		return "", err
 	}
-	digest, err = normalizeDigestLower(digest)
+	digest, err := normalizeDigestLower(digest)
 	if err != nil {
 		return "", err
 	}
@@ -149,8 +144,8 @@ func ComposeBatchedKey(prefix, workspace, digest, ext, batch string) (string, er
 		return "", ErrPrefix
 	}
 	date := time.UnixMilli(ms).UTC().Format("2006-01-02")
-	return fmt.Sprintf("%suploads/%s/%s-%s/images/teams/%s/sha256/%s.%s",
-		prefix, date, timestamp, batchUUID, workspace, digest, ext), nil
+	return fmt.Sprintf("%suploads/%s/%s-%s/%s.%s",
+		prefix, date, timestamp, batchUUID, digest, ext), nil
 }
 
 // splitDottedBatch matches compose_batched_key: splitn(3, '.'), then the
@@ -247,32 +242,11 @@ func ContentType(ext string) (string, error) {
 
 // BatchIdentity returns the {timestamp}-{uuid} directory of a batched key.
 func BatchIdentity(key string) string {
-	parts, ok := batchParts(key)
-	if !ok {
+	if _, ok := ParseUploadKey(key); !ok {
 		return ""
 	}
-	date, batch, class := parts[0], parts[1], parts[2]
-	if _, err := time.Parse("2006-01-02", date); err != nil || class != "images" || !strings.Contains(batch, "-") {
-		return ""
-	}
-	if parts[3] != "teams" || !isUUIDv4(parts[4]) || parts[5] != "sha256" {
-		return ""
-	}
-	digest, ext, ok := splitFile(parts[6])
-	if !ok || !isDigest(digest) || !isStoredExt(ext) {
-		return ""
-	}
-	timestamp, batchUUID, ok := strings.Cut(batch, "-")
-	if !ok || len(timestamp) < 13 || !allDigits(timestamp) {
-		return ""
-	}
-	if _, err := uuid.Parse(batchUUID); err != nil {
-		return ""
-	}
-	if !dateMatches(timestamp, date) {
-		return ""
-	}
-	return batch
+	parts, _ := batchParts(key)
+	return parts[1]
 }
 
 // BatchExpiresAt is the batch timestamp plus UploadBatchHours.
@@ -301,11 +275,7 @@ func ParseUploadKey(key string) (UploadKey, bool) {
 	if !ok {
 		return UploadKey{}, false
 	}
-	date, batch, class := parts[0], parts[1], parts[2]
-	teams, workspace, shaSeg, file := parts[3], parts[4], parts[5], parts[6]
-	if class != "images" || teams != "teams" || shaSeg != "sha256" || !isUUIDv4(workspace) {
-		return UploadKey{}, false
-	}
+	date, batch, file := parts[0], parts[1], parts[2]
 	digest, ext, ok := splitFile(file)
 	if !ok || (ext != "jpg" && ext != "png") || !isDigest(digest) {
 		return UploadKey{}, false
@@ -325,11 +295,10 @@ func ParseUploadKey(key string) (UploadKey, bool) {
 		return UploadKey{}, false
 	}
 	return UploadKey{
-		Workspace: workspace,
-		BatchMS:   ms,
-		BatchID:   batchUUID,
-		Digest:    digest,
-		Ext:       ext,
+		BatchMS: ms,
+		BatchID: batchUUID,
+		Digest:  digest,
+		Ext:     ext,
 	}, true
 }
 
@@ -420,7 +389,7 @@ func batchParts(key string) ([]string, bool) {
 		return nil, false
 	}
 	parts := strings.Split(tail, "/")
-	if len(parts) != 7 {
+	if len(parts) != 3 {
 		return nil, false
 	}
 	return parts, true

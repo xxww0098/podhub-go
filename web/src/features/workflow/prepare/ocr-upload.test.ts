@@ -40,7 +40,7 @@ async function verified() { return Response.json({ data: { bytes: bytes.byteLeng
 
 test("lost PUT response confirms first and never uploads twice", async () => {
   await fixture(async calls => {
-    assert.deepEqual(await stageOcrImage(image, headers), { uploadTicket: "private-ticket" })
+    assert.deepEqual(await stageOcrImage(image, headers), { upload_ticket: "private-ticket" })
     assert.deepEqual(calls.map(c => c.init?.method), ["POST", "PUT", "POST"])
     assert.equal(calls[2]!.path, route("aiOcrUploadsConfirm"))
     assert.deepEqual(calls[2]!.json, { upload_ticket: "private-ticket" })

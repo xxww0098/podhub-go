@@ -4,7 +4,7 @@ import { route } from "@/api/routes"
 import { submitOzonChunk, type OzonSendContext } from "./send-ozon-transport"
 import { projectOzonListingIssue } from "./ozon-admission-refusal"
 import type { FrozenItem } from "../platforms/core"
-import type { OzonBody } from "../platforms/ozon"
+import type { OzonBody } from "../platforms/ozon/adapter"
 
 for (const [status, serverCode, code] of [[409, "offer_busy", "cloud_offer_busy"], [400, "validation", "cloud_validation"]] as const) {
   test(`legacy ${status} request preserves structured cause and whole-request scope at the exported boundary`, async () => {
@@ -34,6 +34,27 @@ for (const [status, serverCode, code] of [[409, "offer_busy", "cloud_offer_busy"
     } finally { globalThis.fetch = original }
   })
 }
+
+test("a 409 contract-currency refusal blocks every row and keeps Cloud's own reason", async () => {
+  const original = globalThis.fetch
+  globalThis.fetch = async () => Response.json({
+    code: "currency_mismatch",
+    error: "商品币种 RUB 与店铺合同币种 CNY 不一致，本批未发送；请在店铺列表测试连接刷新合同币种，或修改商品币种后重试",
+  }, { status: 409, headers: { "x-request-id": "currency-trace" } })
+  const context: OzonSendContext = { storeId: "s1", pins: new Map([["a", { revision: 1 }]]), shouldStop: () => false, results: new Map(), syncRequired: false, replayed: false }
+  const items: FrozenItem<OzonBody>[] = [{ key: "a", body: { rowId: "a", storeId: "s1", offerId: "a", import: {}, evidence: { digest: "preview", card_defaults_digest: "fixture-defaults", sources: [] } }, digest: "preview", clientOperationId: "preview-a", provenance: [] }]
+  try {
+    await submitOzonChunk(context, items)
+    const result = context.results.get("a")!
+    assert.equal(result.outcome, "blocked", "a pre-dispatch refusal is never an unknown write")
+    assert.equal(result.error!.code, "cloud_currency_mismatch")
+    assert.equal(result.error!.serverCode, "currency_mismatch")
+    assert.equal(result.error!.requestCause?.kind, "request_refusal")
+    assert.match(result.error!.message, /币种.*合同币种/)
+    assert.match(result.error!.remediation!, /测试连接/)
+    assert.equal(result.error!.listingIssue, undefined)
+  } finally { globalThis.fetch = original }
+})
 
 test("actual ListingIssue safe projection preserves Cloud summary, actions, scope and its own trace", () => {
   const issue = { code: "OZON_ROW_REJECTED", phase: "submit", scope: "row", summary: "Cloud summary", remediation: "Cloud next step", allowed_actions: ["edit_row"], trace_id: "job-trace", intent_id: "i1", row_id: "r1", store_id: "s1", dispatch_evidence: "rejected", safe_message: "not a display field", arbitrary: "never project" }

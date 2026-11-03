@@ -10,9 +10,13 @@ pipeline. Its source is the native `ozon-freeze-golden.json` fixture in
 `decorative-wall-art-schema.json`. The native fixture owns expected freeze
 results; the browser snapshot owns the scenario's initial state.
 
-The Node-side `publish-pipeline-fixture-parity.test.ts` compares both inputs
-structurally with the native fixtures on every Web test run. When the native
+The Node-side [publish-pipeline-fixture-parity.test.ts](../../publish-pipeline-fixture-parity.test.ts) compares both inputs
+structurally with the native fixtures in the default Web test suite. When the native
 contract intentionally changes, review and update these snapshots together;
 do not add browser imports or static access to crate internals. Remove a
 snapshot only when its browser scenarios are removed or use another verified
 input contract.
+
+These are local input/parity checks. Browser scenarios that use them simulate
+the Cloud boundary and do not establish real Seller authorization, writes or
+result reconciliation.

@@ -37,15 +37,6 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly __wbg_renderruntime_free: (a: number, b: number) => void;
-    readonly alloc: (a: number) => number;
-    readonly drop_result: (a: number) => void;
-    readonly drop_template: (a: number) => void;
-    readonly free: (a: number, b: number) => void;
-    readonly last_error_len: () => number;
-    readonly last_error_ptr: () => number;
-    readonly load_template: (a: number, b: number) => number;
-    readonly prepare_ai_image: (a: number, b: number) => number;
-    readonly render_product: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => number;
     readonly renderruntime_acquire: (a: number, b: number, c: number, d: number) => number;
     readonly renderruntime_dispose_owner: (a: number, b: number) => void;
     readonly renderruntime_measure: (a: number, b: number) => void;
@@ -56,9 +47,6 @@ export interface InitOutput {
     readonly renderruntime_render: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => number;
     readonly renderruntime_retain_template: (a: number, b: number, c: number, d: number) => number;
     readonly renderruntime_set_external_bytes: (a: number, b: number, c: number) => void;
-    readonly result_len: (a: number) => number;
-    readonly result_ptr: (a: number) => number;
-    readonly take_stage_timings: () => number;
     readonly __wbg_wbg_rayon_poolbuilder_free: (a: number, b: number) => void;
     readonly initThreadPool: (a: number) => number;
     readonly wbg_rayon_poolbuilder_build: (a: number) => void;
@@ -68,7 +56,7 @@ export interface InitOutput {
     readonly __wasm_bindgen_func_elem_455: (a: number, b: number, c: number, d: number) => void;
     readonly __wasm_bindgen_func_elem_461: (a: number, b: number, c: number, d: number) => void;
     readonly __wasm_bindgen_func_elem_457: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_2451: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_2444: (a: number, b: number, c: number) => void;
     readonly memory: WebAssembly.Memory;
     readonly __wbindgen_export: (a: number) => void;
     readonly __wbindgen_export2: (a: number, b: number) => void;

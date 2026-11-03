@@ -97,6 +97,28 @@ test("resident rows and material send one POST with the click's pins and nothing
   } finally { stub.restore() }
 })
 
+test("automation refuses a Store change before any submit", async () => {
+  await residentSend(["row-1"], () => "store-2")
+  const stub = serve(cloud(() => { throw new Error("must not submit to another store") }))
+  try {
+    const [result] = await sendRows({ row_ids: ["row-1"], expected_revisions: sendPins(["row-1"]) }, undefined,
+      { core: native, expectedTargets: new Map([["row-1", { storeId: "store-1", sha256: "a", fileName: "item.png" }]]) })
+    assert.equal(result!.error?.code, "target_store_changed")
+    assert.equal(submits(stub.calls).length, 0)
+  } finally { stub.restore() }
+})
+
+test("automation refuses a source change before any submit", async () => {
+  await residentSend(["row-1"])
+  const stub = serve(cloud(() => { throw new Error("must not submit a different image") }))
+  try {
+    const [result] = await sendRows({ row_ids: ["row-1"], expected_revisions: sendPins(["row-1"]) }, undefined,
+      { core: native, expectedTargets: new Map([["row-1", { storeId: "store-1", sha256: "different", fileName: "item.png" }]]) })
+    assert.equal(result!.error?.code, "source_changed")
+    assert.equal(submits(stub.calls).length, 0)
+  } finally { stub.restore() }
+})
+
 test("rows are read only when missing or behind the pin; a newer row is refused before any material read", async () => {
   openCard()
   residentRows([nativeRowView("behind", { revision: 8 })])
@@ -229,7 +251,7 @@ test("different categories in one Store freeze on their own handles and share on
   openCard()
   openCard("card-2", TYPE + 1)
   const stub = serve((call) => {
-    if (isSchema(call)) return schemaData(Number(new URL(call.url, "http://x").searchParams.get("typeId")))
+    if (isSchema(call)) return schemaData(Number(new URL(call.url, "http://x").searchParams.get("type_id")))
     return cloud((body) => accepted(body))(call)
   })
   const core = countingCore(native)
@@ -316,6 +338,19 @@ test("submit refusals are blocked, while waiting and accepted rows remain noops"
     assert.doesNotMatch(JSON.stringify(results[0]), /品牌为必填项/, "unstructured detail is not row presentation evidence")
     assert.equal(results[0]!.error?.code, "workflow_compose_failed")
     assert.equal(results[0]!.error?.remediation, "查看字段校验结果并修正；仍失败请联系管理员核对该商品。")
+  } finally { stub.restore() }
+})
+
+test("a stale media refusal tells the operator to re-slice, not to re-check fields", async () => {
+  await residentSend(["row-media"])
+  const stub = serve(cloud(() => ({ items: [{ row_id: "row-media", created: false, skipped: "compose_failed", detail: "media_expired" }] })))
+  try {
+    const results = await sendRows({ row_ids: ["row-media"], expected_revisions: sendPins(["row-media"]) }, undefined, { core: native })
+    assert.equal(results[0]!.outcome, "blocked")
+    assert.equal(results[0]!.error?.code, "workflow_media_expired")
+    assert.match(results[0]!.error!.message, /切片已过有效期.*重新切片/)
+    assert.match(results[0]!.error!.remediation!, /重新准备|重试切片/)
+    assert.doesNotMatch(results[0]!.error!.message, /拼接时被拒绝/)
   } finally { stub.restore() }
 })
 

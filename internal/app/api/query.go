@@ -9,8 +9,6 @@ import (
 	"time"
 )
 
-const maxCursorMicros int64 = 4_102_444_800_000_000
-
 func queryPtr(q url.Values, key string) *string {
 	vs, ok := q[key]
 	if !ok || len(vs) == 0 {
@@ -204,54 +202,4 @@ func parseLimit(raw *string) (int64, error) {
 	}
 	page, _ := runPageBounds(n)
 	return page, nil
-}
-
-func canonicalUUID(raw string) (string, bool) {
-	s := strings.TrimSpace(raw)
-	lower := strings.ToLower(s)
-	lower = strings.TrimPrefix(lower, "urn:uuid:")
-	lower = strings.TrimPrefix(lower, "{")
-	lower = strings.TrimSuffix(lower, "}")
-	hex := strings.ReplaceAll(lower, "-", "")
-	if len(hex) != 32 {
-		return "", false
-	}
-	for _, c := range hex {
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return "", false
-		}
-	}
-	if strings.Contains(lower, "-") {
-		if len(lower) != 36 || lower[8] != '-' || lower[13] != '-' || lower[18] != '-' || lower[23] != '-' {
-			return "", false
-		}
-	}
-	return hex[0:8] + "-" + hex[8:12] + "-" + hex[12:16] + "-" + hex[16:20] + "-" + hex[20:], true
-}
-
-func parseCursor(raw *string) (int64, string) {
-	if raw == nil {
-		return 0, ""
-	}
-	text := *raw
-	if text == "" {
-		return 0, ""
-	}
-	microsText, idText, ok := strings.Cut(text, ":")
-	if !ok {
-		return 0, ""
-	}
-	id, ok := canonicalUUID(idText)
-	if !ok {
-		return 0, ""
-	}
-	micros, err := strconv.ParseInt(microsText, 10, 64)
-	if err != nil || micros < 0 || micros > maxCursorMicros {
-		return 0, ""
-	}
-	return micros, id
-}
-
-func rfc3339Millis(t time.Time) string {
-	return t.UTC().Truncate(time.Millisecond).Format("2006-01-02T15:04:05.000Z")
 }

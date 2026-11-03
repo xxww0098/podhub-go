@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
-	queue "github.com/xxww0098/podhub-go/internal/platform/jobsched"
+	queue "github.com/xxww0098/podhub-go/internal/queue/contract"
 )
 
 // OrgSubmitBatchLimit is how many listing.submit.batch jobs of one

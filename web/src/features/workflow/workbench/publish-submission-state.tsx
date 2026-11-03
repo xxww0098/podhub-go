@@ -1,8 +1,10 @@
 import { useState } from "react"
+import { Copy } from "lucide-react"
 import type { WorkflowProductLifecycle } from "@/bindings/commands"
 import { probeListingIntent } from "@/bindings/http-listing-intents"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import { notifyCommandError } from "@/lib/notify"
 import { acceptedPublishCopy } from "../model/accepted-status"
 import { UNKNOWN_PUBLISH_FALLBACK } from "../model/workflow-readiness"
@@ -114,7 +116,7 @@ export function PublishSubmissionState({ lifecycle, rowLog, ownsRemediation = tr
             <p>提交批次：{receipt.batch_id} · {receipt.item_count} 件</p>
             <p>接口响应：HTTP {receipt.http_status ?? "未知"}（不代表商品已可售）</p>
             <pre className="max-h-28 max-w-full overflow-auto whitespace-pre-wrap font-mono text-xs" aria-label="平台响应文本">{receipt.response_body === "" ? "（响应正文为空）" : receipt.response_body ?? "未取得响应"}</pre>
-            {receipt.response_body ? <Button type="button" size="xs" variant="outline" onClick={() => void copyResponse()}>复制响应</Button> : null}
+            {receipt.response_body ? <IconButton icon={Copy} label="复制响应" size="icon-xs" variant="outline" onClick={() => void copyResponse()} /> : null}
           </> : null}
         </div>
       </details>

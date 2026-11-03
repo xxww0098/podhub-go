@@ -30,7 +30,7 @@ onSessionSweep(forgetMediaObjects)
 
 export async function createMediaUploadBatch(workspaceUuid: string): Promise<MediaUploadBatch> {
   if (!workspaceUuid || activeWorkspaceUuid() !== workspaceUuid) throw workspaceMissingError()
-  const wire = await apiRequest<{ upload_batch?: unknown, expires_at?: unknown }>("POST", route("mediaUploadBatches"), { workspace_uuid: workspaceUuid }, {}, 35_000)
+  const wire = await apiRequest<{ upload_batch?: unknown, expires_at?: unknown }>("POST", route("mediaUploadBatches"), { workspace_uuid: workspaceUuid }, {}, 35_000, undefined, { responseBody: "json" })
   if (!wire || typeof wire.upload_batch !== "string" || !wire.upload_batch
     || typeof wire.expires_at !== "string" || !Number.isFinite(Date.parse(wire.expires_at))) {
     throw invalidPresign("云端上传目录格式无效", "media_upload_batch_invalid")
@@ -75,7 +75,7 @@ async function prepare(request: DeliverMediaObjectRequest): Promise<DeliveredMed
       assertDeliveryCurrent(request)
       return apiRequest<{ account_id?: unknown, object_key?: unknown, public_url?: unknown, workspace_uuid?: unknown, exists?: unknown }>("POST", route("mediaObjectsByDigestByExtensionProbe", {
         digest: request.digest.toLowerCase(), extension: request.extension.toLowerCase(),
-      }), undefined, {}, 35_000)
+      }), undefined, {}, 35_000, undefined, { responseBody: "json" })
     }, scopedRetry(request))
     assertDeliveryCurrent(request)
     if (answer.exists === true && typeof answer.account_id === "string" && typeof answer.object_key === "string" && typeof answer.public_url === "string") {

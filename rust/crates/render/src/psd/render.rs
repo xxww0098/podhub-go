@@ -20,6 +20,7 @@ mod model {
         pub bottom: i64,
         pub default_color: u8,
         pub disabled: bool,
+        pub density: f64,
         pub image_data: Option<Bitmap>,
     }
 
@@ -109,6 +110,7 @@ fn render_read_options(limits: Limits) -> ReadOptions {
         skip_layer_image_data: Some(false),
         skip_composite_image_data: Some(true),
         skip_thumbnail: Some(true),
+        image_resources_whitelist: Some(Vec::new()),
         skip_linked_files_data: Some(false),
         // Match structural inspection: optional Photoshop metadata which is
         // not consumed by the compositor is skipped, while all resource and
@@ -242,6 +244,7 @@ fn convert_mask(mut mask: LayerMaskData) -> Result<LayerMask, PsdError> {
         bottom: mask.bottom.map(round_i64).unwrap_or_default(),
         default_color: mask.default_color.unwrap_or(0.0).round() as u8,
         disabled: mask.disabled.unwrap_or(false),
+        density: mask.user_mask_density.unwrap_or(1.0),
         image_data: mask.image_data.take().map(convert_pixel_data).transpose()?,
     })
 }

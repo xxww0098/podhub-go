@@ -24,7 +24,7 @@ test("columnAt and colIndexFor map columns bi-directionally", () => {
   assert.equal(colIndexFor("description"), 8)
   assert.equal(colIndexFor("tags"), 9)
   assert.equal(colIndexFor("theme"), 10)
-  assert.equal(colIndexFor("rich_content"), 11)
+  assert.equal(colIndexFor("rich_content"), -1)
   assert.equal(columnAt(3)?.id, "name")
   assert.equal(columnAt(4)?.id, "offer_id")
   assert.equal(columnAt(5)?.id, "model")
@@ -33,7 +33,7 @@ test("columnAt and colIndexFor map columns bi-directionally", () => {
   assert.equal(columnAt(8)?.id, "description")
   assert.equal(columnAt(9)?.id, "tags")
   assert.equal(columnAt(10)?.id, "theme")
-  assert.equal(columnAt(11)?.id, "rich_content")
+  assert.equal(columnAt(11)?.id, "images")
 })
 
 test("editableColumnForIndex accurately identifies editable columns", () => {
@@ -50,7 +50,7 @@ test("editableColumnForIndex accurately identifies editable columns", () => {
   assert.equal(editableColumnForIndex(8), "description")
   assert.equal(editableColumnForIndex(9), "tags")
   assert.equal(editableColumnForIndex(10), null)
-  assert.equal(editableColumnForIndex(11), "rich_content")
+  assert.equal(editableColumnForIndex(11), null)
   // The four media role columns start here; none of them is typed into.
   assert.equal(editableColumnForIndex(12), null)
 })
@@ -359,35 +359,6 @@ test("the persisted tag field wins over the recognition summary", () => {
     ),
     "",
     "an explicit clear must not revive recognition evidence",
-  )
-})
-
-test("JSON富内容 shows the typed value only, like the two price columns", () => {
-  const product = mockDraft("draft-1", "壁画 A")
-  const richField: CategoryFieldView = {
-    ...mockField,
-    key: "attribute_11254",
-    attribute_id: 11254,
-    name: "JSON富内容",
-  }
-  const target = mockRow("row-1", product.draft_id, "img-1.jpg")
-  const raw = '{"content":[{"type":"text","text":"油画"}]}'
-  product.draft.values.attribute_11254 = { kind: "text", value: raw }
-
-  assert.equal(
-    readCellRawText(colIndexFor("rich_content"), target, product, {
-      richContent: richField,
-    }),
-    "",
-    "a card default copied into the row is not the row's own answer",
-  )
-
-  product.hand_edited_keys = ["attribute_11254"]
-  assert.equal(
-    readCellRawText(colIndexFor("rich_content"), target, product, {
-      richContent: richField,
-    }),
-    raw,
   )
 })
 

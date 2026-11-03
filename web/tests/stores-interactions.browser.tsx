@@ -14,7 +14,6 @@ const results = document.querySelector<HTMLPreElement>("#results")!
 const run = document.querySelector<HTMLButtonElement>("#run")!
 const params = new URLSearchParams(location.search)
 const role = params.get("role") ?? "owner"
-const granted = params.get("granted") === "1"
 const editor = params.get("editor") === "1"
 if (params.get("mobile") === "1") fixture.style.width = "390px"
 
@@ -33,7 +32,7 @@ function byText(text: string, root: ParentNode = document): HTMLElement {
   check(found.length === 1, `Expected one button '${text}', got ${found.length}`); return found[0]!
 }
 async function click(element: HTMLElement) { check(!element.hasAttribute("disabled"), "Cannot click disabled control"); flushSync(() => element.click()); await settle() }
-function setInput(input: HTMLInputElement, value: string) {
+function setInput(input: HTMLInputElement | HTMLTextAreaElement, value: string) {
   const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value")!.set!
   setter.call(input, value)
   input.dispatchEvent(new Event("input", { bubbles: true })); input.dispatchEvent(new Event("change", { bubbles: true }))
@@ -41,10 +40,10 @@ function setInput(input: HTMLInputElement, value: string) {
 
 const permissions = {
   manage_store: role === "owner" || role === "manager", edit_name: true,
-  manage_key_grants: role === "owner", test_key: true,
+  test_key: true,
   manage_tags: role === "owner" || role === "manager",
-  manage_key: role === "owner" || granted,
-  delete_store: role === "owner" || granted,
+  manage_key: role === "owner" || role === "manager",
+  delete_store: role === "owner" || role === "manager",
 }
 
 const rosterStore = {
@@ -52,7 +51,7 @@ const rosterStore = {
   configured: true, secret_status: "present" as const, ref_id: "store-1", updated_at_ms: 1_750_000_000_000, verified_at_ms: null,
   last_used_at_ms: null, active: false, cloud_store_uuid: "store-1", create_order: null, cloud_status: "active", manual_disabled: false,
   quota_suspended: false, cloud_revision: 1, credential_revision: 1, needs_reentry: false, can_manage: permissions.manage_store,
-  can_edit_credential: permissions.manage_key, assignee_key_manage: granted,
+  can_edit_credential: permissions.manage_key,
   assignee_name: role === "manager" ? "工作空间管理员" : "工作空间成员", assignee_membership_id: role === "manager" ? 2 : 3, assignee_email: `${role === "manager" ? "manager" : "member"}@example.invalid`, permissions,
   product_quota: {
     daily_create: { limit: 100, usage: 12 },
@@ -91,29 +90,44 @@ const overview = {
 
 let roster: OzonStoresOverview
 let failCredential = true
-let failClear = true
 let nextStore = 2
 const calls: string[] = []
 function resetMocks() {
   roster = { stores: [{ ...rosterStore }], active_id: null, store_limit: 3, stores_used: 1, suspended: 0 }
-  localStorage.removeItem("podhub.workflow.category-tree.v1")
-  failCredential = true; failClear = true; nextStore = 2; calls.length = 0
+  localStorage.removeItem("podhub.workflow.category-tree.v2")
+  failCredential = true; nextStore = 2; calls.length = 0
   accountHttp.accountGetWorkspaceDirectory = async () => directory
   integrationsHttp.integrationsListOzonStores = async () => ({ ...roster, stores: roster.stores.map((store) => ({ ...store })) })
+  integrationsHttp.integrationsImportOzonStores = async ({ items }) => {
+    calls.push(`import:${items.length}`)
+    return { overview: { ...roster }, results: items.map((item) => ({ source_ref: item.source_ref, name: item.name, status: "failed", uuid: null, quota_suspended: false, reason: "模拟导入失败" })) }
+  }
+  integrationsHttp.integrationsExportOzonStores = async () => ({ items: [{ uuid: "store-1", name: "主店", client_id: "123456", api_key: "fixture-export-key" }] })
   integrationsHttp.integrationsRenameOzonStore = async ({ id, name }) => { calls.push(`rename:${id}`); roster.stores.find((store) => store.id === id)!.label = name.trim(); return { ...roster } }
+  integrationsHttp.integrationsResolveOzonStoreName = async ({ api_key, store_uuid }) => {
+    calls.push(`lookup:${store_uuid ?? "new"}`)
+    if (api_key === "bad-key") throw new Error("name lookup rejected")
+    return { name: "Seller 店铺名" }
+  }
   integrationsHttp.integrationsUpsertOzonStore = async ({ id, label, client_id }) => {
     calls.push(`key:${id}`)
     if (failCredential) throw new Error("key rejected")
-    Object.assign(roster.stores.find((store) => store.id === id)!, { label: label.trim(), client_id: client_id.trim() }); return { overview: { ...roster }, store_id: id }
+    let store = roster.stores.find((store) => store.id === id)
+    if (!store) {
+      store = { ...rosterStore, id: `store-${nextStore++}`, permissions: { ...permissions, manage_key: true, delete_store: true } }
+      roster.stores.push(store)
+      roster.stores_used = roster.stores.length
+    }
+    Object.assign(store, { label: label.trim() || "Seller 店铺名", client_id: client_id.trim() })
+    return { overview: { ...roster, stores: roster.stores.map((item) => ({ ...item })) }, store_id: store.id, name_filled: !label.trim() }
   }
   integrationsHttp.integrationsSetStoreTags = async ({ id, tag_uuids }) => { calls.push(`tags:${id}`); const store = roster.stores.find((store) => store.id === id)!; store.tags = tag_uuids.map((uuid) => roster.tags?.find((tag) => tag.uuid === uuid) ?? { uuid, name: uuid }); return { ...roster } }
   integrationsHttp.integrationsCreateStoreTag = async ({ name }) => { calls.push(`tag-create:${name}`); roster.tags = [...(roster.tags ?? []), { uuid: `tag-${name}`, name: name.trim(), store_count: 0 }]; return { ...roster } }
   integrationsHttp.integrationsRenameStoreTag = async ({ uuid, name }) => { calls.push(`tag-rename:${uuid}`); const tag = roster.tags?.find((tag) => tag.uuid === uuid); if (tag) tag.name = name.trim(); return { ...roster } }
   integrationsHttp.integrationsDeleteStoreTag = async ({ uuid }) => { calls.push(`tag-delete:${uuid}`); roster.tags = (roster.tags ?? []).filter((tag) => tag.uuid !== uuid); for (const store of roster.stores) store.tags = store.tags?.filter((tag) => tag.uuid !== uuid); return { ...roster } }
-  integrationsHttp.integrationsClearOzonStore = async () => { calls.push("clear"); if (failClear) throw new Error("clear rejected"); return { ...roster } }
   integrationsHttp.integrationsCreateOzonStore = async ({ label }) => {
     roster.stores.push({ ...rosterStore, id: "other-window", label: label.trim() })
-    roster.stores.push({ ...rosterStore, id: `store-${nextStore++}`, label: label.trim(), client_id: "", configured: false, secret_status: "absent", assignee_key_manage: true, permissions: { ...permissions, manage_key: true, test_key: false }, can_edit_credential: true })
+    roster.stores.push({ ...rosterStore, id: `store-${nextStore++}`, label: label.trim(), client_id: "", configured: false, secret_status: "absent", permissions: { ...permissions, manage_key: true, test_key: false }, can_edit_credential: true })
     roster.stores_used = roster.stores.length
     const created = roster.stores.at(-1)!
     return { id: created.id, roster: { ...roster, stores: roster.stores.map((store) => ({ ...store })) } }
@@ -121,9 +135,7 @@ function resetMocks() {
   integrationsHttp.integrationsTestOzonStore = async () => ({ ...roster })
   integrationsHttp.integrationsRefreshStoreProductQuotas = async () => ({ ...roster, stores: roster.stores.map((store) => ({ ...store })) })
   integrationsHttp.integrationsRefreshStoreFinanceBalances = async () => ({ ...roster, stores: roster.stores.map((store) => ({ ...store })) })
-  integrationsHttp.integrationsSetActiveOzonStore = async () => ({ ...roster })
   integrationsHttp.integrationsAssignOzonStore = async () => ({ ...roster })
-  integrationsHttp.integrationsSetStoreKeyGrant = async () => ({ ...roster })
   listingHttp.listingCardLoadCategoryTree = async () => ([
     {
       description_category_id: 17027490, category_name: "古董和收藏品",
@@ -159,52 +171,132 @@ async function storeChecks() {
     if (config.disabled) { check(!editor || role === "member", "configuration should be available to this actor"); return }
     await click(config); check(document.querySelector('[role="dialog"]'), "real StoresScreen configuration dialog missing")
     if (!editor) return
-    const label = document.querySelector<HTMLInputElement>("#store-label")!; setInput(label, "新名字"); await click(byText("验证并保存"))
+    const label = document.querySelector<HTMLInputElement>("#store-label")!; setInput(label, "新名字"); await click(byText("保存"))
     check(roster.stores[0]!.label === "新名字", "rename-only did not persist"); check(roster.stores[0]!.configured, "rename-only changed credentials")
     check(calls.join(",") === "rename:store-1", "rename must not call credential write")
     await click(fixture.querySelector<HTMLButtonElement>('[aria-label="店铺资料"]')!)
     const key = document.querySelector<HTMLInputElement>("#store-api-key")!
     if (permissions.manage_key) {
-      setInput(document.querySelector<HTMLInputElement>("#store-label")!, "尚未保存的名称"); setInput(key, "bad-key"); await click(byText("验证并保存"))
+      setInput(document.querySelector<HTMLInputElement>("#store-label")!, "尚未保存的名称"); setInput(key, "bad-key"); await click(byText("保存"))
       check(key.value === "bad-key", "failed key save must retain draft")
       check(calls.join(",") === "rename:store-1,key:store-1", "key save must not rename")
       check(roster.stores[0]!.label === "新名字", "key failure must not rename")
     } else {
-      check(key.disabled && byText("验证并保存").hasAttribute("disabled"), "ungranted actor must not edit credentials")
+      check(key.disabled && byText("保存").hasAttribute("disabled"), "ungranted actor must not edit credentials")
     }
-    const clear = document.querySelector<HTMLButtonElement>("button[title^=\"只删除托管密钥\"]")
-    if (permissions.manage_key) {
-      check(clear, "authorized clear button missing"); await click(clear)
-      const dialogs = [...document.querySelectorAll<HTMLElement>('[role="dialog"]')]
-      await click(byText("清除密钥", dialogs.at(-1)!))
-      check([...document.querySelectorAll<HTMLElement>('[role="dialog"]')].some((d) => d.textContent?.includes("清除这家店的密钥")), "failed clear must retain confirmation")
-      check(calls.at(-1) === "clear", "clear endpoint was not called")
-    } else check(!clear, "ungranted actor must not clear credentials")
-    if (role === "manager") check(!document.querySelector('[aria-label="允许指派人管理密钥"]'), "manager must not grant key permissions")
+    check(byText("标签与分组").getAttribute("aria-expanded") === "false", "edit classification must start collapsed")
+    check(!document.querySelector('[aria-label="更多店铺操作"]'), "edit dialog must not offer a more-actions menu")
   })
 }
 
 async function newStoreCheck() {
   await mounted(async () => {
+    if (role === "member") {
+      check(byText("新增店铺").hasAttribute("disabled"), "members cannot create stores")
+      return
+    }
     await click(byText("新增店铺"))
     const label = document.querySelector<HTMLInputElement>("#store-label")!
     check(label.value === "", "new store must start with an empty name")
     const client = document.querySelector<HTMLInputElement>("#store-client-id")!
     check(client && !client.disabled, "new store draft must allow credential entry")
-    check(!document.querySelector("button[title^=\"只删除托管密钥\"]"), "new store draft must not offer clear")
+    const organization = byText("标签与分组")
+    check(organization.getAttribute("aria-expanded") === "false", "new store optional fields must start collapsed")
+    await click(organization)
+    check(organization.getAttribute("aria-expanded") === "true", "optional fields must expand")
     const newTag = document.querySelector<HTMLInputElement>("#store-new-tag")
     if (newTag) {
       setInput(newTag, "新标签")
-      await click(byText("新建"))
+      await click(document.querySelector<HTMLElement>('[aria-label="新建标签"]')!)
       check(calls.includes("tag-create:新标签"), "inline tag creation must call the API")
       const attached = [...document.querySelectorAll<HTMLElement>('[role="dialog"] button[aria-pressed="true"]')]
       check(attached.some((button) => button.textContent?.trim() === "新标签"), "created tag must attach to the draft")
     } else check(role === "member", "only a member loses inline tag creation")
-    setInput(label, "新店先命名")
     check(byText("验证并保存").hasAttribute("disabled"), "incomplete new store must not submit")
     setInput(client, "12345"); setInput(document.querySelector<HTMLInputElement>("#store-api-key")!, "bad-key")
+    check(!byText("验证并保存").hasAttribute("disabled"), "a blank name must not block complete credentials")
     await click(byText("验证并保存"))
     check(calls.filter((call) => call.startsWith("key:")).length === 1, "new store must submit one credential upsert")
+    await click(byText("取消"))
+    check(!document.querySelector('[role="dialog"]:not([data-closed])'), "cancel must close the draft")
+    check(calls.filter((call) => call.startsWith("key:")).length === 1, "cancel must not submit credentials")
+  })
+}
+
+async function automaticNameCheck() {
+  if (role === "member") return
+  await mounted(async () => {
+    failCredential = false
+    await click(byText("新增店铺"))
+    const name = document.querySelector<HTMLInputElement>("#store-label")!
+    const client = document.querySelector<HTMLInputElement>("#store-client-id")!
+    const key = document.querySelector<HTMLInputElement>("#store-api-key")!
+    check(!name.required && client.required && key.required, "only Client ID and API Key are required for a new store")
+    setInput(client, "12345"); setInput(key, "fixture-key")
+    await click(byText("验证并保存"))
+    check(roster.stores.some((store) => store.label === "Seller 店铺名" && store.client_id === "12345"), "the returned Seller name must reach the roster")
+    check(fixture.textContent?.includes("Seller 店铺名"), "the saved automatic name must be visible")
+  })
+}
+
+async function nameLookupCheck() {
+  if (role === "member") return
+  await mounted(async () => {
+    await click(byText("新增店铺"))
+    const name = document.querySelector<HTMLInputElement>("#store-label")!
+    const client = document.querySelector<HTMLInputElement>("#store-client-id")!
+    const key = document.querySelector<HTMLInputElement>("#store-api-key")!
+    const lookup = document.querySelector<HTMLButtonElement>('[aria-label="获取店铺名称"]')!
+    check(lookup.disabled, "name lookup requires credentials")
+    setInput(client, "12345"); await settle()
+    check(lookup.disabled, "new store name lookup requires a key")
+    setInput(name, "未保存名称"); setInput(key, "bad-key")
+    await click(lookup)
+    check(name.value === "未保存名称" && key.value === "bad-key", "failed lookup must retain the name and key")
+    setInput(key, "fixture-key")
+    await click(lookup)
+    check(String(name.value) === "Seller 店铺名", "lookup result must fill the name input")
+    check(roster.stores.length === 1 && !calls.some((call) => call.startsWith("key:") || call.startsWith("rename:")), "lookup must not save the store or credential")
+    await click(byText("取消"))
+    if (!permissions.manage_key) return
+    await click(fixture.querySelector<HTMLButtonElement>('[aria-label="店铺资料"]')!)
+    await click(document.querySelector<HTMLButtonElement>('[aria-label="获取店铺名称"]')!)
+    check(document.querySelector<HTMLInputElement>("#store-label")!.value === "Seller 店铺名", "existing store must be able to use its held key")
+    check(roster.stores[0]!.label === "主店", "held-key lookup must not persist the name")
+  })
+}
+
+async function transferChecks() {
+  await mounted(async () => {
+    if (role === "member") {
+      check(fixture.querySelector<HTMLButtonElement>('[aria-label="批量导入"]')!.disabled, "members cannot import keys")
+      check(fixture.querySelector<HTMLButtonElement>('[aria-label="批量导出"]')!.disabled, "members cannot export keys")
+      return
+    }
+    await click(fixture.querySelector<HTMLButtonElement>('[aria-label="批量导入"]')!)
+    const input = document.querySelector<HTMLTextAreaElement>("#store-import-lines")!
+    check(input, "import input missing")
+    setInput(input, "只有两个字段,123")
+    await settle()
+    check(document.querySelector('[role="dialog"]')?.textContent?.includes("0 家可导入"), "invalid input must report zero importable stores")
+    check(byText("导入").hasAttribute("disabled"), "invalid input must not submit")
+    setInput(input, "主店,123,fixture-key\n无效行")
+    await settle()
+    check(document.querySelector('[role="dialog"]')?.textContent?.includes("1 行无法解析将被跳过"), "invalid rows must stay visible in the summary")
+    await click(byText("导入 1 家"))
+    check(calls.includes("import:1"), "only parsed rows may reach import")
+    check(input.value.includes("fixture-key") && input.value.includes("无效行"), "failed rows must remain for retry")
+    check(document.querySelector('[role="dialog"]')?.textContent?.includes("模拟导入失败"), "import failure reason missing")
+    await click(byText("取消"))
+  })
+  if (!permissions.manage_key) return
+  await mounted(async () => {
+    await click(fixture.querySelector<HTMLButtonElement>('[aria-label="批量导出"]')!)
+    const dialog = document.querySelector('[role="dialog"]')!
+    check(dialog.textContent?.includes("共 1 家店铺"), "export must show the store count")
+    check(dialog.textContent?.includes("明文密钥"), "export must keep its plaintext warning")
+    check(!dialog.querySelector("textarea"), "export must offer actions without a plaintext preview")
+    check(!byText("复制").hasAttribute("disabled") && !byText("下载 .txt").hasAttribute("disabled"), "export actions must remain available")
   })
 }
 
@@ -213,7 +305,8 @@ resetMocks(); flushSync(() => previewRoot.render(<StoresScreen overview={overvie
 run.onclick = async () => {
   run.disabled = true; previewRoot.unmount(); await settle(); results.textContent = "运行中"; unexpectedRequests.length = 0
   const lines: string[] = []
-  try { await storeChecks(); await newStoreCheck(); lines.push("PASS StoresScreen credential checks") } catch (error) { lines.push(`FAIL ${error instanceof Error ? error.stack : String(error)}`) }
+  try { await storeChecks(); await newStoreCheck(); await automaticNameCheck(); await nameLookupCheck(); lines.push("PASS StoresScreen credential checks") } catch (error) { lines.push(`FAIL ${error instanceof Error ? `${error.message}\n${error.stack}` : String(error)}`) }
+  try { await transferChecks(); lines.push("PASS StoresScreen import/export checks") } catch (error) { lines.push(`FAIL ${error instanceof Error ? `${error.message}\n${error.stack}` : String(error)}`) }
   if (unexpectedRequests.length) lines.push(`FAIL Unexpected network: ${unexpectedRequests.join(", ")}`)
   results.textContent = lines.join("\n"); results.dataset.result = lines.some((line) => line.startsWith("FAIL")) ? "failed" : "passed"
   previewRoot = createRoot(fixture); resetMocks(); flushSync(() => previewRoot.render(<StoresScreen overview={overview} />)); run.disabled = false

@@ -15,12 +15,12 @@ import (
 func TestProbeTransportStaysOffProxyAndPlain(t *testing.T) {
 	allowCat := catalogue{loopback: true}
 	denyCat := catalogue{loopback: false}
-	allow := allowCat.client()
-	deny := denyCat.client()
+	allow := allowCat.client(false)
+	deny := denyCat.client(false)
 	if allow == deny {
 		t.Fatal("loopback policies share a client")
 	}
-	if allow != allowCat.client() || deny != denyCat.client() {
+	if allow != allowCat.client(false) || deny != denyCat.client(false) {
 		t.Fatal("probe client is not process-wide")
 	}
 	at := allow.Transport.(*http.Transport)
@@ -58,15 +58,15 @@ func TestProbeFetchLoopbackBytes(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	code, body, dns, err := catalogue{loopback: true}.Fetch(context.Background(), srv.URL+"/models", "openai", "k")
+	code, body, dns, err := catalogue{loopback: true}.Fetch(context.Background(), srv.URL+"/models", "openai", "k", false)
 	if err != nil || dns || code != 200 || string(body) != "models" {
 		t.Fatalf("status %d body %q dns %v err %v", code, body, dns, err)
 	}
-	code, body, dns, err = catalogue{loopback: true}.Fetch(context.Background(), srv.URL+"/redir", "openai", "k")
+	code, body, dns, err = catalogue{loopback: true}.Fetch(context.Background(), srv.URL+"/redir", "openai", "k", false)
 	if err != nil || dns || code != http.StatusFound || string(body) == "followed" {
 		t.Fatalf("redirect status %d body %q dns %v err %v", code, body, dns, err)
 	}
-	_, _, dns, err = catalogue{loopback: false}.Fetch(context.Background(), srv.URL+"/models", "openai", "k")
+	_, _, dns, err = catalogue{loopback: false}.Fetch(context.Background(), srv.URL+"/models", "openai", "k", false)
 	if !dns {
 		t.Fatalf("loopback dial allowed, err %v", err)
 	}
@@ -81,10 +81,10 @@ func TestProbePublicDefaultMatchesLoopbackRefusal(t *testing.T) {
 	t.Cleanup(srv.Close)
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
-	_, _, dnsLoop, errLoop := catalogue{loopback: false}.Fetch(ctx, srv.URL+"/models", "openai", "k")
-	_, _, dnsIP, errIP := catalogue{}.Fetch(ctx, "https://1.2.3.4/models", "openai", "k")
-	_, _, dnsName, errName := catalogue{}.Fetch(ctx, "https://example.com/models", "openai", "k")
-	_, _, dnsPrivate, errPrivate := NewCatalogue(false, false).Fetch(ctx, "https://10.1.1.1/models", "openai", "k")
+	_, _, dnsLoop, errLoop := catalogue{loopback: false}.Fetch(ctx, srv.URL+"/models", "openai", "k", false)
+	_, _, dnsIP, errIP := catalogue{}.Fetch(ctx, "https://1.2.3.4/models", "openai", "k", false)
+	_, _, dnsName, errName := catalogue{}.Fetch(ctx, "https://example.com/models", "openai", "k", false)
+	_, _, dnsPrivate, errPrivate := NewCatalogue(false).Fetch(ctx, "https://10.1.1.1/models", "openai", "k", false)
 	if dialed {
 		t.Fatal("a refused probe dialed the loopback server")
 	}
@@ -109,12 +109,12 @@ func TestProbePublicDefaultMatchesLoopbackRefusal(t *testing.T) {
 	if literalAllowed(net.ParseIP("10.1.1.1"), false, false) || !literalAllowed(net.ParseIP("127.0.0.1"), true, false) {
 		t.Fatal("literal gate")
 	}
-	pub := catalogue{loopback: true, public: true}.client()
-	loc := catalogue{loopback: true, public: false}.client()
+	pub := catalogue{loopback: true}.client(true)
+	loc := catalogue{loopback: true}.client(false)
 	if pub == loc || pub.Transport == loc.Transport {
 		t.Fatal("public policy shares a client")
 	}
-	code, body, dns, err := NewCatalogue(true, false).Fetch(context.Background(), srv.URL+"/models", "openai", "k")
+	code, body, dns, err := NewCatalogue(true).Fetch(context.Background(), srv.URL+"/models", "openai", "k", false)
 	if err != nil || dns || code != 200 || string(body) != "models" || !dialed {
 		t.Fatalf("loopback with public off: %d %q dns %v dialed %v err %v", code, body, dns, dialed, err)
 	}

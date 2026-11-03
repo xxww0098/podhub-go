@@ -132,13 +132,13 @@ func TestWorkbenchIncludesPayoutWhenSet(t *testing.T) {
 		Policy: domain.Policy{DefaultRebateBps: 1000, MinOrderCents: 10000, AttributionValidityDays: 365, MinWithdrawCents: 10000},
 		Commissions: []domain.CommissionView{{
 			ID: 9, InviteeEmail: "i***@example.invalid", WorkspaceName: "invitee-b 的工作空间",
-			Product: "member_seats", OrderAmountCents: 10000, RebateBps: 1000, AmountCents: 1000,
+			Product: "subscription", OrderAmountCents: 10000, RebateBps: 1000, AmountCents: 1000,
 			Status: "credited", Note: "代理佣金 · 订单 po_1", CreatedAt: "2026-08-21T17:30:00.000Z",
 		}},
 	}}
 	rec := httptest.NewRecorder()
 	signed(api).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/agent", nil))
-	const want = `{"data":{"invite_code":"AB23CD45","status":"active","rebate_bps":1000,"min_order_cents":10000,"attribution_validity_days":365,"min_withdraw_cents":10000,"wallet":{"balance_cents":0,"held_cents":0,"available_cents":0},"payout_account":{"channel":"alipay","account":"agent@x.invalid","real_name":"代理人"},"wallet_transfer_available":false,"invitee_count":0,"credited_count":0,"skipped_count":0,"credited_total_cents":0,"commissions":[{"id":9,"invitee_email":"i***@example.invalid","workspace_name":"invitee-b 的工作空间","product":"member_seats","order_amount_cents":10000,"rebate_bps":1000,"amount_cents":1000,"status":"credited","note":"代理佣金 · 订单 po_1","created_at":"2026-08-21T17:30:00.000Z"}]}}`
+	const want = `{"data":{"invite_code":"AB23CD45","status":"active","rebate_bps":1000,"min_order_cents":10000,"attribution_validity_days":365,"min_withdraw_cents":10000,"wallet":{"balance_cents":0,"held_cents":0,"available_cents":0},"payout_account":{"channel":"alipay","account":"agent@x.invalid","real_name":"代理人"},"wallet_transfer_available":false,"invitee_count":0,"credited_count":0,"skipped_count":0,"credited_total_cents":0,"commissions":[{"id":9,"invitee_email":"i***@example.invalid","workspace_name":"invitee-b 的工作空间","product":"subscription","order_amount_cents":10000,"rebate_bps":1000,"amount_cents":1000,"status":"credited","note":"代理佣金 · 订单 po_1","created_at":"2026-08-21T17:30:00.000Z"}]}}`
 	if err := parity.DiffHTTP(parity.Exchange{Status: rec.Code, Body: rec.Body.Bytes()}, parity.Exchange{Status: 200, Body: []byte(want)}); err != nil {
 		t.Fatal(err)
 	}

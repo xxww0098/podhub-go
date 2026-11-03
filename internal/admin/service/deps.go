@@ -10,6 +10,7 @@ import (
 
 	"github.com/xxww0098/podhub-go/internal/admin/domain"
 	core "github.com/xxww0098/podhub-go/internal/listing/core/contract"
+	sign "github.com/xxww0098/podhub-go/internal/platform/r2/sigv4"
 )
 
 // Actor is the super admin the handler already admitted.
@@ -20,20 +21,24 @@ type Actor struct {
 
 // Deps is the admin B process seam. Holder defaults to axum. Instance is
 // CLOUD_INSTANCE_ID (blank becomes axum-{pid}) unless a test sets it.
+// BannedTags is the one-second banned-tag cache; admin may not import
+// listing/rules, so internal/app passes the real function. A nil value
+// fails the prompt write closed.
 type Deps struct {
-	Pool     *pgxpool.Pool
-	Now      func() time.Time
-	Holder   string
-	Instance string
-	Key      string
-	Engine   core.Engine
-	Origin   Caller
-	Tickets  Tickets
+	Pool       *pgxpool.Pool
+	Now        func() time.Time
+	Holder     string
+	Instance   string
+	Accounts   []domain.CloudAccount
+	Engine     core.Engine
+	BannedTags func(ctx context.Context, load func(context.Context) ([]core.Rule, error)) ([]core.Rule, error)
+	Origin     Caller
+	Tickets    Tickets
 }
 
 // Caller performs one presigned origin request.
 type Caller interface {
-	Exchange(ctx context.Context, method, rawURL string, headers map[string]string, body []byte, timeout time.Duration, noCompress, strict bool, max int64) (status int, header map[string][]string, resp []byte, err error)
+	Exchange(ctx context.Context, account sign.Account, method, rawURL string, headers map[string]string, body []byte, timeout time.Duration, noCompress, strict bool, max int64) (status int, header map[string][]string, resp []byte, err error)
 }
 
 // Issued is a browser PUT grant plus the stage ticket.

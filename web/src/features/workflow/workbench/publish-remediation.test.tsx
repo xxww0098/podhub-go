@@ -9,6 +9,8 @@ import type { WorkflowProductLifecycle } from "@/bindings/commands"
 import { resolvePublishRemediation, type PublishRemediationFacts, type PublishRemediation as PublishRemediationModel } from "../model/publish-remediation"
 import type { PreparationVerb } from "../prepare/preparation-tracks"
 import { PublishRemediation, RemediationDetails, remediationView } from "./publish-remediation"
+import { createErrorFeedback } from "@/lib/error-feedback"
+import { RowErrorFeedback } from "./row-error-feedback"
 
 const uploadFailure: PublishRemediationModel = {
   cause: "prepare_leg",
@@ -17,6 +19,20 @@ const uploadFailure: PublishRemediationModel = {
   steps: ["点「重试上传」只重新上传此行未交付的切片"],
   action: { kind: "retry_stage", verb: "deliver", label: "重试上传" },
 }
+
+test("explicit model guidance overrides unrelated field advice in both error detail views", () => {
+  const feedback = createErrorFeedback({ blockers: ["missing_model"], message: "请先配置识别模型" }, "准备失败")
+  const views = [
+    <RowErrorFeedback feedback={feedback} unknownOutcome={false} />,
+    <RemediationDetails view={{ reason: "字段未完成", scope: "仅此行", steps: ["检查必填字段", "保存后重新校验"], feedback }} />,
+  ]
+  for (const view of views) {
+    const markup = renderToStaticMarkup(view)
+    assert.match(markup, /系统默认识图模型.*管理员.*重试识别.*一键准备.*已完成图片保留/)
+    assert.doesNotMatch(markup, /选择可用项/)
+    assert.doesNotMatch(markup, /检查必填字段|保存后重新校验|请核对图片与配置/)
+  }
+})
 
 test("the details stay collapsed and carry reason, scope and ordered steps", () => {
   const markup = renderToStaticMarkup(
@@ -102,7 +118,7 @@ test("a structured diagnostic keeps the same trace in its details and copy affor
   }} />)
   assert.match(markup, /请求追踪编号.*same-trace-id/s)
   assert.doesNotMatch(markup, /诊断编号|SHA-256|原文/)
-  assert.match(markup, /复制诊断信息/)
+  assert.match(markup, /aria-label="复制诊断信息"/)
   assert.doesNotMatch(markup, /role="alert"/)
 })
 
@@ -113,17 +129,23 @@ test("an unknown strip without exact Intent capability supplies manual steps and
   }]} releasing={false} disabled={false}
     onRelease={() => { throw new Error("no release is available") }} />)
   assert.match(markup, /货号「ART-9」，任务号 5666996254。缺少Intent、店铺、释放权限/)
-  assert.match(markup, /确认前不要重发/)
+  assert.match(markup, /1 件待核对，确认前勿重发/)
   assert.doesNotMatch(markup, /<button|恢复待核对|role="alert"/)
 })
 
 test("production manual Unknown fallback offers only explicit inspection, never release", () => {
   const markup = renderToStaticMarkup(<UnknownReleaseStrip rowIds={["row"]} releasing={false} disabled={false}
     onInspect={() => {}} onRelease={() => { throw new Error("release is unavailable") }} />)
-  assert.match(markup, /核对原 Intent/)
-  assert.match(markup, /确认前不要重发/)
+  assert.match(markup, /核对发送记录/)
+  assert.match(markup, /确认前勿重发/)
   assert.doesNotMatch(markup, /释放原 Intent|恢复待核对|role="alert"/)
   assert.equal((markup.match(/<button/g) ?? []).length, 1)
+  const compact = renderToStaticMarkup(<UnknownReleaseStrip compact rowIds={["row"]} facts={[{
+    id: "row", offerId: "ART-9", taskId: "5666996254", missing: ["intent", "store", "permission"],
+  }]} releasing={false} disabled={false} onInspect={() => {}} onRelease={() => assert.fail("unavailable release")} />)
+  assert.match(compact, /1 件待核对，确认前勿重发/)
+  assert.match(compact, /核对发送记录/)
+  assert.doesNotMatch(compact, /Intent|ART-9|5666996254|恢复待核对/)
 })
 
 test("inspected availability exposes an explicitly named confirmation entry and Stop disables it", () => {
@@ -133,13 +155,13 @@ test("inspected availability exposes an explicitly named confirmation entry and 
     facts: [{ id: "row", offerId: "ART-9", intentId: "intent-9", storeLabel: "主店", missing: [] }],
   }
   const available = renderToStaticMarkup(<UnknownReleaseStrip {...props} disabled={false} />)
-  assert.match(available, /aria-label="核对后释放 1 件商品的确切未确认 Intent"/)
+  assert.match(available, /aria-label="核对后释放 1 件商品的原发送记录"/)
   assert.match(available, /货号「ART-9」，店铺「主店」，Intent intent-9/)
   assert.match(available, /释放不会发送/)
   assert.doesNotMatch(available, /缺少/)
   assert.doesNotMatch(available, /<button[^>]*\sdisabled=""/, "CSS disabled: utilities are not a disabled attribute")
   const stopped = renderToStaticMarkup(<UnknownReleaseStrip {...props} disabled />)
-  assert.match(stopped, /<button[^>]*disabled=""[^>]*aria-label="核对后释放 1 件商品的确切未确认 Intent"/)
+  assert.match(stopped, /<button[^>]*disabled=""[^>]*aria-label="核对后释放 1 件商品的原发送记录"/)
   assert.equal(releases, 0, "render / availability never invokes the mutation")
 })
 
@@ -155,7 +177,7 @@ test("a diagnostic reference is forwarded safely without granting an Unknown row
   assert.equal(view.action, undefined)
   const markup = renderToStaticMarkup(<PublishRemediation remediation={model} {...handlers} />)
   assert.match(markup, /诊断编号.*exact-diagnostic-id/s)
-  assert.match(markup, /复制诊断信息/)
+  assert.match(markup, /aria-label="复制诊断信息"/)
   assert.match(markup, /不要重新发送/)
   assert.doesNotMatch(markup, /<button[^>]*>(?:修复品牌字段|重试|释放原 Intent)|role="alert"/)
   assert.equal((markup.match(/<button/g) ?? []).length, 1, "only the read-only copy gesture is available")

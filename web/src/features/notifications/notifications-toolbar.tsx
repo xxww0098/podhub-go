@@ -1,8 +1,7 @@
-import { CheckCheck, RefreshCw } from "lucide-react"
+import { CheckCheck, Loader2Icon, RefreshCw } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
-import { Spinner } from "@/components/ui/spinner"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { IconButton } from "@/components/ui/icon-button"
+import { cn } from "@/lib/utils"
 import type { NotificationsController } from "@/features/notifications/notifications"
 
 /** The reading-standing line the addressable screen and the inbox window share. */
@@ -28,37 +27,26 @@ export function NotificationToolbarActions({
   const { unread, refreshing, markingAllRead, writing } = controller
   return (
     <>
-      <Button
+      <IconButton
+        icon={markingAllRead ? Loader2Icon : CheckCheck}
+        label="全部已读"
         variant="outline"
-        size="sm"
+        size="icon-sm"
+        className={cn(markingAllRead && "[&_svg]:animate-spin")}
+        aria-busy={markingAllRead}
         onClick={() => void controller.markAllRead()}
         disabled={unread === 0 || writing}
-      >
-        {markingAllRead ? (
-          <Spinner data-icon="inline-start" />
-        ) : (
-          <CheckCheck data-icon="inline-start" />
-        )}
-        全部已读
-      </Button>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              type="button"
-              variant="outline"
-              size="icon-sm"
-              aria-label="刷新通知"
-              aria-busy={refreshing}
-              disabled={refreshing || writing}
-              onClick={() => void controller.refresh()}
-            />
-          }
-        >
-          {refreshing ? <Spinner /> : <RefreshCw aria-hidden />}
-        </TooltipTrigger>
-        <TooltipContent>刷新</TooltipContent>
-      </Tooltip>
+      />
+      <IconButton
+        icon={refreshing ? Loader2Icon : RefreshCw}
+        label="刷新通知"
+        variant="outline"
+        size="icon-sm"
+        className={cn(refreshing && "[&_svg]:animate-spin")}
+        aria-busy={refreshing}
+        disabled={refreshing || writing}
+        onClick={() => void controller.refresh()}
+      />
     </>
   )
 }

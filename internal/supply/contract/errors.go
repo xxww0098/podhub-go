@@ -9,8 +9,8 @@ const Level = 3
 var (
 	// ErrUnproven means the status edge is not in the copied SQL functions.
 	ErrUnproven = errors.New("supply transition is not proven")
-	// ErrNotFound is an application miss. sc_listing_bindings has no RLS,
-	// so the repository filters org_id itself.
+	// ErrNotFound is an application miss. sc_listing_bindings is under tenant
+	// RLS; the repository also filters org_id so a missing tenant fails before SQL.
 	ErrNotFound = errors.New("not found")
 	// ErrNoTenant means the caller did not pass an org id.
 	ErrNoTenant = errors.New("missing tenant")

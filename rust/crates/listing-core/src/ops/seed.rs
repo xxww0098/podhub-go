@@ -9,6 +9,7 @@ use crate::envelope::{RowMedia, RowPayload, RowSource};
 use crate::field_pack::seed_gaps;
 use crate::records::{FieldAddress, FieldValueOriginKind};
 
+use super::association::{AssociationIdentity, AssociationRefusal, stamp_association_identity};
 use super::{Ctx, LeanRow};
 
 /// Seed a fresh row under `ctx.card`. The Card's product videos are copied
@@ -28,6 +29,35 @@ pub fn seed_row(
     source: RowSource,
     supplied_draft: Option<WorkflowCategoryDraft>,
 ) -> LeanRow {
+    LeanRow::from_row(seeded_payload(ctx, source, supplied_draft)).0
+}
+
+/// [`seed_row`] for one member of a same-design association: the fixed 货号
+/// (`PH-<row_id>`) and the design's common 型号 are stamped over whatever the
+/// caller's draft or the Card defaults carried for those keys. A category with
+/// no plain 9048 is refused before anything is returned.
+///
+/// # Panics
+///
+/// Panics if `ctx.card` is `None`, like [`seed_row`].
+pub fn seed_associated_row(
+    ctx: &Ctx<'_>,
+    source: RowSource,
+    supplied_draft: Option<WorkflowCategoryDraft>,
+    row_id: &str,
+    identity: &AssociationIdentity,
+) -> Result<LeanRow, AssociationRefusal> {
+    let mut full = seeded_payload(ctx, source, supplied_draft);
+    let card = ctx.card.expect("seed_associated_row requires ctx.card");
+    stamp_association_identity(&mut full, &ctx.schema.view(card.language), row_id, identity)?;
+    Ok(LeanRow::from_row(full).0)
+}
+
+fn seeded_payload(
+    ctx: &Ctx<'_>,
+    source: RowSource,
+    supplied_draft: Option<WorkflowCategoryDraft>,
+) -> RowPayload {
     let card = ctx
         .card
         .expect("seed_row requires ctx.card — 今天没有方案就没有行");
@@ -74,5 +104,5 @@ pub fn seed_row(
         record_origin(&mut full, address, kind, None, ctx.now_ms);
     }
 
-    LeanRow::from_row(full).0
+    full
 }

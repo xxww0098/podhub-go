@@ -8,28 +8,26 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/johannesboyne/gofakes3"
-	"github.com/johannesboyne/gofakes3/backend/s3mem"
 
 	"github.com/xxww0098/podhub-go/internal/app"
+	mediarepo "github.com/xxww0098/podhub-go/internal/media/repo"
+	"github.com/xxww0098/podhub-go/internal/platform/db"
+	sign "github.com/xxww0098/podhub-go/internal/platform/r2/sigv4"
+	"github.com/xxww0098/podhub-go/internal/platform/seal"
 )
 
 func TestMediaPresignUsesTheSessionOrg(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	pool := migratedPool(t, ctx)
+	seedMatchingLease(t, ctx, pool, "recipe", "media presign tenant isolation")
 	t.Setenv("CLOUD_SELLER_CREDENTIAL_KEY", "parity-test-key")
 	t.Setenv("CLOUD_COOKIE_SECURE", "0")
-	fake := httptest.NewServer(gofakes3.New(s3mem.New()).Server())
-	t.Cleanup(fake.Close)
-	if !strings.HasPrefix(fake.URL, "http://127.0.0.1:") {
-		t.Fatalf("endpoint %s", fake.URL)
-	}
-	t.Setenv("R2_ENDPOINT", fake.URL)
-	t.Setenv("R2_BUCKET", "podhub-slices")
-	t.Setenv("R2_ACCESS_KEY_ID", "test")
-	t.Setenv("R2_SECRET_ACCESS_KEY", "test")
+	const integrationKey = "media-presign-fixture-encryption-key"
+	t.Setenv("CLOUD_INTEGRATION_CONFIG_KEY", integrationKey)
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO account_users
 		    (public_id, email, password_hash, role, name, target, supplier_id, plan, created_at, updated_at)
@@ -58,16 +56,33 @@ func TestMediaPresignUsesTheSessionOrg(t *testing.T) {
 	if adaUUID == bobUUID || adaUUID == "" {
 		t.Fatalf("uuids %s %s", adaUUID, bobUUID)
 	}
+	accounts := map[string]string{}
+	for _, email := range []string{"media-ada@pod.example", "media-bob@pod.example"} {
+		var userID, orgID int64
+		if err := pool.QueryRow(ctx, `SELECT u.id,o.id FROM account_users u JOIN organizations o ON o.owner_user_id=u.id WHERE u.email=$1`, email).Scan(&userID, &orgID); err != nil {
+			t.Fatal(err)
+		}
+		account := sign.Account{ID: uuid.NewString(), Endpoint: "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.r2.cloudflarestorage.com", Bucket: "presign-" + strings.Split(email, "@")[0], PublicBaseURL: "https://pub-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.r2.dev", AccessKeyID: "fixture-access", SecretAccessKey: "fixture-secret"}
+		accounts[email] = account.ID
+		if err := db.InTx(ctx, pool, db.App(orgID), func(tx pgx.Tx) error {
+			if err := mediarepo.StageSliceStorage(ctx, tx, orgID, userID, account, seal.DeriveKEK(integrationKey)); err != nil {
+				return err
+			}
+			return mediarepo.ActivateSliceStorage(ctx, tx, orgID, userID, account.ID)
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	digest := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	adaBody := presign(t, handler, digest, sessionCookie(ada))
 	bobBody := presign(t, handler, digest, sessionCookie(bob))
-	if adaBody.Code != http.StatusOK || !strings.Contains(adaBody.Body.String(), "/teams/"+adaUUID+"/sha256/"+digest+".jpg") {
+	if adaBody.Code != http.StatusOK || !strings.Contains(adaBody.Body.String(), "podhub-slices/"+accounts["media-ada@pod.example"]+"/uploads/") || !strings.Contains(adaBody.Body.String(), "/"+digest+".jpg") {
 		t.Fatalf("ada %d %s", adaBody.Code, adaBody.Body.Bytes())
 	}
-	if strings.Contains(adaBody.Body.String(), bobUUID) {
-		t.Fatalf("ada key names bob %s", adaBody.Body.Bytes())
+	if strings.Contains(adaBody.Body.String(), accounts["media-bob@pod.example"]) || strings.Contains(adaBody.Body.String(), adaUUID) || strings.Contains(adaBody.Body.String(), bobUUID) {
+		t.Fatalf("ada key contains another identity %s", adaBody.Body.Bytes())
 	}
-	if bobBody.Code != http.StatusOK || !strings.Contains(bobBody.Body.String(), "/teams/"+bobUUID+"/sha256/"+digest+".jpg") {
+	if bobBody.Code != http.StatusOK || !strings.Contains(bobBody.Body.String(), "podhub-slices/"+accounts["media-bob@pod.example"]+"/uploads/") || !strings.Contains(bobBody.Body.String(), "/"+digest+".jpg") {
 		t.Fatalf("bob %d %s", bobBody.Code, bobBody.Body.Bytes())
 	}
 	anon := presign(t, handler, digest, "")

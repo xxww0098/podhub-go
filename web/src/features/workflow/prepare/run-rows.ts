@@ -33,8 +33,7 @@
  * at each leg it settled, so progress streams per row instead of waiting for
  * the whole batch, and one failed row never aborts its siblings.
  */
-import type { PreparationRequest } from "./ocr-model-routing"
-import type { WorkflowOperationRowResult } from "@/bindings/commands"
+import type { WorkflowOperationRowResult, WorkflowRowsActionRequest } from "@/bindings/commands"
 import { diagLog, elapsedMs, PREPARE_LOG } from "@/lib/diag-log"
 import { bindListingRows, flushListingLogs, listingLog, noteListingRow, offerIdText, psdIdOf, releaseListingBatch } from "@/lib/listing-log"
 import { peekListingWorkbench } from "../workbench/listing-workbench-store"
@@ -54,7 +53,7 @@ const ROW_CHUNK = 64
 
 /** Planning and each effect have separate bounded pools. Results retain input order. */
 export async function runRows(
-  request: PreparationRequest, verb: PreparationVerb,
+  request: WorkflowRowsActionRequest, verb: PreparationVerb,
   onRow?: (row: WorkflowOperationRowResult) => void,
   automationScope?: AutomationExecutionScope,
 ): Promise<WorkflowOperationRowResult[]> {
@@ -76,7 +75,6 @@ export async function runRows(
   listingLog({ module: "prepare", event: "batch.start", correlation: { batchId: listingBatchId }, fields: { verb, rows: request.row_ids.length } })
   const workspaceUuid = currentMediaWorkspaceUuid()
   const batch: RowBatch = { rows: new Set(request.row_ids), cancelled: new Set(), pinned: new Set(), verb }
-  batch.modelRouting = request.modelRouting ? { ...request.modelRouting } : undefined
   const claims = createClaimCoordinator()
   const workers = renderClient.createBatch()
   let renderHolders = verb === "slice" || verb === "prepare" ? request.row_ids.length : 0

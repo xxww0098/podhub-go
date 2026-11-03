@@ -8,13 +8,10 @@ import { isBusyRefusal, retryWhenBusy } from "@/api/busy-retry"
 import { api, request as apiRequest } from "@/api/client"
 import { route } from "@/api/routes"
 import type { components } from "@/api/schema"
-import type { WorkflowAiCandidate, WorkflowAiResult, WorkflowDraftValue } from "@/bindings/commands"
 import type { ListingRowView } from "@/bindings/listing-projection"
 import { withListingSchemaSync } from "@/bindings/http-listing"
 import { elapsedMs } from "@/lib/diag-log"
 import { cancelledError } from "@/lib/error-message"
-import { sharedListingCore, type OcrRetryClass } from "@/listing-core/client"
-import { ListingCoreError } from "@/listing-core/wasm"
 import type { RenderBytes } from "@/render/wasm"
 import { isOcrImageMissing, prepareOcrImage, stageClaimedOcrImage, type OcrUploadBudget, type PreparedOcrImage } from "./ocr-upload"
 import { recoverPaidOcr } from "./ocr-recovery"
@@ -34,10 +31,10 @@ import {
 } from "./execution-context"
 
 /**
- * The image preprocessing and OCR output contract, checked against the Job.
+ * The image preprocessing and artwork recognition contract, checked against the Job.
  * The purchased result carries the actual model selected by Cloud.
  */
-export const RECOGNITION_CONTRACT_VERSION = "browser-image-v1:ocr-fixed1-30-ai5-v2"
+export const RECOGNITION_CONTRACT_VERSION = "artwork-theme-v5"
 
 export const AI_CONCURRENCY = 8
 
@@ -48,95 +45,6 @@ export const OCR_FETCH_TIMEOUT_MS = 90_000
 
 // Cloud reconstructs the existing Chat Completions template internally after private verification.
 
-/**
- * Exact image-tag count, matching `listing_core::ocr_contract` and `docs/ocr.md`.
- * Invalid counts are refused without padding or truncation.
- */
-export const OCR_IMAGE_TAG_COUNT = 5
-/** The one retry identity a Job owns beside its original key. */
-export const OCR_RETRY_KEY_SUFFIX = ":retry"
-
-export function ocrPurchaseKey(idempotencyKey: string, attempt: number): string {
-  // A Job owns at most two purchase identities; every later attempt replays
-  // the same retry identity and is answered from the stored fact (`docs/ocr.md`).
-  return attempt > 1 ? `${idempotencyKey}${OCR_RETRY_KEY_SUFFIX}` : idempotencyKey
-}
-
-function draftValue(value: unknown): WorkflowDraftValue {
-  if (typeof value === "string") return { kind: "text", value }
-  if (typeof value === "boolean") return { kind: "boolean", value }
-  if (typeof value === "number") {
-    return Number.isInteger(value)
-      ? { kind: "integer", value }
-      : { kind: "decimal", value }
-  }
-  if (Array.isArray(value)) {
-    return { kind: "text_list", value: value.map((item) => JSON.stringify(item)) }
-  }
-  return { kind: "text", value: JSON.stringify(value) }
-}
-
-function candidateOf(raw: Record<string, unknown>): WorkflowAiCandidate {
-  const fieldKey = typeof raw.field_key === "string" ? raw.field_key : ""
-  const complexId = typeof raw.complex_id === "number" ? raw.complex_id : undefined
-  const itemId = typeof raw.item_id === "string" ? raw.item_id : undefined
-  return {
-    address:
-      complexId !== undefined && itemId !== undefined
-        ? { kind: "complex", group_key: String(complexId), item_id: itemId, field_key: fieldKey }
-        : { kind: "plain", field_key: fieldKey },
-    value: draftValue(raw.value),
-    source: "ai",
-    state: "proposed",
-  }
-}
-
-export class AiResultUnusable extends Error {
-  readonly code = "workflow_ai_result_unusable"
-  readonly contractKind: OcrRetryClass
-  constructor(reason: string, contractKind: OcrRetryClass = "blind", costMicrofen = 0) {
-    const billing = costMicrofen > 0 ? "本次识别已计费" : "本次未计费（预占已释放）"
-    super(`AI 识别未通过：${reason}。${billing}，结果未写入商品。请联系管理员更新系统提示词后重新准备。`)
-    this.name = "AiResultUnusable"
-    this.contractKind = contractKind
-  }
-}
-
-/**
- * One settled completion → the shared contract, in WASM, before settlement.
- *
- * Cloud runs the same `listing_core::ocr_contract::parse_completion` before
- * charging by default, and again at `ai/settle`. This call only decides the
- * one retry. The shared contract folds Latin
- * lookalikes, rewrites search tags into the required form, and classifies any
- * remaining violation.
- */
-export async function parseAiCompletion(
-  completion: unknown,
-  model: string,
-  costMicrofen = 0,
-): Promise<WorkflowAiResult> {
-  try {
-    const parsed = await sharedListingCore().parseOcrAnswer(completion)
-    const candidates = Array.isArray(parsed.candidates)
-      ? parsed.candidates.map((raw) => candidateOf((raw ?? {}) as Record<string, unknown>))
-      : []
-    return {
-      ru: parsed.ru,
-      tags: parsed.tags,
-      description: parsed.description,
-      model,
-      cost_microfen: costMicrofen,
-      candidates,
-    }
-  } catch (error) {
-    if (error instanceof ListingCoreError && error.code === "CORE_REFUSED") {
-      throw new AiResultUnusable(error.message, error.retryClass, costMicrofen)
-    }
-    throw error
-  }
-}
-
 export type PreparedAiInput = {
   jobId: string
   idempotencyKey: string
@@ -144,7 +52,7 @@ export type PreparedAiInput = {
   sourceSha256: string
   recognitionContractVersion: string
   body: PreparedOcrImage
-  upload?: { uploadTicket: string }
+  upload?: { upload_ticket: string }
   uploadBudget?: OcrUploadBudget
   release: () => void
 }
@@ -164,8 +72,6 @@ export async function runAiJob(
 ): Promise<ListingRowView | undefined> {
   const jobId = job.id
   const idempotencyKey = job.idempotency_key
-  const originalKey = ocrPurchaseKey(idempotencyKey, 1)
-  const retryKey = ocrPurchaseKey(idempotencyKey, 2)
   let requestId: string | undefined
   let listingRow: ListingRowView | undefined
   try {
@@ -222,23 +128,19 @@ export async function runAiJob(
       // restatement of `recognize_job_key`: the kernel minted it at `prepare`
       // under the revision it pinned, and re-deriving it here after a re-read
       // would file the same work under a second key — a second purchase.
-      ;({ requestId, listingRow } = await purchase(ocrPurchaseKey(idempotencyKey, job.attempt)))
+      ;({ requestId, listingRow } = await purchase(idempotencyKey))
     } catch (reason) {
       // A busy ceiling that Stop interrupted is not a failure of this row.
       if (isBusyRefusal(reason) && execution.stopped()) return undefined
       if (isBusyRefusal(reason)) throw reason
       if (isWritebackPending(reason)) {
         requestId = purchaseIdOf(reason) ?? requestId
-      } else if (isContractUnusable(reason) && mayRetryContract(reason) && ocrPurchaseKey(idempotencyKey, job.attempt) === originalKey) {
-        if (execution.stopped()) return undefined
-        ;({ requestId, listingRow } = await purchase(retryKey))
       } else if (shouldRecoverOcr(reason)) {
         const recovered = await recoverPaidOcr({
-          row, job, execution, originalKey: idempotencyKey, retryKey,
+          row, job, execution, originalKey: idempotencyKey,
           recognize: (key) => recognizeOnce(body, key, jobId, execution),
           settle: (requestId) => settlePaidRow(row, jobId, execution, requestId),
-          shouldRecover: shouldRecoverOcr, contractUnusable: isContractUnusable,
-          shouldRetryContract: mayRetryContract,
+          shouldRecover: shouldRecoverOcr,
           writebackPending: isWritebackPending, purchaseId: purchaseIdOf,
         })
         if (recovered === "paused") return undefined
@@ -259,7 +161,7 @@ export async function runAiJob(
     // Matching-epoch fail still closes `uncertain`. Skip only when nothing
     // was purchased — a lost local timer must not skip that write.
     if ((requestId || !lost) && !shouldRecoverOcr(reason)) {
-      await api.post(route("listingRowsByIdAiFail", { id: row.id }), { job_id: jobId, lease: execution.lease }, CONTROL_PLANE_TIMEOUT_MS).catch(() => undefined)
+      await api.post(route("listingRowsByIdAiFail", { id: row.id }), { job_id: jobId, lease: execution.lease, error_code: errorFields(reason).code }, CONTROL_PLANE_TIMEOUT_MS).catch(() => undefined)
     }
     if (execution.stopped()) return undefined
     throw reason
@@ -274,7 +176,7 @@ export async function runAiJob(
 export async function prepareAiInput(row: ListingRowView, job: PreparationJob, workers: RenderBatch, shouldStop: () => boolean): Promise<PreparedAiInput> {
   const pinned = jobPayload(job)
   const snapshot = (job.payload as { recognition_prompt?: { content?: string, fixed_tags?: unknown } }).recognition_prompt
-  if (!snapshot?.content?.trim()) throw new Error("识图作业缺少提示词快照，请重新准备")
+  if (!snapshot?.content?.trim()) throw new Error("识图作业缺少商品事实快照，请重新准备")
   const tagCount = Array.isArray(snapshot.fixed_tags)
     ? snapshot.fixed_tags.filter(tag => typeof tag === "string").length
     : 0
@@ -321,7 +223,7 @@ export async function prepareAiInput(row: ListingRowView, job: PreparationJob, w
  * (`recoverPaidOcr`) — never a same-key retry, an automatic new-key purchase,
  * or a row failure. Only the `docs/ocr.md` §3 contract retry changes the key.
  */
-async function recognizeOnce(body: unknown, idempotencyKey: string, jobId: string, execution: BrowserExecution): Promise<{ result: WorkflowAiResult, requestId: string, listingRow?: ListingRowView }> {
+async function recognizeOnce(body: unknown, idempotencyKey: string, jobId: string, execution: BrowserExecution): Promise<{ result: {model:string;cost_microfen:number}, requestId: string, listingRow?: ListingRowView }> {
   execution.assertCurrent()
   if (execution.stopped()) throw cancelledError()
   const headers = {
@@ -363,18 +265,9 @@ async function recognizeOnce(body: unknown, idempotencyKey: string, jobId: strin
   // Keep the nullable wire field explicit before handing it to the existing
   // narrowed view path.
   const listingRow = completion.listing_row as unknown as ListingRowView | null | undefined
-  try {
-    return {
-      requestId,
-      listingRow: listingRow ?? undefined,
-      // Cost is the charged split — what settlement actually took out of the
-      // balance — never the nominal total that includes absorbed relief.
-      result: await parseAiCompletion(completion.completion, billing.model, billing.charged_microfen),
-    }
-  } catch (reason) {
-    if (listingRow) return { requestId, listingRow, result: { ru: "", tags: [], description: "", model: billing.model, cost_microfen: billing.charged_microfen ?? 0, candidates: [] } }
-    throw Object.assign(reason as object, { requestId })
-  }
+  return { requestId, listingRow: listingRow ?? undefined,
+    result: { model: billing.model, cost_microfen: billing.charged_microfen ?? 0 } }
+
 }
 
 function isWritebackPending(reason: unknown): boolean {
@@ -384,14 +277,6 @@ function isWritebackPending(reason: unknown): boolean {
 export function isContractUnusable(reason: unknown): boolean {
   const code = errorFields(reason).code
   return code === "workflow_ai_result_unusable" || code === "cloud_ocr_contract_violation"
-}
-
-/** Language and tag-contract failures allow one correction; permanent refusals do not. */
-export function mayRetryContract(reason: unknown): boolean {
-  if (!isContractUnusable(reason)) return false
-  const kind = (reason as { contractKind?: OcrRetryClass }).contractKind
-  if (kind === "permanent") return false
-  return true
 }
 
 export function isOcrRecoveryPaused(reason: unknown): boolean {
@@ -408,6 +293,7 @@ function shouldRecoverOcr(reason: unknown): boolean {
   // uncertain shape, never fails the row or re-fires the purchase (04/D2).
   if (
     code === "cloud_unavailable"
+    || code === "cloud_bad_response"
     || code === "cloud_request_in_flight"
     || code === "cloud_upstream_unknown"
     || code === "cloud_request_unbilled_unknown"

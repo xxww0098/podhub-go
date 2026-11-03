@@ -1,4 +1,4 @@
-// Package adminrepo is the SQL for admin users, grants, leases, prices, and TOTP.
+// Package adminrepo is the SQL for admin users, grants, leases, and prices.
 package adminrepo
 
 import (

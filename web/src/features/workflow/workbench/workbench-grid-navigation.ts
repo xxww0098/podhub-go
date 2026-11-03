@@ -56,7 +56,6 @@ export function editableColumnForIndex(
     col?.id === "name" ||
     col?.id === "description" ||
     col?.id === "tags" ||
-    col?.id === "rich_content" ||
     col?.id === "model"
   ) {
     return col.id
@@ -156,7 +155,6 @@ export type WorkbenchColumnFields = {
   theme?: CategoryFieldView
   price?: CategoryFieldView
   oldPrice?: CategoryFieldView
-  richContent?: CategoryFieldView
   model?: CategoryFieldView
 }
 
@@ -248,10 +246,6 @@ export function readCellRawText(
         .filter(Boolean)
         .join("、")
     }
-    case "rich_content": {
-      if (!product?.draft || !fields.richContent) return ""
-      return typedCellRawText(product, fields.richContent)
-    }
     default:
       return column.label
   }
@@ -293,10 +287,10 @@ function isFieldColumn(
  * Plans a Fill Down (Cmd+D / 向下批量填充) operation from the currently active cell.
  *
  * Rules:
- * 1. Must be on an editable column: "name", "description", "tags", "rich_content",
+ * 1. Must be on an editable column: "name", "description", "tags", "model",
  *    and the three field columns "price" / "old_price" / "theme". A field-column
  *    plan also carries the schema field and the draft value to stamp — all
- *    four `tableInput` columns (price / old_price / theme / rich_content) keep
+ *    `tableInput` columns (price / old_price / theme) keep
  *    their hand-edited gate, so a seeded card-default copy is never stamped as
  *    a row's own answer. A category without that attribute cannot take the
  *    fill at all.

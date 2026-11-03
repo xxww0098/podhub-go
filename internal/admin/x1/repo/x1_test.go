@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/xxww0098/podhub-go/internal/platform/config"
 	"github.com/xxww0098/podhub-go/internal/platform/db"
 	"github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
+	"github.com/xxww0098/podhub-go/tests/testkit"
 )
 
 func TestSupplierX1RevisionsRLSAndLease(t *testing.T) {
@@ -67,14 +69,6 @@ func TestSupplierX1RevisionsRLSAndLease(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM public.ai_requests`).Scan(&aiBefore); err != nil {
 		t.Fatal(err)
 	}
-	report, err := rows.SyncPrompts(ctx, actorA, 20)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if report.Counts != (domain.SyncCounts{}) || len(report.Updated) != 0 || report.DetailsTruncated {
-		t.Fatalf("sync %+v", report)
-	}
-	assertApplied(t, ctx, pool, userA, "sc_supplier_prompts_synced", `{"updated":0,"upToDate":0,"unmatched":0,"failed":0}`)
 
 	emptyIn := decodeFixtureRow(t, "requests/post-row-staff-crud.json", nil)
 	empty, err := rows.CreateRow(ctx, actorA, src, emptyIn, "scp_x1_empty", "scs_x1_empty", "DB-X1-EMPTY", 30)
@@ -84,58 +78,77 @@ func TestSupplierX1RevisionsRLSAndLease(t *testing.T) {
 	if empty.Revision != 1 || empty.Published || empty.Archived || empty.PlatformPriceCents != nil || empty.Denial != "sku_not_published" || empty.OzonConfigDenial != "catalog_missing" || empty.Readiness != (domain.RowReadiness{}) {
 		t.Fatalf("empty row %+v", empty)
 	}
-	priced, err := rows.AdjustPrice(ctx, actorA, src, "scp_x1_empty", 2900, "首次定价", 40)
+	superActor := actorA
+	superActor.Role = "super_admin"
+	for _, publish := range []bool{true, false} {
+		if _, err := rows.SetPublished(ctx, actorA, src, empty.ProductID, publish, 20); err == nil {
+			t.Fatal("ordinary admin changed publication")
+		}
+	}
+	if _, err := rows.AdjustPrice(ctx, actorA, src, empty.ProductID, 2900, "denied", 20); err == nil {
+		t.Fatal("ordinary admin changed platform price")
+	}
+	if _, err := rows.SetPublished(ctx, superActor, src, empty.ProductID, true, 20); err == nil {
+		t.Fatal("published a row without a gallery")
+	} else if failure, ok := contract.AsFail(err); !ok || !slices.Contains(failure.Missing, "gallery") {
+		t.Fatalf("missing gallery not reported: %v", err)
+	}
+	priced, err := rows.AdjustPrice(ctx, superActor, src, "scp_x1_empty", 2900, "首次定价", 40)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if priced.Revision != 2 || priced.PlatformPriceCents == nil || *priced.PlatformPriceCents != 2900 || !priced.Readiness.PlatformPrice || priced.Denial != "sku_not_published" {
 		t.Fatalf("price %+v", priced)
 	}
+	if len(priced.PriceHistory) != 1 || priced.PriceHistory[0].PriceCents != 2900 || priced.PriceHistory[0].CreatedAtMS != 40 {
+		t.Fatalf("price history %+v", priced.PriceHistory)
+	}
 	assertApplied(t, ctx, pool, userA, "sc_source_row_price_adjusted", `{"sourceId":"`+src+`","skuId":"scs_x1_empty","priceCents":2900,"note":"首次定价"}`)
+	repriced, err := rows.AdjustPrice(ctx, superActor, src, "scp_x1_empty", 3100, "二次调价", 45)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repriced.PriceHistory) != 2 || repriced.PriceHistory[0].PriceCents != 3100 || repriced.PriceHistory[1].PriceCents != 2900 {
+		t.Fatalf("price history order %+v", repriced.PriceHistory)
+	}
 
 	brief := decodeFixtureRow(t, "requests/post-row-staff-crud.json", map[string]any{
 		"title": "马克杯", "platformCode": "DB-X1-BRIEF",
 		"descriptionCategoryId": json.Number("17033561"), "typeId": json.Number("91497"),
-		"promptContent": string(mustRepoRead(t, "brief-minimal.txt")),
+		"promptContent": string(mustRepoRead(t, "product-profile.json")),
 	})
 	created, err := rows.CreateRow(ctx, actorA, src, brief, "scp_x1_brief", "scs_x1_brief", "DB-X1-BRIEF", 50)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.Revision != 2 || created.DraftPromptRevision == nil || *created.DraftPromptRevision != 1 || created.PublishedPromptRev == nil || *created.PublishedPromptRev != 1 {
-		t.Fatalf("brief row rev %d draft %v published %v", created.Revision, created.DraftPromptRevision, created.PublishedPromptRev)
+	if created.Revision != 2 {
+		t.Fatalf("row revision %d", created.Revision)
 	}
-	var state string
-	var cfgRev int64
-	var pointer int32
-	if err := pool.QueryRow(ctx, `SELECT state, revision, published_revision FROM public.supplier_ozon_configs WHERE product_id = 'scp_x1_brief'`).Scan(&state, &cfgRev, &pointer); err != nil {
-		t.Fatal(err)
-	}
-	if state != "needs_reconfiguration" || cfgRev != 1 || pointer != 1 {
-		t.Fatalf("config %s %d %d", state, cfgRev, pointer)
+	var current string
+	if err := pool.QueryRow(ctx, `SELECT prompt_text FROM supplier_ozon_configs WHERE product_id='scp_x1_brief'`).Scan(&current); err != nil || current != created.PromptContent {
+		t.Fatalf("current profile %q %v", current, err)
 	}
 
-	patch, err := domain.DecodePromptPatch(mustRepoRead(t, "requests/patch-prompt-chernovik.json"))
+	patch := brief
+	patch.PromptName = "草稿"
+	patch.PromptFileName = "draft.md"
+	patch.PromptContent = `{"product_type_ru":"ЧЕРНОВИК Кружка","facts_ru":"керамическая 330 мл с принтом"}`
+	patch.FixedTags = []string{"#новый"}
+	expected := created.Revision
+	patch.ExpectedRevision = &expected
+	patched, err := rows.UpdateRow(ctx, actorA, src, "scp_x1_brief", patch, 60)
 	if err != nil {
 		t.Fatal(err)
 	}
-	patched, err := rows.PatchPrompt(ctx, actorA, "scp_x1_brief", patch, 60)
-	if err != nil {
-		t.Fatal(err)
+	if patched.Revision != 4 || !contains(patched.PromptContent, "ЧЕРНОВИК") {
+		t.Fatalf("updated profile %+v", patched)
 	}
-	if patched.Revision != 4 || patched.DraftPromptRevision == nil || *patched.DraftPromptRevision != 2 || patched.PublishedPromptRevision == nil || *patched.PublishedPromptRevision != 1 || !contains(patched.PromptContent, "ЧЕРНОВИК") {
-		t.Fatalf("patch %+v", patched)
+	var count int
+	if err := pool.QueryRow(ctx, `SELECT count(*),min(prompt_text) FROM supplier_ozon_configs WHERE product_id='scp_x1_brief'`).Scan(&count, &current); err != nil || count != 1 || current != patched.PromptContent {
+		t.Fatalf("single config %d %q %v", count, current, err)
 	}
-	diff, err := rows.PromptDiff(ctx, actorA, src, "scp_x1_brief", patched.DraftPromptRevision)
-	if err != nil || diff.PublishedRevision == nil || *diff.PublishedRevision != 1 || !diff.FixedTagsChanged {
-		t.Fatalf("diff %+v %v", diff, err)
-	}
-	published, err := rows.PublishPrompt(ctx, actorA, src, "scp_x1_brief", 2, 70)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if published.Revision != 2 || published.PublishedRevision != 2 || published.ProductRevision != 5 || published.ConfigRevision != 3 {
-		t.Fatalf("prompt publish %+v", published)
+	if _, err := rows.UpdateRow(ctx, actorA, src, "scp_x1_brief", patch, 61); err == nil {
+		t.Fatal("stale update must fail")
 	}
 
 	// The row surface lists drafts and shows the factory's cost, so Detail must
@@ -206,7 +219,7 @@ func TestSupplierX1RevisionsRLSAndLease(t *testing.T) {
 		VALUES ('admin', 'hono', 'x1-910201', 1, 1, 200, 1, 'x1')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rows.CreateRow(ctx, actorA, src, emptyIn, "scp_x1_leased", "scs_x1_leased", "DB-X1-LEASED", 100); err == nil || err.Error() != "平台货源写入未启用" {
+	if _, err := rows.CreateRow(ctx, actorA, src, emptyIn, "scp_x1_leased", "scs_x1_leased", "DB-X1-LEASED", 100); err == nil || err.Error() != "供应商商品库写入未启用" {
 		t.Fatalf("lease %v", err)
 	}
 	if _, err := pool.Exec(ctx, `DELETE FROM public.writer_leases WHERE holder_instance = 'x1-910201'`); err != nil {
@@ -299,7 +312,7 @@ func x1ParityDB(t testing.TB) (*pgxpool.Pool, context.Context) {
 	t.Helper()
 	dsn := os.Getenv("PODHUB_PARITY_DSN")
 	if dsn == "" {
-		if _, err := os.Stat("/var/run/docker.sock"); err != nil {
+		if !testkit.DockerAvailable() {
 			t.Skip("docker daemon is not available")
 		}
 	}
@@ -367,7 +380,7 @@ func dropX1(ctx context.Context, pool *pgxpool.Pool, source string, ids ...int64
 	_, _ = pool.Exec(ctx, `DELETE FROM public.sc_source_offers WHERE source_id = $1`, source)
 	_, _ = pool.Exec(ctx, `DELETE FROM public.sc_skus WHERE sku_id IN ('scs_x1_empty','scs_x1_brief','scs_x1_bare','scs_x1_leased')`)
 	_, _ = pool.Exec(ctx, `DELETE FROM public.sc_products WHERE source_id = $1`, source)
-	_, _ = pool.Exec(ctx, `DELETE FROM public.audit_logs WHERE user_id = ANY($1) OR entity_id IN ('supplier-prompts',$2)`, ids, source)
+	_, _ = pool.Exec(ctx, `DELETE FROM public.audit_logs WHERE user_id = ANY($1) OR entity_id = $2`, ids, source)
 	_, _ = pool.Exec(ctx, `DELETE FROM public.sc_sources WHERE source_id = $1`, source)
 	_, _ = pool.Exec(ctx, `DELETE FROM public.writer_leases WHERE holder_instance = 'x1-910201'`)
 	_, _ = pool.Exec(ctx, `DELETE FROM public.account_users WHERE id = ANY($1)`, ids)

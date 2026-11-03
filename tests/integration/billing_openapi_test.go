@@ -59,9 +59,8 @@ func TestBillingResponsesMatchOpenAPI(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO redeem_codes
-		    (code, plan, duration_days, used, created_at, updated_at, product, member_seats, ocr_credits, wallet_cents, tier)
-		VALUES ('WALLET96043', 'pro', 30, false, clock_timestamp(), clock_timestamp(),
-		        'wallet_credits', 0, 0, 100, NULL)`); err != nil {
+		    (code, used, created_at, updated_at, wallet_cents)
+		VALUES ('WALLET96043', false, clock_timestamp(), clock_timestamp(), 100)`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -72,7 +71,7 @@ func TestBillingResponsesMatchOpenAPI(t *testing.T) {
 	const stripeSecret = "whsec_spec"
 	router := func(p *access.Principal, payments billinghttp.Payments) http.Handler {
 		r := chi.NewRouter()
-		billinghttp.Register(r, billinghttp.Deps{Pool: pool, Access: access.FixedResolver{Principal: p}, Payments: payments})
+		billinghttp.Register(r, billinghttp.Deps{Billing: billingHTTPPort(), Pool: pool, Access: access.FixedResolver{Principal: p}, Payments: payments})
 		return r
 	}
 	paid := router(nil, billinghttp.Payments{
@@ -82,7 +81,7 @@ func TestBillingResponsesMatchOpenAPI(t *testing.T) {
 	})
 	closed := router(nil, billinghttp.Payments{})
 	owner := router(&access.Principal{UserID: user, OrgID: org, WorkspaceRole: "owner"}, billinghttp.Payments{})
-	admin := router(&access.Principal{UserID: user, OrgID: org, WorkspaceRole: "admin"}, billinghttp.Payments{})
+	manager := router(&access.Principal{UserID: user, OrgID: org, WorkspaceRole: "manager"}, billinghttp.Payments{})
 	viewer := router(&access.Principal{UserID: user, OrgID: org, WorkspaceRole: "viewer"}, billinghttp.Payments{})
 	anonymous := router(nil, billinghttp.Payments{})
 
@@ -130,7 +129,7 @@ func TestBillingResponsesMatchOpenAPI(t *testing.T) {
 		{name: "redeem used", handler: owner, method: "POST", path: "/api/redeem", ctype: "application/json", body: fmt.Sprintf(`{"code":"wallet96043","expected_workspace_uuid":%q}`, workspace), status: 400},
 		{name: "redeem bad body", handler: owner, method: "POST", path: "/api/redeem", ctype: "application/json", body: `{"x":1}`, status: 400},
 		{name: "redeem other workspace", handler: owner, method: "POST", path: "/api/redeem", ctype: "application/json", body: `{"code":"wallet96043","expected_workspace_uuid":"00000000-0000-0000-0000-000000000000"}`, status: 409},
-		{name: "redeem admin not owner", handler: admin, method: "POST", path: "/api/redeem", ctype: "application/json", body: `{"code":"x"}`, status: 403},
+		{name: "redeem manager not owner", handler: manager, method: "POST", path: "/api/redeem", ctype: "application/json", body: `{"code":"x"}`, status: 403},
 		{name: "redeem viewer", handler: viewer, method: "POST", path: "/api/redeem", ctype: "application/json", body: `{"code":"x"}`, status: 403},
 		{name: "redeem signed out", handler: anonymous, method: "POST", path: "/api/redeem", ctype: "application/json", body: `{"code":"x"}`, status: 401},
 	} {

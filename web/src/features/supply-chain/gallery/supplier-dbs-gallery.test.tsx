@@ -1,42 +1,35 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import test from "node:test"
-import { isValidElement, type ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 
-import type { CategoryTreeNodeView, OzonStoreView } from "@/bindings/commands"
+import type { CategoryTreeNodeView } from "@/bindings/commands"
 import type {
   SellerSupplierDbCatalogData,
   SellerSupplierDbRowData,
 } from "@/bindings/http-supplier-dbs-catalog"
 import { toast } from "@/components/ui/toast"
+import { row as supplierRow, propDef } from "@/features/supplier-dbs/supplier-dbs-screen-fixtures"
+import { SupplierRowInfoTab } from "@/features/supplier-dbs/supplier-row-info-tab"
 
 import { assertSellerSurfaceClean } from "../seller-leak"
+import { GalleryCard } from "./gallery-card"
 import { GalleryDetail } from "./gallery-detail"
 import {
   EMPTY_FILTERS,
   categoryFacets,
   categoryIndex,
+  propDefsFor,
   type CatalogListingIdentity,
   type GalleryFilters,
 } from "./gallery-model"
 import {
   importableQueueRows,
-  queueEntryById,
-  queueEntryFromRow,
   resetCollectionForTests,
-  setQueuedPsd,
-  setQueuedStore,
   toggleQueued,
-  type ListingQueueEntry,
 } from "./listing-queue"
 import { GalleryEmpty } from "./gallery-empty"
 import { submitQueueImport } from "./listing-queue-tray"
-import {
-  QueueBindings,
-  QueuePsdOptions,
-  QueueStoreOptions,
-} from "./queue-bindings"
 import { SupplierDbsGallery } from "./supplier-dbs-gallery"
 
 const DAY = 24 * 60 * 60 * 1000
@@ -66,8 +59,8 @@ function row(partial: Partial<SellerSupplierDbRowData>): SellerSupplierDbRowData
 
 const catalog: SellerSupplierDbCatalogData = {
   dbs: [
-    { sourceId: "src_1", name: "美国3C厂", country: "US", icon: "🏭" },
-    { sourceId: "src_2", name: "美东厂", country: "US", icon: "" },
+    { source_id: "src_1", name: "美国3C厂", country: "US", icon: "🏭" },
+    { source_id: "src_2", name: "美东厂", country: "US", icon: "" },
   ],
   propDefs: [
     {
@@ -172,12 +165,12 @@ function gallery(filters: GalleryFilters = EMPTY_FILTERS): string {
   )
 }
 
-test("平台货源筛选对所有用户开放；单库时控件让位", () => {
-  // 库筛选不再按角色收口：多库目录谁都看到「平台货源」下拉；
+test("平台商品库筛选对所有用户开放；单库时控件让位", () => {
+  // 库筛选不再按角色收口：多库目录谁都看到「平台商品库」下拉；
   // 单库目录没有筛选意义，控件不渲染。
   const html = gallery()
-  assert.match(html, /aria-label="平台货源"/)
-  assert.match(html, /全部平台货源/)
+  assert.match(html, /aria-label="平台商品库"/)
+  assert.match(html, /全部平台商品库/)
   assert.match(html, /aria-label="搜索商品"/)
   assert.match(html, /aria-label="类目"/)
   assert.match(html, /aria-label="排序"/)
@@ -193,17 +186,17 @@ test("平台货源筛选对所有用户开放；单库时控件让位", () => {
       onOpenShipping={() => {}}
     />,
   )
-  assert.doesNotMatch(singleDb, /aria-label="平台货源"/)
+  assert.doesNotMatch(singleDb, /aria-label="平台商品库"/)
 })
 
-test("toolbar row: search + 库/类目/价格区间/排序 + 刷新; 库 cascades 类目", () => {
+test("toolbar row: search + 库/类目/价格区间/排序; 库 cascades 类目", () => {
   const html = gallery()
   // 图 1：筛选收进工具条下拉，没有左栏。
   assert.doesNotMatch(html, /data-gallery-rail/)
   assert.match(html, /aria-label="搜索商品"/)
-  assert.match(html, /搜索商品名称、编号或标签/)
-  assert.match(html, /aria-label="平台货源"/)
-  assert.match(html, /全部平台货源/)
+  assert.match(html, /搜索名称、编号、标签或类目/)
+  assert.match(html, /aria-label="平台商品库"/)
+  assert.match(html, /全部平台商品库/)
   assert.match(html, /aria-label="类目"/)
   assert.match(html, /全部类目/)
   // 价格不是预制分段下拉，是卖家输入的最低/最高价。
@@ -213,8 +206,7 @@ test("toolbar row: search + 库/类目/价格区间/排序 + 刷新; 库 cascade
   assert.doesNotMatch(html, /全部价格/)
   assert.match(html, /aria-label="排序"/)
   assert.match(html, /最新上架/)
-  // 密度分段在标题行右端。
-  assert.match(html, /data-gallery-density-toggle/)
+  assert.doesNotMatch(html, /data-gallery-density-toggle|刷新货源/)
   // 画廊只有卖家面形态：管理入口在侧栏「列表管理」屏，不在工具行。
   assert.doesNotMatch(html, /列表管理/)
 
@@ -223,6 +215,12 @@ test("toolbar row: search + 库/类目/价格区间/排序 + 刷新; 库 cascade
   assert.match(scoped, /美东厂/)
   const scopedCats = categoryFacets(catalog.rows, "src_2", categoryIndex(tree))
   assert.deepEqual(scopedCats.map((item) => item.value), ["20000000"])
+})
+
+test("默认的「全部」档不算已选条件：没有 chip，也没有清空筛选", () => {
+  const resultbar = gallery().match(/data-gallery-resultbar[^]*?<\/p>\s*<\/div>/)?.[0] ?? ""
+  assert.match(resultbar, /共 3 件商品/)
+  assert.doesNotMatch(resultbar, /data-gallery-chip|已选条件|清空筛选/)
 })
 
 test("applied-filter chips + live count + 清空筛选", () => {
@@ -248,30 +246,139 @@ test("applied-filter chips + live count + 清空筛选", () => {
   assert.match(html, /aria-label="移除筛选 美国3C厂"/)
 })
 
-test("card wall renders count, 4:3 cover, price, badges + actions", () => {
+test("搜索类目名称时保留该类目的商品，结果数量同步", () => {
+  const html = gallery({ ...EMPTY_FILTERS, q: "日用品" })
+  assert.match(html, /为「日用品」找到 1 件商品/)
+  assert.match(html, /data-gallery-product="prd_1"/)
+  assert.doesNotMatch(html, /data-gallery-product="prd_2"|data-gallery-product="prd_3"/)
+})
+
+test("商品卡片展示封面、类目、价格和配送信息，海报是详情入口", () => {
   const html = gallery()
   // 结果带只剩 N 件商品：库名由工具条下拉与 chip 交代，不再有「全部商品」标题。
   assert.match(html, /data-gallery-resultbar/)
   assert.match(html, /共 3 件商品/)
   assert.doesNotMatch(html, /data-gallery-heading/)
   assert.doesNotMatch(html, /全部商品/)
-  assert.match(html, /data-gallery-wall/)
-  const card = html.match(/<li[^>]*data-gallery-card="prd_1"[^]*?<\/li>/)?.[0] ?? ""
+  assert.match(html, /data-gallery-grid/)
+  assert.doesNotMatch(html, /<table/)
+  const card = html.match(/<article[^>]*data-gallery-product="prd_1"[^]*?<\/article>/)?.[0] ?? ""
   assert.ok(card)
   assert.match(card, /圣诞帽/)
   assert.match(card, /¥16\.00/)
+  assert.match(card, /运费 ¥2\.00/)
   assert.match(card, /2–3 天发货/)
-  // 卡片徽标行：平台货源名 + 类目。卡面是瘦版——零售价/划线价（平台）/
-  // 上架入口/固定 tags/自定义属性全在详情页，隐藏属性永远不上卖家面。
-  assert.match(card, /美国3C厂/)
   assert.match(card, /节日用品/)
-  assert.match(card, /查看详情/)
-  assert.match(card, /加入清单/)
+  assert.match(card, /aria-label="查看 圣诞帽 的商品详情"[^]*?<img/)
+  assert.doesNotMatch(card, /查看详情|编号：|P001|美国3C厂|1 个规格/)
+  assert.match(card, /aria-label="加入上架清单 圣诞帽"/)
   assert.doesNotMatch(card, /hidden-value|>棉</)
   assert.doesNotMatch(html, /¥890\.00|采纳到店铺|>新</)
   assert.match(html, /loading="lazy"/)
-  assert.match(html, /aspect-\[4\/3\]/)
   assertSellerSurfaceClean(catalog, html)
+})
+
+test("商品卡片展示实际尺寸，材质和编号留在详情", () => {
+  const html = renderToStaticMarkup(
+    <GalleryCard
+      row={row({ size: "35×40cm", material: "棉" })}
+      categoryLabel=""
+      onOpen={() => {}}
+    />,
+  )
+  assert.match(html, /35×40cm/)
+  assert.match(html, /未分类/)
+  assert.doesNotMatch(html, /P000|>棉</)
+})
+
+test("商品信息的同一份资料进入商品行和详情，更新后各处同步", () => {
+  const propDefs = [
+    propDef("origin", "src_1", { name: "产地" }),
+    propDef("private", "src_1", { name: "内部属性", sellerVisible: false }),
+  ]
+  const initial = supplierRow("prd_info", "src_1", {
+    title: "数字油画", platformCode: "PAINT-01", size: "40×50 cm", material: "棉麻画布",
+    brand: "画材品牌", craft: "数字印刷", grossWeightG: 480,
+    platformPriceCents: 1250, shippingCostCents: 230, leadTime: "3–5 天",
+    packWidthMm: 420, packHeightMm: 520, packDepthMm: 30,
+    contents: "画布 ×1、画笔 ×3", description: "按编号填色。",
+    gallery: [{ url: "https://img.example/paint.jpg", w: 800, h: 1000 }],
+    productVideos: [{ url: "https://img.example/paint.mp4", coverUrl: "", durationMs: 1000 }],
+    props: { origin: "深圳", private: "不公开的资料" }, internalNote: "内部结算资料",
+  })
+  for (const product of [initial, { ...initial, title: "更新后的油画", size: "50×70 cm", platformPriceCents: 1890, shippingCostCents: 0 }]) {
+    const seller = { ...product, listable: true, listedAtMs: product.updatedAtMs }
+    const info = renderToStaticMarkup(<SupplierRowInfoTab row={product} propDefs={propDefs} onPatch={async () => true} onAdjustPrice={async () => true} />)
+    const detail = renderToStaticMarkup(<GalleryDetail row={seller} propDefs={propDefsFor({ propDefs }, product.sourceId)} categoryLabel="" onOpenListing={() => {}} onOpenShipping={() => {}} />)
+    for (const value of [product.title, product.platformCode, product.size, product.material, product.brand, product.craft, product.contents, product.description, "深圳"]) {
+      assert.ok(info.includes(value), `商品信息缺少 ${value}`)
+      assert.ok(detail.includes(value), `详情缺少 ${value}`)
+    }
+    assert.match(detail, /aria-label="毛重 480 g"/)
+    assert.match(detail, /aria-label="包装尺寸 420×520×30 mm"/)
+    assert.ok(detail.includes(product.gallery[0].url))
+    assert.ok(detail.includes(product.productVideos[0].url))
+    assert.doesNotMatch(detail, /不公开的资料|内部结算资料/)
+    const card = renderToStaticMarkup(<GalleryCard row={seller} categoryLabel="" onOpen={() => {}} />)
+    for (const value of [product.title, product.size, "3–5 天发货", product.gallery[0].url])
+      assert.ok(card.includes(value), `商品卡片缺少 ${value}`)
+    for (const value of [product.platformCode, product.material, product.brand, product.craft, "毛重 480 g"])
+      assert.ok(!card.includes(value), `商品卡片不应堆叠详情字段 ${value}`)
+    const price = `¥${(product.platformPriceCents! / 100).toFixed(2)}`
+    const shipping = `运费 ¥${(product.shippingCostCents! / 100).toFixed(2)}`
+    for (const html of [info, card, detail]) assert.ok(html.includes(price), price)
+    for (const html of [card, detail]) assert.ok(html.includes(shipping), shipping)
+    assert.doesNotMatch(card, /不公开的资料|内部结算资料/)
+  }
+})
+
+test("商品行区分零运费与未知运费，视频封面只在没有图集时使用", () => {
+  const render = (partial: Partial<SellerSupplierDbRowData>) => renderToStaticMarkup(<GalleryCard row={row(partial)} categoryLabel="" onOpen={() => {}} />)
+  for (const shippingCostCents of [null, 0]) assert.match(render({ shippingCostCents }), /运费 ¥0\.00/)
+  assert.match(render({}), /运费待定/)
+  assert.doesNotMatch(render({}), /运费 ¥0\.00/)
+  const productVideos = [{ url: "https://img.example/movie.mp4", coverUrl: "https://img.example/poster.jpg", durationMs: 1000 }]
+  assert.match(render({ productVideos }), /src="https:\/\/img\.example\/poster\.jpg"/)
+  const covered = render({ productVideos, gallery: [{ url: "https://img.example/cover.jpg", w: 800, h: 800 }] })
+  assert.match(covered, /src="https:\/\/img\.example\/cover\.jpg"/)
+  assert.doesNotMatch(covered, /poster\.jpg/)
+  assert.match(render({}), /data-gallery-cover="none"/)
+})
+
+test("商品行的清单动作反映清单状态；多规格商品提示先选择规格", () => {
+  const item = row({ productId: "prd_checkbox", title: "T 恤", variantGroup: "shirt" })
+  const renderCard = (variantCount = 1) => renderToStaticMarkup(
+    <GalleryCard row={item} categoryLabel="" onOpen={() => {}} variantCount={variantCount} />,
+  )
+  const action = (html: string) => html.match(/<button[^>]*data-gallery-queue[^>]*>/)?.[0] ?? ""
+  resetCollectionForTests()
+  // 海报上不摆选择框：清单动作只有卡里这一处，一个动作一个入口。
+  assert.doesNotMatch(renderCard(), /data-slot="checkbox"|data-gallery-overlay/)
+  assert.match(action(renderCard()), /aria-label="加入上架清单 T 恤"/)
+  assert.match(action(renderCard()), /aria-pressed="false"/)
+  toggleQueued(item)
+  assert.match(action(renderCard()), /aria-label="移出上架清单 T 恤"/)
+  assert.match(action(renderCard()), /aria-pressed="true"/)
+  resetCollectionForTests()
+  assert.match(action(renderCard(2)), /aria-label="选择规格后加入上架清单 T 恤"/)
+  assert.match(renderCard(2), />选规格<\/button>/)
+  toggleQueued({ ...item, productId: "prd_other_variant" })
+  const variants = renderCard(2)
+  assert.match(action(variants), /aria-label="查看已选规格 T 恤"/)
+  assert.match(variants, />已选规格<\/button>/)
+  resetCollectionForTests()
+})
+
+test("本页全选区分未选、部分选择与全部选择", () => {
+  resetCollectionForTests()
+  const selection = () => gallery().match(/<[^>]*aria-label="选择本页单规格商品"[^>]*>/)?.[0] ?? ""
+  assert.match(selection(), /aria-checked="false"/)
+  toggleQueued(catalog.rows[0])
+  assert.match(selection(), /aria-checked="mixed"/)
+  toggleQueued(catalog.rows[1])
+  toggleQueued(catalog.rows[2])
+  assert.match(selection(), /aria-checked="true"/)
+  resetCollectionForTests()
 })
 
 test("选中库时不再另起标题，库名由下拉与 chip 交代", () => {
@@ -303,105 +410,56 @@ test("empty states: 无货品 / 筛选无结果 / 搜索无结果", () => {
   assert.match(search, /data-gallery-empty="search"/)
   assert.match(search, /没有找到「不存在的词」相关的货品/)
   assert.match(search, /换个词试试/)
+  for (const html of [emptyCatalog, zero, search]) {
+    assert.match(html, /data-gallery-grid/)
+    assert.doesNotMatch(html, /<table|<article|选择本页单规格商品/)
+  }
 })
 
-test("detail page is read-only: carousel, video, seller_visible props, defaults", () => {
+test("详情只读展示商品事实与公开属性，媒体只包含真实图片和视频", () => {
   const detail = renderToStaticMarkup(
     <GalleryDetail
       row={catalog.rows[0]}
-      propDefs={catalog.propDefs.filter(
-        (def) => def.sourceId === "src_1" && def.sellerVisible,
-      )}
+      propDefs={catalog.propDefs}
       categoryLabel="节日用品"
       onOpenListing={() => {}}
       onOpenShipping={() => {}}
     />,
   )
   assert.match(detail, /data-gallery-detail/)
-  assert.match(detail, /P001/)
-  // 回程走壳层面包屑模块段：详情页内不再放返回钮。
-  assert.doesNotMatch(detail, /返回货架/)
-  assert.match(detail, /圣诞帽/)
-  // 舞台不再挂浮层计数（1 / 2）——当前项由左列缩略图高亮与底部分段 tab 交代。
-  assert.doesNotMatch(detail, /\d+ \/ \d+/)
-  assert.match(detail, /第 2 张/)
-  // 翻页钮挂在舞台层，沿整条媒体序列走（视频→图集→参数→尺码），不是图集独占。
+  for (const value of ["P001", "圣诞帽", "材质", "棉", "无品牌", "节日帽，保暖。", "¥16.00"]) {
+    assert.ok(detail.includes(value), `详情缺少 ${value}`)
+  }
+  assert.match(detail, /<video[^>]*controls/)
+  assert.match(detail, /aria-label="第 2 张"/)
   assert.match(detail, /aria-label="上一项"/)
   assert.match(detail, /aria-label="下一项"/)
-  assert.match(detail, /<video/)
-  assert.match(detail, /controls/)
-  // seller_visible prop renders through its option label; the hidden def
-  // never reaches the page even though the row still carries its value.
-  assert.match(detail, /材质/)
-  assert.match(detail, /棉/)
-  assert.doesNotMatch(detail, /内部选品备注|hidden-value|pp_2/)
-  assert.match(detail, /节日帽，保暖。/)
-  assert.match(detail, /无品牌/)
-  assert.match(detail, /¥16\.00/)
-  assert.match(detail, /建议零售 ¥890\.00/)
-  // 建议零售与平台价、划线价（平台）同为 ¥——卖家面不出现 ₽。
-  assert.match(detail, /平台划线价 ¥1290\.00/)
-  assert.doesNotMatch(detail, /₽/)
-  assert.match(detail, /data-gallery-open-listing/)
-  assert.match(detail, /进入上架/)
-  // 物流注入入口不在详情页（宿主在 catalog-screen 的 ProductShopView）。
-  assert.doesNotMatch(detail, /物流注入/)
-  assert.doesNotMatch(detail, /进店/)
-  assert.doesNotMatch(detail, /采纳到店铺/)
-  // 商品事实只读，规格使用单选控件。
+  assert.doesNotMatch(detail, /内部选品备注|hidden-value|pp_2|建议零售|平台划线价|¥890\.00|¥1290\.00|₽/)
+  assert.match(detail, /aria-label="商品参数"/)
+  assert.match(detail, /aria-label="商品资料"/)
+  assert.doesNotMatch(detail, /aria-label="媒体与参数"|role="tab"/)
+  assert.doesNotMatch(detail, /返回货架|物流注入|采纳到店铺/)
   assert.doesNotMatch(detail, /<textarea|<input(?![^>]*type="radio")/)
   assertSellerSurfaceClean(catalog, detail)
 })
 
-test("detail page follows the taobao shape: 价盘横幅/服务条/规格格/动作条", () => {
+test("图片与商品资料同时展示，价格和规格在上架动作之前", () => {
   const detail = renderToStaticMarkup(
-    <GalleryDetail
-      row={catalog.rows[0]}
-      propDefs={catalog.propDefs.filter(
-        (def) => def.sourceId === "src_1" && def.sellerVisible,
-      )}
-      categoryLabel="节日用品"
-      onOpenListing={() => {}}
-      onOpenShipping={() => {}}
-    />,
+    <GalleryDetail row={catalog.rows[0]} propDefs={catalog.propDefs} categoryLabel="节日用品" onOpenListing={() => {}} onOpenShipping={() => {}} />,
   )
-  // 不设店铺条/页眉行：库名/国别/货号都不占页顶一块（库名走画廊工具行，
-  // 货号落在「基本信息」）。
-  assert.doesNotMatch(detail, /美国3C厂/)
-  assert.doesNotMatch(detail, />US</)
-  assert.match(detail, /节日用品/)
-  // 价盘横幅：红橙渐变促销条上平台价大号等宽。
-  assert.match(detail, /data-gallery-price-banner/)
-  // 交付信息行只余上架日期——交期不再在此重复（只在基本信息表与参数面板）。
-  // 标题下不再重复「图集 N 张」——看图器 tab 已承担。
-  const deliveryStart = detail.indexOf('aria-label="交付信息"')
-  assert.ok(deliveryStart > -1, "交付信息行应渲染")
-  const deliveryBlock = detail.slice(
-    deliveryStart,
-    detail.indexOf("</ul>", deliveryStart),
-  )
-  assert.match(deliveryBlock, /上架 \d/)
-  assert.doesNotMatch(deliveryBlock, /天发货/)
+  const positions = ['aria-label="媒体浏览"', "data-gallery-price", 'aria-label="规格"', "data-gallery-queue-toggle", 'aria-label="商品资料"'].map((marker) => detail.indexOf(marker))
+  assert.ok(positions.every((index) => index >= 0))
+  assert.deepEqual(positions, [...positions].sort((a, b) => a - b))
+  assert.match(detail, /data-gallery-stage[^]*?<video/)
+  assert.match(detail, /aria-label="商品参数"[^]*?节日帽，保暖。/)
+  assert.match(detail, /运费 ¥2\.00/)
   assert.match(detail, /2–3 天发货/)
-  assert.doesNotMatch(detail, /图集 \d+ 张/)
-  // 规格选项格：select 属性的可选项全部铺 tile，行值（棉）高亮为已选。
-  assert.match(detail, /aria-label="材质"/)
-  assert.match(detail, /aria-current="true"[^>]*>\s*棉|>棉<\/li>/)
-  // 动作条：加入上架清单 / 进入上架 / 收藏。
-  assert.match(detail, /data-gallery-queue-toggle/)
+  assert.match(detail, /data-gallery-open-listing/)
+  assert.match(detail, /进入上架/)
   assert.match(detail, /加入上架清单/)
   assert.match(detail, /data-gallery-favorite/)
-  assert.match(detail, />收藏</)
-  // 竖排媒体缩略图列在主舞台左侧，舞台下挂分段 tab。
-  assert.match(detail, /aria-label="媒体列表"/)
-  assert.match(detail, /aria-label="第 2 张"/)
-  // 有媒体时不留占位钮——缩略图自己就是入口。
-  assert.doesNotMatch(detail, /data-gallery-media-rail="video"/)
-  assert.doesNotMatch(detail, /data-gallery-media-rail="gallery"/)
-  assert.match(detail, /data-gallery-media-tab="video"/)
-  assert.match(detail, /data-gallery-media-tab="gallery"/)
-  assert.match(detail, /data-gallery-media-tab="params"/)
-  assert.match(detail, /data-gallery-media-tab="size"/)
+  assert.match(detail, /aria-label="收藏"/)
+  assert.doesNotMatch(detail, /美国3C厂|源头供货|全场直发|data-gallery-price-banner/)
 })
 
 test("进入上架不依赖清单：当前规格可直接进入上架", () => {
@@ -433,15 +491,13 @@ test("进入上架不依赖清单：当前规格可直接进入上架", () => {
   const openListingTag = (html: string) =>
     html.match(/<button[^>]*data-gallery-open-listing[^>]*>/)?.[0] ?? ""
 
-  // 未入清单：进入上架可点，不挂门提示；规格格在场，提示词绑定正文也在
-  // （正文只说明绑定关系，不下发提示词内容）。
+  // 未入清单仍可进入上架；规格选择保持可见。
   const idle = render(variantA)
   assert.doesNotMatch(openListingTag(idle), /disabled=""/)
   assert.doesNotMatch(idle, /data-gallery-listing-gate/)
   assert.doesNotMatch(idle, /加入清单后即可进入上架/)
   assert.doesNotMatch(idle, /选好规格加入清单后/)
   assert.match(idle, /role="radiogroup" aria-label="规格"/)
-  assert.match(idle, /提示词随规格选择/)
 
   // 规格 A 入清单：A 的规格项带「已在清单」标记，进入上架仍放开。
   toggleQueued(variantA)
@@ -457,216 +513,88 @@ test("进入上架不依赖清单：当前规格可直接进入上架", () => {
   resetCollectionForTests()
 })
 
-test("单规格也在动作条前显示规格与提示词选择", () => {
+test("单规格也在动作条前显示规格选择", () => {
   const html = renderToStaticMarkup(
-    <GalleryDetail
-      row={row({ size: "" })}
-      propDefs={[]}
-      categoryLabel="手工"
-      onOpenListing={() => {}}
-      onOpenShipping={() => {}}
-    />,
+    <GalleryDetail row={row({ size: "" })} propDefs={[]} categoryLabel="手工" onOpenListing={() => {}} onOpenShipping={() => {}} />,
   )
-  assert.match(html, /规格与提示词/)
   assert.match(html, /type="radio"[^>]*aria-label="默认规格"[^>]*checked=""/)
-  assert.match(html, /提示词随规格选择/)
-  assert.ok(html.indexOf('aria-label="基本信息"') < html.indexOf('aria-label="规格"'))
   assert.ok(html.indexOf('aria-label="规格"') < html.indexOf('data-gallery-queue-toggle'))
 })
 
-test("动作条上方列基本信息：名称/编号/类目/品牌/属性 + 包装/交期", () => {
+test("补充资料保留已填事实与公开属性，不重复名称和编号，不铺空字段", () => {
   const detail = renderToStaticMarkup(
     <GalleryDetail
       row={row({
-        size: "40×50cm",
-        material: "帆布",
-        craft: "喷绘",
-        brand: "无品牌",
-        packWidthMm: 400,
-        packHeightMm: 300,
-        packDepthMm: 100,
-        packWeightG: 350,
-        contents: "画布 ×1、颜料 ×1套、画笔 ×3",
-        props: { pp_1: "cotton", pp_text: "深圳" },
+        title: "油画", size: "40×50cm", material: "帆布", craft: "喷绘", brand: "无品牌",
+        grossWeightG: 480, packWidthMm: 400, packHeightMm: 300, packDepthMm: 100,
+        packWeightG: 350, contents: "画布 ×1、画笔 ×3", props: { pp_1: "cotton", origin: "深圳", amount: 0, waterproof: false, size_attr: "长边 500 mm", other: "外库数据" },
       })}
       propDefs={[
-        ...catalog.propDefs.filter(
-          (def) => def.sourceId === "src_1" && def.sellerVisible,
-        ),
-        {
-          propId: "pp_text",
-          sourceId: "src_1",
-          name: "产地",
-          type: "text",
-          options: [],
-          position: 9,
-          sellerVisible: true,
-          createdAtMs: 0,
-          updatedAtMs: 0,
-        },
+        ...catalog.propDefs,
+        propDef("origin", "src_1", { name: "产地" }),
+        propDef("amount", "src_1", { name: "起订量", type: "number" }),
+        propDef("waterproof", "src_1", { name: "防水", type: "checkbox" }),
+        propDef("size_attr", "src_1", { name: "尺寸说明" }),
+        propDef("other", "src_2", { name: "外库属性" }),
       ]}
-      categoryLabel="节日用品"
+      categoryLabel="手工制作套件"
       typeLabel="数字油画"
       onOpenListing={() => {}}
       onOpenShipping={() => {}}
     />,
   )
-  // 基本信息表在动作条（加入上架清单）之前。
-  const specIndex = detail.indexOf('aria-label="基本信息"')
-  const ctaIndex = detail.indexOf("data-gallery-queue-toggle")
-  assert.ok(specIndex > -1, "基本信息块应渲染")
-  assert.ok(ctaIndex > specIndex, "基本信息块应在动作条上方")
-  const specBlock = detail.slice(specIndex, ctaIndex)
-  // 字段单与行页面「基本信息」区一致：名称打头，编号（等宽）/类目
-  // （L2 · 类型）/品牌/材质/工艺/毛重/包装/清单/交期——类目由类目坐标解析，
-  // 不经默认字段；规格/运费/上架不在此表（分归变体 radio、价盘横幅、
-  // 交付信息行）。
-  assert.match(specBlock, /aria-label="名称 货品"/)
-  assert.match(specBlock, /aria-label="编号 P000"/)
-  assert.match(specBlock, /aria-label="类目 节日用品 · 数字油画"/)
-  assert.match(specBlock, /aria-label="品牌 无品牌"/)
-  assert.match(specBlock, /aria-label="材质 帆布"/)
-  assert.match(specBlock, /aria-label="工艺 喷绘"/)
-  assert.match(specBlock, /aria-label="清单 画布 ×1、颜料 ×1套、画笔 ×3"/)
-  assert.match(specBlock, /aria-label="交期 2–3 天发货"/)
-  assert.doesNotMatch(specBlock, /aria-label="规格 |aria-label="运费 |aria-label="上架 /)
-  // 未铺选项格的文本属性进表；已铺格的 select 属性（材质 pp_1=棉）不重复，
-  // 选项格本身仍在上方。
-  assert.match(specBlock, /aria-label="产地 深圳"/)
-  assert.doesNotMatch(specBlock, /aria-label="材质 棉"/)
-  assert.match(detail, /aria-label="材质"[\s\S]*?aria-label="基本信息"/)
-  // 包装三边合并成一行（毫米），包装重量一行（克）。
-  assert.match(specBlock, /aria-label="包装尺寸 400×300×100 mm"/)
-  assert.match(specBlock, /aria-label="包装重量 350 g"/)
-  // 默认字段不进详情页：原始字段键不出现。
-  assert.doesNotMatch(specBlock.split("</dl>")[0]!, /attribute_\d+|width|dimension_unit/)
-  // 基本信息块整表常驻：裸行缺项不散行，统一「—」占位。
-  const bare = renderToStaticMarkup(
-    <GalleryDetail
-      row={row({ title: "裸行" })}
-      propDefs={[]}
-      categoryLabel="家居"
-      onOpenListing={() => {}}
-      onOpenShipping={() => {}}
-    />,
-  )
-  assert.match(bare, /aria-label="基本信息"/)
-  assert.match(bare, /aria-label="名称 裸行"/)
-  assert.match(bare, /aria-label="编号 P000"/)
-  assert.match(bare, /aria-label="类目 家居"/)
-  for (const label of [
-    "品牌",
-    "材质",
-    "工艺",
-    "毛重",
-    "包装尺寸",
-    "包装重量",
-  ]) {
-    assert.match(bare, new RegExp(`aria-label="${label} —"`), `裸行缺 ${label} 占位行`)
+  assert.ok(detail.indexOf("data-gallery-queue-toggle") < detail.indexOf('aria-label="商品资料"'))
+  for (const fact of ["品牌 无品牌", "材质 帆布", "工艺 喷绘", "毛重 480 g", "商品清单 画布 ×1、画笔 ×3", "包装尺寸 400×300×100 mm", "材质 棉", "产地 深圳", "起订量 0", "防水 否"]) {
+    assert.ok(detail.includes(`aria-label="${fact}"`), `补充资料缺少 ${fact}`)
   }
-  // 已定义但未填的 seller_visible 属性同样留占位行，不随值散行。
-  const bareProp = renderToStaticMarkup(
-    <GalleryDetail
-      row={row({ title: "裸行" })}
-      propDefs={[
-        {
-          propId: "pp_text",
-          sourceId: "src_1",
-          name: "产地",
-          type: "text",
-          options: [],
-          position: 9,
-          sellerVisible: true,
-          createdAtMs: 0,
-          updatedAtMs: 0,
-        },
-      ]}
-      categoryLabel="家居"
-      onOpenListing={() => {}}
-      onOpenShipping={() => {}}
-    />,
-  )
-  assert.match(bareProp, /aria-label="产地 —"/)
-})
-
-test("价盘横幅按内容收拢宽度：主价区 + metric 带，供货承诺竖向叠放贴右缘", () => {
-  const detail = renderToStaticMarkup(
-    <GalleryDetail
-      row={catalog.rows[0]}
-      propDefs={catalog.propDefs.filter(
-        (def) => def.sourceId === "src_1" && def.sellerVisible,
-      )}
-      categoryLabel="节日用品"
-      onOpenListing={() => {}}
-      onOpenShipping={() => {}}
-    />,
-  )
-  // 横幅按内容收拢宽度（w-fit），与下方收拢的 CTA 保持协调。
-  const banner = detail.match(/<div[^>]*data-gallery-price-banner[^>]*>/)?.[0] ?? ""
-  assert.match(banner, /w-fit/)
-  assert.match(banner, /from-\[#ff5a1f\]/)
-  // 主价区：平台价大号 + 同币种划线价锚点（aria-label 保留口径）。
-  assert.match(detail, /平台价[\s\S]*?font-mono text-2xl/)
-  assert.match(detail, /aria-label="平台划线价 ¥1290\.00"/)
-  // metric 带：建议零售（¥）与平台价分行，运费紧随其后，缺项整行不渲染。
-  assert.match(detail, /data-gallery-price-metrics=""/)
-  assert.match(detail, /建议零售 ¥890\.00/)
-  assert.match(detail, /运费 ¥2\.00/)
-  // 供货承诺两行叠放：源头供货在上方，全场直发在下方。
-  const promise = detail.match(/<div class="[^"]*"><span class="[^"]*">\s*源头供货/)?.[0] ?? ""
-  assert.match(promise, /flex-col/)
-  assert.match(promise, /items-end/)
-  assert.match(detail, /全场直发/)
-  // 空值或零值运费显示为 ¥0.00（零运费）。
-  const zeroShipping = renderToStaticMarkup(
-    <GalleryDetail
-      row={row({
-        title: "零运费货",
-        shippingCostCents: null,
-      })}
-      propDefs={[]}
-      categoryLabel="节日用品"
-      onOpenListing={() => {}}
-      onOpenShipping={() => {}}
-    />,
-  )
-  assert.match(zeroShipping, /data-gallery-price-metrics=""/)
-  assert.match(zeroShipping, /运费 ¥0\.00/)
-  // 无建议零售且未定义运费的行不留空的 metric 带。
+  assert.match(detail, /手工制作套件 · 数字油画/)
+  assert.doesNotMatch(detail, /外库数据|外库属性|包装重量|350 g|attribute_\d+/)
+  const params = detail.match(/aria-label="商品资料"[^]*?<\/dl>/)?.[0] ?? ""
+  for (const fact of ["类目 手工制作套件", "规格 40×50cm", "材质 帆布", "尺寸说明 长边 500 mm", "毛重 480 g", "包装尺寸 400×300×100 mm"])
+    assert.ok(params.includes(fact), `商品参数缺少 ${fact}`)
+  assert.equal((detail.match(/>油画</g) ?? []).length, 1)
+  assert.equal((detail.match(/>P000</g) ?? []).length, 1)
   const bare = renderToStaticMarkup(
-    <GalleryDetail
-      row={catalog.rows[1]}
-      propDefs={[]}
-      categoryLabel="家居"
-      onOpenListing={() => {}}
-      onOpenShipping={() => {}}
-    />,
+    <GalleryDetail row={row({ brand: "  " })} propDefs={[propDef("origin", "src_1", { name: "产地" })]} categoryLabel="家居" onOpenListing={() => {}} onOpenShipping={() => {}} />,
   )
-  assert.doesNotMatch(bare, /data-gallery-price-metrics/)
-  assert.match(bare, /data-gallery-price-banner/)
+  assert.match(bare, /aria-label="类目 家居"/)
+  assert.doesNotMatch(bare, /aria-label="品牌 |aria-label="材质 |aria-label="产地 /)
 })
 
-test("工具行尾收密度/收藏筛/上架清单入口；卡片带查看详情与加入清单", () => {
+test("详情区分零运费与未知运费，缺少价格或交期时明确显示未知", () => {
+  const render = (partial: Partial<SellerSupplierDbRowData>) => renderToStaticMarkup(
+    <GalleryDetail row={row(partial)} propDefs={[]} categoryLabel="" onOpenListing={() => {}} onOpenShipping={() => {}} />,
+  )
+  for (const shippingCostCents of [null, 0]) assert.match(render({ shippingCostCents }), /运费 ¥0\.00/)
+  const unknown = render({ platformPriceCents: null, leadTime: "" })
+  assert.match(unknown, /平台价 ¥—/)
+  assert.match(unknown, /运费待定/)
+  assert.match(unknown, /交期待定/)
+  assert.match(unknown, /类目待定/)
+  assert.doesNotMatch(unknown, /运费 ¥0\.00/)
+})
+
+test("工具行尾收收藏筛/上架清单入口；卡片海报打开详情并可加入清单", () => {
   const html = gallery()
   assert.match(html, /data-gallery-favonly/)
   assert.match(html, /只看收藏/)
   // 收藏筛在工具行里（搜索那一行），不单落一行、也不下沉到结果带。
-  const toolbar = html.match(/<div class="flex flex-wrap items-center gap-3"[^]*?data-gallery-resultbar/)?.[0]
+  const toolbar = html.match(/<div[^>]*data-slot="gallery-toolbar"[^]*?data-gallery-resultbar/)?.[0]
   assert.ok(toolbar)
+  assert.match(toolbar, /data-gallery-controls/)
   assert.match(toolbar, /data-gallery-favonly/)
-  // 清单入口是工具行尾的常态按钮（图 1），不再盖在卡墙角。
+  // 清单入口是工具行尾的常态按钮（图 1），不再盖在商品表格角。
   assert.match(toolbar, /data-gallery-queue-open/)
-  assert.match(toolbar, /上架清单/)
-  // 卡片：封面常驻收藏心 + 动作带的查看详情/加入清单。
-  assert.match(html, /data-gallery-card-favorite/)
+  assert.match(toolbar, /aria-label="上架清单"/)
+  // 海报打开详情，收藏与加入清单保留独立操作。
+  assert.match(html, /data-gallery-favorite/)
   assert.match(html, /aria-label="收藏 圣诞帽"/)
-  assert.match(html, /data-gallery-card-queue/)
+  assert.match(html, /data-gallery-queue/)
   assert.match(html, /aria-label="加入上架清单 圣诞帽"/)
-  assert.match(html, /查看详情/)
-  assert.match(html, /加入清单/)
+  assert.match(html, /aria-label="查看 圣诞帽 的商品详情"/)
 })
 
-test("卡片只切换清单成员；清单浮窗不再带平台选择", () => {
+test("商品行只切换清单成员；清单浮窗不再带平台选择", () => {
   const hatRow = catalog.rows[0]!
   toggleQueued(hatRow)
   const html = gallery()
@@ -675,131 +603,64 @@ test("卡片只切换清单成员；清单浮窗不再带平台选择", () => {
   resetCollectionForTests()
 })
 
-test("无媒体行详情页也走看图器：默认参数页，图集如空态、视频入口隐藏", () => {
+test("工具行清单非空就能重新核对商品，不被缓存可上架状态锁死", () => {
+  const directButton = () => gallery().match(/<button[^>]*data-gallery-queue-direct-submit[^>]*>/)?.[0] ?? ""
+  resetCollectionForTests()
+  assert.match(directButton(), /disabled=""/)
+  toggleQueued(catalog.rows[0]!)
+  assert.doesNotMatch(directButton(), /disabled=""/)
+  resetCollectionForTests()
+  toggleQueued(row({ productId: "prd_missing" }))
+  assert.doesNotMatch(directButton(), /disabled=""/)
+  resetCollectionForTests()
+})
+
+test("无媒体行显示简洁空态，不生成空的媒体入口", () => {
   const detail = renderToStaticMarkup(
-    <GalleryDetail
-      row={row({
-        title: "无图货",
-        gallery: [],
-        productVideos: [],
-        description: "",
-      })}
-      propDefs={[]}
-      categoryLabel="节日用品"
-      onOpenListing={() => {}}
-      onOpenShipping={() => {}}
-    />,
+    <GalleryDetail row={row({ title: "无图货" })} propDefs={[]} categoryLabel="节日用品" onOpenListing={() => {}} onOpenShipping={() => {}} />,
   )
-  assert.match(detail, /data-gallery-detail/)
   assert.match(detail, /暂无图片/)
-  assert.match(detail, /进入上架/)
   assert.match(detail, /无图货/)
-  // 看图器常驻：图集/参数/尺码 tab + 参数/尺码列尾钮都在；图集面板给空态。
-  assert.match(detail, /data-gallery-media-tab="gallery"/)
-  assert.match(detail, /data-gallery-media-tab="params"/)
-  assert.match(detail, /data-gallery-media-tab="size"/)
-  assert.match(detail, /data-gallery-media-rail="params"/)
-  // 无视频不设入口——左列占位钮与分段 tab 都不出「视频」，
-  // 不给空面板留门。（舞台的视频 tabpanel 面板壳仍常驻挂 hidden，
-  // 无入口时不可达。）
-  assert.doesNotMatch(detail, /data-gallery-media-rail="video"/)
-  assert.doesNotMatch(detail, /data-gallery-media-tab="video"/)
-  assert.doesNotMatch(detail, /视频 \d+ 条/)
-  // 图集空态仍保留占位钮——与视频位（随数据隐藏）是两种口径。
-  assert.match(detail, /data-gallery-media-rail="gallery"/)
-  const rail = detail.match(/aria-label="媒体列表"[^]*?<\/ul>/)?.[0] ?? ""
-  assert.ok(rail, "媒体列表 should be present")
-  const railOrder = ["gallery", "params", "size"].map((id) =>
-    rail.indexOf(`data-gallery-media-rail="${id}"`),
-  )
-  assert.deepEqual(
-    railOrder,
-    [...railOrder].sort((a, b) => a - b),
-    "rail keeps 图集/参数/尺码 order",
-  )
-  assert.ok(railOrder.every((index) => index >= 0), "rail entries present")
-  assert.doesNotMatch(detail, /<video/)
-  // 翻页序列与媒体列一一对位：空图集占位仍在列，翻页钮始终在场。
-  assert.match(detail, /aria-label="上一项"/)
+  assert.match(detail, /进入上架/)
+  assert.doesNotMatch(detail, /<video|媒体列表|上一项|下一项/)
+  assert.doesNotMatch(detail, /role="tab"/)
+  assert.match(detail, /aria-label="类目 节日用品"/)
+  assert.match(detail, /aria-label="规格 默认规格"/)
   assertSellerSurfaceClean(catalog, detail)
 })
 
-test("无视频有图集：视频 tab 与列位隐藏，图集照常", () => {
-  const detail = renderToStaticMarkup(
-    <GalleryDetail
-      row={row({
-        title: "只有图的货",
-        gallery: [
-          { url: "https://img.example/1.jpg", w: 800, h: 800 },
-          { url: "https://img.example/2.jpg", w: 800, h: 800 },
-        ],
-        productVideos: [],
-      })}
-      propDefs={[]}
-      categoryLabel="节日用品"
-      onOpenListing={() => {}}
-      onOpenShipping={() => {}}
-    />,
+test("单张图片也保留缩略图导航，多张图片提供翻页", () => {
+  const render = (gallery: SellerSupplierDbRowData["gallery"]) => renderToStaticMarkup(
+    <GalleryDetail row={row({ gallery })} propDefs={[]} categoryLabel="节日用品" onOpenListing={() => {}} onOpenShipping={() => {}} />,
   )
-  // 有图集时默认 tab 是图集；视频入口两个位置都不出现。
-  assert.doesNotMatch(detail, /data-gallery-media-tab="video"/)
-  assert.doesNotMatch(detail, /data-gallery-media-rail="video"/)
-  assert.doesNotMatch(detail, /data-gallery-media-rail="gallery"/)
-  assert.match(detail, /data-gallery-media-tab="gallery"/)
-  assert.match(detail, /aria-label="第 1 张"/)
-  assert.doesNotMatch(detail, /<video/)
+  const image = { url: "https://img.example/1.jpg", w: 800, h: 800 }
+  const single = render([image])
+  assert.match(single, /alt="货品 图片 1"/)
+  assert.match(single, /aria-label="媒体列表"/)
+  assert.match(single, /aria-label="第 1 张" aria-current="true"/)
+  assert.doesNotMatch(single, /上一项|下一项|<video/)
+  const multiple = render([image, { ...image, url: "https://img.example/2.jpg" }])
+  assert.match(multiple, /aria-label="媒体列表"/)
+  assert.match(multiple, /aria-label="第 1 张" aria-current="true"/)
+  assert.match(multiple, /aria-label="第 2 张"/)
+  assert.match(multiple, /aria-label="下一项"/)
+  assert.doesNotMatch(multiple, /<video/)
 })
 
-test("行级包装尺寸/重量进尺码卡，画廊不为默认字段另设页底区", () => {
-  const detail = renderToStaticMarkup(
-    <GalleryDetail
-      row={row({
-        gallery: [],
-        productVideos: [],
-        size: "40×50cm",
-        grossWeightG: 480,
-        packWidthMm: 400,
-        packHeightMm: 300,
-        packDepthMm: 100,
-        packWeightG: 350,
-      })}
-      propDefs={[]}
-      categoryLabel="节日用品"
-      onOpenListing={() => {}}
-      onOpenShipping={() => {}}
-    />,
+test("包装三边齐全合并展示，缺边只显示已知尺寸，毛重保持独立", () => {
+  const render = (partial: Partial<SellerSupplierDbRowData>) => renderToStaticMarkup(
+    <GalleryDetail row={row(partial)} propDefs={[]} categoryLabel="节日用品" onOpenListing={() => {}} onOpenShipping={() => {}} />,
   )
-  const sizePanel = detail.match(/role="tabpanel" aria-label="尺码"[^]*?<\/dl>/)?.[0]
-  assert.ok(sizePanel, "尺码面板应列事实而不是空态")
-  assert.doesNotMatch(sizePanel, /暂无尺码信息/)
-  const labels = ["规格 40×50cm", "毛重 480 g", "包装尺寸 400×300×100 mm", "包装重量 350 g"]
-  for (const label of labels) {
-    assert.ok(sizePanel.includes(`aria-label="${label}"`), `尺码面板缺 ${label}`)
-  }
-  const order = labels.map((label) => sizePanel.indexOf(`aria-label="${label}"`))
-  assert.deepEqual(order, [...order].sort((a, b) => a - b), "尺码卡按 规格/毛重/包装序")
-
-  // 缺一条边时按已填的边逐条呈现，不凑「包装尺寸」行。
-  const partial = renderToStaticMarkup(
-    <GalleryDetail
-      row={row({ packWidthMm: 400 })}
-      propDefs={[]}
-      categoryLabel="节日用品"
-      onOpenListing={() => {}}
-      onOpenShipping={() => {}}
-    />,
-  )
-  const partialPanel = partial.match(/role="tabpanel" aria-label="尺码"[^]*?<\/dl>/)?.[0]
-  assert.ok(partialPanel)
-  assert.match(partialPanel, /aria-label="包装宽度 400 mm"/)
-  assert.doesNotMatch(partialPanel, /aria-label="包装尺寸 \d/)
-
-  // 不再有页底「默认字段」账目区——画廊详情不读默认字段。
-  assert.doesNotMatch(detail, /aria-label="默认字段"/)
-  assert.doesNotMatch(detail, /默认字段（\d+）/)
+  const complete = render({ grossWeightG: 480, packWidthMm: 400, packHeightMm: 300, packDepthMm: 100, packWeightG: 350 })
+  assert.match(complete, /aria-label="毛重 480 g"/)
+  assert.match(complete, /aria-label="包装尺寸 400×300×100 mm"/)
+  assert.doesNotMatch(complete, /包装重量|350 g|默认字段/)
+  const partial = render({ packWidthMm: 400 })
+  assert.match(partial, /aria-label="包装宽度 400 mm"/)
+  assert.doesNotMatch(partial, /aria-label="包装尺寸|包装高度|包装深度/)
 })
 
-test("打开的行以详情页整页呈现，卡墙让位而不是盖抽屉", () => {
+test("打开的商品以详情页整页呈现，商品卡片让位而不是盖抽屉", () => {
   const html = renderToStaticMarkup(
     <SupplierDbsGallery
       catalog={catalog}
@@ -814,8 +675,8 @@ test("打开的行以详情页整页呈现，卡墙让位而不是盖抽屉", ()
   )
   assert.match(html, /data-gallery-detail/)
   assert.match(html, /P001/)
-  // 详情页是页面不是浮层：工具条、结果带与卡墙全部让位。
-  assert.doesNotMatch(html, /data-gallery-wall|data-gallery-resultbar|aria-label="搜索商品"/)
+  // 详情页是页面不是浮层：工具条、结果带与商品表格全部让位。
+  assert.doesNotMatch(html, /data-gallery-grid|data-gallery-resultbar|aria-label="搜索商品"/)
 })
 
 test("pager is a minimal corner control; the count stands on its own", () => {
@@ -843,217 +704,6 @@ test("pager is a minimal corner control; the count stands on its own", () => {
 })
 
 
-/** 工作区可用店铺（cloud uuid 口径）——清单行的目标店铺单选就列这一份。 */
-const queueStores = [
-  { id: "store-moscow", label: "莫斯科一店" },
-  { id: "store-spb", label: "圣彼得堡店" },
-] as OzonStoreView[]
-
-function queueEntry(overrides: Partial<ListingQueueEntry> = {}): ListingQueueEntry {
-  return { ...queueEntryFromRow(catalog.rows[0]!), ...overrides }
-}
-
-/** 触发钮连同内部回显的标记段：从 data 标记切到该钮闭合。 */
-function controlMarkup(html: string, marker: string): string {
-  const start = html.indexOf(marker)
-  if (start < 0) return ""
-  const end = html.indexOf("</button>", start)
-  return end < 0 ? html.slice(start) : html.slice(start, end)
-}
-
-/** 某个单选/动作项的起始标签（从锚点往后找），用来看选中与禁用态。 */
-function itemTag(html: string, label: string, after = ""): string {
-  const from = after ? html.indexOf(after) : 0
-  const at = html.indexOf(label, from < 0 ? 0 : from)
-  if (at < 0) return ""
-  const start = html.lastIndexOf("<button", at)
-  const end = html.indexOf(">", start)
-  return start < 0 || end < 0 ? "" : html.slice(start, end + 1)
-}
-
-/** 元素里的纯文本（穿过 span/svg 之类的壳）。 */
-function elementText(value: ReactNode): string {
-  if (typeof value === "string" || typeof value === "number") return String(value)
-  if (Array.isArray(value)) return value.map(elementText).join("")
-  if (isValidElement(value)) {
-    return elementText((value.props as { children?: ReactNode }).children)
-  }
-  return ""
-}
-
-/**
- * 浮层内容走 portal，SSR 读不到、bun test 又没有 DOM；所以直接调用无 hook 的
- * 选项组件拿元素树，点它的按钮——同一条 onClick 闭包，测的是真实写回。
- */
-function tapButton(node: ReactNode, label: string): void {
-  if (Array.isArray(node)) {
-    for (const child of node) tapButton(child, label)
-    return
-  }
-  if (!isValidElement(node)) return
-  const props = node.props as { children?: ReactNode; onClick?: () => void }
-  if (node.type === "button" && elementText(props.children).trim() === label) {
-    props.onClick?.()
-    return
-  }
-  tapButton(props.children, label)
-}
-
-test("清单行就地绑目标店铺与 PSD：虚线待绑、绑上回显、清除回退", () => {
-  resetCollectionForTests()
-  const hat = catalog.rows[0]!
-  toggleQueued(hat)
-  // 从模块清单取条目渲染：和浮窗读的是同一份快照。
-  const render = () =>
-    renderToStaticMarkup(
-      <QueueBindings
-        entry={queueEntryById(hat.productId)!}
-        available
-        stores={queueStores}
-      />,
-    )
-
-  // 未绑：两个虚线触发钮。
-  const idle = render()
-  assert.match(idle, /data-gallery-queue-bindings="prd_1"/)
-  const storeIdle = controlMarkup(idle, 'data-gallery-queue-store=""')
-  assert.match(storeIdle, /aria-label="绑定店铺 圣诞帽"/)
-  assert.match(storeIdle, /绑定店铺/)
-  assert.doesNotMatch(storeIdle, /目标店铺：/)
-  assert.match(storeIdle, /border-dashed/)
-  const psdIdle = controlMarkup(idle, 'data-gallery-queue-psd=""')
-  assert.match(psdIdle, /aria-label="绑定 PSD 圣诞帽"/)
-  assert.match(psdIdle, /border-dashed/)
-
-  // 绑上：触发钮换成店铺徽标与等宽文件名（都能在浮窗里改回来）。
-  setQueuedStore(hat.productId, "store-spb")
-  setQueuedPsd(hat.productId, { sha256: "d".repeat(64), fileName: "油画模板.psd" })
-  const bound = render()
-  const storeBound = controlMarkup(bound, 'data-gallery-queue-store=""')
-  assert.match(storeBound, /aria-label="目标店铺：圣彼得堡店"/)
-  assert.match(storeBound, />圣彼得堡店</)
-  assert.doesNotMatch(storeBound, /border-dashed/)
-  const psdBound = controlMarkup(bound, 'data-gallery-queue-psd=""')
-  assert.match(psdBound, /aria-label="PSD 模板：油画模板\.psd"/)
-  assert.match(psdBound, /font-mono[^"]*">油画模板\.psd/)
-  assert.doesNotMatch(psdBound, /border-dashed/)
-
-  // 清除：字段摘掉，行回到待绑形态。
-  setQueuedStore(hat.productId, "")
-  setQueuedPsd(hat.productId, null)
-  const cleared = render()
-  const storeCleared = controlMarkup(cleared, 'data-gallery-queue-store=""')
-  assert.match(storeCleared, /aria-label="绑定店铺 圣诞帽"/)
-  assert.doesNotMatch(storeCleared, /圣彼得堡店/)
-  const psdCleared = controlMarkup(cleared, 'data-gallery-queue-psd=""')
-  assert.match(psdCleared, /aria-label="绑定 PSD 圣诞帽"/)
-  assert.doesNotMatch(psdCleared, /油画模板\.psd/)
-  resetCollectionForTests()
-})
-
-test("下架的行不给绑定控件：绑定落不了卡，就别攒草稿", () => {
-  // 行不在最新货盘里（已下架）：整组控件不渲染。
-  assert.equal(
-    renderToStaticMarkup(
-      <QueueBindings entry={queueEntry()} available={false} stores={queueStores} />,
-    ),
-    "",
-  )
-  assert.match(
-    renderToStaticMarkup(
-      <QueueBindings entry={queueEntry()} available stores={queueStores} />,
-    ),
-    /data-gallery-queue-bindings="prd_1"/,
-  )
-})
-
-test("店铺浮层是「不绑定」+ 工作区店铺的单选；没有店铺时给引导出口", () => {
-  const radios = 'role="radiogroup"'
-  const list = renderToStaticMarkup(
-    <QueueStoreOptions entry={queueEntry()} stores={queueStores} />,
-  )
-  assert.match(list, /role="radiogroup" aria-label="目标店铺"/)
-  assert.match(list, /不绑定/)
-  assert.match(itemTag(list, "不绑定", radios), /aria-checked="true"/)
-  assert.match(itemTag(list, "莫斯科一店", radios), /aria-checked="false"/)
-  assert.match(itemTag(list, "圣彼得堡店", radios), /aria-checked="false"/)
-
-  // 已绑：那一项是选中的，其余（含「不绑定」）不是。
-  const boundList = renderToStaticMarkup(
-    <QueueStoreOptions entry={queueEntry({ storeId: "store-spb" })} stores={queueStores} />,
-  )
-  assert.match(itemTag(boundList, "圣彼得堡店", radios), /aria-checked="true"/)
-  assert.match(itemTag(boundList, "莫斯科一店", radios), /aria-checked="false"/)
-  assert.match(itemTag(boundList, "不绑定", radios), /aria-checked="false"/)
-
-  // 没有可用店铺：给出「去店铺页添加」；没有出口回调就不画走不动的按钮。
-  const guided = renderToStaticMarkup(
-    <QueueStoreOptions entry={queueEntry()} stores={[]} onOpenStores={() => {}} />,
-  )
-  assert.match(guided, /还没有可用店铺/)
-  assert.match(guided, /去店铺页添加/)
-  assert.doesNotMatch(
-    renderToStaticMarkup(<QueueStoreOptions entry={queueEntry()} stores={[]} />),
-    /去店铺页添加/,
-  )
-})
-
-test("点单选/清除钮就地写回清单条目", () => {
-  resetCollectionForTests()
-  const hat = catalog.rows[0]!
-  toggleQueued(hat)
-
-  const openStoreList = () =>
-    QueueStoreOptions({ entry: queueEntryById(hat.productId)!, stores: queueStores })
-  tapButton(openStoreList(), "圣彼得堡店")
-  assert.equal(queueEntryById(hat.productId)?.storeId, "store-spb")
-  tapButton(openStoreList(), "莫斯科一店") // 换绑覆盖前值
-  assert.equal(queueEntryById(hat.productId)?.storeId, "store-moscow")
-  tapButton(openStoreList(), "不绑定")
-  assert.equal("storeId" in (queueEntryById(hat.productId) ?? {}), false)
-
-  // 「选择 PSD 模板…」交给触发钮的选文件回调；这里只钉住接线。
-  let picked = 0
-  tapButton(
-    QueuePsdOptions({ entry: queueEntryById(hat.productId)!, onPick: () => { picked += 1 } }),
-    "选择 PSD 模板…",
-  )
-  assert.equal(picked, 1)
-
-  setQueuedPsd(hat.productId, { sha256: "d".repeat(64), fileName: "油画模板.psd" })
-  tapButton(
-    QueuePsdOptions({ entry: queueEntryById(hat.productId)!, onPick: () => {} }),
-    "恢复商库默认（清除）",
-  )
-  assert.equal(queueEntryById(hat.productId)?.psd, undefined)
-  resetCollectionForTests()
-})
-
-test("PSD 浮层给「选择 PSD 模板…」与「恢复商库默认（清除）」", () => {
-  const unbound = renderToStaticMarkup(
-    <QueuePsdOptions entry={queueEntry()} onPick={() => {}} />,
-  )
-  assert.match(unbound, /选择 PSD 模板…/)
-  assert.match(unbound, /恢复商库默认（清除）/)
-  // 没绑过就没有可清的覆盖，清除项置灰；选文件进行中也不许重复点。
-  assert.match(itemTag(unbound, "恢复商库默认（清除）"), /disabled=""/)
-  assert.match(
-    itemTag(
-      renderToStaticMarkup(<QueuePsdOptions entry={queueEntry()} picking onPick={() => {}} />),
-      "选择 PSD 模板…",
-    ),
-    /disabled=""/,
-  )
-
-  const bound = renderToStaticMarkup(
-    <QueuePsdOptions
-      entry={queueEntry({ psd: { sha256: "abc", fileName: "海报.psd" } })}
-      onPick={() => {}}
-    />,
-  )
-  assert.doesNotMatch(itemTag(bound, "恢复商库默认（清除）"), /disabled=""/)
-})
-
 test("GalleryEmpty standalone kinds carry their next step", () => {
   const zero = renderToStaticMarkup(
     <GalleryEmpty kind="zero" query="" onClear={() => {}} />,
@@ -1067,7 +717,7 @@ test("GalleryEmpty standalone kinds carry their next step", () => {
 
 // ---------- 前置门：暂不可上架的行 ----------
 
-test("暂不可上架的详情行：两键禁用 + 一行说明，收藏不受影响", () => {
+test("暂不可上架的详情行仍可加入或移出清单，进入上架给出原因", () => {
   const blocked = renderToStaticMarkup(
     <GalleryDetail
       row={row({
@@ -1086,17 +736,16 @@ test("暂不可上架的详情行：两键禁用 + 一行说明，收藏不受�
     html.match(new RegExp(`<button[^>]*${marker}[^>]*>`))?.[0] ?? ""
   const queueToggle = tag(blocked, "data-gallery-queue-toggle")
   const openListing = tag(blocked, "data-gallery-open-listing")
-  // 两枚自绘 button：aria-disabled + data-listability-blocked + 置灰光标。
-  for (const button of [queueToggle, openListing]) {
-    assert.match(button, /aria-disabled="true"/)
-    assert.match(button, /data-listability-blocked/)
-    assert.match(button, /cursor-not-allowed/)
-    assert.match(button, /opacity-45/)
-  }
+  assert.doesNotMatch(queueToggle, /disabled=""|aria-disabled="true"/)
+  assert.match(openListing, /disabled=""/)
+  assert.match(openListing, /aria-disabled="true"/)
+  assert.match(openListing, /data-listability-blocked/)
+  assert.match(openListing, /cursor-not-allowed/)
+  assert.match(openListing, /opacity-45/)
   // 说明是陈述句——常驻 <p>，不是告警也不写错误 DOM。
   assert.match(
     blocked,
-    /data-listability-note[^>]*>平台正在复核该商品的 Ozon 配置，暂不可上架/,
+    /data-listability-note[^>]*>商品类目信息已过期，需平台更新后再上架/,
   )
   assert.doesNotMatch(blocked, /role="alert"/)
   // 收藏不属上架动作：不受影响、不带标记（Button 基础类自带 aria-disabled:
@@ -1125,23 +774,22 @@ test("暂不可上架的详情行：两键禁用 + 一行说明，收藏不受�
       onOpenShipping={() => {}}
     />,
   )
-  assert.doesNotMatch(clear, /data-listability-blocked|data-listability-note|aria-disabled=/)
+  assert.doesNotMatch(clear, /data-listability-blocked|data-listability-note/)
+  for (const marker of ["data-gallery-queue-toggle", "data-gallery-open-listing"]) {
+    assert.doesNotMatch(tag(clear, marker), /disabled=""|aria-disabled="true"/)
+  }
 })
 
-test("详情页两枚自绘 button 的 onClick 都带守卫——SSR 不派发事件", () => {
+test("详情页上架动作保留点击守卫", () => {
   const source = readFileSync(
     new URL("./gallery-detail.tsx", import.meta.url),
     "utf8",
   )
-  // 守卫先于动作：listingBlocked 时 toggleQueued / onOpenListing 都不触发。
+  // 清单允许暂存待处理商品，实际导入仍保留守卫。
   assert.equal(
     source.match(/if \(listingBlocked\) return/g)?.length,
-    2,
-    "加入上架清单与进入上架两键都须带守卫",
-  )
-  assert.match(
-    source,
-    /if \(listingBlocked\) return\s*toggleQueued\(row\)/,
+    1,
+    "进入上架须保留守卫",
   )
   assert.match(
     source,
@@ -1149,7 +797,7 @@ test("详情页两枚自绘 button 的 onClick 都带守卫——SSR 不派发�
   )
 })
 
-test("暂不可上架的卡整卡置灰并带分类徽标，收藏与清单角标照常在", () => {
+test("暂不可上架的卡保留清晰的状态与可用的收藏、清单操作", () => {
   resetCollectionForTests()
   const html = renderToStaticMarkup(
     <SupplierDbsGallery
@@ -1179,25 +827,25 @@ test("暂不可上架的卡整卡置灰并带分类徽标，收藏与清单角�
       onOpenShipping={() => {}}
     />,
   )
-  // 置灰：两张受阻卡的 <li> 带 opacity-60。
   for (const id of ["prd_bl", "prd_dl"]) {
-    const card = html.match(new RegExp(`<li[^>]*data-gallery-card="${id}"[^>]*>`))?.[0] ?? ""
-    assert.match(card, /opacity-60/, `${id} 应置灰`)
+    const card = html.match(new RegExp(`<article[^>]*data-gallery-product="${id}"[^]*?</article>`))?.[0] ?? ""
+    assert.match(card, /data-gallery-listability/, `${id} 应显示受阻状态`)
+    assert.doesNotMatch(card, /disabled=""/, `${id} 仍可浏览、收藏和加入本地清单`)
   }
   // 分类徽标：平台待处理 / 已停售各一枚。
-  assert.match(html, /data-gallery-card-listability[^>]*>暂不可上架/)
-  assert.match(html, /data-gallery-card-listability[^>]*>已停售/)
-  assert.equal(html.match(/data-gallery-card-listability/g)?.length, 2)
+  assert.match(html, /data-gallery-listability[^>]*>暂不可上架/)
+  assert.match(html, /data-gallery-listability[^>]*>已停售/)
+  assert.equal(html.match(/data-gallery-listability/g)?.length, 2)
   // 收藏与清单角标不属上架门——两枚都在。
   assert.match(html, /aria-label="收藏 复核中挂画"/)
   assert.match(html, /aria-label="加入上架清单 复核中挂画"/)
-  // 可上架卡没有徽标、不置灰。
-  const okCard = html.match(/<li[^>]*data-gallery-card="prd_2"[^>]*>/)?.[0] ?? ""
-  assert.doesNotMatch(okCard, /opacity-60/)
+  // 可上架商品没有徽标、不置灰。
+  const okCard = html.match(/<article[^>]*data-gallery-product="prd_2"[^]*?<\/article>/)?.[0] ?? ""
+  assert.doesNotMatch(okCard, /data-gallery-listability/)
   resetCollectionForTests()
 })
 
-test("批量进入上架跳过暂不可上架的行：一次性报数，可达集照走", () => {
+test("批量进入上架跳过暂不可上架的行：一次性报数，可达集照走", async () => {
   const present = [
     row({ productId: "prd_ok", title: "可上架" }),
     row({ productId: "prd_bl", title: "待复核", listable: false, denial: "catalog_expired" }),
@@ -1219,7 +867,7 @@ test("批量进入上架跳过暂不可上架的行：一次性报数，可达�
   }) as typeof toast.add
   const submitted: CatalogListingIdentity[] = []
   try {
-    submitQueueImport(present, (products) => submitted.push(...products))
+    assert.equal(await submitQueueImport(present, (products) => { submitted.push(...products) }), true)
     assert.deepEqual(toasts.map((item) => item.title), [
       "已跳过 2 件暂不可上架的商品",
     ])
@@ -1235,9 +883,9 @@ test("批量进入上架跳过暂不可上架的行：一次性报数，可达�
     // 全部受阻：报数仍交代，空数组不进上架导航。
     toasts.length = 0
     let called = 0
-    submitQueueImport(present.slice(1), () => {
+    assert.equal(await submitQueueImport(present.slice(1), () => {
       called += 1
-    })
+    }), false)
     assert.equal(called, 0)
     assert.deepEqual(toasts.map((item) => item.title), [
       "已跳过 2 件暂不可上架的商品",

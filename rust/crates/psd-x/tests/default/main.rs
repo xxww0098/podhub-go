@@ -1,6 +1,7 @@
 mod allocation_architecture;
 mod allocation_ledger;
 mod descriptor_spec;
+mod resource_reading;
 mod rle;
 mod serde_codecs;
 mod smart_object_preview_policy;

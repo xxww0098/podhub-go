@@ -84,7 +84,7 @@ func TestWithTxSessions(t *testing.T) {
 // org 0, which is how every supplier-user read and write opens.
 //
 // The wallet arms are gone (§9: suppliers have no funds access), so isolation
-// is asserted through sc_source_members, which still carries a per-supplier
+// is asserted through sc_source_fulfillers, which carries a per-supplier
 // policy and is what Me() reads.
 func TestWithTxIsolatesSuppliers(t *testing.T) {
 	pool, ctx := parityDB(t)
@@ -99,11 +99,11 @@ func TestWithTxIsolatesSuppliers(t *testing.T) {
 	repo := New(pool, tenant.BeginApp)
 	err := repo.withTx(ctx, 0, userA, func(tx pgx.Tx) error {
 		var sources string
-		if err := tx.QueryRow(ctx, `SELECT coalesce(string_agg(source_id, ','), '') FROM sc_source_members`).Scan(&sources); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT coalesce(string_agg(source_id, ','), '') FROM sc_source_fulfillers`).Scan(&sources); err != nil {
 			return err
 		}
 		if sources != sourceA {
-			return fmt.Errorf("supplier A sees members %q", sources)
+			return fmt.Errorf("supplier A sees fulfilment grants %q", sources)
 		}
 		// Funds rows are invisible to a supplier session at all.
 		var funds int
@@ -121,6 +121,30 @@ func TestWithTxIsolatesSuppliers(t *testing.T) {
 	me, err := repo.Me(ctx, userB)
 	if err != nil || len(me.Sources) != 1 || me.Sources[0].SourceID != sourceB {
 		t.Fatalf("supplier B sources %+v %v", me.Sources, err)
+	}
+}
+
+func TestFactoryMemberCanEnterBeforeCatalogBinding(t *testing.T) {
+	pool, ctx := parityDB(t)
+	const userID, sourceID = int64(882103), "src_factory_pending"
+	seedSupplier(t, ctx, pool, userID, sourceID)
+	t.Cleanup(func() { dropSupplier(context.Background(), pool, userID, sourceID) })
+	if _, err := pool.Exec(ctx, `DELETE FROM sc_source_fulfillers WHERE source_id=$1`, sourceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM sc_sources WHERE source_id=$1`, sourceID); err != nil {
+		t.Fatal(err)
+	}
+	repo := New(pool, tenant.BeginApp)
+	me, err := repo.Me(ctx, userID)
+	if err != nil || me.Sources == nil || len(me.Sources) != 0 {
+		t.Fatalf("pending factory: %+v %v", me, err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM sc_factory_members WHERE factory_id=$1`, sourceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Me(ctx, userID); err == nil {
+		t.Fatal("account without factory membership was admitted")
 	}
 }
 

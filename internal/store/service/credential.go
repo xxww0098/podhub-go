@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"log/slog"
+	"strings"
 
 	"github.com/xxww0098/podhub-go/internal/store/contract"
 	"github.com/xxww0098/podhub-go/internal/store/domain"
@@ -12,7 +13,7 @@ import (
 // transaction: the read that opens a stored pair for a probe, the export, and
 // the probe itself. The writers ride on RosterTx.
 type CredentialDirectory interface {
-	OpenCurrentCredential(ctx context.Context, orgID int64, uuid string) (domain.OpenedCredential, *contract.APIError)
+	OpenCurrentCredential(ctx context.Context, orgID int64, actor domain.Actor, uuid string) (domain.OpenedCredential, *contract.APIError)
 	Export(ctx context.Context, orgID int64, actor domain.Actor) ([]domain.ExportedCredential, *contract.APIError)
 	ProbeRoles(ctx context.Context, clientID, apiKey string) (status int, body []byte, err error)
 	MarkLeased(ctx context.Context, orgID, storeID, credentialRevision, nowMS int64)
@@ -22,6 +23,51 @@ type CredentialDirectory interface {
 func (s Service) WithCredentialDirectory(dir CredentialDirectory) Service {
 	s.credential = dir
 	return s
+}
+
+// ResolveCredentialName reads Seller info without changing the store or its key.
+func (s Service) ResolveCredentialName(ctx context.Context, orgID, userID int64, storeUUID, clientID, apiKey string) (string, *contract.APIError) {
+	if s.roster == nil || s.info == nil {
+		return "", contract.Internal()
+	}
+	actor, api := s.roster.LoadActor(ctx, userID, orgID)
+	if api != nil {
+		return "", api
+	}
+	if strings.TrimSpace(apiKey) == "" && storeUUID != "" {
+		uuid, ok := domain.NormalizeStoreUUID(storeUUID)
+		if !ok {
+			return "", contract.Validation(contract.MsgStoreUUID)
+		}
+		if s.credential == nil {
+			return "", contract.Internal()
+		}
+		opened, api := s.credential.OpenCurrentCredential(ctx, orgID, actor, uuid)
+		if api != nil {
+			return "", api
+		}
+		if strings.TrimSpace(clientID) != opened.ClientID {
+			return "", contract.Validation("Client ID 已变更，请输入对应的 API Key")
+		}
+		apiKey = opened.APIKey
+	}
+	client, key, api := domain.NormalizeCredential(clientID, apiKey)
+	if api != nil {
+		return "", api
+	}
+	status, body, err := s.info.PostSellerInfo(ctx, client, key)
+	defer clear(body)
+	if err != nil || status < 200 || status >= 300 {
+		if status == 401 || status == 403 {
+			return "", contract.Validation("无法读取店铺名称，请检查 Client ID、API Key 和 Seller 信息读取权限")
+		}
+		return "", contract.Unreachable("店铺名称暂时无法读取，请稍后重试")
+	}
+	company, parsed := domain.ParseSellerInfo(body)
+	if name := domain.KeepShort(company.ShortName); parsed && name != "" {
+		return name, nil
+	}
+	return "", contract.Validation("API 未返回有效的店铺名称，可手动填写")
 }
 
 // RegisterCredential is POST /api/workspaces/stores/{uuid}/credential.
@@ -46,6 +92,9 @@ func (s Service) RegisterCredential(ctx context.Context, orgID, userID int64, uu
 	actor, api := s.roster.LoadActor(ctx, userID, orgID)
 	if api != nil {
 		return domain.RegisterOutcome{}, api
+	}
+	if !actor.CanManageAll() {
+		return domain.RegisterOutcome{}, contract.Forbidden(contract.MsgNoKeyPermission)
 	}
 	expires, api := s.probeCredential(ctx, client, key)
 	if api != nil {
@@ -80,6 +129,14 @@ func (s Service) RegisterCredential(ctx context.Context, orgID, userID int64, uu
 	})
 	if api != nil {
 		return domain.RegisterOutcome{}, api
+	}
+	if s.info != nil && s.dir != nil {
+		filled, err := s.OnCredentialSaved(ctx, orgID, normalized, client, key)
+		if err != nil {
+			slog.Warn("store name fill failed after credential save", "org_id", orgID, "store_id", normalized)
+		} else {
+			written.NameFilled = filled.Filled
+		}
 	}
 	return written, nil
 }
@@ -141,7 +198,7 @@ func (s Service) TestCredential(ctx context.Context, orgID, userID int64, uuid s
 	if api != nil {
 		return domain.VerifyResult{}, api
 	}
-	opened, api := s.credential.OpenCurrentCredential(ctx, orgID, normalized)
+	opened, api := s.credential.OpenCurrentCredential(ctx, orgID, actor, normalized)
 	if api != nil {
 		return domain.VerifyResult{}, api
 	}
@@ -200,6 +257,17 @@ func (s Service) TestCredential(ctx context.Context, orgID, userID int64, uuid s
 			Status: 500, Code: contract.CodeInternal, Message: contract.MsgVerifyNotSaved,
 		}
 	}
+	// The key is open and proven live: refill this one store's snapshots now so
+	// the roster the SPA re-reads after a probe shows current figures. Best
+	// effort, like the loops: a failed read keeps the previous snapshot.
+	refreshedAt := domain.NowMS()
+	s.refreshSnapshot(ctx, orgID, normalized, opened, refreshedAt, refreshProducts)
+	s.refreshSnapshot(ctx, orgID, normalized, opened, refreshedAt, refreshFinance)
+	if s.info != nil && s.dir != nil {
+		if _, err := s.OnCredentialVerified(ctx, orgID, normalized, opened.ClientID, opened.APIKey); err != nil {
+			slog.Warn("store name fill failed after credential verification", "org_id", orgID, "store_id", normalized)
+		}
+	}
 	return domain.VerifyResult{
 		StoreUUID:          normalized,
 		CredentialRevision: opened.CredentialRevision,
@@ -216,6 +284,9 @@ func (s Service) ExportCredentials(ctx context.Context, orgID, userID int64) ([]
 	actor, api := s.roster.LoadActor(ctx, userID, orgID)
 	if api != nil {
 		return nil, api
+	}
+	if !actor.CanManageAll() {
+		return nil, contract.Forbidden(contract.MsgNoKeyPermission)
 	}
 	items, api := s.credential.Export(ctx, orgID, actor)
 	if api != nil {

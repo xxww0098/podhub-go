@@ -122,7 +122,7 @@ func (d Deps) CreateDirectory(ctx context.Context, accountID, path string) (stri
 	if err != nil {
 		return "", "", fail(500, "INTERNAL", "服务暂不可用")
 	}
-	status, _, _, err := d.exchange(ctx, methodPut, raw, map[string]string{"content-type": "application/x-directory"}, []byte{}, 0, true, true, 0)
+	status, _, _, err := d.exchange(ctx, signed, methodPut, raw, map[string]string{"content-type": "application/x-directory"}, []byte{}, 0, true, true, 0)
 	if err != nil {
 		return "", "", fail(503, "UNAVAILABLE", "媒体源站暂不可用")
 	}
@@ -171,7 +171,7 @@ func (d Deps) MoveObject(ctx context.Context, accountID, sourcePath, destPath, k
 	if err != nil {
 		return fail(500, "INTERNAL", "服务暂不可用")
 	}
-	status, _, body, err := d.exchange(ctx, methodPut, raw, map[string]string{"x-amz-copy-source": copySource}, []byte{}, copyTimeout, true, true, 0)
+	status, _, body, err := d.exchange(ctx, signed, methodPut, raw, map[string]string{"x-amz-copy-source": copySource}, []byte{}, copyTimeout, true, true, 0)
 	if err != nil {
 		return fail(503, "UNAVAILABLE", "源站 COPY 失败："+err.Error())
 	}
@@ -350,7 +350,7 @@ func (d Deps) head(ctx context.Context, account sign.Account, key string, ttl, t
 	if err != nil {
 		return 0, nil, err
 	}
-	status, header, _, err := d.exchange(ctx, methodHead, raw, nil, nil, timeout, true, true, 0)
+	status, header, _, err := d.exchange(ctx, account, methodHead, raw, nil, nil, timeout, true, true, 0)
 	return status, header, err
 }
 

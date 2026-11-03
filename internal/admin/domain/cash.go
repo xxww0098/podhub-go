@@ -4,27 +4,23 @@ import (
 	"strings"
 
 	supcontract "github.com/xxww0098/podhub-go/internal/admin/supplier/contract"
-	x1contract "github.com/xxww0098/podhub-go/internal/admin/x1/contract"
 )
 
 // Withdrawal is SupplierWithdrawalView. Blank optional fields are omitted.
 type Withdrawal = supcontract.Withdrawal
 
-// Prompt is SupplierPromptData. The type lives with the x1 contract.
-type Prompt = x1contract.Prompt
-
 // GrantView is ScopedAutomationGrantView. Time options serialize null.
 type GrantView struct {
 	ID           string    `json:"id"`
 	Name         string    `json:"name"`
-	ScopeKind    string    `json:"scopeKind"`
-	SourceIDs    *[]string `json:"sourceIds"`
+	ScopeKind    string    `json:"scope_kind"`
+	SourceIDs    *[]string `json:"source_ids"`
 	Actions      []string  `json:"actions"`
-	TokenPrefix  string    `json:"tokenPrefix"`
-	CreatedAtMs  int64     `json:"createdAtMs"`
-	ExpiresAtMs  *int64    `json:"expiresAtMs"`
-	LastUsedAtMs *int64    `json:"lastUsedAtMs"`
-	RevokedAtMs  *int64    `json:"revokedAtMs"`
+	TokenPrefix  string    `json:"token_prefix"`
+	CreatedAtMs  int64     `json:"created_at_ms"`
+	ExpiresAtMs  *int64    `json:"expires_at_ms"`
+	LastUsedAtMs *int64    `json:"last_used_at_ms"`
+	RevokedAtMs  *int64    `json:"revoked_at_ms"`
 }
 
 // NormalizeStatus is the withdrawal list filter. Blank means no filter.

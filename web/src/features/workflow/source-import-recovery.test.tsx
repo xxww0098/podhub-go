@@ -44,7 +44,7 @@ const CARD = {
     language: "zh_hans",
     schemaRevision: "rev-1",
     defaults: { values: {}, complex_values: [] },
-    aiPrompt: "识图提示词",
+    aiPrompt: "识图商品事实",
     psdTemplateSha256: "template-sha",
     targetStoreId: "store-1",
     aiFieldPolicy: { allowed_field_keys: [], protected_field_keys: [] },
@@ -100,7 +100,8 @@ function recordFetch(reply: (call: Call) => unknown = (call) => {
       body: init?.body === undefined ? undefined : JSON.parse(String(init.body)),
     }
     calls.push(call)
-    return new Response(JSON.stringify({ data: reply(call) }), {
+    const response = reply(call)
+    return new Response(JSON.stringify(call.method === "GET" && call.url.startsWith(`${route("catalogSchema")}?`) ? response : { data: response }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     })

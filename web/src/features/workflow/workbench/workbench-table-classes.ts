@@ -22,7 +22,7 @@ export function headClass(column: WorkbenchColumn) {
     HEAD,
     column.id === LAST_COLUMN_ID ? CELL_LAST : CELL,
     column.width,
-    column.sticky && `sticky ${column.sticky} z-30`,
+    column.sticky && cn(column.id === "publish_state" ? "md:sticky" : "sticky", column.sticky, "z-30"),
     column.edge && "border-r-border-strong",
     "border-b border-b-border-strong bg-card",
   )
@@ -33,7 +33,7 @@ export function cellClass(columnId: string, extra?: string, active?: boolean, ri
   return cn(
     column.id === LAST_COLUMN_ID ? CELL_LAST : CELL,
     column.width,
-    column.sticky && `sticky ${column.sticky} z-10`,
+    column.sticky && cn(column.id === "publish_state" ? "md:sticky" : "sticky", column.sticky, "z-10"),
     column.edge && "border-r-border-strong",
     "border-b border-b-border transition-colors duration-150",
     // No z-index: the inset ring needs none, and z-20 here made a scrolled-under

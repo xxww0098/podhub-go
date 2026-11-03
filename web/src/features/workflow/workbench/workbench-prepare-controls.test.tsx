@@ -54,7 +54,7 @@ test("the toolbar presents one ordered sequence while preparation runs", () => {
   assert.doesNotMatch(html, /data-slot="status-popup/)
   // Card defaults are the template, not the instance a running lane writes.
   assert.doesNotMatch(buttonMarkup(html, "默认字段"), /disabled=""/)
-  assert.doesNotMatch(html, /aria-label="PSD 与提示词"/)
+  assert.doesNotMatch(html, /aria-label="PSD 与商品事实"/)
   assert.match(buttonMarkup(html, "导入图片"), /disabled=""/)
 })
 

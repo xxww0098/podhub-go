@@ -4,4 +4,4 @@ package licenses
 // scripts/check-third-party-licenses.py --update rewrites this constant so
 // the test binary changes with the list. go test otherwise caches a pass
 // without noticing edits to files outside this package.
-const listStamp = "b25ac4d3dd5b4493a3ffc7cceb77aab6dcf5fecae52652641d7102b37d957547"
+const listStamp = "d9a1b7374b1b40bb18a3f57d5f951ec2830b3fd7a143073e3e6434997b937c1c"

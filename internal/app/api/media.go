@@ -3,22 +3,26 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
-	"github.com/xxww0098/podhub-go/internal/media/service/upload"
+	media "github.com/xxww0098/podhub-go/internal/media/contract"
+	mediagen "github.com/xxww0098/podhub-go/internal/media/http/gen"
+	mediarepo "github.com/xxww0098/podhub-go/internal/media/repo"
 	"github.com/xxww0098/podhub-go/internal/platform/db/sqlc"
+	"github.com/xxww0098/podhub-go/internal/platform/httpx/jsonwire"
 	storage "github.com/xxww0098/podhub-go/internal/platform/r2"
 	sign "github.com/xxww0098/podhub-go/internal/platform/r2/sigv4"
 )
 
-// mediaPresignBody is the transit batch presign request. There is no checksum
-// switch: the design makes x-amz-checksum-sha256 mandatory, so a client cannot
-// turn it off.
 type mediaPresignBody struct {
-	ByteLength uint64 `json:"byte_length"`
+	ByteLength int64  `json:"byte_length"`
 	Batch      string `json:"batch"`
 	Purpose    string `json:"purpose"`
 }
@@ -28,71 +32,112 @@ type mediaErrorBody struct {
 	Code  string `json:"code"`
 }
 
-// PostMediaObjectPresign signs one transit batch PUT for the caller's
-// workspace. The route sits behind identity.Middleware. The org id comes from
-// the session principal, and the workspace uuid is read as podhub_app.
-//
-// The object lives at most until the next 04:00 Shanghai clear.
-func (s *Server) PostMediaObjectPresign(w http.ResponseWriter, r *http.Request, digest string, extension string) {
+type mediaFailure struct {
+	status int
+	code   string
+	text   string
+}
+
+func (e *mediaFailure) Error() string { return e.text }
+
+func mediaInvalid() error     { return &mediaFailure{400, "VALIDATION", "媒体上传请求无效"} }
+func mediaUnavailable() error { return &mediaFailure{503, "UNAVAILABLE", "对象存储暂不可用"} }
+func sliceAccountUnavailable() error {
+	return &mediaFailure{503, "UNAVAILABLE", "工作空间存储桶尚未就绪，请联系所有者在设置中检查"}
+}
+func mediaConflict() error {
+	return &mediaFailure{409, "CONFLICT", "上传对象或存储配置已变化，请重新上传"}
+}
+
+// The single-object route uses the same reservation and confirmation identity
+// as batch upload; its existing flat wire format remains unchanged.
+func (s *Server) PostMediaObjectPresign(w http.ResponseWriter, r *http.Request, digest, extension string) {
+	var in mediaPresignBody
+	if err := decodeMedia(r, &in); err != nil || (in.Purpose != "" && in.Purpose != "workflow-media") {
+		writeMediaFailure(w, mediaInvalid())
+		return
+	}
+	p, workspace, err := s.mediaActor(r, "")
+	if err != nil {
+		writeMediaFailure(w, err)
+		return
+	}
+	var batch *string
+	if in.Batch != "" {
+		batch = &in.Batch
+	}
+	rows, err := s.presignMedia(r.Context(), p, workspace, batch, []mediagen.MediaObjectBatchPresignItem{{Digest: digest, Extension: extension, ByteLength: in.ByteLength}})
+	if err != nil {
+		writeMediaFailure(w, err)
+		return
+	}
+	row := rows[0]
+	jsonwire.Write(w, http.StatusOK, mediagen.MediaPresignResponse{
+		ObjectKey: row.ObjectKey, PublicUrl: row.PublicUrl, Url: row.Upload.Url,
+		ContentType: row.Upload.Headers.ContentType, IfNoneMatch: row.Upload.Headers.IfNoneMatch,
+		ChecksumSha256: row.Upload.Headers.ChecksumSha256, ExpiresAtMs: row.Upload.ExpiresAtMs, UploadTicket: *row.UploadTicket,
+	})
+}
+
+func (s *Server) mediaActor(r *http.Request, expected string) (access.Principal, string, error) {
 	p, refusal, err := s.principal(r)
 	if err != nil {
-		writeMedia(w, http.StatusInternalServerError, access.MsgUnavailable, "INTERNAL")
-		return
+		return p, "", mediaUnavailable()
 	}
 	if refusal != nil {
-		writeMedia(w, refusal.Status, refusal.Message, mediaCode(refusal))
-		return
+		return p, "", &mediaFailure{refusal.Status, mediaCode(refusal), refusal.Message}
 	}
-	if p.OrgID <= 0 || strings.TrimSpace(p.WorkspaceRole) == "" {
-		writeMedia(w, http.StatusForbidden, access.MsgNoWorkspace, "FORBIDDEN")
-		return
-	}
-	if _, ok := access.ParseWorkspace(p.WorkspaceRole); !ok {
-		writeMedia(w, http.StatusForbidden, access.MsgBadWorkspaceRole, "FORBIDDEN")
-		return
-	}
-	account, ok := s.mediaAccount()
-	if !ok {
-		writeMedia(w, http.StatusServiceUnavailable, "对象存储只接受 127.0.0.1 假桶", "MEDIA_BUCKET")
-		return
-	}
-	var body mediaPresignBody
-	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&body); err != nil || body.ByteLength == 0 {
-		writeMedia(w, http.StatusBadRequest, "上传大小或文件类型无效", "MEDIA_INPUT")
-		return
+	if status, message, ok := access.OrgMember(p); !ok {
+		return p, "", &mediaFailure{status, "FORBIDDEN", message}
 	}
 	workspace, err := s.workspaceUUID(r.Context(), p.OrgID)
 	if err != nil || workspace == "" {
-		writeMedia(w, http.StatusServiceUnavailable, access.MsgUnavailable, "INTERNAL")
-		return
+		return p, "", mediaUnavailable()
 	}
-	orgID := p.OrgID
-	signed, err := upload.Presign(upload.Request{
-		Account:     account,
-		Workspace:   workspace,
-		Digest:      digest,
-		Ext:         extension,
-		Batch:       body.Batch,
-		ByteLength:  body.ByteLength,
-		Now:         s.now(),
-		Purpose:     body.Purpose,
-		ActorID:     p.UserID,
-		WorkspaceID: &orgID,
-	})
-	if err != nil {
-		writeMedia(w, http.StatusBadRequest, err.Error(), "MEDIA_INPUT")
-		return
+	if expected != "" && expected != workspace {
+		return p, "", &mediaFailure{403, "FORBIDDEN", "工作空间已变化，请重新准备媒体"}
 	}
-	writeJSON(w, http.StatusOK, signed)
+	return p, workspace, nil
 }
 
-func (s *Server) mediaAccount() (sign.Account, bool) {
-	if s == nil || s.Media == nil || !storage.LoopbackHost(s.Media.Endpoint) {
+func (s *Server) mediaAccount(ctx context.Context, actor access.Principal) (sign.Account, bool) {
+	if s == nil {
 		return sign.Account{}, false
 	}
-	return *s.Media, true
+	var account *sign.Account
+	if s.Media != nil {
+		var err error
+		account, err = s.Media(ctx, actor)
+		if err != nil {
+			return sign.Account{}, false
+		}
+	} else {
+		err := s.transitTx(ctx, actor, false, func(tx pgx.Tx) error {
+			row, err := mediarepo.ActiveSliceStorage(ctx, tx, actor.OrgID, s.SliceStorageKey)
+			if err == nil && row != nil {
+				account = &row.Account
+			}
+			return err
+		})
+		if err != nil {
+			return sign.Account{}, false
+		}
+	}
+	if account == nil {
+		return sign.Account{}, false
+	}
+	a := *account
+	if strings.TrimSpace(a.ID) == "" {
+		return sign.Account{}, false
+	}
+	if s.Media != nil && (a.Provider == sign.ProviderGeneric || a.Provider == sign.ProviderCloudflare) && storage.LoopbackHost(a.Endpoint) && a.PublicBaseURL != "" && a.AccessKeyID != "" && a.SecretAccessKey != "" {
+		return a, true
+	}
+	err := (media.Config{Role: media.RoleTransit, Provider: string(a.Provider), Endpoint: a.Endpoint,
+		Region: a.Region, Bucket: a.Bucket, KeyPrefix: a.KeyPrefix, PublicBaseURL: a.PublicBaseURL,
+		ForcePathStyle: a.ForcePathStyle, AccessKeyID: a.AccessKeyID, SecretAccessKey: a.SecretAccessKey,
+		SessionToken: a.SessionToken}).ValidateSliceStorage()
+	return a, err == nil
 }
 
 func (s *Server) workspaceUUID(ctx context.Context, orgID int64) (string, error) {
@@ -105,7 +150,19 @@ func (s *Server) workspaceUUID(ctx context.Context, orgID int64) (string, error)
 		workspace, err = q.OrganizationUUID(ctx, orgID)
 		return err
 	})
-	return workspace, err
+	return strings.ToLower(workspace), err
+}
+
+func decodeMedia(r *http.Request, value any) error {
+	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(value); err != nil {
+		return err
+	}
+	if err := dec.Decode(new(any)); err != io.EOF {
+		return mediaInvalid()
+	}
+	return nil
 }
 
 func mediaCode(refusal *access.Refusal) string {
@@ -116,5 +173,22 @@ func mediaCode(refusal *access.Refusal) string {
 }
 
 func writeMedia(w http.ResponseWriter, status int, message, code string) {
-	writeJSON(w, status, mediaErrorBody{Error: message, Code: code})
+	jsonwire.Write(w, status, mediaErrorBody{Error: message, Code: code})
+}
+
+func mediaFailureDetails(err error) *mediaFailure {
+	var failure *mediaFailure
+	if errors.As(err, &failure) {
+		return failure
+	}
+	var databaseError *pgconn.PgError
+	if errors.As(err, &databaseError) {
+		slog.Error("media database operation failed", "code", databaseError.Code, "message", databaseError.Message)
+	}
+	return &mediaFailure{503, "UNAVAILABLE", "媒体操作暂不可用"}
+}
+
+func writeMediaFailure(w http.ResponseWriter, err error) {
+	failure := mediaFailureDetails(err)
+	writeMedia(w, failure.status, failure.text, failure.code)
 }

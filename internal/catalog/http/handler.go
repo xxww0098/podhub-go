@@ -12,29 +12,35 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/xxww0098/podhub-go/internal/catalog/service"
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
 	"github.com/xxww0098/podhub-go/internal/platform/db"
 	"github.com/xxww0098/podhub-go/internal/platform/httpx/jsonwire"
 	"github.com/xxww0098/podhub-go/internal/platform/seal"
+	"github.com/xxww0098/podhub-go/internal/platform/writer"
 )
 
-// SellerRead posts one Seller read to a loopback origin. A nil function is
-// treated as unreachable and does not dial a public host.
+// SellerRead posts one allowed Seller read through the assembly. A nil
+// function is treated as unreachable.
 type SellerRead func(ctx context.Context, path string, body []byte, clientID, apiKey string) (status int, resp []byte, err error)
 
-// Host serves catalog reads. Live fill uses Seller and only a loopback origin.
+// Host serves catalog reads. Live fill uses the dedicated Seller read port.
 type Host struct {
 	Pool   *pgxpool.Pool
 	Access access.Resolver
 	Now    func() time.Time
 	Seller SellerRead
 	Seals  seal.Ring
+	// Snapshot is the canonical listing snapshot supplied by the assembly.
+	Snapshot   func(context.Context, []byte) ([]byte, error)
+	Fetcher    *service.Fetcher
+	fetchLease *service.FetchClaim
 }
 
 // readIn runs one read inside an application session.
 //
 // h.Pool on its own holds podhub_login_api connections, and that role is
-// NOINHERIT with zero table grants (00083): the GRANT podhub_app TO
+// NOINHERIT with zero table grants (00001_roles.sql): the GRANT podhub_app TO
 // podhub_login_api only takes effect after SET ROLE. A bare h.Pool.Query
 // therefore fails with "permission denied for table sc_*" rather than
 // returning no rows. Every catalog read that touches a table must go through
@@ -47,7 +53,15 @@ func (h Host) readIn(ctx context.Context, fn func(pgx.Tx) error) error {
 	if h.Pool == nil {
 		return errNoPool
 	}
-	return db.InTx(ctx, h.Pool, db.AppRole(), fn)
+	return db.InTx(ctx, h.Pool, db.AppRole(), func(tx pgx.Tx) error {
+		if h.fetchLease != nil {
+			defer writer.Forget(tx)
+			if err := service.AssertFetchClaim(ctx, tx, *h.fetchLease, h.Now()); err != nil {
+				return err
+			}
+		}
+		return fn(tx)
+	})
 }
 
 // queryRow, query and exec are the session-wrapped forms of the pgxpool
@@ -105,7 +119,10 @@ func Mount(r chi.Router, h Host) {
 	}
 	r.Get("/api/catalog/tree", h.tree)
 	r.Get("/api/catalog/schema", h.schema)
-	r.Get("/api/catalog/fetch-config", h.fetchConfig)
+	r.Post("/api/catalog/schema/dictionary-search", h.searchDictionary)
+	r.Get("/api/admin/catalog/fetch-config", h.fetchConfig)
+	r.Put("/api/admin/catalog/fetch-config", h.saveFetchConfig)
+	r.Post("/api/admin/catalog/fetch-config/run", h.runFetch)
 	r.Get("/api/catalog/wb/subjects/{subject_id}", h.wbSubject)
 }
 
@@ -164,7 +181,7 @@ func (h Host) tree(w http.ResponseWriter, r *http.Request) {
 	}
 	var payload []byte
 	var fetched int64
-	err := h.Pool.QueryRow(r.Context(), `SELECT payload, fetched_at_ms FROM public.ozon_catalog_tree_cache WHERE language = $1`, language).Scan(&payload, &fetched)
+	err := h.queryOne(r.Context(), `SELECT payload, fetched_at_ms FROM public.ozon_catalog_tree_cache WHERE language = $1`, language, []any{&payload, &fetched})
 	if err == pgx.ErrNoRows {
 		if storeID != "" {
 			h.fillTree(w, r, p, language, storeID)
@@ -179,7 +196,7 @@ func (h Host) tree(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !Fresh(h.Now(), fetched) {
-		_, _ = h.Pool.Exec(r.Context(), `DELETE FROM public.ozon_catalog_tree_cache WHERE language = $1 AND fetched_at_ms = $2`, language, fetched)
+		_, _ = h.exec(r.Context(), `DELETE FROM public.ozon_catalog_tree_cache WHERE language = $1 AND fetched_at_ms = $2`, language, fetched)
 		if storeID != "" {
 			h.fillTree(w, r, p, language, storeID)
 			return

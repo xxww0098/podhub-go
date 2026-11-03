@@ -1,13 +1,13 @@
 /**
- * 平台货源画廊（卖家端货盘）— 好看、可比、可筛。
+ * 平台商品库列表（卖家端货盘）。
  *
  * 参考图 1 的形态：顶部一行工具条（搜索 + 库/类目下拉 + 价格区间 + 排序 +
- * 刷新 + 密度 + 收藏筛，「上架清单」入口收在行尾——gallery-toolbar.tsx），
- * 「共 N 件商品」计数行 + 已选条件 chips，接着是卡墙，右下角极简翻页。
+ * 收藏筛，「上架清单」与批量上架入口收在行尾——gallery-toolbar.tsx），
+ * 「共 N 件商品」计数行 + 已选条件 chips，接着是商品卡片，右下角极简翻页。
  * 选品模式（`picking`，屏从 `?pick=1` 读）把清单浮窗开局就摊开：从「批量上架」
  * 进来的人先看到下一步，而不是自己找入口。
  * 没有左栏——facet 全部收进下拉；固定 tags 由搜索词与 `?tags=` 深链覆盖。
- * 整卡点击进只读详情页（屏级受控的 `detail`），主动作「进入上架」交给
+ * 点击商品海报打开只读详情页（屏级受控的 `detail`），主动作「进入上架」交给
  * app 导航；物流注入保留为独立次动作。
  */
 import {
@@ -17,14 +17,15 @@ import {
   useState,
 } from "react"
 
-import type { CategoryTreeNodeView, OzonStoreView } from "@/bindings/commands"
+import type { CategoryTreeNodeView } from "@/bindings/commands"
 import type {
   SellerSupplierDbCatalogData,
   SellerSupplierDbRowData,
 } from "@/bindings/http-supplier-dbs-catalog"
 import { useScreenActive } from "@/components/screen-pane"
+import { Checkbox } from "@/components/ui/checkbox"
 
-import { GalleryCardWall } from "./gallery-card"
+import { GalleryCard } from "./gallery-card"
 import { GalleryDetail } from "./gallery-detail"
 import { GalleryEmpty } from "./gallery-empty"
 import {
@@ -44,12 +45,9 @@ import {
   priceRangeLabel,
   propDefsFor,
   queryRows,
-  readGalleryDensity,
   typeLabelFor,
   variantsForRow,
-  writeGalleryDensity,
   type CatalogListingIdentity,
-  type GalleryDensity,
   type GalleryFilters,
   type GallerySort,
 } from "./gallery-model"
@@ -68,8 +66,6 @@ export function SupplierDbsGallery({
   picking = false,
   onOpenListing,
   onOpenShipping,
-  stores = [],
-  onOpenStores,
   refreshing,
   onRefresh,
 }: {
@@ -79,7 +75,7 @@ export function SupplierDbsGallery({
   categoryTree: CategoryTreeNodeView[]
   /** 打开的行详情页——屏级受控：壳层面包屑要知道正在看哪个商品。 */
   detail?: SellerSupplierDbRowData
-  /** 整卡点击 → 该行以详情页形态打开。 */
+  /** 打开该商品的详情页。 */
   onOpenDetail: (row: SellerSupplierDbRowData) => void
   /**
    * 选品模式（屏从 `?pick=1` 读）：清单浮窗开局即摊开——从「批量上架」进来的
@@ -87,18 +83,11 @@ export function SupplierDbsGallery({
    */
   picking?: boolean
   /** 单件（详情页）或批量（上架清单）都只递最小商品身份数组。 */
-  onOpenListing: (products: CatalogListingIdentity[]) => void
+  onOpenListing: (products: CatalogListingIdentity[]) => void | Promise<void>
   onOpenShipping: (row: SellerSupplierDbRowData) => void
-  /**
-   * 本工作区的可用店铺（cloud uuid 口径），清单行用它做「目标店铺」单选；
-   * 没有店铺时清单行的 Popover 给「去店铺页添加」的引导。
-   */
-  stores?: readonly OzonStoreView[]
-  /** 引导出口：跳「店铺」屏（屏的回调，画廊不自己找路）。 */
-  onOpenStores?: () => void
-  /** 刷新卡在工具行右端（图 1）——壳层塞进来的是 loadCatalog。 */
+  /** 打开清单与批量进入上架前重读货盘。 */
   refreshing?: boolean
-  onRefresh?: () => void
+  onRefresh?: () => Promise<SellerSupplierDbRowData[] | undefined>
 }) {
   const screenActive = useScreenActive()
   const searchRef = useRef<HTMLInputElement>(null)
@@ -116,18 +105,6 @@ export function SupplierDbsGallery({
   useEffect(() => {
     setQueueOpen(picking)
   }, [picking])
-  // Density is a view preference, not a filter: it survives a filter change and
-  // a reload, and never changes which rows match.
-  const [density, setDensity] = useState<GalleryDensity>(() =>
-    typeof window === "undefined"
-      ? "standard"
-      : readGalleryDensity(window.localStorage),
-  )
-  const updateDensity = (next: GalleryDensity) => {
-    setDensity(next)
-    if (typeof window !== "undefined") writeGalleryDensity(window.localStorage, next)
-  }
-
   const catIndex = useMemo(() => categoryIndex(categoryTree), [categoryTree])
 
   // The draft follows the committed query only: a seller who typed a keyword
@@ -193,15 +170,17 @@ export function SupplierDbsGallery({
   const rows = catalog.rows
   // The keyword-matched rows: the facet rail counts from these, so a count and
   // the list it opens can never disagree.
-  const railRows = useMemo(() => queryRows(rows, filters.q), [rows, filters.q])
+  const railRows = useMemo(() => queryRows(rows, filters.q, catIndex), [rows, filters.q, catIndex])
   const matched = useMemo(() => {
-    const listed = filterGallery(rows, filters, sort)
+    const listed = filterGallery(rows, filters, catIndex, sort)
     const visible = favOnly
       ? listed.filter((row) => collection.favoriteIds.has(row.productId))
       : listed
     return groupGalleryRows(visible)
-  }, [rows, filters, sort, favOnly, collection.favoriteIds])
+  }, [rows, filters, catIndex, sort, favOnly, collection.favoriteIds])
   const paged = paginate(matched, page, GALLERY_PAGE_SIZE)
+  const selectableRows = paged.rows.filter((group) => group.rows.length === 1).map((group) => group.row)
+  const selectedCount = selectableRows.filter((row) => collection.queueIds.has(row.productId)).length
   const favoriteCount = useMemo(
     () => rows.filter((row) => collection.favoriteIds.has(row.productId)).length,
     [rows, collection.favoriteIds],
@@ -219,26 +198,28 @@ export function SupplierDbsGallery({
         : null
 
   const dbName = (sourceId: string) =>
-    catalog.dbs.find((db) => db.sourceId === sourceId)?.name ?? sourceId
+    catalog.dbs.find((db) => db.source_id === sourceId)?.name ?? sourceId
 
-  /** 库/类目下拉各自镜像一枚 chip；价格/标签/关键词只在生效时出现。 */
+  /** 库/类目下拉的当前档只在选了某一档时镜像成 chip；价格/标签/关键词同理。 */
   const catLabel = filters.cat
     ? categoryLabelFor(Number(filters.cat), catIndex) || `类目 ${filters.cat}`
     : "全部类目"
   const chips: Array<{ key: string; label: string; onRemove: () => void }> = []
-  if (catalog.dbs.length > 1) {
+  if (catalog.dbs.length > 1 && filters.db) {
     chips.push({
       key: "db",
-      label: filters.db ? dbName(filters.db) : "全部平台货源",
+      label: dbName(filters.db),
       // A category belongs to one 库, so dropping the 库 drops it too.
       onRemove: () => onFiltersChange({ ...filters, db: "", cat: "" }),
     })
   }
-  chips.push({
-    key: "cat",
-    label: catLabel,
-    onRemove: () => onFiltersChange({ ...filters, cat: "" }),
-  })
+  if (filters.cat) {
+    chips.push({
+      key: "cat",
+      label: catLabel,
+      onRemove: () => onFiltersChange({ ...filters, cat: "" }),
+    })
+  }
   if (filters.priceMin || filters.priceMax) {
     chips.push({
       key: "price",
@@ -269,7 +250,7 @@ export function SupplierDbsGallery({
       ? `为「${query}」找到 ${resultCount}`
       : `共 ${resultCount}`
 
-  // 下拉 facet：类目在已选库范围内——计数与卡墙同口径。价格是输入区间，无 facet。
+  // 类目下拉在已选库范围内，计数与商品卡片同口径。价格是输入区间，无 facet。
   const catItems = categoryFacets(railRows, filters.db, catIndex)
   const dbItems = dbFacets(catalog.dbs, railRows)
 
@@ -287,23 +268,21 @@ export function SupplierDbsGallery({
         if (open) onRefresh?.()
       }}
       refreshing={refreshing}
+      refreshRows={onRefresh}
       rows={rows}
       onOpenDetail={(row) => {
         setQueueOpen(false)
         onOpenDetail(row)
       }}
       onOpenListing={onOpenListing}
-      stores={stores}
-      onOpenStores={onOpenStores}
     />
   )
 
-  // 行被点开时整页换成详情页——交换发生在本组件内部，所以页码/排序/
-  // 搜索与价格草稿在经面包屑返回画廊后原样还在（抽屉时代卡墙从未卸载）。
+  // 详情页保留当前列表的页码、排序、搜索与价格草稿。
   if (detail) {
     return (
       <div
-        className="relative flex min-h-0 min-w-0 flex-1 flex-col gap-3"
+        className="relative flex min-h-0 min-w-0 flex-1 flex-col gap-2"
         data-gallery=""
       >
         <GalleryDetail
@@ -330,7 +309,7 @@ export function SupplierDbsGallery({
 
   return (
     <div
-      className="relative flex min-h-0 min-w-0 flex-1 flex-col gap-3"
+      className="relative flex min-h-0 min-w-0 flex-1 flex-col gap-2"
       data-gallery=""
     >
       <GalleryToolbar
@@ -362,49 +341,64 @@ export function SupplierDbsGallery({
         onPriceMaxChange={setDraftPriceMax}
         sort={sort}
         onSortChange={setSort}
-        density={density}
-        onDensityChange={updateDensity}
         favOnly={favOnly}
         favoriteCount={favoriteCount}
         onFavOnlyChange={setFavOnly}
-        refreshing={refreshing}
-        onRefresh={onRefresh}
         tray={queueTray("toolbar")}
-      />
-
-      <GalleryResultBar
-        count={countLabel}
-        chips={chips}
-        onClearAll={() => onFiltersChange({ ...EMPTY_FILTERS })}
-      />
-
-      {emptyKind ? (
-        <GalleryEmpty
-          kind={emptyKind}
-          query={query}
-          onClear={() => onFiltersChange({ ...EMPTY_FILTERS })}
-        />
-      ) : (
-        <>
-          {/* Scroll on a plain wrapper: making the grid itself the scroll
-              container collapses its auto rows. */}
-          <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
-            <GalleryCardWall
-              rows={paged.rows.map((group) => group.row)}
-              density={density}
-              dbLabel={(row) => dbName(row.sourceId)}
-              categoryLabel={(row) => categoryLabelOf(row, catIndex)}
-              onOpen={onOpenDetail}
-              variantCount={(row) => matched.find((group) => group.row.productId === row.productId)?.rows.length ?? 1}
-            />
-          </div>
-          <GalleryPager
-            page={paged.page}
-            pages={paged.pages}
-            onPage={setPage}
+        results={
+          <GalleryResultBar
+            count={countLabel}
+            chips={chips}
+            onClearAll={() => onFiltersChange({ ...EMPTY_FILTERS })}
+            selection={!emptyKind ? (
+              <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-muted-foreground" title="多规格商品请先选择规格">
+                <Checkbox
+                  aria-label="选择本页单规格商品"
+                  checked={selectableRows.length > 0 && selectedCount === selectableRows.length}
+                  indeterminate={selectedCount > 0 && selectedCount < selectableRows.length}
+                  disabled={selectableRows.length === 0}
+                  onCheckedChange={(checked) => {
+                    for (const row of selectableRows) {
+                      if (collection.queueIds.has(row.productId) !== checked) collection.toggleQueued(row)
+                    }
+                  }}
+                />
+                全选
+              </label>
+            ) : undefined}
           />
-        </>
-      )}
+        }
+      />
+
+      <div data-gallery-grid="" className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain p-3">
+        {emptyKind ? (
+          <GalleryEmpty
+            kind={emptyKind}
+            query={query}
+            onClear={() => onFiltersChange({ ...EMPTY_FILTERS })}
+          />
+        ) : (
+          <ul aria-label="平台商品库商品列表" className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,11.5rem),1fr))] content-start gap-x-5 gap-y-6">
+            {paged.rows.map((group) => (
+              <li key={group.row.productId} className="flex min-w-0">
+                <GalleryCard
+                  row={group.row}
+                  categoryLabel={categoryLabelOf(group.row, catIndex)}
+                  onOpen={onOpenDetail}
+                  variantCount={group.rows.length}
+                />
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      {!emptyKind ? (
+        <GalleryPager
+          page={paged.page}
+          pages={paged.pages}
+          onPage={setPage}
+        />
+      ) : null}
     </div>
   )
 }

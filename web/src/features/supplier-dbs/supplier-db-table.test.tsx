@@ -9,7 +9,7 @@ import type {
   SupplierDbRow,
 } from "@/bindings/http-supplier-dbs"
 
-import { SupplierDbDetailView } from "./supplier-db-table"
+import { SupplierProductsView } from "./supplier-db-table"
 import { pageList, rowMatchesStatus } from "./supplier-db-filters"
 import { formatCnyCents } from "./supplier-prop-editors"
 import { missingReadiness } from "./supplier-readiness"
@@ -69,7 +69,7 @@ function row(productId: string, over: Partial<SupplierDbRow> = {}): SupplierDbRo
     packDepthMm: null,
     packWeightG: null,
     contents: "",
-    gallery: [],
+    gallery: [{ url: "https://cdn.invalid/a.png", w: 100, h: 100 }],
     psd: [],
     productVideos: [],
     promptName: "",
@@ -121,6 +121,8 @@ function stubStore(): SupplierDbsStore {
     reorderProps: fail,
     deleteProp: fail,
     createRow: fail,
+    createVariant: fail,
+    syncProductOzon: fail,
     updateRow: fail,
     patchCell: fail,
     duplicateRow: fail,
@@ -135,54 +137,49 @@ function stubStore(): SupplierDbsStore {
 
 function renderDetail(detail: SupplierDbDetail) {
   return renderToStaticMarkup(
-    <SupplierDbDetailView
+    <SupplierProductsView
       store={stubStore()}
-      detail={detail}
-      onExit={() => {}}
-      onEditDb={() => {}}
-      onOpenAccounts={() => {}}
+      dbs={[detail.db]}
+      details={[detail]}
+      onManageFactories={() => {}}
       loadCategoryTree={async () => []}
     />,
   )
 }
 
-test("库页摘要列：商品/状态/成本价/平台价/操作，类目保留在商品上下文", () => {
+test("库页摘要列展示商品、类目、品牌、价格和更新时间", () => {
   const html = renderDetail({
     db: db({ rowCount: 1 }),
     propDefs: [propDef({ name: "尺码" })],
     rows: [row("p1")],
   })
-  for (const label of ["商品", "状态", "成本价", "平台价", "操作"]) {
+  for (const label of ["商品", "商品库", "规格", "上架就绪", "平台供货价", "发布状态", "操作"]) {
     assert.ok(html.includes(`>${label}<`), `missing column ${label}`)
   }
   // 自定义属性不再是表格列——定义管理收在「库设置 → 自定义属性」。
   assert.doesNotMatch(html, /data-supplier-db-prop="prop-x"/)
-  assert.match(html, /库设置/)
+  assert.doesNotMatch(html, /工厂配置|新增工厂/)
   assert.match(html, /美国3C厂/)
-  assert.match(html, /美国/)
-  assert.match(html, /id="supplier-db-header-listed"/)
-  assert.match(html, />公开</)
-  assert.doesNotMatch(html, /●公开|○未公开/)
+  assert.equal(html.match(/<table\b/g)?.length, 1)
+  assert.doesNotMatch(html, /role="switch"|data-panel=/)
 })
 
-test("库页公开开关跟随 listed", () => {
-  const on = renderDetail({ db: db({ listed: true }), propDefs: [], rows: [] })
-  const off = renderDetail({ db: db({ listed: false }), propDefs: [], rows: [] })
-  // Base UI 把 id 放在隐藏 input 上，开关本体是 role=switch。
-  const listedSwitch =
-    /role="switch"[^>]*title="关闭后整库商品对卖家隐藏"/
-  assert.match(on, listedSwitch)
-  assert.match(on, /role="switch"[^>]*aria-checked="true"/)
-  assert.match(off, /role="switch"[^>]*aria-checked="false"/)
+test("库摘要按商品分组计数，独立展示规格数", () => {
+  const html = renderDetail({ db: db({ rowCount: 99 }), propDefs: [], rows: [
+    row("p1", { variantGroup: "same" }), row("p2", { variantGroup: "same" }), row("p3"), row("p4", { archived: true }),
+  ] })
+  assert.match(html, /共 2 款商品，3 个规格/)
+  assert.equal(html.match(/data-supplier-product=/g)?.length, 2)
 })
 
-test("行渲染只读摘要：缩略图、编号、状态徽标、币种", () => {
+test("行渲染商品摘要和内部成本输入：缩略图、编号、状态徽标、币种", () => {
   const html = renderDetail({
     db: db({ rowCount: 1, publishedCount: 1 }),
     propDefs: [],
     rows: [
       row("p1", {
         title: "圣诞帽",
+        brand: "星辰服饰",
         platformCode: "P001",
         published: true,
         readiness: {
@@ -203,20 +200,21 @@ test("行渲染只读摘要：缩略图、编号、状态徽标、币种", () =>
         gallery: [{ url: "https://cdn.invalid/a.png", w: 100, h: 100 }],
       }),
       row("p2", { title: "归档行", archived: true }),
+      row("p3", { title: "时间未知", updatedAtMs: 0 }),
     ],
   })
   assert.match(html, /圣诞帽/)
   assert.match(html, /P001/)
-  assert.match(html, /¥8\.00/)
+  assert.match(html, /类目 11 \/ 类型 101/)
   assert.match(html, /¥16\.00/)
-  assert.match(html, /已上架/)
-  assert.match(html, /●就绪/)
+  assert.match(html, /已发布/)
   assert.match(html, /<img src="https:\/\/cdn\.invalid\/a\.png"/)
+  assert.doesNotMatch(html, /aria-label="成本价/)
   // 归档行不进商品表
   assert.doesNotMatch(html, /归档行/)
-  // 行内不做编辑——表格是只读摘要，编辑全在行面板
+  // 公开商品字段仍在行面板编辑。
   assert.doesNotMatch(html, /data-cell-display/)
-  assert.match(html, /aria-label="行操作 圣诞帽"/)
+  assert.match(html, /aria-label="编辑规格 P001"/)
   assert.match(html, /data-supplier-db-open="p1"/)
   assert.doesNotMatch(html, /role="alert"/)
 })
@@ -257,44 +255,36 @@ test("统计页签按非归档口径计数：全部 / 已上架 / 待完善", ()
   )
 })
 
-test("筛选行：搜索 + 状态 + 类目 + 上架状态三个下拉", () => {
+test("筛选行：搜索、类目和更多筛选按顺序排列", () => {
   const html = renderDetail({
     db: db({ rowCount: 2 }),
     propDefs: [],
     rows: [row("p1"), row("p2")],
   })
-  assert.match(html, /aria-label="搜索商品"/)
-  assert.match(html, /data-filter="status"/)
-  assert.match(html, /data-filter="category"/)
-  assert.match(html, /data-filter="publish"/)
-  // 收起态显示中文标签，不回落成 all / incomplete
-  assert.match(
-    html,
-    /data-filter="status"[\s\S]*?data-slot="select-value"[^>]*>全部状态</,
-  )
-  assert.match(
-    html,
-    /data-filter="category"[\s\S]*?data-slot="select-value"[^>]*>全部类目</,
-  )
-  assert.match(
-    html,
-    /data-filter="publish"[\s\S]*?data-slot="select-value"[^>]*>全部上架状态</,
-  )
+  const filterLabels = ["搜索商品", "类目筛选", "更多筛选"]
+  let previousIndex = -1
+  for (const label of filterLabels) {
+    const index = html.indexOf(`aria-label="${label}"`)
+    assert.ok(index > previousIndex, `${label} 应按顺序直接显示在筛选栏中`)
+    previousIndex = index
+  }
+  assert.doesNotMatch(html, /aria-label="状态筛选"|aria-label="上架状态筛选"/)
   assert.match(
     html,
     /aria-label="每页条数"[\s\S]*?data-slot="select-value"[^>]*>10 条\/页</,
   )
-  assert.match(html, /新建商品/)
+  assert.match(html, /aria-label="新增商品"/)
   assert.doesNotMatch(html, /data-bulk-bar=/)
-  assert.match(html, /共 2 条/)
+  assert.match(html, /共 2 款商品，2 个规格/)
 })
 
 test("空库仍有完整表头与分页脚，行区给引导文案", () => {
   const html = renderDetail({ db: db({ name: "" }), propDefs: [], rows: [] })
   assert.match(html, /data-supplier-db-table=""/)
   assert.match(html, />商品</)
-  assert.match(html, /库还没有商品——「＋ 新建商品」建行/)
-  assert.match(html, /共 0 条/)
+  assert.match(html, /还没有商品/)
+  assert.match(html, /从商品库创建一个规格，再补齐资料、定价并发布。/)
+  assert.match(html, /共 0 款商品，0 个规格/)
   assert.match(html, /aria-label="每页条数"/)
   assert.doesNotMatch(html, /role="alert"/)
 })
@@ -303,13 +293,13 @@ test("金额格式化统一人民币（¥），空值读作 —", () => {
   assert.equal(formatCnyCents(800), "¥8.00")
   assert.equal(formatCnyCents(null), "—")
   assert.deepEqual(
-    // missingReadiness 按字段实时算（类目坐标 + 平台价齐 → 缺提示词/固定 tags）。
+    // missingReadiness 按字段实时算（类目坐标 + 平台价齐 → 缺识图事实/固定 tags）。
     missingReadiness(row("p1", {
       descriptionCategoryId: 11,
       typeId: 101,
       platformPriceCents: 1600,
     })),
-    ["提示词", "固定 tags", "Ozon 配置未校验"],
+    ["识图事实", "固定 tags", "Ozon 配置未校验"],
   )
 })
 

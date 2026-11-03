@@ -5,7 +5,7 @@ import { defaultPricePairRejected } from "./card-library-host"
 import { renderLibrary, sampleCard } from "./card-library-test-support"
 import { parseSalePrice } from "./sale-price"
 
-test("名册有主题与 JSON富内容两列，与价格并列展示卡默认", () => {
+test("名册保留主题与 JSON 富内容入口，富内容只显示填写状态", () => {
   const html = renderLibrary([
     {
       ...sampleCard,
@@ -30,10 +30,18 @@ test("名册有主题与 JSON富内容两列，与价格并列展示卡默认", 
 
   assert.match(html, /<th[^>]*>主题</)
   assert.match(html, /<th[^>]*>JSON富内容</)
-  assert.match(html, /aria-label="主题 夏季T恤"/)
   assert.match(html, /aria-label="JSON富内容 夏季T恤"/)
+  assert.match(html, /已填写/)
+  assert.match(html, /aria-label="主题 夏季T恤"/)
   assert.match(html, /花卉和植物、猫/)
-  assert.match(html, /油画/)
+  assert.doesNotMatch(html, /油画/)
+})
+
+test("空白富内容显示粘贴入口，忙碌方案不开放编辑", () => {
+  assert.match(renderLibrary(), /粘贴 JSON 富内容/)
+  const html = renderLibrary([sampleCard], {}, { busy: true })
+  assert.match(html, /<p[^>]*aria-label="JSON富内容 夏季T恤"/)
+  assert.doesNotMatch(html, /<button[^>]*aria-label="JSON富内容 夏季T恤"/)
 })
 
 test("销售价列展示卡默认并解析正小数", () => {
@@ -116,7 +124,7 @@ test("saveDefaultPrice 向单元格区分成败：守卫无判定，预检与请
   assert.ok(syncAt !== -1 && returnTrueAt > syncAt)
 })
 
-test("主题与富内容走同一条卡默认可写与回写路径", async () => {
+test("主题沿用卡默认可写与回写路径", async () => {
   const { readFile } = await import("node:fs/promises")
   const source = await readFile(new URL("./card-library-host.tsx", import.meta.url), "utf8")
   const fn = source.slice(
@@ -127,48 +135,6 @@ test("主题与富内容走同一条卡默认可写与回写路径", async () =>
   assert.match(fn, /syncRowsForDefaultField\(/)
   // 键必须是打开时读到的 Schema key（调用方解析），不在宿主里硬编码属性 7109/11254。
   assert.doesNotMatch(fn, /attribute_7109|attribute_11254/)
-})
-
-test("富内容弹窗封顶：文本框到上限就框内滚动，保存按钮不被挤出视口", async () => {
-  const { readFile } = await import("node:fs/promises")
-  const editor = await readFile(
-    new URL("./workbench/workbench-cell-editor.tsx", import.meta.url),
-    "utf8",
-  )
-  const dialog = await readFile(
-    new URL("./card-default-cells.tsx", import.meta.url),
-    "utf8",
-  )
-  const spec = await readFile(
-    new URL("./workbench/workbench-prose-spec.tsx", import.meta.url),
-    "utf8",
-  )
-  // 回归：Textarea 的 field-sizing-content 会跟着 JSON 行数无限长高，弹窗被
-  // 顶出屏幕后底部的保存 / 填入按钮点不到。文本框封顶 + 框内滚动，弹窗再兜底可滚。
-  // 富内容（rich_content 规格）覆盖为宽弹窗 + 高文本框；散文列保持紧凑默认。
-  assert.match(
-    spec,
-    /max-h-\[min\(46rem,calc\(100dvh-2rem\)\)\] overflow-y-auto sm:max-w-3xl/,
-    "富内容弹窗要放宽并封顶",
-  )
-  assert.match(spec, /min-h-64 max-h-112/, "富内容文本框要更高并封顶")
-  assert.match(
-    editor,
-    /max-h-\[min\(42rem,calc\(100dvh-2rem\)\)\] overflow-y-auto sm:max-w-xl/,
-    "散文弹窗保持默认封顶",
-  )
-  assert.match(
-    editor,
-    /"min-h-24 max-h-72 overflow-y-auto text-compact leading-5"/,
-    "散文文本框保持默认封顶",
-  )
-  // 两个消费端都跟随规格；校验规格字面量时同时保留接线回归。
-  assert.match(editor, /const spec = edit \? PROSE_EDITOR\[edit\.column\] : PROSE_EDITOR\.name/)
-  assert.match(editor, /spec\.dialogClassName/)
-  assert.match(editor, /spec\.textareaClassName/)
-  // 名册弹窗不复写尺寸字面量，全部跟随 PROSE_EDITOR.rich_content 的规格。
-  assert.match(dialog, /className=\{spec\.dialogClassName\}/)
-  assert.match(dialog, /spec\.textareaClassName/)
 })
 
 test("价格单元格接线必须转发保存判定，void 吞掉布尔即失败静默回滚", async () => {

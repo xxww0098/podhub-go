@@ -19,9 +19,9 @@ func TestOrderQuery(t *testing.T) {
 	if _, err := ParseOrderQuery("", "", nil, "not-a-cursor", nil); err == nil || err.Error() != "cursor 无效" {
 		t.Fatal(err)
 	}
-	ms, id, ok := DecodeCursor("1789900000000:AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA")
-	if !ok || ms != 1789900000000 || id != "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" {
-		t.Fatalf("%d %s %v", ms, id, ok)
+	q, err = ParseOrderQuery("", "", nil, "1789900000000:AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA", nil)
+	if err != nil || q.CursorMS == nil || *q.CursorMS != 1789900000000 || q.CursorID != "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" {
+		t.Fatalf("%+v %v", q, err)
 	}
 }
 

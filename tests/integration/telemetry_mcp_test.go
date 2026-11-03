@@ -2,8 +2,10 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -11,6 +13,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	admindomain "github.com/xxww0098/podhub-go/internal/admin/domain"
+	adminrepo "github.com/xxww0098/podhub-go/internal/admin/repo"
 	"github.com/xxww0098/podhub-go/internal/mcp/domain"
 	mcphttp "github.com/xxww0098/podhub-go/internal/mcp/http"
 	mcprepo "github.com/xxww0098/podhub-go/internal/mcp/repo"
@@ -71,9 +75,62 @@ func TestTelemetryInboxAndClientLogs(t *testing.T) {
 		t.Fatalf("inbox rows %d %v", rows, err)
 	}
 
+	t.Run("Base32 receipt persists numeric statuses and is searchable after copying", func(t *testing.T) {
+		fixture, err := os.ReadFile("../../fixtures/telemetry/error-feedback.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		const id = "7K3M9Q2D6R8PT"
+		body, err := json.Marshal(map[string]any{"events": []any{map[string]any{
+			"id": id, "kind": "error_feedback.v1", "schema_version": 1, "payload_json": string(fixture),
+		}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 2; i++ {
+			rec := postTM(r, "/api/events/inbox", "dev-tm", string(body))
+			if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"accepted":["`+id+`"]`) || !strings.Contains(rec.Body.String(), `"rejected":[]`) {
+				t.Fatalf("receipt %d %s", rec.Code, rec.Body.String())
+			}
+		}
+		var count int
+		var statusType, apiStatusType string
+		if err := pool.QueryRow(ctx, `SELECT count(*), min(jsonb_typeof(payload_json::jsonb->'status')), min(jsonb_typeof(payload_json::jsonb->'apiStatus'))
+			FROM event_inbox_events WHERE device_uid = 'dev-tm' AND id = $1`, id).Scan(&count, &statusType, &apiStatusType); err != nil || count != 1 || statusType != "number" || apiStatusType != "number" {
+			t.Fatalf("stored receipt %d %s %s %v", count, statusType, apiStatusType, err)
+		}
+		admin := adminrepo.NewBilling(pool, "")
+		for query, want := range map[string]int{
+			id: 1, strings.ToLower(id): 1, "7K3M-9Q2D-6R8PT": 1, " 7k3m-9q2d-6r8pt ": 1,
+			"7K3M-9Q2D-6R8PV": 0, "----": 0,
+		} {
+			q, fault := admindomain.ValidateErrorQuery(map[string]string{"q": query, "source": "error_feedback"})
+			if fault != nil {
+				t.Fatal(fault)
+			}
+			body, err := admin.ListErrors(ctx, admindomain.Actor{}, admindomain.ErrorFilter{Query: q})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var result struct {
+				Data struct {
+					Rows []admindomain.ErrorRow `json:"rows"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &result); err != nil || len(result.Data.Rows) != want {
+				t.Fatalf("query %q: %s, %v", query, body, err)
+			}
+			if want == 1 && result.Data.Rows[0].EventID != id {
+				t.Fatalf("query %q returned another receipt: %s", query, body)
+			}
+		}
+	})
+
+	otherUser, _ := insertWorkspace(t, ctx, pool, "tm-conflict-"+stamp+"@example.com", "Conflicting actor")
+	seedCompanyMember(t, ctx, pool, org, otherUser, "member", 2)
 	other := chi.NewRouter()
 	telemetryhttp.Mount(other, telemetryhttp.Deps{
-		Resolve: fixedTelemetry(user+100000, org, "owner"),
+		Resolve: fixedTelemetry(otherUser, org, "member"),
 		Actions: telemetrysvc.New(telemetryrepo.New(pool)),
 		Collect: true,
 		Now:     func() time.Time { return time.Date(2026, 10, 9, 3, 0, 1, 0, time.UTC) },

@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"sort"
 	"strings"
+
+	access "github.com/xxww0098/podhub-go/internal/identity/contract"
 )
 
 const searchLimitMessage = "Provide query or up to 20 method names; limit must be 1–20"
@@ -73,7 +75,7 @@ func (g Grant) Permits(action string) bool {
 	case "catalog":
 		return action == "catalog:read"
 	case "supplier_catalog":
-		return staff(g.PlatformRole) && supplierAction(action)
+		return access.IsPlatformStaff(g.PlatformRole) && supplierAction(action)
 	default:
 		return false
 	}
@@ -103,21 +105,11 @@ func contains(list []string, want string) bool {
 }
 
 func workspaceAllows(role, action string) bool {
-	switch action {
-	case "read", "catalog:read":
-		return role != ""
-	case "prepare", "cards:write":
-		return role != "" && role != "viewer"
-	case "submit":
-		return role == "owner" || role == "manager" || role == "member"
-	default:
+	if _, ok := access.ParseWorkspace(role); !ok {
 		return false
 	}
-}
-
-func staff(role string) bool {
-	switch strings.ToLower(strings.TrimSpace(role)) {
-	case "admin", "super_admin":
+	switch action {
+	case "read", "catalog:read", "prepare", "cards:write", "submit":
 		return true
 	default:
 		return false
@@ -354,6 +346,7 @@ func workspaceMethods() []Descriptor {
 		{Name: "workspace.stores.list", Summary: "List stores visible to this grant owner, without credentials", Keywords: kw, InputSchema: empty, OutputSchema: out, Declaration: decl("workspace.stores", "list"), Effect: "read", Example: example, action: "read"},
 		{Name: "workspace.cards.list", Summary: "Page cards after applying the caller's store visibility", Keywords: kw, InputSchema: json.RawMessage(`{"additionalProperties":false,"properties":{"cursor":{"maxLength":1024,"minLength":1,"type":"string"},"limit":{"maximum":100,"minimum":1,"type":"integer"},"storeId":{"maxLength":256,"minLength":1,"type":"string"}},"required":[],"type":"object"}`), OutputSchema: out, Declaration: decl("workspace.cards", "list"), Effect: "read", Example: example, action: "read"},
 		{Name: "workspace.assets.list", Summary: "List authorized asset metadata; no paths or file bytes", Keywords: kw, InputSchema: empty, OutputSchema: out, Declaration: decl("workspace.assets", "list"), Effect: "read", Example: example, action: "read"},
+		{Name: "workspace.listingRows.getState", Summary: "Read one visible listing row and its latest submission evidence", Keywords: kw, InputSchema: json.RawMessage(`{"additionalProperties":false,"properties":{"cardId":{"format":"uuid","type":"string"},"rowId":{"format":"uuid","type":"string"},"storeId":{"format":"uuid","type":"string"}},"required":["cardId","rowId","storeId"],"type":"object"}`), OutputSchema: out, Declaration: "declare namespace sdk.workspace.listingRows { function getState(args: {cardId:string;rowId:string;storeId:string}): Promise<Record<string, unknown>>; }", Effect: "read", Example: json.RawMessage(`{"cardId":"00000000-0000-4000-8000-000000000001","rowId":"00000000-0000-4000-8000-000000000002","storeId":"00000000-0000-4000-8000-000000000003"}`), action: "read"},
 		{Name: "workspace.listingIntents.list", Summary: "Page visible listing intents; exact ID filters require storeId and empty arrays select nothing", Keywords: kw, InputSchema: json.RawMessage(`{"additionalProperties":false,"properties":{"cardId":{"maxLength":256,"minLength":1,"type":"string"},"cursor":{"maxLength":1024,"minLength":1,"type":"string"},"intentIds":{"items":{"format":"uuid","type":"string"},"maxItems":100,"type":"array"},"latestPerRow":{"type":"boolean"},"limit":{"maximum":100,"minimum":1,"type":"integer"},"listingRowId":{"maxLength":256,"minLength":1,"type":"string"},"listingRowIds":{"items":{"format":"uuid","type":"string"},"maxItems":100,"type":"array"},"stableOrder":{"type":"boolean"},"storeId":{"maxLength":256,"minLength":1,"type":"string"}},"required":[],"type":"object"}`), OutputSchema: out, Declaration: decl("workspace.listingIntents", "list"), Effect: "read", Example: example, action: "read"},
 		{Name: "workspace.cards.createDraftFromCatalogProduct", Summary: "Create or return the existing supplier product draft; never replace an existing store or title", Keywords: kw, InputSchema: json.RawMessage(`{"additionalProperties":false,"properties":{"callId":{"maxLength":128,"minLength":1,"type":"string"},"expectedProductRevision":{"pattern":"^[1-9][0-9]{0,18}$","type":"string"},"productId":{"maxLength":256,"minLength":1,"type":"string"},"storeId":{"maxLength":256,"minLength":1,"type":"string"},"title":{"maxLength":200,"type":"string"}},"required":["productId","callId"],"type":"object"}`), OutputSchema: out, Declaration: decl("workspace.cards", "createDraftFromCatalogProduct"), Effect: "write", Example: example, action: "cards:write"},
 	}

@@ -50,8 +50,6 @@ test("the store editor edits the Seller identity and nothing that has no Cloud h
   assert.doesNotMatch(source, /watermarkName|advertisingClientId|advertisingClientSecret/)
   assert.doesNotMatch(source, /<details/)
   assert.match(source, /id="store-api-key"/)
-  assert.match(source, /允许指派人管理密钥/)
-  assert.doesNotMatch(source, /指派人密钥权限/)
 })
 
 test("new store draft accepts credentials in one step", () => {
@@ -59,7 +57,7 @@ test("new store draft accepts credentials in one step", () => {
     new URL("../src/features/stores/stores-screen.tsx", import.meta.url),
     "utf8",
   )
-  assert.match(storeEditor, /const canManageKey =\s*draft && !draft\.id \? true/)
+  assert.match(storeEditor, /const canManageKey =\s*draft && !draft\.id \? canManageRoster/)
   assert.match(storeCommands, /async function saveKey\(\)/)
   assert.match(storeCommands, /integrationsUpsertOzonStore/)
   assert.match(storeCommands, /integrationsCreateOzonStore/)
@@ -72,17 +70,16 @@ test("store roster exposes recent use and slot-releasing removal", () => {
     new URL("../src/features/stores/stores-screen.tsx", import.meta.url),
     "utf8",
   )
-  assert.match(source, /<TableHead>归属<\/TableHead>/)
-  assert.match(source, /<TableHead>分组<\/TableHead>/)
+  assert.match(source, /<TableHead[^>]*>归属<\/TableHead>/)
+  assert.match(source, /aria-label=\{`分组：\$\{store\.group\.name\}`\}/)
   assert.doesNotMatch(source, /<TableHead>密钥<\/TableHead>/)
-  assert.match(source, /<TableHead>最近使用<\/TableHead>/)
+  assert.match(source, /<TableHead[^>]*>最近使用<\/TableHead>/)
   assert.match(source, /期末余额/)
   assert.match(source, /store\.assignee_email/)
   assert.match(source, /store\.last_used_at_ms/)
   // 名额门集中在 createStoreGate：canCreate 与禁用文案同源，不再分叉。
   assert.match(source, /input\.storesUsed >= input\.storeLimit/)
   assert.match(source, /移除店铺并释放名额/)
-  assert.match(source, /只删除托管密钥，店铺仍占用名额/)
 })
 
 // Every Store is the Workspace's; the 归属 column names its one Assignee or reads

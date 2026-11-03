@@ -7,7 +7,7 @@ export function bindSupplierDbsAuthority(store: SupplierDbsStore): void {
   const snapshot = () => {
     const overview = peekAccountOverview()
     if (!overview?.session.authenticated) return null
-    const identity = overview.accounts?.find((account) => account.active)?.uuid ?? overview.session.email
+    const identity = overview.session.uuid ?? overview.session.email
     return identity ? { key: `${identity}:${overview.session.role ?? ""}`, role: overview.session.role } : null
   }
   let authority = snapshot()?.key ?? null

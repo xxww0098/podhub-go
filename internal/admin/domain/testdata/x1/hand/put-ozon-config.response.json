@@ -4,32 +4,77 @@
   "response": {
     "data": {
       "config": {
-        "productId": "<scp>",
-        "descriptionCategoryId": 17033561,
-        "typeId": 91497,
+        "product_id": "<scp>",
+        "description_category_id": 17033561,
+        "type_id": 91497,
         "language": "zh_hans",
         "values": {
-          "fixed:currency_code": [{ "kind": "text", "value": "RUB" }],
-          "fixed:depth": [{ "kind": "integer", "value": 100 }],
-          "fixed:dimension_unit": [{ "kind": "text", "value": "mm" }],
-          "fixed:height": [{ "kind": "integer", "value": 300 }],
-          "fixed:vat": [{ "kind": "decimal", "value": "0.2" }],
-          "fixed:weight": [{ "kind": "integer", "value": 350 }],
-          "fixed:weight_unit": [{ "kind": "text", "value": "g" }],
-          "fixed:width": [{ "kind": "integer", "value": 400 }]
+          "fixed:currency_code": [
+            {
+              "kind": "text",
+              "value": "RUB"
+            }
+          ],
+          "fixed:depth": [
+            {
+              "kind": "integer",
+              "value": 100
+            }
+          ],
+          "fixed:dimension_unit": [
+            {
+              "kind": "text",
+              "value": "mm"
+            }
+          ],
+          "fixed:height": [
+            {
+              "kind": "integer",
+              "value": 300
+            }
+          ],
+          "fixed:vat": [
+            {
+              "kind": "decimal",
+              "value": "0.2"
+            }
+          ],
+          "fixed:weight": [
+            {
+              "kind": "integer",
+              "value": 350
+            }
+          ],
+          "fixed:weight_unit": [
+            {
+              "kind": "text",
+              "value": "g"
+            }
+          ],
+          "fixed:width": [
+            {
+              "kind": "integer",
+              "value": 400
+            }
+          ]
         },
-        "fixedTags": ["<sixteen_tags>"],
-        "promptText": "<canonical TEST_BRIEF>",
-        "aiOutput": { "title": true, "description": true, "tags": true },
+        "complex_values": [],
+        "fixed_tags": [
+          "<sixteen_tags>"
+        ],
+        "prompt_text": "<canonical TEST_BRIEF>",
+        "ai_output": {
+          "title": true,
+          "description": true,
+          "tags": true
+        },
         "revision": "<config revision after write_judgement>",
         "state": "valid",
-        "validatedCatalogDigest": "<ozon_category_current.content_digest>",
+        "validated_catalog_digest": "<ozon_category_current.content_digest>",
         "issues": [],
         "usable": false,
         "denial": "sku_not_published",
-        "updatedAtMs": "<unix_ms>",
-        "draftPromptRevision": 1,
-        "publishedPromptRevision": 1
+        "updated_at_ms": "<unix_ms>"
       }
     }
   }

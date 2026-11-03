@@ -1,8 +1,0 @@
-package: opshttp
-output: internal/ops/http/gen/openapi.gen.go
-generate:
-  models: true
-  chi-server: false
-output-options:
-  include-tags:
-    - ops

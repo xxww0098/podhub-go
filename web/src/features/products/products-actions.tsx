@@ -16,7 +16,6 @@ import {
 import type { StoreProductRow } from "./products-api"
 import { ozonProductUrl } from "./product-read-cells"
 import { actionBlockReason, type ProductAction } from "./products-mutation"
-import { VARIANT_PRODUCT_ACTIONS } from "./products-variant-model"
 
 export const ACTION_LABEL: Record<ProductAction, string> = {
   price: "改价格",
@@ -26,9 +25,6 @@ export const ACTION_LABEL: Record<ProductAction, string> = {
   archive: "归档",
   unarchive: "恢复",
   delete: "删除",
-  "variant-merge": "合并为同款",
-  "variant-split": "拆出规格",
-  "variant-move": "移入已有同款",
 }
 
 /** 前台商品页地址：Ozon 公开页面只按 SKU 寻址（本部署面向 ozon.ru 店面）。 */
@@ -144,12 +140,6 @@ export function SelectionActions({
           更多
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          {VARIANT_PRODUCT_ACTIONS.map((action) => (
-            <DropdownMenuItem key={action} onClick={() => onAction(action)}>
-              {ACTION_LABEL[action]}
-            </DropdownMenuItem>
-          ))}
-          <DropdownMenuSeparator />
           <DropdownMenuItem disabled={verifyDisabled} onClick={() => onAction("verify")}>
             {ACTION_LABEL.verify}
           </DropdownMenuItem>

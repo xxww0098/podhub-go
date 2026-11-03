@@ -15,14 +15,14 @@ type PurposeKind string
 const (
 	// PurposeOrgFile is a general workspace file in the private bucket.
 	PurposeOrgFile PurposeKind = "org_file"
-	// PurposeOrgTemplate is a PSD template in the private bucket.
-	PurposeOrgTemplate PurposeKind = "org_template"
 	// PurposeDelegateBinding is a delegate original tied to one binding.
 	PurposeDelegateBinding PurposeKind = "delegate_binding"
 	// PurposeSource is a supplier product image in the assets bucket.
 	PurposeSource PurposeKind = "source"
 	// PurposeCatalog is a platform catalog image in the assets bucket.
 	PurposeCatalog PurposeKind = "catalog"
+	// PurposeListingImage is a workspace-owned, persistent public product image.
+	PurposeListingImage PurposeKind = "listing_image"
 )
 
 // Purpose is one resolved upload target.
@@ -45,16 +45,16 @@ func ResolvePurpose(kind, id string, orgID int64, bindingID string) (Purpose, er
 		return Purpose{}, ErrPurpose
 	}
 	switch PurposeKind(strings.TrimSpace(kind)) {
+	case PurposeListingImage:
+		if strings.TrimSpace(id) != "" && strings.TrimSpace(id) != itoa(orgID) {
+			return Purpose{}, ErrPurpose
+		}
+		return Purpose{Kind: PurposeListingImage, Bucket: RoleAssets, Scope: "org:" + itoa(orgID) + ":image", ID: itoa(orgID), OrgID: orgID}, nil
 	case PurposeOrgFile:
 		if strings.TrimSpace(id) != "" && strings.TrimSpace(id) != itoa(orgID) {
 			return Purpose{}, ErrPurpose
 		}
 		return Purpose{Kind: PurposeOrgFile, Bucket: RolePrivate, Scope: "org:" + itoa(orgID) + ":file", ID: itoa(orgID), OrgID: orgID}, nil
-	case PurposeOrgTemplate:
-		if strings.TrimSpace(id) != "" && strings.TrimSpace(id) != itoa(orgID) {
-			return Purpose{}, ErrPurpose
-		}
-		return Purpose{Kind: PurposeOrgTemplate, Bucket: RolePrivate, Scope: "org:" + itoa(orgID) + ":template", ID: itoa(orgID), OrgID: orgID}, nil
 	case PurposeDelegateBinding:
 		binding, err := normalizeBindingID(id)
 		if err != nil {

@@ -10,18 +10,15 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/xxww0098/podhub-go/internal/admin/domain"
+	billing "github.com/xxww0098/podhub-go/internal/billing/contract"
 )
 
 type fakeAPI struct {
-	standing domain.Standing
 	err      error
 	calls    int
 	redeemID int64
 }
 
-func (f *fakeAPI) Standing(context.Context, int64, string) (domain.Standing, error) {
-	return f.standing, f.err
-}
 func (f *fakeAPI) PublicID(context.Context, int64) (string, error) { return "pub", nil }
 func (f *fakeAPI) ListPlans(context.Context, domain.Actor) ([]byte, error) {
 	f.calls++
@@ -40,6 +37,17 @@ func (f *fakeAPI) CancelOrder(context.Context, domain.Actor, string) ([]byte, er
 	return nil, nil
 }
 func (f *fakeAPI) ListRedeem(context.Context, domain.Actor) ([]byte, error) { return []byte(`{}`), nil }
+func (f *fakeAPI) ListCoupons(context.Context, domain.Actor) ([]byte, error) {
+	return []byte(`{"data":{"coupons":[]}}`), nil
+}
+func (f *fakeAPI) CreateCoupon(context.Context, domain.Actor, billing.CouponSpec) ([]byte, error) {
+	f.calls++
+	return []byte(`{"data":{}}`), nil
+}
+func (f *fakeAPI) SetCouponEnabled(context.Context, domain.Actor, string, bool) ([]byte, error) {
+	f.calls++
+	return []byte(`{"data":{}}`), nil
+}
 func (f *fakeAPI) CreateRedeem(context.Context, domain.Actor, domain.RedeemSpec) ([]byte, error) {
 	return nil, nil
 }
@@ -120,7 +128,7 @@ func hit(handler http.Handler, method, path, auth string, headers map[string]str
 }
 
 func TestAdminBAuthFamilies(t *testing.T) {
-	api := &fakeAPI{standing: domain.Standing{Enrolled: true, Elevated: true}}
+	api := &fakeAPI{}
 	cases := []struct {
 		name, method, path, role string
 		want                     int
@@ -143,26 +151,8 @@ func TestAdminBAuthFamilies(t *testing.T) {
 	}
 }
 
-func TestAdminBStepUp(t *testing.T) {
-	handler := func(standing domain.Standing) http.Handler {
-		return mountFake(&fakeAPI{standing: standing}, "super_admin")
-	}
-	missing := hit(handler(domain.Standing{Missing: true}), http.MethodGet, "/api/admin/plans", "token", nil)
-	if missing.Code != 500 || !strings.Contains(missing.Body.String(), "服务暂不可用") {
-		t.Fatal(missing.Code, missing.Body.String())
-	}
-	enroll := hit(handler(domain.Standing{}), http.MethodGet, "/api/admin/plans", "token", nil)
-	if enroll.Code != 403 || !strings.Contains(enroll.Body.String(), "请先绑定验证器") {
-		t.Fatal(enroll.Code, enroll.Body.String())
-	}
-	step := hit(handler(domain.Standing{Enrolled: true}), http.MethodGet, "/api/admin/plans", "token", nil)
-	if step.Code != 403 || !strings.Contains(step.Body.String(), "管理操作需要重新验证") {
-		t.Fatal(step.Code, step.Body.String())
-	}
-}
-
 func TestAdminBCSRFAndValidation(t *testing.T) {
-	api := &fakeAPI{standing: domain.Standing{Enrolled: true, Elevated: true}}
+	api := &fakeAPI{}
 	handler := mountFake(api, "super_admin")
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/redeem-codes", strings.NewReader(`{}`))
 	req.Header.Set("Cookie", "sid=abc")

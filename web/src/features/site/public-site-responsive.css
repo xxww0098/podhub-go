@@ -1,79 +1,147 @@
-@media (max-width: 900px) {
-  .public-site .header-in {
-    grid-template-columns: 1fr auto;
-    grid-template-areas:
-      "brand access"
-      "nav nav";
-    gap: 6px 16px;
+@media (max-width: 1000px) {
+  .public-site .product-hero {
+    gap: 4%;
   }
 
-  .public-site .brand {
-    grid-area: brand;
+  .public-site h1 {
+    font-size: clamp(2rem, 3.8vw, 2.5rem);
   }
 
-  .public-site .header nav {
-    grid-area: nav;
-    justify-self: stretch;
-    justify-content: flex-start;
-    padding-bottom: 8px;
+  .public-site .hero-photo {
+    min-height: 400px;
   }
 
-  .public-site .header-in > div:last-child {
-    grid-area: access;
-    justify-self: end;
+  .public-site .hero-actions {
+    gap: 12px 16px;
   }
 
-  .public-site .plans {
+  .public-site .workflow-inner {
     grid-template-columns: 1fr;
-    max-width: 520px;
+    gap: 32px;
+  }
+
+  .public-site .site-cta {
+    padding: 40px;
   }
 }
 
 @media (max-width: 700px) {
   .public-site .wrap {
-    width: min(calc(100% - 32px), 1180px);
+    width: calc(100% - 32px);
   }
 
-  .public-site .cta {
-    align-items: stretch;
-    flex-direction: column;
+  .public-site .header-in {
+    justify-content: space-between;
+    gap: 0 16px;
+    padding-top: 10px;
   }
 
-  .public-site .cta a {
+  .public-site .brand strong {
+    font-size: 16px;
+  }
+
+  .public-site .mark {
+    width: 28px;
+    height: 28px;
+  }
+
+  .public-site .header-actions .site-primary,
+  .public-site .header-actions .site-secondary {
+    padding-inline: 12px;
+  }
+
+  .public-site .header nav {
+    order: 3;
     width: 100%;
+    margin-left: -14px;
   }
 
-  .public-site .local-grid,
-  .public-site .help,
-  .public-site .legal,
-  .public-site .footer-main,
-  .public-site .local-grid > div,
-  .public-site .routes,
-  .public-site .footer-links {
+  .public-site section[id],
+  .public-site main {
+    scroll-margin-top: 116px;
+  }
+
+  .public-site .product-hero {
     grid-template-columns: 1fr;
+    gap: 28px;
+    padding-block: 32px;
   }
 
-  .public-site .legal > nav {
-    position: static;
+  .public-site .hero-copy {
+    padding: 0;
+  }
+
+  .public-site h1 {
+    font-size: 2.25rem;
+  }
+
+  .public-site .hero-copy > p {
+    margin-top: 20px;
+  }
+
+  .public-site .hero-actions {
+    margin-top: 24px;
+  }
+
+  .public-site .hero-copy .hero-note {
+    margin-top: 24px;
+  }
+
+  .public-site .hero-photo {
+    height: auto;
+    min-height: 0;
+    aspect-ratio: 4 / 3;
+    border-radius: 16px;
+  }
+
+  .public-site .product-showcase {
+    padding-block: 16px 40px;
+  }
+
+  .public-site .product-grid {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+
+  .public-site .workflow-section {
+    padding-block: 44px;
+  }
+
+  .public-site .workflow-steps {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+
+  .public-site .workflow-steps li {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0 20px;
+    grid-template-columns: 32px 1fr;
+    align-items: center;
+    column-gap: 12px;
   }
 
-  .public-site .footer-base {
-    flex-direction: column;
-    gap: 10px;
+  .public-site .workflow-steps h3 {
+    margin: 0;
+  }
+
+  .public-site .workflow-steps p {
+    grid-column: 2;
+    margin-top: 8px;
+  }
+
+  .public-site .site-cta {
+    margin-block: 40px;
+    padding: 32px 0;
+  }
+
+  .public-site .site-cta .site-primary {
+    width: 100%;
+    justify-content: center;
   }
 }
 
-@media (max-width: 860px) {
-  .public-site .catalog-hero {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .public-site {
-    scroll-behavior: auto;
+@media (forced-colors: active) {
+  .public-site .site-primary,
+  .public-site .site-secondary {
+    border: 1px solid ButtonText;
   }
 }

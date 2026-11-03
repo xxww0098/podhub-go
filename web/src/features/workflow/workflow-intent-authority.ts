@@ -9,7 +9,7 @@ import { preparationRunning } from "./prepare/preparation-tracks"
 /** Server-projected management permission and visible Store, never canResume or a role guess. */
 export function captureWorkflowAccess(workspaceId: number | undefined, storeId: string): { current: () => boolean } | undefined {
   const account = peekAccountOverview()
-  const actor = account?.accounts?.find((item) => item.active)?.uuid
+  const actor = account?.session.uuid
   const workspace = account?.active_workspace
   const session = rowCacheScope()
   const allowed = () => {
@@ -17,7 +17,7 @@ export function captureWorkflowAccess(workspaceId: number | undefined, storeId: 
     const stores = peekStoreRoster(workspaceId)?.overview.stores ?? []
     const store = stores.find((item) => item.id === storeId || item.cloud_store_uuid === storeId)
     return session.current() && !!actor && !!workspace && workspace.id === workspaceId
-      && now?.session.authenticated === true && now.accounts?.find((item) => item.active)?.uuid === actor
+      && now?.session.authenticated === true && now.session.uuid === actor
       && now.active_workspace?.uuid === workspace.uuid && now.active_workspace?.id === workspaceId
       && store?.permissions?.manage_store === true && store.can_manage === true
   }

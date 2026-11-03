@@ -84,15 +84,6 @@ type PriceRow struct {
 	Effective                                         time.Time
 }
 
-// TotpRow is the sealed verifier.
-type TotpRow struct {
-	Nonce     []byte
-	Cipher    []byte
-	Confirmed bool
-	Failed    int
-	ResetAt   *time.Time
-}
-
 // ConfigBlob is the ciphertext row.
 type ConfigBlob struct {
 	Revision   int64
@@ -108,5 +99,4 @@ type (
 	Person    = userscontract.Person
 	Workspace = userscontract.Workspace
 	Directory = userscontract.Directory
-	SeatLoad  = userscontract.SeatLoad
 )

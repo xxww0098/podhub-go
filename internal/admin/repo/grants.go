@@ -12,11 +12,29 @@ import (
 
 	"github.com/xxww0098/podhub-go/internal/admin/contract"
 	"github.com/xxww0098/podhub-go/internal/admin/domain"
+	"github.com/xxww0098/podhub-go/internal/platform/db"
 )
+
+func (r Repo) withGrantStaff(ctx context.Context, actor contract.Actor, fn func(pgx.Tx) error) error {
+	if r.pool == nil {
+		return internal()
+	}
+	return mapDB(db.InTx(ctx, r.pool, db.Staff(), func(tx pgx.Tx) error {
+		var role string
+		err := tx.QueryRow(ctx, `SELECT role FROM account_users WHERE id=$1 AND disabled_at IS NULL FOR SHARE`, actor.UserID).Scan(&role)
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && role != "admin" && role != "super_admin") {
+			return forbidden("当前授权已变化，请刷新后重试")
+		}
+		if err != nil {
+			return err
+		}
+		return fn(tx)
+	}))
+}
 
 func (r Repo) ListGrants(ctx context.Context, actor contract.Actor) ([]domain.GrantView, error) {
 	var out []domain.GrantView
-	err := r.withTx(ctx, actor.OrgID, func(tx pgx.Tx) error {
+	err := r.withGrantStaff(ctx, actor, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, grantSelect+`
 			 WHERE user_id = $1 AND scope_kind = 'supplier_catalog' AND org_id IS NOT DISTINCT FROM NULL::bigint
 			 ORDER BY created_at DESC, id`, actor.UserID)
@@ -40,7 +58,7 @@ func (r Repo) ListGrants(ctx context.Context, actor contract.Actor) ([]domain.Gr
 func (r Repo) CreateGrant(ctx context.Context, actor contract.Actor, in domain.GrantInput) (domain.GrantView, string, error) {
 	var view domain.GrantView
 	var token string
-	err := r.withTx(ctx, actor.OrgID, func(tx pgx.Tx) error {
+	err := r.withGrantStaff(ctx, actor, func(tx pgx.Tx) error {
 		if in.Sources != nil {
 			for _, id := range *in.Sources {
 				var found string
@@ -52,15 +70,6 @@ func (r Repo) CreateGrant(ctx context.Context, actor contract.Actor, in domain.G
 					return mapDB(err)
 				}
 			}
-		}
-		var role string
-		err := tx.QueryRow(ctx, `
-			SELECT role FROM account_users WHERE id = $1 AND disabled_at IS NULL FOR SHARE`, actor.UserID).Scan(&role)
-		if errors.Is(err, pgx.ErrNoRows) || (err == nil && role != "admin" && role != "super_admin") {
-			return forbidden("当前授权已变化，请刷新后重试")
-		}
-		if err != nil {
-			return mapDB(err)
 		}
 		raw := make([]byte, 32)
 		if _, err := rand.Read(raw); err != nil {
@@ -75,7 +84,7 @@ func (r Repo) CreateGrant(ctx context.Context, actor contract.Actor, in domain.G
 			sources = *in.Sources
 		}
 		var id string
-		err = tx.QueryRow(ctx, `
+		err := tx.QueryRow(ctx, `
 			INSERT INTO automation_grants (
 			    user_id, org_id, scope_kind, source_ids, name, token_hash, token_prefix, actions, expires_at)
 			VALUES ($1, NULL, 'supplier_catalog', $2::text[], $3, $4, $5, $6::text[],
@@ -102,7 +111,7 @@ func (r Repo) CreateGrant(ctx context.Context, actor contract.Actor, in domain.G
 
 func (r Repo) RevokeGrant(ctx context.Context, actor contract.Actor, id string) (string, error) {
 	var removed string
-	err := r.withTx(ctx, actor.OrgID, func(tx pgx.Tx) error {
+	err := r.withGrantStaff(ctx, actor, func(tx pgx.Tx) error {
 		var got string
 		var org *int64
 		err := tx.QueryRow(ctx, `

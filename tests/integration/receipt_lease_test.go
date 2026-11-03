@@ -35,7 +35,7 @@ func TestParallelBatchReceiptSurvivesLeaseLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	digest := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	image := "https://cdn.example/uploads/2023-11-14/1700000000000-22222222-2222-4222-8222-222222222222/images/teams/" + workspace + "/sha256/" + digest + ".jpg"
+	image := "https://cdn.example/uploads/2023-11-14/1700000000000-22222222-2222-4222-8222-222222222222/" + digest + ".jpg"
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO public.media_object_leases (
 			workspace_uuid, batch_id, content_hash, org_id, object_key, media_account_id,
@@ -127,7 +127,7 @@ func TestParallelBatchReceiptSurvivesLeaseLock(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			errs[i] = submit.Work(ctx, pool, batches[i].job, eg.Port())
+			errs[i] = listingSubmit().Work(ctx, pool, batches[i].job, eg.Port())
 		}(i)
 	}
 	finished := make(chan struct{})
@@ -176,7 +176,7 @@ func TestParallelBatchReceiptSurvivesLeaseLock(t *testing.T) {
 	for i := range batches {
 		var err error
 		for try := 0; try < 8; try++ {
-			err = submit.Work(ctx, pool, batches[i].job, eg.Port())
+			err = listingSubmit().Work(ctx, pool, batches[i].job, eg.Port())
 			if !errors.Is(err, queuedomain.ErrLockBusy) {
 				break
 			}
@@ -264,7 +264,7 @@ func TestOrgBatchCapDoesNotSend(t *testing.T) {
 		jobID, orgID, uuid.NewString(), "cap-"+jobID.String(), userID, payload); err != nil {
 		t.Fatal(err)
 	}
-	err := submit.Work(ctx, pool, queuecontract.Claimed{
+	err := listingSubmit().Work(ctx, pool, queuecontract.Claimed{
 		ID: jobID, OrgID: orgID, Kind: "listing.submit.batch", SubmitterUserID: userID,
 		Attempt: 1, MaxAttempts: 8, Epoch: 1, Owner: "listing-test", Payload: payload,
 	}, eg.Port())

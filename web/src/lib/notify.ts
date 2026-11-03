@@ -141,9 +141,12 @@ const REFUSAL_TIMEOUT = 20_000
 export function notifyCommandError(reason: unknown, fallback: string) {
   const code = commandErrorCode(reason)
   const message = errorMessage(reason, fallback)
-  // Keyed by code so a repeated refusal replaces its own row instead of
-  // stacking: the in-progress guard fires per attempt, and a cap refusal
-  // answers every retry of a thing that can never succeed.
+  // Keyed by cause so one cause shows one card, however many reads failed with
+  // it: opening a screen runs several independent loads (cards, roster, tree),
+  // and Cloud refuses all of them with the same sentence. Retrying a cap
+  // refusal answers with the same key, so the decision stays one card too.
+  // A plain browser exception has no cause to key on and keeps its own card.
+  const cause = code ? `${code}\u0000${message}` : undefined
   const refusal = isWorkspaceCapRefusal(reason)
   const details = createErrorFeedback(reason, fallback)
   details.errorId = reportError(NOTIFY_LOG, reason, {
@@ -157,10 +160,7 @@ export function notifyCommandError(reason: unknown, fallback: string) {
   reportFeedback(details, withRefusal(reason), true)
   return addErrorToast(details.summary, {
     feedback: details,
-    id:
-      refusal || code === "workflow_task_in_progress" || code === "cloud_unavailable"
-        ? code
-        : undefined,
+    id: cause,
     timeout: refusal ? REFUSAL_TIMEOUT : undefined,
   })
 }

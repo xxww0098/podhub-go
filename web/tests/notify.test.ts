@@ -46,6 +46,50 @@ test("repeated automatic task-in-progress errors reuse one visible notification"
   }
 })
 
+test("one Cloud refusal is one notification, whichever reads failed with it", () => {
+  // Opening a screen runs several loads (cards, roster, tree). With no
+  // Workspace, Cloud refuses every one with the same sentence; the operator
+  // must see one card for the cause, not one per request.
+  const noWorkspace = "当前账号尚未加入任何工作空间，请先创建工作空间，或等待他人邀请后在通知中接受"
+  const cards = Object.assign(new Error(noWorkspace), { code: "forbidden", status: 403 })
+  const roster = Object.assign(new Error(noWorkspace), { code: "forbidden", status: 403 })
+
+  try {
+    let ids: string[] = []
+    captureConsoleLog(() => {
+      ids = [
+        notifyCommandError(cards, "无法读取已保存的上架方案，请稍后重试。"),
+        notifyCommandError(roster, "无法读取店铺，请稍后重试。"),
+      ]
+    })
+
+    assert.equal(ids[0], ids[1])
+  } finally {
+    toast.close()
+  }
+})
+
+test("different Cloud causes keep separate notifications", () => {
+  const forbidden = Object.assign(new Error("当前账号尚未加入任何工作空间，请先创建工作空间，或等待他人邀请后在通知中接受"), { code: "forbidden" })
+  const unavailable = Object.assign(new Error("云端服务暂时不可用"), { code: "cloud_unavailable" })
+  const missing = Object.assign(new Error("类目不存在"), { code: "cloud_not_found" })
+
+  try {
+    let ids: string[] = []
+    captureConsoleLog(() => {
+      ids = [
+        notifyCommandError(forbidden, "无法读取"),
+        notifyCommandError(unavailable, "无法读取"),
+        notifyCommandError(missing, "无法读取"),
+      ]
+    })
+
+    assert.equal(new Set(ids).size, 3)
+  } finally {
+    toast.close()
+  }
+})
+
 test("repeated Cloud outages replace the same notification", () => {
   const reason = {
     code: "cloud_unavailable",
@@ -61,7 +105,7 @@ test("repeated Cloud outages replace the same notification", () => {
       second = notifyCommandError(reason, "无法登录")
     })
 
-    assert.equal(first, "cloud_unavailable")
+    assert.ok(first)
     assert.equal(second, first)
   } finally {
     toast.close()
@@ -76,7 +120,7 @@ test("notifyError writes one greppable console line and still toasts", () => {
   try {
     assert.ok(id)
     assert.equal(lines.length, 1)
-    assert.match(String(lines[0]?.[0]), /^\[notify\] error code=operation_failed errorId=[0-9]{20} message=无法打开上架执行$/)
+    assert.match(String(lines[0]?.[0]), /^\[notify\] error code=operation_failed errorId=[0-9A-F][0-9A-HJKMNP-TV-Z]{12} message=无法打开上架执行$/)
   } finally {
     toast.close()
   }
@@ -93,7 +137,7 @@ test("notifyCommandError logs code and resolved message on one line", () => {
   })
   try {
     assert.equal(lines.length, 1)
-    assert.match(String(lines[0]?.[0]), /^\[notify\] error code=cloud_unavailable errorId=[0-9]{20} message=云端服务暂时不可用 请稍后重试。$/)
+    assert.match(String(lines[0]?.[0]), /^\[notify\] error code=cloud_unavailable errorId=[0-9A-F][0-9A-HJKMNP-TV-Z]{12} message=云端服务暂时不可用 请稍后重试。$/)
   } finally {
     toast.close()
   }
@@ -113,7 +157,7 @@ test("notifyCommandError keeps safe diagnostics and skips arbitrary objects and 
     assert.equal(lines[0]?.length, 1)
     assert.match(String(lines[0]?.[0]), /code=unauthenticated.*message=登录已失效，请重新登录/)
     assert.doesNotMatch(String(lines[0]?.[0]), /reason=|\/Users\/|Error:|\n/)
-    assert.match(String(lines[1]?.[0]), /^\[notify\] error code=operation_failed errorId=[0-9]{20} message=无法登录$/)
+    assert.match(String(lines[1]?.[0]), /^\[notify\] error code=operation_failed errorId=[0-9A-F][0-9A-HJKMNP-TV-Z]{12} message=无法登录$/)
     assert.equal(
       lines.every((line) => !String(line[0]).includes("should-not-appear")),
       true,
@@ -145,7 +189,7 @@ test("live error notices write one notify console line", () => {
   })
   try {
     assert.equal(lines.length, 1)
-    assert.match(String(lines[0]?.[0]), /^\[notify\] error code=operation_failed errorId=[0-9]{20} message=导入失败$/)
+    assert.match(String(lines[0]?.[0]), /^\[notify\] error code=operation_failed errorId=[0-9A-F][0-9A-HJKMNP-TV-Z]{12} message=导入失败$/)
   } finally {
     clearLive("live:import-fail")
   }

@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -91,8 +90,4 @@ func OrgAtLeast0(orgID int64) int64 {
 		return 0
 	}
 	return orgID
-}
-
-func RFC3339Millis(t time.Time) string {
-	return t.UTC().Format("2006-01-02T15:04:05.000Z")
 }

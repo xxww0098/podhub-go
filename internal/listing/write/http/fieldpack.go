@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
+	"github.com/xxww0098/podhub-go/internal/platform/db"
 	"github.com/xxww0098/podhub-go/internal/platform/httpx/jsonwire"
 )
 
@@ -128,24 +129,29 @@ func (h Host) list(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "请求格式无效", "validation")
 		return
 	}
-	rows, err := h.Pool.Query(r.Context(), `
+	packs := []packView{}
+	err := db.InTx(r.Context(), h.Pool, db.AppRole(), func(tx pgx.Tx) error {
+		rows, err := tx.Query(r.Context(), `
 		SELECT `+packColumns+` FROM public.ozon_field_packs
 		WHERE author_user_id = $1 AND description_category_id = $2 AND type_id = $3 AND language = $4
 		ORDER BY active DESC, updated_at_ms DESC, id DESC
 		LIMIT 100`, p.UserID, cat, typ, lang)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			view, err := scanPack(rows)
+			if err != nil {
+				return err
+			}
+			packs = append(packs, view)
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, access.MsgUnavailable, "internal")
 		return
-	}
-	defer rows.Close()
-	packs := []packView{}
-	for rows.Next() {
-		view, err := scanPack(rows)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, access.MsgUnavailable, "internal")
-			return
-		}
-		packs = append(packs, view)
 	}
 	jsonwire.Write(w, http.StatusOK, struct {
 		Data struct {
@@ -158,8 +164,8 @@ func (h Host) list(w http.ResponseWriter, r *http.Request) {
 
 func coordinate(r *http.Request) (int64, int64, string, bool) {
 	q := r.URL.Query()
-	cat, err1 := strconv.ParseInt(q.Get("description_category_id"), 10, 64)
-	typ, err2 := strconv.ParseInt(q.Get("type_id"), 10, 64)
+	cat, err1 := strconv.ParseInt(q.Get("descriptionCategoryId"), 10, 64)
+	typ, err2 := strconv.ParseInt(q.Get("typeId"), 10, 64)
 	lang, ok := LanguageKey(q.Get("language"))
 	if err1 != nil || err2 != nil || !ok {
 		return 0, 0, "", false
@@ -202,19 +208,13 @@ func (h Host) create(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "请求格式无效", "validation")
 		return
 	}
-	tx, err := h.Pool.Begin(r.Context())
-	if err != nil {
-		slog.Error("field pack begin", "err", err)
-		writeErr(w, http.StatusInternalServerError, access.MsgUnavailable, "internal")
-		return
-	}
-	defer func() { _ = tx.Rollback(r.Context()) }()
-	if err := lockActive(r.Context(), tx, p.UserID, body.Coordinate.DescriptionCategoryID, body.Coordinate.TypeID, lang); err != nil {
-		slog.Error("field pack lock", "err", err)
-		writeErr(w, http.StatusInternalServerError, access.MsgUnavailable, "internal")
-		return
-	}
-	view, err := scanPack(tx.QueryRow(r.Context(), `
+	var view packView
+	err = db.InTx(r.Context(), h.Pool, db.AppRole(), func(tx pgx.Tx) error {
+		if err := lockActive(r.Context(), tx, p.UserID, body.Coordinate.DescriptionCategoryID, body.Coordinate.TypeID, lang); err != nil {
+			return err
+		}
+		var err error
+		view, err = scanPack(tx.QueryRow(r.Context(), `
 		INSERT INTO public.ozon_field_packs
 			(author_user_id, name, description_category_id, type_id, language, defaults_json, shared, active, updated_at_ms, updated_at)
 		SELECT $1, $2, $3, $4, $5, $6, false,
@@ -224,14 +224,11 @@ func (h Host) create(w http.ResponseWriter, r *http.Request) {
 		       ),
 		       $7, clock_timestamp()
 		RETURNING `+packColumns,
-		p.UserID, body.Name, body.Coordinate.DescriptionCategoryID, body.Coordinate.TypeID, lang, string(encoded), h.Now().UnixMilli()))
+			p.UserID, body.Name, body.Coordinate.DescriptionCategoryID, body.Coordinate.TypeID, lang, string(encoded), h.Now().UnixMilli()))
+		return err
+	})
 	if err != nil {
-		slog.Error("field pack insert", "err", err)
-		writeErr(w, http.StatusInternalServerError, access.MsgUnavailable, "internal")
-		return
-	}
-	if err := tx.Commit(r.Context()); err != nil {
-		slog.Error("field pack commit", "err", err)
+		slog.Error("field pack create", "err", err)
 		writeErr(w, http.StatusInternalServerError, access.MsgUnavailable, "internal")
 		return
 	}
@@ -292,44 +289,32 @@ func (h Host) patch(w http.ResponseWriter, r *http.Request) {
 		text := string(encoded)
 		defaults = &text
 	}
-	tx, err := h.Pool.Begin(r.Context())
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, access.MsgUnavailable, "internal")
-		return
-	}
-	defer func() { _ = tx.Rollback(r.Context()) }()
-	var cat, typ int64
-	var lang string
-	err = tx.QueryRow(r.Context(), `
+	var view packView
+	err = db.InTx(r.Context(), h.Pool, db.AppRole(), func(tx pgx.Tx) error {
+		var cat, typ int64
+		var lang string
+		err := tx.QueryRow(r.Context(), `
 		SELECT description_category_id, type_id, language FROM public.ozon_field_packs
 		WHERE id = $1::uuid AND author_user_id = $2`, id, p.UserID).Scan(&cat, &typ, &lang)
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeErr(w, http.StatusNotFound, "字段包不存在", "not_found")
-		return
-	}
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, access.MsgUnavailable, "internal")
-		return
-	}
-	if err := lockActive(r.Context(), tx, p.UserID, cat, typ, lang); err != nil {
-		writeErr(w, http.StatusInternalServerError, access.MsgUnavailable, "internal")
-		return
-	}
-	if active != nil && *active {
-		if _, err := tx.Exec(r.Context(), `
+		if err != nil {
+			return err
+		}
+		if err := lockActive(r.Context(), tx, p.UserID, cat, typ, lang); err != nil {
+			return err
+		}
+		if active != nil && *active {
+			if _, err := tx.Exec(r.Context(), `
 			UPDATE public.ozon_field_packs SET active = false
 			WHERE id <> $1::uuid AND author_user_id = $2 AND description_category_id = $3 AND type_id = $4 AND language = $5 AND active`,
-			id, p.UserID, cat, typ, lang); err != nil {
-			writeErr(w, http.StatusInternalServerError, access.MsgUnavailable, "internal")
-			return
-		}
-		if _, err := tx.Exec(r.Context(), `
+				id, p.UserID, cat, typ, lang); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(r.Context(), `
 			UPDATE public.ozon_field_packs SET active = true WHERE id = $1::uuid AND author_user_id = $2`, id, p.UserID); err != nil {
-			writeErr(w, http.StatusInternalServerError, access.MsgUnavailable, "internal")
-			return
+				return err
+			}
 		}
-	}
-	view, err := scanPack(tx.QueryRow(r.Context(), `
+		view, err = scanPack(tx.QueryRow(r.Context(), `
 		UPDATE public.ozon_field_packs
 		SET name = COALESCE($3, name),
 		    active = COALESCE($4, active),
@@ -338,11 +323,13 @@ func (h Host) patch(w http.ResponseWriter, r *http.Request) {
 		    updated_at = clock_timestamp()
 		WHERE id = $1::uuid AND author_user_id = $2
 		RETURNING `+packColumns, id, p.UserID, name, active, defaults, h.Now().UnixMilli()))
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, access.MsgUnavailable, "internal")
+		return err
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeErr(w, http.StatusNotFound, "字段包不存在", "not_found")
 		return
 	}
-	if err := tx.Commit(r.Context()); err != nil {
+	if err != nil {
 		writeErr(w, http.StatusInternalServerError, access.MsgUnavailable, "internal")
 		return
 	}
@@ -364,11 +351,16 @@ func (h Host) share(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "请求格式无效", "validation")
 		return
 	}
-	view, err := scanPack(h.Pool.QueryRow(r.Context(), `
+	var view packView
+	err = db.InTx(r.Context(), h.Pool, db.AppRole(), func(tx pgx.Tx) error {
+		var err error
+		view, err = scanPack(tx.QueryRow(r.Context(), `
 		UPDATE public.ozon_field_packs
 		SET shared = $3, updated_at_ms = $4, updated_at = clock_timestamp()
 		WHERE id = $1::uuid AND author_user_id = $2
 		RETURNING `+packColumns, chi.URLParam(r, "id"), p.UserID, body.Shared, h.Now().UnixMilli()))
+		return err
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeErr(w, http.StatusNotFound, "字段包不存在", "not_found")
 		return
@@ -387,13 +379,22 @@ func (h Host) delete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	tag, err := h.Pool.Exec(r.Context(), `DELETE FROM public.ozon_field_packs WHERE id = $1::uuid AND author_user_id = $2`, chi.URLParam(r, "id"), p.UserID)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, access.MsgUnavailable, "internal")
+	err := db.InTx(r.Context(), h.Pool, db.AppRole(), func(tx pgx.Tx) error {
+		tag, err := tx.Exec(r.Context(), `DELETE FROM public.ozon_field_packs WHERE id = $1::uuid AND author_user_id = $2`, chi.URLParam(r, "id"), p.UserID)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return pgx.ErrNoRows
+		}
+		return nil
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeErr(w, http.StatusNotFound, "字段包不存在", "not_found")
 		return
 	}
-	if tag.RowsAffected() == 0 {
-		writeErr(w, http.StatusNotFound, "字段包不存在", "not_found")
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, access.MsgUnavailable, "internal")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -408,17 +409,6 @@ func (h Host) library(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "请求格式无效", "validation")
 		return
 	}
-	rows, err := h.Pool.Query(r.Context(), `
-		SELECT p.id::text, p.name, COALESCE(u.name, ''), p.updated_at_ms
-		FROM public.ozon_field_packs p
-		LEFT JOIN public.account_users u ON u.id = p.author_user_id
-		WHERE p.shared AND p.description_category_id = $1 AND p.type_id = $2 AND p.language = $3
-		ORDER BY p.updated_at_ms DESC, p.id DESC`, cat, typ, lang)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, access.MsgUnavailable, "internal")
-		return
-	}
-	defer rows.Close()
 	type summary struct {
 		ID                string `json:"id"`
 		Name              string `json:"name"`
@@ -426,13 +416,29 @@ func (h Host) library(w http.ResponseWriter, r *http.Request) {
 		UpdatedAtMs       int64  `json:"updated_at_ms"`
 	}
 	packs := []summary{}
-	for rows.Next() {
-		var item summary
-		if err := rows.Scan(&item.ID, &item.Name, &item.AuthorDisplayName, &item.UpdatedAtMs); err != nil {
-			writeErr(w, http.StatusInternalServerError, access.MsgUnavailable, "internal")
-			return
+	err := db.InTx(r.Context(), h.Pool, db.AppRole(), func(tx pgx.Tx) error {
+		rows, err := tx.Query(r.Context(), `
+		SELECT p.id::text, p.name, COALESCE(u.name, ''), p.updated_at_ms
+		FROM public.ozon_field_packs p
+		LEFT JOIN public.account_users u ON u.id = p.author_user_id
+		WHERE p.shared AND p.description_category_id = $1 AND p.type_id = $2 AND p.language = $3
+		ORDER BY p.updated_at_ms DESC, p.id DESC`, cat, typ, lang)
+		if err != nil {
+			return err
 		}
-		packs = append(packs, item)
+		defer rows.Close()
+		for rows.Next() {
+			var item summary
+			if err := rows.Scan(&item.ID, &item.Name, &item.AuthorDisplayName, &item.UpdatedAtMs); err != nil {
+				return err
+			}
+			packs = append(packs, item)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, access.MsgUnavailable, "internal")
+		return
 	}
 	jsonwire.Write(w, http.StatusOK, struct {
 		Data struct {

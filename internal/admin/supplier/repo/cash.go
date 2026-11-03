@@ -72,6 +72,17 @@ func (r Portal) decide(ctx context.Context, actor outcome.Actor, id string, nowM
 		if err != nil {
 			return corerepo.MapDB(err)
 		}
+		var staff int
+		err = tx.QueryRow(ctx, `
+			SELECT 1 FROM public.account_users
+			 WHERE id = $1 AND disabled_at IS NULL AND role IN ('admin', 'super_admin')
+			 FOR SHARE`, actor.UserID).Scan(&staff)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return corerepo.Forbidden("需要平台管理员权限")
+		}
+		if err != nil {
+			return corerepo.MapDB(err)
+		}
 		if status != "requested" {
 			return corerepo.Conflict("这笔提现已经处理过")
 		}

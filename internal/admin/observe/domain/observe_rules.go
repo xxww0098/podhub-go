@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	corecontract "github.com/xxww0098/podhub-go/internal/admin/core/contract"
+	"github.com/xxww0098/podhub-go/internal/platform/uuidx"
 )
 
 const (
@@ -77,7 +78,7 @@ func ParseCursor(raw string, inScope func(string) bool) (store string, product i
 	if !ok {
 		return "", 0, corecontract.Validation("validation", "cursor 无效")
 	}
-	store, ok = corecontract.NormalizeUUID(storeRaw)
+	store, ok = uuidx.StrictUUID(storeRaw)
 	if !ok {
 		return "", 0, corecontract.Validation("validation", "cursor 无效")
 	}

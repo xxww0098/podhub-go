@@ -25,7 +25,7 @@ for (const signedIn of [false, true]) {
     try {
       await withStubbedDevice(async () => {
         assert.ok(peekAccountOverview()?.active_workspace?.uuid)
-        reportErrorFeedback({ errorId: "00000000000000000001", code: "preparation_failed" })
+        reportErrorFeedback({ errorId: "0000000000001", code: "preparation_failed" })
       })
       assert.equal(stub.calls.length, 0, "the receipt is still queued while the fixture owns fetch")
       stub.restore()

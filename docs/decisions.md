@@ -1,53 +1,61 @@
 # 决策登记表
 
-这是未决事项与已决事项的唯一登记处。各域对拍文档（`docs/parity/*.md`）只在末尾列本域独有的开放问题，并链接到这里；同一个决策不要在多处各写一份。
+这里统一登记跨文档决策；领域文档保留方案、实现与证据，引用本表，不再复制开放清单。已定不等于已部署或验收通过，精铺能力以[技术验证清单](precision-listing-verification.md)为准。
 
-状态只有三种：**开放**（尚未定）、**已定**（有结论和依据）、**不做**（明确不做，附原因）。
+状态为 **开放**、**已定**、**不做**。被新决定取代的记录保留原编号并注明替代依据；代码已实现的原开放项移到「已定」，明确只核实静态实现。
 
 ## 开放
 
 | # | 事项 | 现状 | 选项 | 推荐 | 相关文档 |
 | --- | --- | --- | --- | --- | --- |
-| O1 | 浏览器 `listing-core.wasm` 是否成为 Go 加载的那一份 | 服务端用同一份源码另编的窄 wasm（只有禁用标签匹配），与浏览器产物不是同一字节 | a) 在 `listing-core-wasm` 增加一个匹配 op，产出 Go 与浏览器共用的单一 wasm；b) 维持窄 wasm | a，但要等上游导出该 op；在此之前维持 b | [listing-core-host.md](parity/listing-core-host.md)、[architecture.md](architecture.md) |
-| O2 | 提交前的禁用标签闸是否保留 | `POST /api/listing/submit` 在冻结前拒绝命中禁用标签的请求（400），而冻结本身不查标签。这是有意的行为变化，用户已表示倾向保留 | a) 保留；b) 去掉，让冻结不查标签 | a | [listing-core-host.md](parity/listing-core-host.md) |
-| O3 | schema_revision 的排序何时放进 wasm | Go 在调用 `snapshot_from_fields` 前按 attribute id 排序；wasm 内部仍按传入顺序哈希。`LegacyRevision` 双版本接受仍在 `internal/listing/submit/draft.go` | a) 下次浏览器 wasm 重编时把排序放进 wasm，观察一个窗口期后退役 `LegacyRevision`；b) 永久维持服务端排序 + 双版本接受 | a；窗口期至少为缓存 TTL 的数倍，具体长度待定 | [schema-revision-parity.md](parity/schema-revision-parity.md) |
-| O5 | 发布时由谁执行数据库迁移 | 进程启动不自动迁移，仓库里没有迁移命令行入口；`db.Migrate` 只被集成测试调用 | a) 增加 `cmd/migrate`；b) 由部署流程在启动前跑一次性 job；c) 启动时自动迁移 | a 或 b，取决于部署方式 | [architecture.md](architecture.md) §队列与迁移 |
-| O6 | 日志 UI 与 NOTICE 署名位置 | 还没有日志页 | a) 随日志 UI 一起放；b) 先放在前端页脚 | a | [newapi-billing-parity.md](parity/newapi-billing-parity.md) |
-| O7 | 订阅到期后能否在 free 容量内继续新建任务 | 到期即拦截新活、放行在途任务；截断后的工作区是否还能小规模使用没有决定 | a) 允许，按 free 容量继续用；b) 不允许，到期后只能读 | a | [subscription-billing.md](architecture/subscription-billing.md) §已定与待定 |
-| O8 | 12 个月预付期间能否立即减容 | 方案按「一律在 `term_end` 生效且不退款」写；立即释放会让同一账期内反复增减被重复计费 | a) 只在 `term_end` 生效；b) 允许立即释放、钱不退 | a | [subscription-billing.md](architecture/subscription-billing.md) §定价与折算 |
-| O9 | 兑换码改成「赠送 N 个月」后如何落账 | 兑换码当前按席位发批次，新方案改为时长 | a) 叠加在已有账期上顺延；b) 只用于已过期工作区重开 | a | [subscription-billing.md](architecture/subscription-billing.md) §旧机制处理 |
-| O10 | 钱包按所有者用户还是按工作区记账 | `user_wallets` 主键是 `user_id`，同一 owner 的多个付费工作区共享余额；「付费工作区不限数量」后更明显 | a) 保留 owner 级共享并写进产品说明；b) 改为按工作区（`user_wallets` / `wallet_ledger` / `HoldTx` / `SettleTx` 全部改主键） | a | [subscription-billing.md](architecture/subscription-billing.md) §已定与待定 |
-| O11 | 一个货源库只能有一个履约人，还是可以有多个 | 现在只有一个 `sc_source_members` 成员概念，没有「履约人」这一维；派发按 `source_id` 找包，收件人不固定 | a) 一库一履约人（`sc_source_fulfillers` 上 `UNIQUE(source_id) WHERE status='active'`）；b) 一库多履约人，按商品/SKU 再分配 | a | [account-permission-model.md](architecture/account-permission-model.md) §3.2、§7.1 |
-| O12 | 历史派单包（`fulfiller_id IS NULL`）怎么处理 | 历史包的收件人不可重建：`rebind` 的审计正文是字面量 `{}`，成员行已被物理删除 | a) fail-closed，只有 staff 可见，另加 6 周只读过渡臂；b) 立即全封；c) 永久保留 source 级 | a | [account-permission-model.md](architecture/account-permission-model.md) §7.4 |
-| O13 | 供应商账号能否复用已有的平台邮箱 | `provision` 只按 `role != 'user'` 拒绝复用，普通平台账号会被静默绑成某厂家的供应商成员；`uq_account_users_email` 是大小写敏感的唯一索引，而查询用 `lower(email)` | a) 不能复用，转供应商必须超管显式操作并留审计；b) 允许复用（同一账号双重身份） | a | [account-permission-model.md](architecture/account-permission-model.md) §4.3 |
-| O14 | 是否引入 `can_view_global` 让非超管看全平台数据 | 观察面现在 9 处硬编码 `role='super_admin'`（`observe/repo/observe.go:77-78`、`00275` 六条策略 L5-51、`00300:85-92`、`00320:165-173`） | a) 不引入，观察面继续只认 super_admin；b) 引入并同步重写这 9 处 | a | [account-permission-model.md](architecture/account-permission-model.md) §1 M6、§12 |
-| O15 | 关闭供应商资金访问前如何清 `supplier_wallets` 残留余额与待审提现 | `supplier_wallets.balance_microfen` 可能非零，`supplier_withdrawals.status='requested'` 有 `UNIQUE(source_id) WHERE status='requested'` 的单据约束；迁移不能凭空清零 | a) 先出报表、逐厂清算（线下打款或 `pay`/`reject` 收口）再执行删策略的迁移；b) 迁移里自动清零 | a | [account-permission-model.md](architecture/account-permission-model.md) §9.2 |
+| O1 | 是否合并服务端与浏览器的 listing-core 模块 | 服务端嵌入 `listing-core.wasm`（含禁用标签 op 20、`snapshot_from_fields`），浏览器用 `--features browser` 的 `listing-state.wasm`；共用源码，不共用同一二进制 | a) 去掉 feature 差异后合并；b) 保持按 feature 分别构建 | 维持现有分工；合并需另验导出与体积 | [listing-core-host.md](parity/listing-core-host.md)、[architecture.md](architecture.md) |
+| O2 | 是否改变提交前禁用标签策略 | 当前提交路径保留冻结前标签拒绝；历史材料对「已决定」与「倾向保留」记载不一致，本表不补造确认 | a) 保留现状；b) 改变策略并同步回归 | 保留现状，变更时明确决定 | [listing-core-host.md](parity/listing-core-host.md) |
+| O3 | schema revision 排序与旧哈希退役 | Go 调用前排序；`LegacyRevision` 与 `submit/schema_revision.go` 仍接受旧哈希 | a) 内核统一排序并同步调用方、缓存与测试；b) 维持当前实现 | 按新工程约束收敛为单一契约；现存双接受不构成永久旧兼容要求 | [schema-revision-parity.md](parity/schema-revision-parity.md) |
+| O9 | 套餐兑换码如何与已付订阅共存 | 套餐码指定套餐、店铺数和月数 | a) 已付期间结束后追加；b) 立即覆盖原期间 | a，保留已付时长；没有有效期间时立即开始 | [subscription-billing.md](architecture/subscription-billing.md#套餐兑换码) |
+| O14 | 是否引入 `can_view_global` 让非超管看全平台数据 | 现行方案没有引入该标志；跨租户观察授权仍须单独核查，旧报告的固定调用点计数不作为现状 | a) 不引入，观察面继续只认 super_admin；b) 引入并复核所有 HTTP、SQL 与 RLS 授权路径 | a | [account-permission-model.md](architecture/account-permission-model.md) §角色为何分开、§决策状态 |
+| O16 | 套餐功能是否按档位开关 | 尚未实现按套餐的功能开关：在能力表和服务端检查落地之前，各档只在店铺单价和数量上有区别 | a) 增加套餐能力表，服务端各入口检查；b) 各档功能保持一致，只按数量与单价区分 | a | [订阅与续费](architecture/subscription-billing.md) §价格与容量 |
+| O17 | 自动续费是否代扣 | 没有已验证的代扣或授权扣款能力；工作区钱包是 AI 额度，不是订阅付款渠道。D25 只做自动出单 | a) 只出单，用户付款；b) 到期前从工作区钱包自动扣；c) 接入渠道代扣协议 | a；b、c 须先按精铺准入的方式验证授权、实际扣款、结果回读和失败处理 | [订阅与续费](architecture/subscription-billing.md#待实现店铺上限自动出单与到期冻结) |
 
 ## 已定
 
 | # | 事项 | 结论 | 依据 / 落点 |
 | --- | --- | --- | --- |
-| D1 | 迁移号乱序 | `goose.WithAllowMissing()` + 迁移文件 sha256 守卫；不改历史迁移号 | `internal/platform/db/migrate.go` 的 `gooseUp`；`internal/platform/db/migrate_guard_test.go`、`db/migrations.sha256`；[architecture.md](architecture.md) §队列与迁移 |
-| D2 | OpenAPI 生成链 | `api/openapi.yaml` 是唯一 spec；oapi-codegen 生成 models 与 chi 路由，响应字节手写 | `api/codegen/*.yaml`、`Makefile` 的 `generate`、[architecture.md](architecture.md) |
-| D3 | 集成测试的 Postgres | 共享容器 + 迁移一次的模板库，测试串行 | `tests/integration/main_test.go`、`tests/testkit` |
+| D1 | 迁移历史 | 压缩为 `00001_roles` / `00002_schema` / `00003_seed` 三个文件，版本连续，`gooseUp` 用严格 `Up`；已提交文件由 sha256 冻结，新增文件号必须更大 | `internal/platform/db/migrate.go` 的 `gooseUp`；`internal/platform/db/migrate_guard_test.go`、`db/migrations.sha256`；[architecture.md](architecture.md) §队列与迁移 |
+| D2 | OpenAPI 生成链 | `api/openapi.yaml` 是唯一 spec；oapi-codegen 生成 models 与 chi 路由（生成范围 2026-10-28 起收缩为 7 个单元，见 D24），响应字节手写 | `api/codegen/*.yaml`、`Makefile` 的 `generate`、[architecture.md](architecture.md) |
+| D3 | 集成测试的 Postgres | 普通用例使用共享 Docker 容器和迁移一次的模板库；改角色或重放部分迁移的用例使用独立集群。显式测试 DSN 与无 Docker 时的行为见 README | `tests/integration/main_test.go`、`tests/testkit`、[开发与检查](../README.md#开发与检查) |
 | D4 | 镜像是否含 `writer-lease` | 含 | `Dockerfile`、`Makefile` 的 `build` |
 | D5 | OTLP exporter 默认 | 默认关闭；只有 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` 指向回环 collector 时才拨号 | `internal/platform/observability/observability.go` |
-| D6 | RelayKit 与计费公式副本的 AGPL-3.0 | 接受，不购买商业授权；仓库整体 AGPL-3.0-only | 根 `NOTICE`、[newapi-billing-parity.md](parity/newapi-billing-parity.md) |
-| D7 | 前端是否从 spec 生成客户端 | 生成，已落地：`web/` 用 openapi-typescript 从 `api/openapi.yaml` 生成 `schema.d.ts`，再生成 `routes.ts` | `web/package.json` 的 `api:generate` / `api:routes`；`web/src/api/routes.test.ts` |
-| D14 | spec 以哪一侧为准 | **以 Go 代码为准**：`api/openapi.yaml` 描述本仓库当前实际的路由、状态码和响应形状。Go 独有的路由保留并在文档里标注来源 | `api/openapi.yaml`、`internal/app/testdata/routes.txt`、[architecture.md](architecture.md) §OpenAPI |
+| D6 | AI 计费与协议调用的来源 | 自研 `internal/billing/contract` 与 `internal/platform/aiclient`；不链接、不拷贝 RelayKit/new-api。仓库为专有软件，SPDX `LicenseRef-Proprietary` | `internal/billing/contract`、`internal/platform/aiclient`、根 `LICENSE` 与 `NOTICE`、[ai-billing-parity.md](parity/ai-billing-parity.md) |
+| D7 | 前端是否从 spec 生成契约类型与路径 | 生成，已落地：`web/` 用 openapi-typescript 从 `api/openapi.yaml` 生成 `schema.d.ts`，再生成 `routes.ts`；请求封装和业务接线仍由前端实现 | `web/package.json` 的 `api:generate` / `api:routes`；`web/src/api/routes.test.ts` |
 | D8 | admin 子单元的切分粒度 | 按主题（shipping、supplier、billing、delegate、catalog、users、observe、x1） | `tests/archtest/arch_test.go` 的 `level`、[architecture-tree.md](architecture-tree.md) |
 | D9 | 环境变量解析点 | 只在 `internal/platform/config`；业务代码不出现 `os.Getenv` / `os.LookupEnv` | `tests/archtest/parsepoint_test.go` |
-| D10 | 租户事务入口 | `internal/platform/db.InTx` + 显式会话（`App`/`Worker`/`Staff`/`Observer`/`WalletUser`/`SupplierUser`/`Grant`/`Catalog`）；GUC 名只在 `tenantx` | `internal/platform/db/tx.go`、[architecture.md](architecture.md) |
+| D10 | 租户事务入口 | `internal/platform/db.InTx` + 显式会话；空会话拒绝，不隐式补租户。会话构造器和授权边界统一见项目树；GUC 设置集中在 `tenantx`，旧调用由架构基线收敛 | `internal/platform/db/tx.go`、[数据库薄封装](architecture-tree.md#数据库薄封装) |
 | D11 | 业务队列是否迁到 River | 不迁。River 只当执行器，业务状态在 `jobs` 表 | [architecture.md](architecture.md)、[queue-and-migration-differences.md](parity/queue-and-migration-differences.md) |
-| D12 | 是否批量把 1,091 处手写 SQL 改成 sqlc | 不批量改；sqlc 只用于新查询和被迁移的查询 | [optimization-plan.md](architecture/optimization-plan.md) §5.1 |
+| D12 | 是否批量把手写 SQL 改成 sqlc | 不批量改；sqlc 用于新查询和被迁移的查询 | [optimization-plan.md](architecture/optimization-plan.md) |
 | D13 | 是否编译 Go wasm（`GOOS=js`） | 不做；浏览器侧继续用 Rust wasm（源码在 `rust/crates`，产物在 `wasm/dist/browser`） | [architecture.md](architecture.md) |
-| D18 | 前端是否并入本仓库 | 并入 `web/`。React 19 + Vite，与 Go 服务端同仓；两边只通过 `api/openapi.yaml` 和 `wasm/dist/browser/listing-state.wasm` 耦合 | `web/`、[architecture.md](architecture.md) §系统边界、[architecture-tree.md](architecture-tree.md) §仓库边界 |
-| D19 | Go 未实现但 spec 已登记的路由 | 保留在 spec 里，由 `internal/app/api/not_ported.go` 的桩统一回 501 `NOT_PORTED`，不删除；spec 里有而 Go 根本没挂载的 54 条不在此列，前端 `web/src/api/mounted.test.ts` 用只减不增的名单登记，禁止新增调用 | `internal/app/api/not_ported.go`；`routes.txt` 黄金表同步收录；`web/src/api/mounted.test.ts` |
+| D14 | spec 以哪一侧为准 | **以 Go 代码为准**：`api/openapi.yaml` 描述本仓库当前实际的路由、状态码和响应形状。Go 独有的路由保留并在文档里标注来源 | `api/openapi.yaml`、`internal/app/testdata/routes.txt`、[architecture.md](architecture.md) §契约与变更 |
+| D15 | 订阅定价、账期、容量变更与到期规则 | 套餐 free/lite/pro/max 决定功能档位和各自的店铺单价，没有打包月费，也不含店铺。月价 = 店铺数 × 该档店铺单价，店铺按绝对数量购买（种子价：lite ¥20、pro ¥25、max ¥30，每店铺每月；free 不可购买，固定 1 店）。**成员不售卖**：每个工作区的成员上限全局为 10 人（含所有者），不分档位，free 也一样；超出上限的加入者按加入顺序 `quota_suspended`，所有者永不暂停；管理员可用 `organizations.member_seat_limit_override` 把某工作区上限覆盖为 1–10。取消成员单价，这取代了更早的「所有者是唯一免费成员、额外成员每人 ¥30」方案。上限常量 `billing/domain.MemberCap`、`admin/users/contract.MemberCap` 与 SQL `subscription_capacity()` 里的 10 须同改。可购买期限 1/3/6/12 个完整服务月，不打折；单价在每个付费期间内冻结。升级或增加店铺补当月差额，折算到期间结束；减少店铺免费，下期生效。同账号最多一个 free 工作区，同账号最多一个 free 工作区，付费工作区不限数量，不建抵扣账本。**原自然月账期已被购买日方案替代**：首购/续费买完整服务月，已付期间与下次配置分开；到期排水与免费容量按现行方案 | 基线 `00002_schema.sql` / `00003_seed.sql`（`plans.store_monthly_cents`）、`internal/billing/domain/period.go` / `subscription.go`；[订阅与续费](architecture/subscription-billing.md)（2026-10-27）；本次仅静态核对 |
+| D18 | 前端是否并入本仓库 | 并入 `web/`。React 19 + Vite，与 Go 服务端同仓；HTTP 契约来自 `api/openapi.yaml`，浏览器消费 `wasm/dist/browser/` 下的上架与渲染产物 | `web/`、[architecture.md](architecture.md) §系统边界、[architecture-tree.md](architecture-tree.md) §仓库边界 |
+| D19 | 未实现接口是否一律保留为 501 | **原决定已被 API 简化取代**：无生产消费方的接口已按范围删除；现存桩和未挂载路由由契约测试登记，不是保留所有旧接口的理由 | [API 简化记录](api-simplification-report.md)；`internal/app/api/not_ported.go`、`web/src/api/mounted.test.ts` |
 | D20 | `web/` 的 wasm 测试依赖 | 根目录的 `crates` 已删除；前端测试与文档写明确的 `rust/crates/...` 路径 | `web/.gitignore`、[architecture-tree.md](architecture-tree.md) §迁移记录 |
-| D21 | PSD 渲染源码是否并入本仓库 | 并入 `rust/crates/{render,render-wasm,psd-x}`，属于同一个 workspace。产物入库，用 `make web-wasm` 重建。这同时回答了原 O4：取「并入 `rust/`」而不是当时推荐的「只提交产物 + 源码哈希」 | `rust/Cargo.toml`、`web/scripts/build-render.sh`、`Makefile`、[optimization-plan.md](architecture/optimization-plan.md) D7 |
+| D21 | PSD 渲染源码是否并入本仓库 | 并入 `rust/crates/{render,render-wasm,psd-x}`，属于同一个 workspace。产物入库，用 `make wasm`（或 `scripts/build-wasm.sh render`）重建。这同时回答了原 O4：取「并入 `rust/`」而不是当时推荐的「只提交产物 + 源码哈希」 | `rust/Cargo.toml`、`scripts/build-wasm.sh`、`Makefile`、[optimization-plan.md](architecture/optimization-plan.md) D7 |
 | D22 | listing-core 浏览器产物体积上限 | 沿用上游的 1.5 MiB，不另放宽。浏览器模块就是 `--features browser` 的 `wasm/dist/browser/listing-state.wasm`，该特性去掉服务端专用导出 `snapshot_from_fields`，本仓库只比上游多导出 `send_transition`，实测仍在 1.5 MiB 以内；导出面由同文件的导出断言锁定（必须含 `send_transition`、不得含 `snapshot_from_fields`），提交了服务端那份会直接失败 | `web/tests/listing-core-wasm.test.ts` 的 `WASM_SIZE_LIMIT` 与导出断言 |
-| D23 | 00365 给六张目录表加 RLS 时，既有 `podhub_app` 读路径怎么办 | §10.2 的前置条件是「确认所有既有读路径都带 `staff_access`」，实测不成立：`BeginAdmin` 不设 `staff_access`（`admin/core/repo/staff.go:15-25`），`admin/catalog/repo/catalog.go:46,62` 与 `admin/shipping/repo/shipping.go:82,98` 走 `BeginAdmin`，`supply/repo/catalog.go:33` 与 `supplier/repo/catalog.go` 用 `BeginApp(..., 0)`，`listing/read/http/http.go:138` 用 org 会话，`delegate/repo/seller_order.go:250,515` JOIN `sc_sources` | **原方案 O16 的选项 a（过渡兼容臂 `sc_<table>_app_compat`）已撤销**：`AGENTS.md` 要求「把本项目当新工程改，允许破坏性变更，不旧兼容」，而兼容臂正是旧兼容——它把「任何带 org GUC 的会话」当成授权，等于在关洞的同时把洞留着。改为**按读路径的真实语义各给一条臂**：`staff_access` 全权、`sc_catalog_managers` 命中管自己 source、`published` 的目录是平台共享参考数据对任意 app 会话可读、供应商经 `sc_source_members` 读自己的 source、卖家经 `delegate_bindings` 读自己绑定的 source。`sc_source_offers`（工厂成本）**不开放通用读臂**，只有 staff / 商品负责人 / 本工作区自己的派单结算能读。同时把 `admin/catalog` 与 `admin/shipping` 的 4 处 `BeginAdmin` 换成 `BeginStaff` | [account-permission-model.md](architecture/account-permission-model.md) §6.1、§10.2、§11.4、§12 |
-| D15 | 订阅账期、容量变更与到期规则 | free/lite/pro/max 四档，店铺统一 ¥20/月、成员 ¥30/月；账期按自然月、`Asia/Shanghai`；套餐购买、续费、加购、加人、升级全部按当月剩余天数折算（同一个 `Prorate`），加购与升级不改到期日；3/6/12 个月不打折；宽限 0 天；到期前入队的任务全部跑完；付费工作空间不限数量、同一账号同一时刻只能有 1 个 free 工作空间；不建抵扣账本 | 用户 2026-10-18 确认；[subscription-billing.md](architecture/subscription-billing.md) |
+| D23 | 目录 RLS 是否保留通用兼容读臂 | 不保留 `sc_<table>_app_compat`；按 staff、商品负责人、公开目录、供应商成员与卖家绑定分别授权，工厂成本不开放通用读 | 基线 `00002_schema.sql` 的 `sc_*` RLS 策略；[账号权限方案](architecture/account-permission-model.md) 记录授权及验收边界 |
+| D24 | 12 个域放弃 oapi-codegen 生成路线 | admin、ai、store、ratings、ops、mcp、delegate、billing、automation、telemetry、supply、supplier 及 catalog-reads（reads 变体）的 13 份生成配置与对应零引用生成目录（含 `internal/agent/gen/sqlcgen`）删除，这些域的 HTTP 层手写；`api/openapi.yaml` 仍是唯一契约源（D2 的 spec 地位不变）。同一批清理 4 个零引用业务包（`internal/seller/ozon/repo/ledger`、`internal/media/domain/multipart`、`internal/media/service/render`、`internal/delegate/jobs`）。明确接受校验面收窄：被删 tag 的 Go 侧 typename 碰撞只能靠剩余 7 份配置与前端 openapi-typescript 链发现 | `api/codegen/`（余 agent、catalog、health、identity、listing、listing-rules、media 共 7 份）、`sqlc.yaml`、`Makefile`；[api-simplification-report.md](api-simplification-report.md) 与 delegate/supplier parity 的历史注记。`db/queries/agent` 留待 db 侧后续清理 |
+| D25 | 店铺购买上限、自动出单与到期冻结 | 补充 D15，并取代 D15 中「到期回落免费容量」的部分及原开放项 O7。①每工作区单次有效购买至多 100 个店铺名额（一店一把当前密钥），按单个工作区计；成员仍为 10 人免费。②到期前 72 小时为开启 `auto_renew` 的工作区生成 1 个月续费单，金额冻结；只出单不代扣，用户选渠道付款，否则到期后重新购买。③付过费的工作区到期后冻结：全部店铺拒绝新业务，数据与成员只读可见，只能续费或充值；从未付费的 free 工作区仍为 1 家店；无宽限期。实现于迁移 `00014`；本地 Postgres 回归通过，未做真实商户或生产验收 | [订阅与续费](architecture/subscription-billing.md#待实现店铺上限自动出单与到期冻结) |
+| D26 | 发布时由谁执行数据库迁移 | 采用一次性部署作业：新增 `cmd/migrate`（同一镜像内），在 API、worker、lease-keeper 启动前执行；API 启动仍不自动迁移。`PODHUB_ALLOW_SUPERUSER_DB=1` 仅给该作业；`PODHUB_API_DB_PASSWORD` 设置 `podhub_login_api`，`PODHUB_WORKER_DB_PASSWORD` 设置三个 worker 登录角色密码 | `cmd/migrate`、`internal/app/migrate.go`、`compose.yaml` 的 `migrate` 服务、`Dockerfile` |
+
+### 原开放项的实现状态（2026-10-23 静态复核）
+
+以下只确认代码和迁移已有落点，未在本次文档清理中执行数据库验收或核查生产部署。
+
+| 原编号 | 当前实现 | 依据与仍需核验的范围 |
+| --- | --- | --- |
+| O8 | 不立即收回已付容量；减少下次购买数量在全部已付服务结束后适用，已购买未来低容量期间在其开始时切换 | `internal/billing/domain/subscription.go`、[订阅与续费](architecture/subscription-billing.md#店铺续费调整)；不把提前支付等同于提前减容 |
+| O11 | 同一货源库最多一名 active 履约人；迁移选择最早 active 成员回填 | `00361`；[账号权限方案](architecture/account-permission-model.md)。业务分配与越权行为仍需相应测试 |
+| O12 | 可匹配历史包回填履约人；剩余 NULL 包不向供应商开放，由 staff 处理；未保留六周过渡臂 | `00362`、`00363`；不再把已撤销的兼容窗口列为推荐 |
+| O13 | provision 拒绝复用 `account_kind=platform` 的账号 | `internal/admin/supplier/repo/accounts.go`；账号转型不能靠静默绑定完成 |
+| O15 | 删除供应商钱包访问前，非零余额或 requested 提现会阻断迁移，须先人工清算；本人固定派单对应结算仍可读 | `00363`；不能概括为「供应商不能读任何资金行」，也不证明生产余额已清算 |
 
 ## 不做
 
@@ -55,6 +63,6 @@
 | --- | --- | --- |
 | N1 | 统一 20 份 `itoa` | 收益太小，收进公共包反而增加跨包依赖 |
 | N2 | 拆 `internal/identity` 的平铺文件 | `net/http` 与同包未导出调用绑住，改动会制造新违规或改函数体；见 [architecture-tree.md](architecture-tree.md) §仓库边界 |
-| N3 | 改对外的 `listing` 命名、路由、JSON 字段、错误码、队列 kind | 结果一致性约束 |
-| N4 | 改 `OZON_WRITE_KILL_SWITCH`、`CLOUD_MEDIA_GC_DELETE` 的解析与语义 | 语义固定，见 [architecture.md](architecture.md) §安全开关 |
-| N5 | 改已有迁移文件与 PL/pgSQL 函数体 | 迁移守卫冻结；函数体保持既定实现，不重写 |
+| N3 | 无目的改名 `listing` 路由、字段和队列 kind | 不做纯改名；原「结果一致性禁止改契约」已由新工程准则取代，必要产品变更须同步调用方与测试 |
+| N4 | 改 `OZON_WRITE_KILL_SWITCH`、`CLOUD_MEDIA_GC_DELETE` 的解析与语义 | 语义固定，见 [architecture.md](architecture.md) §安全开关与外部出口 |
+| N5 | 改写已提交迁移 | 迁移指纹守卫冻结历史；必要的数据库行为调整通过新迁移与回归表达，不因此禁止后续修正函数 |

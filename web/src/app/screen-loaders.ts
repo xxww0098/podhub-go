@@ -6,17 +6,20 @@ import type { AppScreen } from "@/lib/app-screens"
  * `import(pathVariable)` cannot widen the bundle.
  */
 export const SCREEN_LOADERS = {
+  home: () => import("@/features/home/home-screen"),
   console: () => import("@/features/console/console-screen"),
   "admin-console": () => import("@/features/platform-observation/admin-console-screen"),
   "admin-products": () => import("@/features/platform-observation/admin-products-screen"),
   listing: () => import("@/features/workflow/workflow-screen-entry"),
   catalog: () => import("@/features/supply-chain/catalog-screen"),
+  products: () => import("@/features/products/products-screen"),
+  "task-records": () => import("@/features/task-records/task-records-screen"),
   "supplier-dbs": () => import("@/features/supplier-dbs/supplier-dbs-screen"),
+  "supplier-catalog": () => import("@/features/supplier-catalog/catalog-manager-screen"),
   "supplier-accounts": () => import("@/features/supplier/admin-supplier-accounts-screen"),
   "admin-delegate-orders": () =>
     import("@/features/delegate/admin-delegate-orders-screen"),
   "message-center": () => import("@/features/message-center/message-center-screen"),
-  products: () => import("@/features/products/products-screen"),
   "ops-shipping": () => import("@/features/ops/shipping/shipping-screen"),
   "delegate-orders": () => import("@/features/delegate/delegate-screen"),
   "ops-returns": () => import("@/features/ops/returns/returns-screen"),

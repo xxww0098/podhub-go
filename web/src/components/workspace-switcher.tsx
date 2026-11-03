@@ -1,22 +1,8 @@
-import { useEffect, useRef, useState } from "react"
-import {
-  Check,
-  ChevronDown,
-  CircleArrowUp,
-  Ellipsis,
-  Gift,
-  Lock,
-  LogOut,
-  MailPlus,
-  Plus,
-  Store,
-  UserPlus,
-} from "lucide-react"
-
+import { useRef, useState } from "react"
+import { Building2, Check, ChevronsUpDown, CircleArrowUp, Gift, Lock, LogOut, Plus, Settings } from "lucide-react"
+import { StoreIcon } from "@/components/store-icon"
 import type {
   AccountOverview,
-  CreateWorkspaceInvitationRequest,
-  StackedAccountView,
   WorkspaceStandingView,
 } from "@/bindings/commands"
 import { accountHttp } from "@/bindings/http-account"
@@ -33,9 +19,6 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { useSidebar } from "@/components/ui/sidebar"
@@ -47,9 +30,8 @@ import {
 import { IdentityMark } from "@/components/identity-mark"
 import { Spinner } from "@/components/ui/spinner"
 import { CreateWorkspaceForm } from "@/features/workspace/no-workspace-screen"
-import { WorkspaceInviteDialog } from "@/features/workspace/workspace-invite-dialog"
 import { RedeemCodeDialog } from "@/features/plans/redeem-code-dialog"
-import { notifyCommandError, notifyError } from "@/lib/notify"
+import { notifyCommandError } from "@/lib/notify"
 import {
   SCREEN_LABELS,
   type WorkspaceSpaceScreen,
@@ -62,8 +44,8 @@ import { PlanMark, formatPlan, formatRole } from "@/components/workspace-display
 type MenuSide = "top" | "right" | "bottom" | "left"
 
 const TRIGGER =
-  "group/workspace flex w-full cursor-pointer items-center gap-2.5 rounded-lg p-0.5 text-left transition-colors outline-none group-data-[collapsible=icon]:size-9! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:p-0 hover:bg-sidebar-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring data-popup-open:bg-sidebar-accent"
-const SHELL = "w-64 border border-border/80 p-1.5 rounded-2xl"
+  "group/workspace flex h-14 w-full min-w-0 shrink-0 cursor-pointer items-center gap-2.5 rounded-lg border border-transparent px-2.5 text-left text-sidebar-foreground transition-colors outline-none group-data-[collapsible=icon]:size-9 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:border-transparent group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-0 hover:bg-sidebar-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring data-popup-open:bg-sidebar-accent"
+const SHELL = "w-60 border border-border/80 p-1.5 rounded-lg"
 const WORKSPACE_ROW = "cursor-pointer items-center gap-2.5 px-2.5 py-2"
 const ACTION =
   "cursor-pointer items-center gap-2.5 px-2.5 py-2 text-compact font-medium tracking-[-0.01em] hover:bg-accent/80 focus:bg-accent focus:text-accent-foreground not-data-[variant=destructive]:focus:[&_svg]:text-accent-foreground not-data-[variant=destructive]:[&_svg]:text-muted-foreground data-[variant=destructive]:text-destructive data-[variant=destructive]:focus:bg-destructive/10"
@@ -71,61 +53,7 @@ const UPGRADE =
   "cursor-pointer items-center gap-2.5 px-2.5 py-2 text-compact font-medium tracking-[-0.01em] text-brand-ink hover:bg-accent/80 focus:bg-accent focus:text-brand-ink [&_svg]:text-brand"
 const MARK = "size-7 shrink-0 shadow-[inset_0_0_0_1px_var(--border)]"
 const MENU_MARK = "size-8 shrink-0 shadow-[inset_0_0_0_1px_var(--border)]"
-const ACCOUNT_MARK = "size-5 shrink-0 shadow-[inset_0_0_0_1px_var(--border)]"
-const ACCOUNT_MORE =
-  "flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-faint-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring data-popup-open:bg-accent data-popup-open:text-accent-foreground"
-
-/**
- * sessionStorage handoff for 「创建工作空间」 picked on another stacked
- * account: creating under it needs that account's session, and the switch
- * reloads the page. The reloaded menu replays the intent as the create
- * dialog (or Cloud's refusal); the no-Workspace gate consumes it too, since an
- * unaffiliated account lands on a page that already is the join-or-create
- * surface. Entries older than two minutes are stale — the session that asked
- * is gone.
- */
-export const PENDING_WORKSPACE_CREATE = "podhub:pending-workspace-create"
-const PENDING_WORKSPACE_CREATE_TTL_MS = 120_000
-
-function markPendingWorkspaceCreate(uuid: string) {
-  try {
-    sessionStorage.setItem(
-      PENDING_WORKSPACE_CREATE,
-      JSON.stringify({ uuid, at: Date.now() }),
-    )
-  } catch {
-    // Storage blocked or full: the switch still lands on the right account.
-  }
-}
-
-function readPendingWorkspaceCreate(): string | undefined {
-  try {
-    const raw = sessionStorage.getItem(PENDING_WORKSPACE_CREATE)
-    if (!raw) return undefined
-    const pending = JSON.parse(raw) as { uuid?: string; at?: number }
-    if (
-      !pending.uuid ||
-      !pending.at ||
-      Date.now() - pending.at > PENDING_WORKSPACE_CREATE_TTL_MS
-    ) {
-      sessionStorage.removeItem(PENDING_WORKSPACE_CREATE)
-      return undefined
-    }
-    return pending.uuid
-  } catch {
-    sessionStorage.removeItem(PENDING_WORKSPACE_CREATE)
-    return undefined
-  }
-}
-
-/** The gate is itself the join-or-create surface; a leftover intent is stale. */
-export function clearPendingWorkspaceCreate() {
-  try {
-    sessionStorage.removeItem(PENDING_WORKSPACE_CREATE)
-  } catch {
-    // Storage blocked: nothing to clear.
-  }
-}
+const CARD = "rounded-lg border border-border/60 bg-muted/20 p-1"
 
 /** Workspace switching and actions belong to the header; account actions stay in the footer. */
 export function WorkspaceMenu({
@@ -151,8 +79,6 @@ export function WorkspaceMenu({
   const [open, setOpen] = useState(false)
   const [creating, setCreating] = useState(false)
   const [switchingTo, setSwitchingTo] = useState<number>()
-  const [inviteOpen, setInviteOpen] = useState(false)
-  const [inviteRoles, setInviteRoles] = useState<string[]>([])
   const [redeemOpen, setRedeemOpen] = useState(false)
   // Lock placement for the open session — collapsing the rail mid-menu must
   // not flip top↔right and make the popup jump.
@@ -161,53 +87,14 @@ export function WorkspaceMenu({
   const entitlement = overview?.entitlement
   const workspaces = overview?.workspaces ?? []
   const workspaceIds = workspaces.map((workspace) => workspace.id)
-  const accounts = overview?.accounts ?? []
   const active =
     overview?.active_workspace ??
     workspaces.find((workspace) => workspace.is_owned) ??
     workspaces[0]
 
-  const workspaceName = active?.name ?? "未选择 Workspace"
+  const workspaceName = active?.name ?? "未选择工作空间"
   const plan = active?.plan ?? entitlement?.plan
   const roleLabel = formatRole(active?.role)
-  const canInvite = active?.role === "owner" || active?.role === "manager"
-
-  async function openInvite() {
-    try {
-      const directory = await accountHttp.accountGetWorkspaceDirectory()
-      if (directory.permissions.invite_roles.length === 0) {
-        notifyError("当前账号没有邀请成员权限。")
-        return
-      }
-      setInviteRoles(directory.permissions.invite_roles)
-      setInviteOpen(true)
-    } catch (reason) {
-      notifyCommandError(reason, "无法读取成员目录，请稍后重试。")
-    }
-  }
-
-  async function createInvitation(request: CreateWorkspaceInvitationRequest) {
-    return accountHttp.accountCreateWorkspaceInvitation(request)
-  }
-
-  /* A 「创建工作空间」 picked on another stacked account arrives here
-     after the switch's reload — replay it as the create dialog once Cloud's
-     standing is known. A different presented account means the switch never
-     landed, so the stale intent is dropped instead of replayed later. */
-  useEffect(() => {
-    const pending = readPendingWorkspaceCreate()
-    if (!pending) return
-    const activeUuid = accounts.find((account) => account.active)?.uuid
-    if (!activeUuid) return
-    if (activeUuid !== pending) {
-      clearPendingWorkspaceCreate()
-      return
-    }
-    if (!standing) return
-    clearPendingWorkspaceCreate()
-    if (refusal) notifyError(refusal)
-    else setCreating(true)
-  }, [accounts, standing, refusal])
 
   return (
     <>
@@ -229,40 +116,50 @@ export function WorkspaceMenu({
             render={
               <DropdownMenuTrigger
                 aria-label={
-                  formatPlan(plan)
-                    ? `工作空间 ${workspaceName}，${formatPlan(plan)}`
-                    : `工作空间 ${workspaceName}`
+                  active
+                    ? formatPlan(plan)
+                      ? `工作空间 ${workspaceName}，${formatPlan(plan)}`
+                      : `工作空间 ${workspaceName}`
+                    : "未选择工作空间"
                 }
-                /* Collapsed, this is one more cell of the rail's 36px column, so
-                   it takes the same square as a nav row rather than sizing itself
-                   to the mark it holds. */
-                className={TRIGGER}
+                className={cn(TRIGGER, "shell-workspace-trigger border-sidebar-border bg-background")}
               />
             }
           >
-            <WorkspaceMark
-              name={workspaceName}
-              workspaceId={active?.id}
-              workspaceIds={workspaceIds}
-              imageUrl={active?.avatar_url}
-              className="size-10 shrink-0 group-data-[collapsible=icon]:size-8"
-            />
-            <span className="min-w-0 flex-1 truncate text-xl font-medium group-data-[collapsible=icon]:hidden" title={workspaceName}>
-              {workspaceName}
+            {active ? (
+              <WorkspaceMark
+                name={workspaceName}
+                workspaceId={active.id}
+                workspaceIds={workspaceIds}
+                imageUrl={active.avatar_url}
+                className="shell-workspace-avatar size-8 shrink-0 shadow-[inset_0_0_0_1px_var(--border)] group-data-[collapsible=icon]:size-7"
+              />
+            ) : (
+              <span
+                aria-hidden
+                className="shell-workspace-avatar flex size-8 shrink-0 items-center justify-center rounded-md border border-dashed border-border text-muted-foreground group-data-[collapsible=icon]:size-7"
+              >
+                <Building2 className="size-4" />
+              </span>
+            )}
+            <span className="flex min-w-0 flex-1 flex-col group-data-[collapsible=icon]:hidden">
+              <span className="shell-workspace-name truncate text-sm font-semibold leading-5" title={workspaceName}>{workspaceName}</span>
+              <span className="shell-workspace-meta flex min-w-0 items-center gap-1.5 text-xs leading-4 text-muted-foreground">
+                {active ? <PlanMark plan={plan} /> : null}
+                <span className="truncate">{active ? roleLabel ?? "工作空间" : "创建或选择后开始"}</span>
+              </span>
             </span>
-            <ChevronDown
+            <ChevronsUpDown
               aria-hidden
-              className={cn(
-                "size-3.5 shrink-0 text-faint-foreground transition-[color,transform] duration-200 ease-settle group-hover/workspace:text-muted-foreground group-data-[collapsible=icon]:hidden",
-                open && "rotate-180 text-muted-foreground",
-              )}
+              className="size-4 shrink-0 text-muted-foreground group-data-[collapsible=icon]:hidden"
             />
-            <span className="shrink-0 group-data-[collapsible=icon]:hidden"><PlanMark plan={plan} /></span>
           </TooltipTrigger>
           {/* Collapsed, the mark is the only thing left of the Workspace's identity —
               without this the rail opens on an unlabelled coloured square. */}
           <TooltipContent side="right" hidden={state !== "collapsed" || isMobile || open}>
-            {[workspaceName, formatPlan(plan), roleLabel].filter(Boolean).join(" · ")}
+            {active
+              ? [workspaceName, formatPlan(plan), roleLabel].filter(Boolean).join(" · ")
+              : "未选择工作空间"}
           </TooltipContent>
         </Tooltip>
 
@@ -272,176 +169,165 @@ export function WorkspaceMenu({
           sideOffset={8}
           className={SHELL}
         >
-          <div className="flex items-center gap-2.5 px-2 py-1.5">
-            <WorkspaceMark
-              name={workspaceName}
-              workspaceId={active?.id}
-              workspaceIds={workspaceIds}
-              imageUrl={active?.avatar_url}
-              className={MENU_MARK}
-            />
-            <WorkspaceIdentity
-              name={workspaceName}
-              plan={plan}
-              roleLabel={roleLabel}
-              nameClass="text-sm"
-            />
+          {/* Two cards: actions for the current space, then the shared
+              switcher. The trigger already names the current space. */}
+          <div className={CARD}>
+            {active ? (
+              <DropdownMenuGroup className="flex flex-col gap-0.5">
+                <DropdownMenuItem
+                  title="管理店铺与 Seller 密钥"
+                  onMouseEnter={() => preloadScreen("stores")}
+                  onFocus={() => preloadScreen("stores")}
+                  onClick={() => onOpenSpace("stores")}
+                  aria-current={spaceScreen === "stores" ? "page" : undefined}
+                  className={ACTION}
+                >
+                  {/* Current page: the glyph takes the accent, the same rule
+                      the rail rows use — focus:bg-accent stays free for focus
+                      and never doubles as the "you are here" mark. */}
+                  <StoreIcon
+                    aria-hidden
+                    className={cn(spaceScreen === "stores" && "text-brand")}
+                  />
+                  {SCREEN_LABELS.stores}
+                </DropdownMenuItem>
+                {onOpenPlans ? (
+                  <DropdownMenuItem className={UPGRADE} onClick={onOpenPlans}>
+                    <CircleArrowUp aria-hidden />
+                    升级
+                  </DropdownMenuItem>
+                ) : null}
+                <DropdownMenuItem
+                  className={ACTION}
+                  onClick={() => setRedeemOpen(true)}
+                >
+                  <Gift aria-hidden />
+                  兑换码
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+            ) : (
+              <div className="flex items-center gap-2.5 px-2 py-1.5">
+                <div className="flex size-8 shrink-0 items-center justify-center rounded-md border border-dashed border-border/80 bg-background text-muted-foreground">
+                  <Building2 className="size-4" />
+                </div>
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <span className="truncate text-sm font-medium leading-tight">尚未选择工作空间</span>
+                  <span className="truncate text-xs text-muted-foreground">创建或选择空间以开始</span>
+                </div>
+              </div>
+            )}
           </div>
 
-          <DropdownMenuSeparator className="my-1.5 bg-border/60" />
-
-          <DropdownMenuGroup className="flex flex-col gap-0.5">
-            <DropdownMenuItem
-              title="管理店铺与 Seller 密钥"
-              onMouseEnter={() => preloadScreen("stores")}
-              onFocus={() => preloadScreen("stores")}
-              onClick={() => onOpenSpace("stores")}
-              aria-current={spaceScreen === "stores" ? "page" : undefined}
-              className={ACTION}
-            >
-              {/* Current page: the glyph takes the accent, the same rule
-                  the rail rows use — focus:bg-accent stays free for focus
-                  and never doubles as the "you are here" mark. */}
-              <Store
-                aria-hidden
-                className={cn(spaceScreen === "stores" && "text-brand")}
-              />
-              {SCREEN_LABELS.stores}
-            </DropdownMenuItem>
-            {onOpenPlans ? (
-              <DropdownMenuItem className={UPGRADE} onClick={onOpenPlans}>
-                <CircleArrowUp aria-hidden />
-                升级
-              </DropdownMenuItem>
-            ) : null}
-            <DropdownMenuItem
-              className={ACTION}
-              onClick={() => setRedeemOpen(true)}
-            >
-              <Gift aria-hidden />
-              兑换码
-            </DropdownMenuItem>
-            {canInvite ? (
-              <DropdownMenuItem
-                className={ACTION}
-                onClick={() => void openInvite()}
-              >
-                <MailPlus aria-hidden />
-                邀请成员
-              </DropdownMenuItem>
-            ) : null}
-          </DropdownMenuGroup>
-
-          <DropdownMenuSeparator className="my-1.5 bg-border/60" />
-
-
-          <DropdownMenuGroup className="flex flex-col gap-0.5">
-            <DropdownMenuLabel className="sr-only">可切换的 Workspace</DropdownMenuLabel>
-            {workspaces.length === 0 ? (
-              <div className="px-1.5 py-1.5 text-compact text-muted-foreground">
-                尚无可切换的 Workspace
-              </div>
-            ) : (
-              workspaces.map((workspace) => {
-                const isActive = workspace.id === active?.id
-                const roleLine = formatRole(workspace.role)
-                return (
-                  /* Notion-style hover card: the row's own facts — plan badge
-                     and roster size — restated as text the mark can't carry. */
-                  <Tooltip key={workspace.id}>
-                    <TooltipTrigger
-                      render={
-                        <DropdownMenuItem
-                          disabled={
-                            switchingTo !== undefined || (!isActive && !onSwitchWorkspace)
-                          }
-                          aria-current={isActive ? "true" : undefined}
-                          onClick={() => {
-                            if (isActive || !onSwitchWorkspace) {
-                              setOpen(false)
-                              return
-                            }
-                            setSwitchingTo(workspace.id)
-                            void Promise.resolve(onSwitchWorkspace(workspace.id)).finally(() => {
-                              setSwitchingTo(undefined)
-                              setOpen(false)
-                            })
-                          }}
-                          className={WORKSPACE_ROW}
-                        />
-                      }
-                    >
-                      <WorkspaceMark
-                        name={workspace.name}
-                        workspaceId={workspace.id}
-                        workspaceIds={workspaceIds}
-                        imageUrl={workspace.avatar_url}
-                        className={MARK}
-                      />
-                      <WorkspaceIdentity
-                        name={workspace.name}
-                        plan={workspace.plan}
-                        roleLabel={roleLine}
-                        nameClass="text-compact"
-                      />
-                      {isActive ? (
-                        <Check
-                          aria-label="当前 Workspace"
-                          className="size-3.5 shrink-0 text-brand-ink"
-                        />
-                      ) : switchingTo === workspace.id ? (
-                        <Spinner
-                          className="size-3.5 shrink-0"
-                          aria-label="正在切换"
-                        />
-                      ) : (
-                        <span aria-hidden className="size-3.5 shrink-0" />
-                      )}
-                    </TooltipTrigger>
-                    <TooltipContent side="right" sideOffset={8}>
-                      <span className="flex flex-col items-start">
-                        {formatPlan(workspace.plan) ? (
-                          <span>{formatPlan(workspace.plan)}</span>
-                        ) : null}
-                        {workspace.member_count !== undefined ? (
-                          <span>{workspace.member_count} 名成员</span>
-                        ) : null}
-                      </span>
-                    </TooltipContent>
-                  </Tooltip>
-                )
-              })
-            )}
-            {standing ? (
-              refusal ? (
-                <div
-                  role="note"
-                  className="flex items-start gap-2.5 rounded-md px-2.5 py-2 text-left"
-                >
-                  <Lock
-                    aria-hidden
-                    className="mt-0.5 size-4 shrink-0 text-faint-foreground"
-                  />
-                  <span className="flex min-w-0 flex-1 flex-col gap-1">
-                    <span className="text-compact font-medium tracking-[-0.01em] text-muted-foreground">
-                      创建工作空间
-                    </span>
-                    <span className="text-meta leading-normal text-faint-foreground">
-                      {refusal}
-                    </span>
-                  </span>
+          <div className={cn(CARD, "mt-1.5")}>
+            <DropdownMenuGroup className="flex flex-col gap-0.5">
+              <DropdownMenuLabel className="px-2.5 py-1 text-meta font-medium text-faint-foreground">所有空间</DropdownMenuLabel>
+              {workspaces.length === 0 ? (
+                <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border/60 bg-muted/20 px-3 py-3 text-center">
+                  <p className="text-xs font-medium text-foreground">暂无可切换的工作空间</p>
+                  <p className="mt-0.5 text-meta text-muted-foreground">创建新空间以开启店铺与上架管理</p>
                 </div>
               ) : (
-                <DropdownMenuItem
-                  onClick={() => setCreating(true)}
-                  className={cn(ACTION, "text-brand-ink")}
-                >
-                  <Plus aria-hidden />
-                  创建工作空间
-                </DropdownMenuItem>
-              )
-            ) : null}
-          </DropdownMenuGroup>
+                workspaces.map((workspace) => {
+                  const isActive = workspace.id === active?.id
+                  const roleLine = formatRole(workspace.role)
+                  return (
+                    /* Notion-style hover card: the row's own facts — plan badge
+                       and roster size — restated as text the mark can't carry. */
+                    <Tooltip key={workspace.id}>
+                      <TooltipTrigger
+                        render={
+                          <DropdownMenuItem
+                            disabled={
+                              switchingTo !== undefined || (!isActive && !onSwitchWorkspace)
+                            }
+                            aria-current={isActive ? "true" : undefined}
+                            onClick={() => {
+                              if (isActive || !onSwitchWorkspace) {
+                                setOpen(false)
+                                return
+                              }
+                              setSwitchingTo(workspace.id)
+                              void Promise.resolve(onSwitchWorkspace(workspace.id)).finally(() => {
+                                setSwitchingTo(undefined)
+                                setOpen(false)
+                              })
+                            }}
+                            className={WORKSPACE_ROW}
+                          />
+                        }
+                      >
+                        <WorkspaceMark
+                          name={workspace.name}
+                          workspaceId={workspace.id}
+                          workspaceIds={workspaceIds}
+                          imageUrl={workspace.avatar_url}
+                          className={MARK}
+                        />
+                        <WorkspaceIdentity
+                          name={workspace.name}
+                          plan={workspace.plan}
+                          roleLabel={roleLine}
+                          nameClass="text-compact"
+                        />
+                        {isActive ? (
+                          <Check
+                            aria-label="当前工作空间"
+                            className="size-3.5 shrink-0 text-brand-ink"
+                          />
+                        ) : switchingTo === workspace.id ? (
+                          <Spinner
+                            className="size-3.5 shrink-0"
+                            aria-label="正在切换"
+                          />
+                        ) : (
+                          <span aria-hidden className="size-3.5 shrink-0" />
+                        )}
+                      </TooltipTrigger>
+                      <TooltipContent side="right" sideOffset={8}>
+                        <span className="flex flex-col items-start">
+                          {formatPlan(workspace.plan) ? (
+                            <span>{formatPlan(workspace.plan)}</span>
+                          ) : null}
+                          {workspace.member_count !== undefined ? (
+                            <span>{workspace.member_count} 名成员</span>
+                          ) : null}
+                        </span>
+                      </TooltipContent>
+                    </Tooltip>
+                  )
+                })
+              )}
+              {standing ? (
+                refusal ? (
+                  <div
+                    role="note"
+                    className="flex items-start gap-2.5 rounded-md px-2.5 py-2 text-left"
+                  >
+                    <Lock
+                      aria-hidden
+                      className="mt-0.5 size-4 shrink-0 text-faint-foreground"
+                    />
+                    <span className="flex min-w-0 flex-1 flex-col gap-1">
+                      <span className="text-compact font-medium tracking-[-0.01em] text-muted-foreground">
+                        创建工作空间
+                      </span>
+                      <span className="text-meta leading-normal text-faint-foreground">
+                        {refusal}
+                      </span>
+                    </span>
+                  </div>
+                ) : (
+                  <DropdownMenuItem
+                    onClick={() => setCreating(true)}
+                    className={cn(ACTION, "text-brand-ink")}
+                  >
+                    <Plus aria-hidden />
+                    创建工作空间
+                  </DropdownMenuItem>
+                )
+              ) : null}
+            </DropdownMenuGroup>
+          </div>
 
         </DropdownMenuContent>
       </DropdownMenu>
@@ -462,13 +348,6 @@ export function WorkspaceMenu({
         </DialogContent>
       </Dialog>
 
-      <WorkspaceInviteDialog
-        open={inviteOpen}
-        onOpenChange={setInviteOpen}
-        onInvite={createInvitation}
-        inviteRoles={inviteRoles}
-      />
-
       <RedeemCodeDialog
         open={redeemOpen}
         onOpenChange={setRedeemOpen}
@@ -482,26 +361,16 @@ export function WorkspaceMenu({
 
 export function AccountMenu({
   overview,
-  standing,
-  onSwitchAccount,
-  onLogoutAccount,
-  onAddAccount,
-  onWorkspaceCreated,
   onSignedOut,
+  onOpenSettings,
 }: {
   overview?: AccountOverview
-  standing?: WorkspaceStandingView
-  onSwitchAccount?: (uuid: string) => void | Promise<void>
-  onLogoutAccount?: (uuid: string) => void | Promise<void>
-  onAddAccount?: () => void
-  onWorkspaceCreated?: (standing: WorkspaceStandingView) => void
   onSignedOut: () => void
+  onOpenSettings?: () => void
 }) {
   const { state, isMobile } = useSidebar()
   const [open, setOpen] = useState(false)
-  const [creating, setCreating] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [busyAccount, setBusyAccount] = useState<string>()
   const sideRef = useRef<MenuSide>("top")
   const session = overview?.session
   const name = session?.name?.trim() || undefined
@@ -509,8 +378,6 @@ export function AccountMenu({
   const accountLabel = email ?? name ?? "未登录"
   const accountName = name ?? email ?? "未登录"
   const accountRoleLabel = platformRoleLabel(session?.role)
-  const otherAccounts = (overview?.accounts ?? []).filter((account) => !account.active)
-  const refusal = standing ? createWorkspaceRefusal(standing) : undefined
 
   async function signOut() {
     setBusy(true)
@@ -524,38 +391,8 @@ export function AccountMenu({
     }
   }
 
-  async function switchAccount(uuid: string) {
-    if (!onSwitchAccount || busyAccount) return
-    setBusyAccount(uuid)
-    try {
-      await onSwitchAccount(uuid)
-    } finally {
-      setBusyAccount(undefined)
-    }
-  }
-
-  async function removeAccount(uuid: string) {
-    if (!onLogoutAccount || busyAccount) return
-    setBusyAccount(uuid)
-    try {
-      await onLogoutAccount(uuid)
-    } finally {
-      setBusyAccount(undefined)
-    }
-  }
-
-  function joinOrCreateWorkspace(account: StackedAccountView) {
-    if (account.active) {
-      setCreating(true)
-      return
-    }
-    if (!onSwitchAccount || busyAccount) return
-    markPendingWorkspaceCreate(account.uuid)
-    void switchAccount(account.uuid)
-  }
-
   return (
-    <>
+    <div className="shell-account-card">
       <DropdownMenu
         open={open}
         onOpenChange={(next) => {
@@ -564,65 +401,50 @@ export function AccountMenu({
         }}
       >
         <Tooltip>
-          <TooltipTrigger render={<DropdownMenuTrigger aria-label={`账户 ${accountName}，${accountRoleLabel}`} className={cn(TRIGGER, "mb-4 gap-3 px-3.5 py-3 group-data-[collapsible=icon]:mb-0")} />}>
-            <IdentityMark kind="user" name={accountName} role={session?.role} imageUrl={session?.avatar_url} className="size-12 shrink-0 group-data-[collapsible=icon]:size-8" />
-            <span className="flex min-w-0 flex-1 flex-col gap-0.5 group-data-[collapsible=icon]:hidden">
-              <span className="truncate text-xl font-medium">{accountName}</span>
-              <span className="truncate text-xs text-faint-foreground">{email ?? accountRoleLabel}</span>
+          <TooltipTrigger render={<DropdownMenuTrigger aria-label={`账户 ${accountLabel}，${accountRoleLabel || "未知角色"}`} className={cn(TRIGGER, "shell-account-trigger")} />}>
+            <IdentityMark kind="user" name={accountName} role={session?.role} imageUrl={session?.avatar_url} className="shell-account-avatar size-8 shrink-0 rounded-full group-data-[collapsible=icon]:size-6" />
+            <span className="flex min-w-0 flex-1 flex-col group-data-[collapsible=icon]:hidden">
+              <span className="shell-account-name truncate text-sm font-medium leading-5" title={accountName}>{accountName}</span>
+              <span className="shell-account-role truncate text-xs leading-4 text-muted-foreground">{accountRoleLabel || "未知角色"}</span>
             </span>
-            <ChevronDown aria-hidden className="size-3.5 shrink-0 text-muted-foreground group-data-[collapsible=icon]:hidden" />
+            <ChevronsUpDown aria-hidden className="size-4 shrink-0 text-muted-foreground group-data-[collapsible=icon]:hidden" />
           </TooltipTrigger>
           <TooltipContent side="right" hidden={state !== "collapsed" || isMobile || open}>
             {[accountName, email, accountRoleLabel].filter(Boolean).join(" · ")}
           </TooltipContent>
         </Tooltip>
         <DropdownMenuContent side={sideRef.current} align="start" sideOffset={8} className={SHELL}>
-          <div className="flex items-center gap-2.5 rounded-md py-1 pl-2.5 pr-1">
-            <IdentityMark kind="user" name={accountName} role={session?.role} imageUrl={session?.avatar_url} className={ACCOUNT_MARK} />
-            <span className="min-w-0 flex-1 truncate text-compact text-muted-foreground" title={accountLabel}>{accountLabel}</span>
-            <AccountActionsSubmenu
-              email={accountLabel}
-              joinOrCreateDisabled={!standing || Boolean(refusal)}
-              onJoinOrCreate={() => setCreating(true)}
-              onSignOut={() => void signOut()}
-              signOutDisabled={busy}
-              signOutLabel="退出登录"
-            />
+          <div className="flex flex-col gap-2 rounded-lg border border-border/50 bg-muted/30 p-2.5">
+            <div className="flex items-center gap-2.5">
+              <IdentityMark kind="user" name={accountName} role={session?.role} imageUrl={session?.avatar_url} className={MENU_MARK} />
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate text-compact font-medium" title={accountName}>{accountName}</span>
+                {email ? <span className="truncate font-mono text-meta text-muted-foreground" title={email}>{email}</span> : null}
+              </span>
+            </div>
+            {accountRoleLabel ? (
+              <div className="flex items-center justify-between border-t border-border/40 pt-1.5 text-xs">
+                <span className="text-meta text-muted-foreground">当前权限</span>
+                <span className="inline-flex items-center rounded-md bg-background px-1.5 py-0.5 text-meta font-medium text-foreground ring-1 ring-inset ring-border/60">
+                  {accountRoleLabel}
+                </span>
+              </div>
+            ) : null}
           </div>
-          {otherAccounts.length > 0 ? (
-            <>
-              <DropdownMenuSeparator className="my-1.5 bg-border/60" />
-              <DropdownMenuGroup className="flex flex-col gap-0.5">
-                <DropdownMenuLabel className="sr-only">其他已登录账号</DropdownMenuLabel>
-                <StackedAccountItems
-                  accounts={otherAccounts}
-                  busyUuid={busyAccount}
-                  onSwitch={onSwitchAccount ? switchAccount : undefined}
-                  onRemove={onLogoutAccount ? removeAccount : undefined}
-                  onJoinOrCreate={joinOrCreateWorkspace}
-                  joinOrCreateDisabled={() => !onSwitchAccount}
-                />
-              </DropdownMenuGroup>
-            </>
-          ) : null}
-          {onAddAccount ? (
-            <DropdownMenuItem className={ACTION} onClick={onAddAccount}>
-              <UserPlus aria-hidden />添加账号
-            </DropdownMenuItem>
-          ) : null}
           <DropdownMenuSeparator className="my-1.5 bg-border/60" />
-          <DropdownMenuItem variant="destructive" disabled={busy} className={ACTION} onClick={() => void signOut()}>
-            <LogOut aria-hidden />退出登录
-          </DropdownMenuItem>
+          <DropdownMenuGroup className="flex flex-col gap-0.5">
+            {onOpenSettings ? (
+              <DropdownMenuItem className={ACTION} onClick={() => onOpenSettings()}>
+                <Settings aria-hidden />设置
+              </DropdownMenuItem>
+            ) : null}
+            <DropdownMenuItem variant="destructive" disabled={busy} className={ACTION} onClick={() => void signOut()}>
+              <LogOut aria-hidden />退出登录
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
         </DropdownMenuContent>
       </DropdownMenu>
-      <Dialog open={creating} onOpenChange={setCreating}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader><DialogTitle>创建工作空间</DialogTitle></DialogHeader>
-          <CreateWorkspaceForm inDialog onCreated={(next) => { setCreating(false); onWorkspaceCreated?.(next) }} onCancel={() => setCreating(false)} />
-        </DialogContent>
-      </Dialog>
-    </>
+    </div>
   )
 }
 
@@ -718,165 +540,6 @@ export function WorkspaceMark({
       onPick={onPick}
       className={className}
     />
-  )
-}
-
-/**
- * The Notion-style "…" an account row carries: 创建工作空间 first (加入他人
- * 工作空间只能走邀请，见创建弹窗指引；该入口只创建), the account's sign-out
- * second. Shared by the muted active-account row and every stacked row in the
- * rail menu.
- */
-function AccountActionsSubmenu({
-  email,
-  disabled,
-  joinOrCreateDisabled,
-  onJoinOrCreate,
-  onSignOut,
-  signOutDisabled,
-  signOutLabel,
-}: {
-  email: string
-  disabled?: boolean
-  joinOrCreateDisabled?: boolean
-  onJoinOrCreate?: () => void
-  onSignOut?: () => void
-  signOutDisabled?: boolean
-  signOutLabel: string
-}) {
-  return (
-    <DropdownMenuSub>
-      <DropdownMenuSubTrigger
-        chevron={false}
-        disabled={disabled}
-        label={email}
-        aria-label={`账号 ${email} 的更多操作`}
-        title="更多操作"
-        className={ACCOUNT_MORE}
-      >
-        <Ellipsis aria-hidden className="size-3.5" />
-      </DropdownMenuSubTrigger>
-      <DropdownMenuSubContent
-        sideOffset={6}
-        className="flex flex-col gap-0.5 p-1.5"
-      >
-        {onJoinOrCreate ? (
-          <DropdownMenuItem
-            className={ACTION}
-            disabled={joinOrCreateDisabled}
-            onClick={onJoinOrCreate}
-          >
-            <Plus aria-hidden />
-            创建工作空间
-          </DropdownMenuItem>
-        ) : null}
-        {onSignOut ? (
-          <DropdownMenuItem
-            variant="destructive"
-            className={ACTION}
-            disabled={signOutDisabled}
-            onClick={onSignOut}
-          >
-            <LogOut aria-hidden />
-            {signOutLabel}
-          </DropdownMenuItem>
-        ) : null}
-      </DropdownMenuSubContent>
-    </DropdownMenuSub>
-  )
-}
-
-/**
- * One compact row per account on this browser's session stack — mark, email,
- * the active one checked; clicking another row switches to it. With
- * `onJoinOrCreate` each row carries the "…" submenu (创建工作空间, then 登出); without it the row keeps a plain sign-out button for the
- * no-Workspace gate's leaner menu. Shared between the rail menu and the
- * gate's account menu.
- */
-export function StackedAccountItems({
-  accounts,
-  busyUuid,
-  onSwitch,
-  onRemove,
-  onJoinOrCreate,
-  joinOrCreateDisabled,
-}: {
-  accounts: StackedAccountView[]
-  busyUuid?: string
-  onSwitch?: (uuid: string) => void
-  onRemove?: (uuid: string) => void
-  onJoinOrCreate?: (account: StackedAccountView) => void
-  /** Per-row veto for 创建工作空间 — e.g. the active account's Cloud refusal. */
-  joinOrCreateDisabled?: (account: StackedAccountView) => boolean
-}) {
-  return (
-    <>
-      {accounts.map((account) => {
-        const switching = busyUuid === account.uuid
-        return (
-          <div key={account.uuid} className="flex items-center gap-0.5 pr-1">
-            <DropdownMenuItem
-              disabled={switching}
-              aria-current={account.active ? "true" : undefined}
-              className={cn(WORKSPACE_ROW, "min-w-0 flex-1")}
-              onClick={() => {
-                if (!account.active) onSwitch?.(account.uuid)
-              }}
-            >
-              <IdentityMark
-                kind="user"
-                name={account.name || account.email}
-                imageUrl={account.avatar_url ?? undefined}
-                className={ACCOUNT_MARK}
-              />
-              <span
-                className="min-w-0 flex-1 truncate font-mono text-compact text-muted-foreground"
-                title={
-                  account.name
-                    ? `${account.name} · ${account.email}`
-                    : account.email
-                }
-              >
-                {account.email}
-              </span>
-              {account.active ? (
-                <Check
-                  aria-label="当前账号"
-                  className="size-3.5 shrink-0 text-brand-ink"
-                />
-              ) : switching ? (
-                <Spinner className="size-3.5 shrink-0" aria-label="正在切换" />
-              ) : null}
-            </DropdownMenuItem>
-            {onJoinOrCreate ? (
-              <AccountActionsSubmenu
-                email={account.email}
-                disabled={switching}
-                joinOrCreateDisabled={joinOrCreateDisabled?.(account)}
-                onJoinOrCreate={() => onJoinOrCreate(account)}
-                onSignOut={
-                  onRemove ? () => onRemove(account.uuid) : undefined
-                }
-                signOutDisabled={switching}
-                signOutLabel={account.active ? "退出登录" : "退出该账号"}
-              />
-            ) : !account.active && !switching && onRemove ? (
-              <button
-                type="button"
-                aria-label={`退出账号 ${account.email}`}
-                title="退出该账号"
-                className={ACCOUNT_MORE}
-                /* Beside the row, not inside it — the click never reaches the
-                   item, so the menu stays open and the list updates in place. */
-                onClick={() => onRemove(account.uuid)}
-              >
-                <LogOut aria-hidden className="size-3.5" />
-              </button>
-            ) : null}
-          </div>
-        )
-      })}
-    </>
   )
 }
 

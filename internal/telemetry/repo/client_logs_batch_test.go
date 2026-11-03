@@ -18,6 +18,7 @@ import (
 	"github.com/xxww0098/podhub-go/internal/platform/db"
 	"github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
 	"github.com/xxww0098/podhub-go/internal/telemetry/domain"
+	"github.com/xxww0098/podhub-go/tests/testkit"
 )
 
 func TestDedupeClientLogsFirstWins(t *testing.T) {
@@ -289,7 +290,7 @@ func telemetryBatchDB(t telemetryFail) (*pgxpool.Pool, context.Context) {
 	t.Helper()
 	dsn := os.Getenv("PODHUB_PARITY_DSN")
 	if dsn == "" {
-		if _, err := os.Stat("/var/run/docker.sock"); err != nil {
+		if !testkit.DockerAvailable() {
 			t.Skip("docker daemon is not available")
 		}
 	}

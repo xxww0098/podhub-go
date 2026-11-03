@@ -29,7 +29,7 @@ func TestAgentFlows(t *testing.T) {
 	stamp := strconv.FormatInt(time.Now().UnixNano(), 36)
 	agentUser, agentOrg := insertWorkspace(t, ctx, pool, "agent-"+stamp+"@example.invalid", "甲的工作空间")
 	claimer, claimerOrg := insertWorkspace(t, ctx, pool, "invitee@"+stamp+".example.invalid", "invitee-b 的工作空间")
-	outsider, _ := insertWorkspace(t, ctx, pool, "out-"+stamp+"@example.invalid", "外人")
+	outsider, outsiderOrg := insertWorkspace(t, ctx, pool, "out-"+stamp+"@example.invalid", "外人")
 	code := "AG" + strings.ToUpper(stamp)
 	if len(code) > 32 {
 		code = code[:32]
@@ -252,7 +252,7 @@ func TestAgentFlows(t *testing.T) {
 			 WHERE org_id = $1 AND entry_type = 'adjustment' AND idempotency_key = 'agent_transfer:op-1'`, agentOrg).Scan(&walletRows); err != nil {
 			t.Fatal(err)
 		}
-		if err := pool.QueryRow(ctx, `SELECT balance_microfen FROM user_wallets WHERE user_id = $1`, agentUser).Scan(&balance); err != nil {
+		if err := pool.QueryRow(ctx, `SELECT balance_microfen FROM workspace_wallets WHERE org_id = $1`, agentOrg).Scan(&balance); err != nil {
 			t.Fatal(err)
 		}
 		if err := pool.QueryRow(ctx, `SELECT balance_cents FROM agent_commission_wallets WHERE user_id = $1`, agentUser).Scan(&commission); err != nil {
@@ -403,7 +403,10 @@ func TestAgentFlows(t *testing.T) {
 		}
 	})
 
-	t.Run("wallet rows stay hidden without the wallet guc", func(t *testing.T) {
+	t.Run("wallet rows stay hidden without the org guc", func(t *testing.T) {
+		if _, err := pool.Exec(ctx, `INSERT INTO public.workspace_wallets (org_id) VALUES ($1) ON CONFLICT (org_id) DO NOTHING`, claimerOrg); err != nil {
+			t.Fatal(err)
+		}
 		tx, err := pool.Begin(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -412,15 +415,36 @@ func TestAgentFlows(t *testing.T) {
 		if _, err := tx.Exec(ctx, `SELECT set_config('role', 'podhub_app', true)`); err != nil {
 			t.Fatal(err)
 		}
+		insertWallet := func(org int64) error {
+			sp, err := tx.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer sp.Rollback(ctx)
+			_, err = sp.Exec(ctx, `INSERT INTO public.workspace_wallets (org_id) VALUES ($1)`, org)
+			return err
+		}
 		var n int
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM public.user_wallets WHERE user_id = $1`, agentUser).Scan(&n); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM public.workspace_wallets WHERE org_id = ANY($1::bigint[])`, []int64{agentOrg, claimerOrg}).Scan(&n); err != nil {
 			t.Fatal(err)
 		}
 		if n != 0 {
 			t.Fatalf("missing guc saw %d wallet rows", n)
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO public.user_wallets (user_id) VALUES ($1)`, outsider); err == nil {
+		if err := insertWallet(outsiderOrg); err == nil {
 			t.Fatal("insert without guc")
+		}
+		if _, err := tx.Exec(ctx, `SELECT set_config('app.current_org_id', $1, true)`, strconv.FormatInt(agentOrg, 10)); err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM public.workspace_wallets WHERE org_id = $1`, agentOrg).Scan(&n); err != nil || n != 1 {
+			t.Fatalf("own wallet %d %v", n, err)
+		}
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM public.workspace_wallets WHERE org_id = $1`, claimerOrg).Scan(&n); err != nil || n != 0 {
+			t.Fatalf("other org wallet %d %v", n, err)
+		}
+		if err := insertWallet(outsiderOrg); err == nil {
+			t.Fatal("insert for another org")
 		}
 	})
 }

@@ -321,3 +321,45 @@ fn write_data_rle_matches_js_encoder_vectors() {
         );
     }
 }
+
+#[test]
+fn short_rle_rows_do_not_shift_following_rows() {
+    let encoded = [0, 2, 0, 3, 0, 10, 1, 20, 30];
+    let mut reader = PsdReader::new(&encoded, None, None);
+    let mut output = DecodeTarget::rgba(2, 2);
+    read_data_rle(&mut reader, Some(&mut output), 2, 2, 8, 4, &[0], false).unwrap();
+    assert_eq!(from_data(&output.data), [10, 0, 20, 30]);
+    assert_eq!(reader.offset, encoded.len());
+}
+
+#[test]
+fn rle_rows_borrow_input_and_only_reserve_the_length_table() {
+    for large in [false, true] {
+        let rows: [&[u8]; 2] = [&[129, 7, 1, 8, 9], &[128, 129, 9, 1, 10, 11]];
+        let mut encoded = Vec::new();
+        for row in rows {
+            if large {
+                encoded.extend((row.len() as u32).to_be_bytes());
+            } else {
+                encoded.extend((row.len() as u16).to_be_bytes());
+            }
+        }
+        for row in rows {
+            encoded.extend(row);
+        }
+        let mut reader = PsdReader::new(&encoded, None, None);
+        let table_bytes = rows.len() * size_of::<usize>();
+        reader.configure_allocation_limits(table_bytes, 0).unwrap();
+        let mut output = DecodeTarget::rgba(130, 2);
+        read_data_rle(&mut reader, Some(&mut output), 130, 2, 8, 4, &[0], large).unwrap();
+        let mut expected = vec![7; 128];
+        expected.extend([8, 9]);
+        expected.extend([9; 128]);
+        expected.extend([10, 11]);
+        assert_eq!(from_data(&output.data), expected);
+        assert_eq!(reader.offset, encoded.len());
+        let observed = reader.allocation_observations();
+        assert_eq!(observed.high_water_bytes, table_bytes);
+        assert_eq!(observed.live_bytes, 0);
+    }
+}

@@ -2,7 +2,7 @@ package domain
 
 // Line is one delegate_order_lines row as
 // delegate_supplier_recompute_order_state reads it
-// (db/migrations/00205_supplier_portal_actions.sql).
+// (the baseline schema, delegate_* functions).
 // Ready is the SELECT boolean `(b.active IS TRUE AND EXISTS verified asset)`.
 // A missing binding makes `b.active IS TRUE` false, so Ready nil and Ready
 // false both clear all_ready. That expression never yields SQL NULL.

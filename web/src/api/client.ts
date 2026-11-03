@@ -22,6 +22,7 @@ import type { DiagnosticContextInput } from "@/lib/diagnostic-context"
  * screen — one event per refused response, no redirect from inside a fetch.
  */
 export const UNAUTHENTICATED_EVENT = "podhub:unauthenticated"
+export const SESSION_REFRESH_EVENT = "podhub:session-refresh"
 
 type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
 
@@ -102,7 +103,7 @@ function diagnosticFields(method: Method, path: string, startedAt: number, respo
   return fields
 }
 
-/** The session is gone the moment the status says so, whatever the body holds. */
+/** A 401 means the Cookie session is gone; tell the shell once. */
 function announceUnauthenticated(response: Response) {
   if (response.status === 401 && typeof window !== "undefined") {
     window.dispatchEvent(new Event(UNAUTHENTICATED_EVENT))
@@ -192,9 +193,9 @@ export function cloudRefusal(response: Pick<Response, "status" | "headers">, bod
   const message = text(fields.error) ?? text(fields.message)
   const code = text(fields.code)
   const unconfirmed = method !== "GET" && !message && status !== 401
-  const recovery = fields.ocrRecovery
+  const recovery = fields.ocr_recovery
   const recoveryId = recovery && typeof recovery === "object"
-    ? text((recovery as { requestId?: unknown }).requestId)
+    ? text((recovery as { request_id?: unknown }).request_id)
     : undefined
   return Object.assign(
     commandError(
@@ -223,7 +224,6 @@ export function storeChecksumGrantPath(method: string, path: string): boolean {
   const clean = path.split("?")[0] ?? path
   if (clean.endsWith("/confirm") || clean.endsWith("/finalize")) return false
   if (clean.endsWith("/presign") || clean.endsWith("/presign-batch")) return true
-  if (clean.endsWith("/listing/templates")) return true
   return clean.endsWith("/uploads") || clean.endsWith("/upload")
 }
 
@@ -270,15 +270,18 @@ export async function request<T>(
       timeout.clear()
       throw unavailable(reason, method, path, startedAt, diagnostic, options)
     }
-    announceUnauthenticated(response)
     // `fetch` resolves on response headers; the deadline must cover the body too,
     // so the timer stays armed until `text()` finishes or the body stalls out.
     let payload: unknown
     try {
       payload = await readPayload(response, method, path, startedAt, diagnostic, options, timeout.signal)
+    } catch (reason) {
+      announceUnauthenticated(response)
+      throw reason
     } finally {
       timeout.clear()
     }
+    announceUnauthenticated(response)
     if (!response.ok) {
       const error = cloudRefusal(response, payload, method, path)
       if (options.reportOwner !== "caller") reportError("[api]", error, { ...diagnosticFields(method, path, startedAt, response), kind: "http" }, diagnostic)
@@ -308,10 +311,16 @@ export async function getBytes(path: string, timeoutMs?: number): Promise<{ byte
     timeout?.clear()
     throw unavailable(reason, "GET", path, startedAt)
   }
-  announceUnauthenticated(response)
   try {
     if (!response.ok) {
-      const payload = await readPayload(response, "GET", path, startedAt)
+      let payload: unknown
+      try {
+        payload = await readPayload(response, "GET", path, startedAt)
+      } catch (reason) {
+        announceUnauthenticated(response)
+        throw reason
+      }
+      announceUnauthenticated(response)
       const error = cloudRefusal(response, payload, "GET", path)
       reportError("[api]", error, { ...diagnosticFields("GET", path, startedAt, response), kind: "http" })
       throw error

@@ -1,16 +1,13 @@
-/** 平台货源 HTTP client. Wire types mirror the camelCase DTO; prop_defs is propDefs. */
+/** 平台商品库管理 HTTP client. Wire types mirror the camelCase DTO; prop_defs is propDefs. */
 import { api } from "@/api/client"
 import { route } from "@/api/routes"
+import type { components } from "@/api/schema"
 import type {
   SupplierPromptPreview,
-  SupplierPromptDiff,
-  PublishSupplierPromptResult,
   SupplierDbDetail,
   UpsertSupplierDbRequest,
   UpsertSupplierDbPropRequest,
   UpsertSupplierDbRowRequest,
-  PatchSupplierPromptRequest,
-  SupplierPromptSync,
   AdjustSupplierDbPriceRequest,
   PresignSupplierDbUploadRequest,
   SupplierDbPropDeleteResult,
@@ -18,13 +15,24 @@ import type {
   SupplierDbMutationData,
   SupplierDbPropMutationData,
   SupplierDbRowMutationData,
-  SupplierPromptListData,
-  SupplierPromptMutationData,
   SupplierDbOkData,
   SupplierDbRowOkData,
   SupplierDbUploadData
 } from "./http-supplier-dbs-types"
 export type * from "./http-supplier-dbs-types"
+
+export function supplierUploadData(data: components["schemas"]["SupplierDbUploadPresignResponse"]["data"]): SupplierDbUploadData {
+  const target = data.upload
+  return { upload: {
+    upload: target.upload,
+    uploadTicket: target.upload_ticket,
+    alreadyPresent: target.already_present,
+    multipart: target.multipart ? {
+      uploadId: target.multipart.upload_id, partSize: target.multipart.part_size, ticket: target.multipart.ticket,
+      parts: target.multipart.parts.map((part) => ({ partNumber: part.part_number, url: part.url, byteLength: part.byte_length, expiresAtMs: part.expires_at_ms })),
+    } : undefined,
+  } }
+}
 
 // ---------- paths ----------
 // All endpoints sit under /admin/supplier-dbs in api/routes.ts
@@ -48,49 +56,12 @@ const rowPath = (sourceId: string, productId: string) =>
   })
 const uploadsPath = (sourceId: string) =>
   route("adminSupplierDbsBySourceIdUploads", { source_id: sourceId })
-const supplierPromptPath = (productId: string) =>
-  route("adminSupplierPromptsByProductId", { product_id: productId })
-
 export const supplierDbsHttp = {
-  supplierPromptsList: () =>
-    api.get<SupplierPromptListData>(route("adminSupplierPrompts")),
-
-  supplierPromptPatch: (productId: string, body: PatchSupplierPromptRequest) =>
-    api.patch<SupplierPromptMutationData>(supplierPromptPath(productId), body),
-
-  supplierPromptPreview: (
-    sourceId: string,
-    productId: string,
-    body: { brief: string; fixedTags: string[] },
-  ) =>
-    api.post<SupplierPromptPreview>(
-      route("adminSupplierDbsBySourceIdRowsByProductIdPromptPreview", {
-        source_id: sourceId,
-        product_id: productId,
-      }),
-      body,
-    ),
-
-  supplierPromptDiff: (sourceId: string, productId: string, revision: number) =>
-    api.get<SupplierPromptDiff>(
-      `${route("adminSupplierDbsBySourceIdRowsByProductIdPromptDiff", {
-        source_id: sourceId,
-        product_id: productId,
-      })}?revision=${revision}`,
-    ),
-
-  supplierPromptPublish: (sourceId: string, productId: string, revision: number) =>
-    api.post<PublishSupplierPromptResult>(
-      route("adminSupplierDbsBySourceIdRowsByProductIdPromptPublish", {
-        source_id: sourceId,
-        product_id: productId,
-      }),
-      { revision },
-    ),
-
-  /** 超级管理员：把供应商副本对齐到类目提示词的当前正文（决策 D9）。 */
-  supplierPromptsSync: () =>
-    api.post<SupplierPromptSync>(route("adminSupplierPromptsSync")),
+  supplierPromptPreview: (sourceId: string, productId: string, body: { brief: string; fixedTags: string[] }) =>
+    api.post<SupplierPromptPreview>(route("adminSupplierDbsBySourceIdRowsByProductIdPromptPreview", {
+      source_id: sourceId,
+      product_id: productId,
+    }), body),
 
   supplierDbsList: () =>
     api.get<SupplierDbListData>(route("adminSupplierDbs")),
@@ -99,22 +70,22 @@ export const supplierDbsHttp = {
     api.get<SupplierDbDetail>(dbPath(sourceId)),
 
   supplierDbCreate: (body: UpsertSupplierDbRequest) =>
-    api.post<SupplierDbMutationData>(route("adminSupplierDbs"), body),
+    api.post<SupplierDbMutationData>(route("adminSupplierDbs"), { ...body, template: body.template ?? null, viewPrefs: body.viewPrefs ?? null }),
 
   supplierDbUpdate: (sourceId: string, body: UpsertSupplierDbRequest) =>
-    api.put<SupplierDbMutationData>(dbPath(sourceId), body),
+    api.put<SupplierDbMutationData>(dbPath(sourceId), { ...body, template: body.template ?? null, viewPrefs: body.viewPrefs ?? null }),
 
   supplierDbDelete: (sourceId: string) =>
     api.del<SupplierDbOkData>(dbPath(sourceId)),
 
   supplierDbPropCreate: (sourceId: string, body: UpsertSupplierDbPropRequest) =>
-    api.post<SupplierDbPropMutationData>(propsPath(sourceId), body),
+    api.post<SupplierDbPropMutationData>(propsPath(sourceId), { ...body, position: body.position ?? null }),
 
   supplierDbPropUpdate: (
     sourceId: string,
     propId: string,
     body: UpsertSupplierDbPropRequest,
-  ) => api.put<SupplierDbPropMutationData>(propPath(sourceId, propId), body),
+  ) => api.put<SupplierDbPropMutationData>(propPath(sourceId, propId), { ...body, position: body.position ?? null }),
 
   supplierDbPropDelete: (sourceId: string, propId: string) =>
     api.del<SupplierDbPropDeleteResult>(propPath(sourceId, propId)),
@@ -165,8 +136,12 @@ export const supplierDbsHttp = {
 
   // POST …/uploads — presign for the dedicated R2 bucket; the browser PUTs the
   // bytes straight to `putUrl` and the row then stores `publicUrl`.
-  supplierDbUploadPresign: (
+  supplierDbUploadPresign: async (
     sourceId: string,
     body: PresignSupplierDbUploadRequest,
-  ) => api.post<SupplierDbUploadData>(uploadsPath(sourceId), body),
+  ): Promise<SupplierDbUploadData> => {
+    const { contentType, ...input } = body
+    const data = await api.post<components["schemas"]["SupplierDbUploadPresignResponse"]["data"]>(uploadsPath(sourceId), { ...input, content_type: contentType })
+    return supplierUploadData(data)
+  },
 }

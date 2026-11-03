@@ -25,7 +25,7 @@ const (
 
 // RunBackground starts the API timers. Slice-bucket purge stays in the
 // media-gc process and is not started here. Stopping ctx stops the timers.
-func RunBackground(ctx context.Context, pool *pgxpool.Pool) {
+func RunBackground(ctx context.Context, pool *pgxpool.Pool, fetcher *catalog.Fetcher) {
 	if pool == nil {
 		return
 	}
@@ -46,7 +46,7 @@ func RunBackground(ctx context.Context, pool *pgxpool.Pool) {
 		case <-ctx.Done():
 			return
 		case <-sweep.C:
-			if _, err := ai.SweepStranded(ctx, pool); err != nil && ctx.Err() == nil {
+			if _, err := ai.SweepStranded(ctx, pool, billingrepo.ReleaseTx); err != nil && ctx.Err() == nil {
 				slog.Error("ai reaper", "err", err)
 			}
 		case <-prune.C:
@@ -57,6 +57,9 @@ func RunBackground(ctx context.Context, pool *pgxpool.Pool) {
 			// Expiry first: it opens the drain event the projection reads.
 			if _, err := billingrepo.ExpireDue(ctx, pool, 200, time.Now()); err != nil && ctx.Err() == nil {
 				slog.Error("billing expiry sweep", "err", err)
+			}
+			if _, err := billingrepo.IssueDueRenewals(ctx, pool, time.Now()); err != nil && ctx.Err() == nil {
+				slog.Error("billing auto renewal sweep", "err", err)
 			}
 			if _, err := billingrepo.FinishDrains(ctx, pool, time.Now()); err != nil && ctx.Err() == nil {
 				slog.Error("billing drain deadline", "err", err)
@@ -76,7 +79,7 @@ func RunBackground(ctx context.Context, pool *pgxpool.Pool) {
 				slog.Error("log retention", "err", err)
 			}
 		case <-fetch.C:
-			if _, err := catalog.TickFetch(ctx, pool, time.Now()); err != nil && ctx.Err() == nil {
+			if _, err := fetcher.Start(ctx, false); err != nil && ctx.Err() == nil {
 				slog.Error("catalog fetch schedule", "err", err)
 			}
 		}

@@ -7,19 +7,17 @@ import { missingFromRefusal } from "./supplier-readiness"
 import type { SupplierDbsStore } from "./supplier-dbs-store"
 import { commandFailure } from "./supplier-dbs-errors"
 
-export function useSupplierDbRowActions({ store, sourceId, rows, openRowId, setOpenRowId, requestOpenRow }: {
+export function useSupplierDbRowActions({ store, rows, openRowId, setOpenRowId, requestOpenRow, canPublish = false }: {
   store: SupplierDbsStore
-  sourceId: string
   rows: SupplierDbRow[]
   openRowId: string | null
   setOpenRowId: (id: string | null) => void
   requestOpenRow: (id: string) => void
+  canPublish?: boolean
 }) {
   const active = useRef(true)
   useEffect(() => { active.current = true; return () => { active.current = false } }, [])
-  const db = { sourceId }
   const [creating, setCreating] = useState(false)
-  const [rowBusyId, setRowBusyId] = useState<string | null>(null)
   const [deleteRowId, setDeleteRowId] = useState<string | null>(null)
   const [deleteRowBusy, setDeleteRowBusy] = useState(false)
   const [archiveRowId, setArchiveRowId] = useState<string | null>(null)
@@ -30,7 +28,7 @@ export function useSupplierDbRowActions({ store, sourceId, rows, openRowId, setO
   // 而不是关掉面板；无同款兄弟时退回普通行删除的语义与文案。
   const deletingRowGroup = deletingRow?.variantGroup?.trim()
     ? rows.filter(
-        (item) => !item.archived && item.variantGroup === deletingRow.variantGroup,
+        (item) => !item.archived && item.sourceId === deletingRow.sourceId && item.variantGroup === deletingRow.variantGroup,
       )
     : []
   const deletingRowSiblings = deletingRowGroup.filter(
@@ -40,20 +38,21 @@ export function useSupplierDbRowActions({ store, sourceId, rows, openRowId, setO
   const toggleStatus = async (
     row: SupplierDbRow,
   ): Promise<{ ok: boolean; missing: string[]; reason?: unknown }> => {
+    if (!canPublish) return { ok: false, missing: [] }
     if (row.published) {
-      const result = await store.unpublishRow(db.sourceId, row.productId)
+      const result = await store.unpublishRow(row.sourceId, row.productId)
       if (!active.current) return { ok: false, missing: [] }
       if (result.ok) {
-        notifySuccess("已下架")
+        notifySuccess("已停用规格")
         return { ok: true, missing: [] }
       }
       notifyCommandError(commandFailure(result), "下架失败")
       return { ok: false, missing: [] }
     }
-    const result = await store.publishRow(db.sourceId, row.productId)
+    const result = await store.publishRow(row.sourceId, row.productId)
     if (!active.current) return { ok: false, missing: [] }
     if (result.ok) {
-      notifySuccess("已上架")
+      notifySuccess("已发布到平台商品库")
       return { ok: true, missing: [] }
     }
     const missing = missingFromRefusal(result.reason)
@@ -74,34 +73,18 @@ export function useSupplierDbRowActions({ store, sourceId, rows, openRowId, setO
     }
   }
 
-  const duplicateRow = async (row: SupplierDbRow) => {
-    setRowBusyId(row.productId)
-    const result = await store.duplicateRow(db.sourceId, row.productId)
-    if (!active.current) return
-    setRowBusyId(null)
-    if (!result.ok) {
-      notifyCommandError(commandFailure(result), "复制行失败")
-      return
-    }
-    const title = result.value.row.title || "未命名 副本"
-    if (result.value.configCopyError === undefined) {
-      notifySuccess(`已复制为「${title}」`)
-    } else {
-      // 行已建好，只是默认字段没跟过来：新行保留，提示去新行里重新配置。
-      notifySuccess(`已复制为「${title}」，默认字段未复制`)
-      notifyCommandError(result.value.configCopyError, "默认字段未复制，请在新行里重新配置")
-    }
-  }
-
-  const newPage = async () => {
+  const newPage = async (sourceId: string, size: string) => {
+    if (!size.trim()) { notifyError("请先填写规格名称"); return false }
     setCreating(true)
-    const result = await store.createRow(db.sourceId)
+    const result = await store.createRow(sourceId, { size: size.trim() })
     if (!active.current) return
     setCreating(false)
     if (result.ok) {
       requestOpenRow(result.value.productId)
+      return true
     } else {
-      notifyCommandError(commandFailure(result), "新建行失败")
+      notifyCommandError(commandFailure(result), "新增商品失败")
+      return false
     }
   }
 
@@ -115,7 +98,7 @@ export function useSupplierDbRowActions({ store, sourceId, rows, openRowId, setO
       deletingRowGroup[groupIndex - 1]?.productId ??
       null
     setDeleteRowBusy(true)
-    const result = await store.deleteRow(db.sourceId, deletingRow.productId)
+    const result = await store.deleteRow(deletingRow.sourceId, deletingRow.productId)
     if (!active.current) return
     setDeleteRowBusy(false)
     if (result.ok) {
@@ -134,7 +117,7 @@ export function useSupplierDbRowActions({ store, sourceId, rows, openRowId, setO
   const confirmArchiveRow = async () => {
     if (!archivingRow) return
     setArchiveRowBusy(true)
-    const result = await store.archiveRow(db.sourceId, archivingRow.productId)
+    const result = await store.archiveRow(archivingRow.sourceId, archivingRow.productId)
     if (!active.current) return
     setArchiveRowBusy(false)
     if (result.ok) {
@@ -146,8 +129,8 @@ export function useSupplierDbRowActions({ store, sourceId, rows, openRowId, setO
     }
   }
 
-  return { creating, rowBusyId, deleteRowId, setDeleteRowId, archiveRowId, setArchiveRowId, deletingRow, archivingRow, deletingRowSiblings,
-    deleteRowBusy, archiveRowBusy, toggleStatus, toggleStatusFromMenu, duplicateRow, newPage, confirmDeleteRow, confirmArchiveRow }
+  return { creating, deleteRowId, setDeleteRowId, archiveRowId, setArchiveRowId, deletingRow, archivingRow, deletingRowSiblings,
+    deleteRowBusy, archiveRowBusy, toggleStatus, toggleStatusFromMenu, newPage, confirmDeleteRow, confirmArchiveRow }
 }
 
 export function SupplierDbRowConfirmations({ actions }: { actions: ReturnType<typeof useSupplierDbRowActions> }) {

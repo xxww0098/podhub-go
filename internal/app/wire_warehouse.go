@@ -12,16 +12,17 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/xxww0098/podhub-go/internal/identity"
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
+	opscontract "github.com/xxww0098/podhub-go/internal/ops/contract"
+	opsrepo "github.com/xxww0098/podhub-go/internal/ops/repo"
 	ozonerrdomain "github.com/xxww0098/podhub-go/internal/ozonerr/domain"
 	ozonerrrepo "github.com/xxww0098/podhub-go/internal/ozonerr/repo"
 	ozonerrsvc "github.com/xxww0098/podhub-go/internal/ozonerr/service"
 	"github.com/xxww0098/podhub-go/internal/platform/config"
-	"github.com/xxww0098/podhub-go/internal/seller"
-	sellercontract "github.com/xxww0098/podhub-go/internal/seller/contract"
-	sellerdomain "github.com/xxww0098/podhub-go/internal/seller/domain"
-	sellerrepo "github.com/xxww0098/podhub-go/internal/seller/repo"
+	"github.com/xxww0098/podhub-go/internal/platform/seal"
+	seller "github.com/xxww0098/podhub-go/internal/seller/ozon"
+	sellerdomain "github.com/xxww0098/podhub-go/internal/seller/ozon/domain"
+	sellerrepo "github.com/xxww0098/podhub-go/internal/seller/ozon/repo"
 	whcontract "github.com/xxww0098/podhub-go/internal/warehouse/contract"
 	warehousehttp "github.com/xxww0098/podhub-go/internal/warehouse/http"
 	warehouserepo "github.com/xxww0098/podhub-go/internal/warehouse/repo"
@@ -29,7 +30,7 @@ import (
 )
 
 // mountWarehouse registers the tenant warehouse cache and browser-direct writes.
-// Reads use seller.Egress.Call with write disabled. The grant path receives
+// Reads use the dedicated Seller read allowlist. The grant path receives
 // the kill-switch bool already captured on cfg.
 func mountWarehouse(r chi.Router, pool *pgxpool.Pool, sessions access.Resolver, cfg config.Config) {
 	if r == nil {
@@ -37,10 +38,14 @@ func mountWarehouse(r chi.Router, pool *pgxpool.Pool, sessions access.Resolver, 
 	}
 	ring := sealRing(cfg)
 	ready := cfg.SellerCredentialKey != ""
+	keyID := cfg.SellerCredentialKeyID
+	if keyID == "" {
+		keyID = seal.DefaultSellerKeyID
+	}
 	eg := seller.New(cfg).WithPool(pool)
 	svc := warehousesvc.Service{
 		DB:     warehouserepo.New(pool),
-		Open:   admitOpener{store: sellerrepo.NewAdmitStore(pool, ring, ready)},
+		Open:   admitOpener{store: opsrepo.New(pool, ring, ready, keyID)},
 		Post:   egressPoster{eg: eg},
 		Limit:  budgetLimiter{pool: pool},
 		Errors: WarehouseCatalog(pool),
@@ -49,18 +54,11 @@ func mountWarehouse(r chi.Router, pool *pgxpool.Pool, sessions access.Resolver, 
 	warehousehttp.Mount(r, warehousehttp.Deps{
 		Session:        warehouseSession{inner: sessions},
 		Actions:        svc,
-		Read:           allows(identity.CapStoreRead),
-		Write:          allows(identity.CapWarehouseWrite),
+		Read:           func(role string) bool { _, ok := access.ParseWorkspace(role); return ok },
+		Write:          access.CanManage,
 		WritesDisabled: cfg.OzonWritesDisabled(),
 		Now:            time.Now,
 	})
-}
-
-func allows(cap identity.Capability) func(string) bool {
-	return func(role string) bool {
-		parsed, ok := identity.ParseWorkspaceRole(role)
-		return ok && parsed.Allows(cap)
-	}
 }
 
 type warehouseSession struct{ inner access.Resolver }
@@ -89,14 +87,14 @@ func refusalCode(refusal *access.Refusal) string {
 	return "forbidden"
 }
 
-type admitOpener struct{ store sellerrepo.AdmitStore }
+type admitOpener struct{ store opscontract.Stores }
 
 func (o admitOpener) Open(ctx context.Context, orgID, userID int64, role, storeID string, now time.Time) (string, string, error) {
-	clientID, apiKey, err := o.store.Admit(ctx, orgID, userID, role, storeID, now.UnixMilli())
+	admitted, err := o.store.Admit(ctx, orgID, userID, role, storeID, now.UnixMilli())
 	if err == nil {
-		return clientID, apiKey, nil
+		return admitted.Secret.ClientID, admitted.Secret.APIKey, nil
 	}
-	var admit *sellercontract.AdmitError
+	var admit *opscontract.Fail
 	if errors.As(err, &admit) {
 		return "", "", &whcontract.OpenError{Status: admit.Status, Code: admit.Code, Message: admit.Message}
 	}
@@ -109,7 +107,7 @@ func (p egressPoster) Post(ctx context.Context, path string, body []byte, client
 	if p.eg == nil {
 		return 0, nil, seller.ErrRefusedOrigin
 	}
-	reply, err := p.eg.Call(ctx, http.MethodPost, path, body, false, true, clientID, apiKey)
+	reply, err := p.eg.SellerReadCall(ctx, http.MethodPost, path, body, false, true, clientID, apiKey)
 	if errors.Is(err, sellerrepo.ErrRateLimited) {
 		return 0, nil, whcontract.ErrRateLimited
 	}

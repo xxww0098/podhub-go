@@ -14,9 +14,8 @@ import (
 )
 
 // TestMain migrates one template database on a shared Postgres container.
-// migrateTemplate calls db.Migrate, so the template uses the same
-// allow-missing Up as production. An empty database has no gap, and that
-// Up applies every file in version order.
+// migrateTemplate calls db.Migrate, so the template is built by the same Up
+// production runs: the three squashed files, in version order.
 func TestMain(m *testing.M) {
 	// flag.Parse has not run yet. Listing should not start Postgres.
 	flag.Parse()

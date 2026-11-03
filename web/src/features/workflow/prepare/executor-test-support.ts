@@ -4,7 +4,6 @@
  */
 import { resetConsoleDedupe } from "@/lib/diag-log"
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
 
 import { route } from "@/api/routes"
 import type { TestContext } from "node:test"
@@ -32,10 +31,6 @@ export const TWENTY_TAGS = [
 export const FIXED_TAGS = Array.from({ length: 16 }, (_, index) => `#fixed_${index + 1}`)
 
 export const FIVE_TAGS = TWENTY_TAGS.slice(0, 5)
-
-export const OK_ANSWER = readFileSync(new URL("../../../../../fixtures/ocr/digital-painting.json", import.meta.url), "utf8")
-
-export const HAN_ANSWER = readFileSync(new URL("../../../../../fixtures/ocr/digital-painting-han.json", import.meta.url), "utf8")
 
 export type RenderBatchOccupy = import("@/render/client").RenderBatch["occupy"]
 
@@ -81,14 +76,14 @@ function mediaBatchAnswer(call: Call): { objects: unknown[] } {
   if (call.url.endsWith("/presign-batch")) {
     return {
       objects: (call.body?.objects ?? []).map((item: { digest: string, extension: string }) => {
-        const [stamp, nonce] = String(call.body?.upload_batch ?? "").split(".")
-        const prefix = stamp && nonce ? `uploads/2026-09-16/${stamp}-${nonce}/` : ""
+        const [stamp, nonce] = String(call.body?.upload_batch ?? `${Date.now()}.22222222-2222-4222-8222-222222222222`).split(".")
+        const prefix = `uploads/2026-09-16/${stamp}-${nonce}/`
         return {
           transport: "direct",
           workspace_uuid: workspace,
           account_id: "acct",
-          object_key: `${prefix}images/teams/${workspace}/sha256/${item.digest}.${item.extension}`,
-          public_url: `https://cdn.example.invalid/${prefix}images/teams/${workspace}/sha256/${item.digest}.${item.extension}`,
+          object_key: `${prefix}${item.digest}.${item.extension}`,
+          public_url: `https://cdn.example.invalid/${prefix}${item.digest}.${item.extension}`,
           storage_revision: 1,
           upload_batch: call.body?.upload_batch,
           upload: {
@@ -154,7 +149,7 @@ export function record(
     }
     calls.push(call)
     if (call.url.endsWith("/media/upload-batches")) {
-      return new Response(JSON.stringify({ data: { upload_batch: `${Date.now()}.00000000-0000-4000-8000-${String(calls.length).padStart(12, "0")}.fixture-signature`, expires_at: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString() } }), {
+      return new Response(JSON.stringify({ upload_batch: `${Date.now()}.00000000-0000-4000-8000-${String(calls.length).padStart(12, "0")}.fixture-signature`, expires_at: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString() }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       })
@@ -182,14 +177,14 @@ export function record(
     } else if (call.url.match(/\/media\/objects\/([^/]+)\/([^/]+)\/presign$/)) {
       const match = call.url.match(/\/media\/objects\/([^/]+)\/([^/]+)\/presign$/)!
       const workspace = peekAccountOverview()?.active_workspace?.uuid ?? "test-workspace"
-      const [stamp, nonce] = String(call.body.upload_batch ?? "").split(".")
-      const prefix = stamp && nonce ? `uploads/2026-09-16/${stamp}-${nonce}/` : ""
+      const [stamp, nonce] = String(call.body.upload_batch ?? `${Date.now()}.22222222-2222-4222-8222-222222222222`).split(".")
+      const prefix = `uploads/2026-09-16/${stamp}-${nonce}/`
       answer = {
         transport: "direct",
         workspace_uuid: workspace,
         account_id: "acct",
-        object_key: `${prefix}images/teams/${workspace}/sha256/${match[1]}.${match[2]}`,
-        public_url: `https://cdn.example.invalid/${prefix}images/teams/${workspace}/sha256/${match[1]}.${match[2]}`,
+        object_key: `${prefix}${match[1]}.${match[2]}`,
+        public_url: `https://cdn.example.invalid/${prefix}${match[1]}.${match[2]}`,
         storage_revision: 1,
         upload: { url: `https://s3.example.invalid/media/${match[1]}.${match[2]}`,
           headers: { content_type: match[2] === "png" ? "image/png" : "image/jpeg", if_none_match: "*" }, expires_at_ms: Date.now() + 600000 },
@@ -297,7 +292,8 @@ export function record(
     }
     if (confirmations.length) answer = bulk ? { items: receipts, total: receipts.length } : receipts[0]
     for (const job of (answer as { jobs?: { id: string }[] })?.jobs ?? []) jobs.set(job.id, job)
-    return new Response(JSON.stringify({ data: answer }), {
+    const bareMediaDTO = /\/media\/objects\/(?:presign-batch|complete-batch|[^/]+\/[^/]+\/(?:complete|probe))$/.test(call.url)
+    return new Response(JSON.stringify(bareMediaDTO ? answer : { data: answer }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     })
@@ -394,7 +390,8 @@ export const COMPLETION = {
 
 /**
  * The render worker and OPFS are browser-only. `runRows` is exercised through
- * the routes it takes; the render itself is pinned by `tests/render-wasm.test.ts`.
+ * the routes it takes; the render itself is pinned by `tests/threaded-render.browser.ts`
+ * and the `render` crate's `end_to_end_render` test.
  */
 export async function withStubbedDevice<T>(
   run: () => Promise<T>,
@@ -540,7 +537,7 @@ export function slicePrepareReply(rowId: string) {
   }
 }
 
-export function ocrRecoveryView(attempts: Array<{ attempt: "original" | "contract_retry", status: string, requestId?: string | null, resultUsable?: boolean | null }>) {
+export function ocrRecoveryView(attempts: Array<{ attempt: "original", status: string, requestId?: string | null, resultUsable?: boolean | null }>) {
   return {
     job_state: "running",
     lease_epoch: 1,

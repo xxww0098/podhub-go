@@ -5,7 +5,9 @@ import {
   ListingCardActions,
   listingCardMatchesQuery,
   listingCardVisibleForms,
+  supplierCardMedia,
 } from "./card-library"
+import type { SellerSupplierDbRowData } from "@/bindings/http-supplier-dbs-catalog"
 import { renderLibrary, sampleCard } from "./card-library-test-support"
 
 function renderActions(props: { busy?: boolean; uploading?: boolean }) {
@@ -32,20 +34,20 @@ function buttonFor(html: string, ariaLabel: string): string {
 
 test("行内上架是带文案的描边按钮，不是幽灵图标", () => {
   const html = renderActions({})
-  const labelAt = html.indexOf('aria-label="上架 测试卡"')
+  const labelAt = html.indexOf('aria-label="进入上架 测试卡"')
   assert.notEqual(labelAt, -1)
   const start = html.lastIndexOf("<button", labelAt)
   const end = html.indexOf("</button>", labelAt)
   const button = html.slice(start, end + "</button>".length)
   assert.match(button, /border-border/)
-  assert.match(button, /<\/svg>上架<\/button>/)
+  assert.match(button, /<\/svg>进入上架<\/button>/)
 })
 
 test("背景视频上传中 上架 仍可点击，复制/删除 保持锁定", () => {
   const html = renderActions({ uploading: true })
 
   assert.doesNotMatch(
-    buttonFor(html, "上架 测试卡"),
+    buttonFor(html, "进入上架 测试卡"),
     / disabled=""/,
     "上传中不得阻塞打开上架方案",
   )
@@ -60,21 +62,22 @@ test("背景视频上传中 上架 仍可点击，复制/删除 保持锁定", (
 
 test("busy 时 上架 与其余按钮一起锁定", () => {
   const html = renderActions({ busy: true })
-  assert.match(buttonFor(html, "上架 测试卡"), / disabled=""/)
+  assert.match(buttonFor(html, "进入上架 测试卡"), / disabled=""/)
 })
 
 test("上架方案名册是 shadcn Table，不再是卡片网格", () => {
   const html = renderLibrary()
   assert.match(html, /<table[\s>]/)
   assert.match(html, /<tr[\s>]/)
-  assert.match(html, /aria-label="选择全部上架方案"/)
+  assert.match(html, /aria-label="选择当前页上架方案"/)
   assert.match(html, /aria-label="选择 夏季T恤"/)
   assert.match(html, /aria-label="搜索上架方案"/)
+  assert.match(html, /上架方案库/)
   assert.match(html, /placeholder="搜索名称、规格、类目或店铺"/)
   assert.doesNotMatch(html, /aria-label="批量操作"/)
   assert.doesNotMatch(html, /<th[^>]*>主图</)
   assert.match(html, /<th[^>]*scope="col"[^>]*>名称</)
-  assert.match(html, /<th[^>]*>规格与提示词</)
+  assert.match(html, /<th[^>]*>规格与商品事实</)
   assert.match(html, /<th[^>]*>销售价</)
   assert.match(html, /aria-label="销售价 夏季T恤"/)
   assert.match(html, /<th[^>]*>类目</)
@@ -85,24 +88,41 @@ test("上架方案名册是 shadcn Table，不再是卡片网格", () => {
   assert.match(html, /data-testid="card-store-chips"/)
   assert.match(html, />夏季T恤</)
   assert.doesNotMatch(html, /夏季T恤 · 40x50/)
-  assert.match(html, /aria-label="规格 40x50 · 提示词 prompt\.txt"/)
+  assert.match(html, /aria-label="规格 40x50 · 商品事实 prompt\.txt"/)
   assert.match(html, />40x50</)
   assert.match(html, />prompt\.txt</)
   assert.match(html, />tee\.psd</)
-  assert.match(html, />1<\/span>\s*个上架方案/)
+  assert.match(html, /共 <span[^>]*>1<\/span> 个方案/)
+  assert.match(html, /aria-label="夏季T恤 商品图片不可用"/)
   const rowAt = html.indexOf('data-listing-card="card-1"')
   const rowTag = html.slice(html.lastIndexOf("<tr", rowAt), html.indexOf(">", rowAt))
   assert.doesNotMatch(rowTag, /cursor-pointer/, "行不再整体可点，绑定都走行内控件")
   assert.doesNotMatch(html, /aria-label="编辑 夏季T恤"/)
-  assert.match(html, /aria-label="上架 夏季T恤"/)
+  assert.match(html, /aria-label="进入上架 夏季T恤"/)
   assert.match(html, /aria-label="类目 11 \/ 类型 22"/)
   assert.doesNotMatch(html, /aria-label="上传进度空闲/)
   assert.doesNotMatch(html, /<article/)
   assert.doesNotMatch(html, /minmax\(min\(100%,18rem\)/)
   assert.doesNotMatch(html, /h-\[9rem\]/)
-  assert.doesNotMatch(html, /<h1/)
+  assert.match(html, /<h1[^>]*>上架方案<\/h1>/)
   assert.doesNotMatch(html, /title="类目/)
   assert.doesNotMatch(html, /LayoutGrid/)
+})
+
+test("名册分页显示当前页并让深链目标保持可见", () => {
+  const forms = Array.from({ length: 25 }, (_, index) => ({
+    ...sampleCard,
+    draft_id: `card-${index}`,
+    display_name: `方案 ${index}`,
+  }))
+  const html = renderLibrary(forms, {}, { highlightDraftId: "card-24" })
+  assert.equal((html.match(/data-listing-card=/g) ?? []).length, 20)
+  assert.match(html, /data-listing-card="card-24"/)
+  assert.match(html, /data-highlighted="true"/)
+  assert.doesNotMatch(html, /data-listing-card="card-19"/)
+  assert.match(html, /第 1 \/ 2 页/)
+  assert.doesNotMatch(buttonFor(html, "下一页"), / disabled=""/)
+  assert.match(buttonFor(html, "上一页"), / disabled=""/)
 })
 
 test("名册不再单独披露保存时间与上传进度列", () => {
@@ -118,47 +138,82 @@ test("高亮行带 data-highlighted，供地址深链跳转定位", () => {
   assert.match(html, /data-highlighted="true"/)
 })
 
-test("规格与提示词在独立列，缺一则只披露有的那项", () => {
+test("规格与商品事实在独立列，缺一则只披露有的那项", () => {
   const onlySpec = renderLibrary([{ ...sampleCard, ai_prompt_file_name: "" }])
   assert.match(onlySpec, /aria-label="规格 40x50"/)
   assert.doesNotMatch(onlySpec, /prompt\.txt/)
 
   const onlyPrompt = renderLibrary([{ ...sampleCard, size: undefined, ai_prompt_file_name: "数字油画.md" }])
-  assert.match(onlyPrompt, /aria-label="提示词 数字油画\.md"/)
+  assert.match(onlyPrompt, /aria-label="商品事实 数字油画\.md"/)
   assert.doesNotMatch(onlyPrompt, />40x50</)
 
   const empty = renderLibrary([{ ...sampleCard, size: "", ai_prompt_file_name: "" }])
-  assert.match(empty, /aria-label="无规格与提示词"/)
+  assert.match(empty, /aria-label="无规格与商品事实"/)
 })
 
 test("列表还在加载时用骨架，不先画出空态", () => {
   const html = renderLibrary([], {}, { busy: true })
   assert.match(html, /data-listing-library-skeleton/)
   assert.match(html, /正在加载上架方案/)
-  assert.doesNotMatch(html, /还没有上架方案/)
+  assert.doesNotMatch(html, /暂无方案/)
   assert.doesNotMatch(html, /data-slot="table"/)
 })
 
-test("没有上架方案时仍用 Empty，不画一张空表", () => {
+test("没有上架方案时保留表头和添加入口，搜索及选择不可用", () => {
   const html = renderLibrary([])
-  assert.match(html, /还没有上架方案/)
-  assert.match(html, /去平台货源选品/)
-  assert.match(html, /同一商品只保留一份引用/)
-  assert.doesNotMatch(html, /创建第一个上架方案/)
-  assert.doesNotMatch(html, /data-slot="table"/)
+  assert.match(html, /暂无上架方案/)
+  assert.match(html, /共 <span[^>]*>0<\/span> 个方案/)
+  assert.match(html, /aria-label="添加商品"/)
+  assert.equal((html.match(/aria-label="添加商品"/g) ?? []).length, 1)
+  assert.match(html, /从平台商品库添加商品/)
+  assert.match(html, /data-slot="table"/)
+  assert.match(html, /<th[^>]*scope="col"[^>]*>名称</)
+  const selectAt = html.indexOf('aria-label="选择当前页上架方案"')
+  const select = html.slice(html.lastIndexOf("<span", selectAt), html.indexOf(">", selectAt))
+  assert.match(select, /aria-disabled="true"/)
+  const searchAt = html.indexOf('aria-label="搜索上架方案"')
+  const search = html.slice(html.lastIndexOf("<input", searchAt), html.indexOf(">", searchAt))
+  assert.match(search, / disabled=""/)
+  assert.doesNotMatch(html, /每页方案数量/)
+})
+
+test("商品主图和编号来自卖家商品库对应记录", () => {
+  const rows = [
+    { productId: "product-1", platformCode: "TEE-01", gallery: [{ url: "/real.jpg", w: 10, h: 10 }] },
+    { productId: "product-2", platformCode: "MUG-02", gallery: [] },
+  ] as SellerSupplierDbRowData[]
+  assert.deepEqual(supplierCardMedia(rows), {
+    "product-1": { imageUrl: "/real.jpg", code: "TEE-01" },
+    "product-2": { imageUrl: "", code: "MUG-02" },
+  })
+})
+
+test("读取失败不冒充没有方案，并提供重试", () => {
+  const html = renderLibrary([], {}, { loadError: true })
+  assert.match(html, /上架方案读取失败，请重试/)
+  assert.match(html, /aria-label="重试读取上架方案"/)
+  assert.doesNotMatch(html, /暂无方案|添加商品/)
+})
+
+test("刷新失败保留已有方案，并标明这是上次读取的数据", () => {
+  const html = renderLibrary([sampleCard], {}, { loadError: true })
+  assert.match(html, /刷新失败，当前显示上次读取的方案/)
+  assert.match(html, /data-listing-card="card-1"/)
+  assert.match(html, /aria-label="重试读取上架方案"/)
+  assert.doesNotMatch(html, /暂无方案/)
 })
 
 test("商库方案不提供复制入口，添加回到在线商库", () => {
   const html = renderLibrary([{ ...sampleCard, supplier_product_id: "supplier-1" }])
-  assert.match(html, /从商库添加/)
+  assert.match(html, /aria-label="添加商品"/)
   assert.doesNotMatch(html, /aria-label="复制 /)
-  assert.match(html, /aria-label="上架 夏季T恤"/)
+  assert.match(html, /aria-label="进入上架 夏季T恤"/)
 })
 
 test("失效引用留在列表但不能上架", () => {
   const html = renderLibrary([{ ...sampleCard, supplier_product_id: "supplier-1", supplier_unavailable: true }])
   assert.match(html, /来源不可用/)
-  assert.match(buttonFor(html, "上架 夏季T恤"), / disabled=""/)
+  assert.match(buttonFor(html, "进入上架 夏季T恤"), / disabled=""/)
   assert.doesNotMatch(buttonFor(html, "删除 夏季T恤"), / disabled=""/)
 })
 
@@ -178,7 +233,7 @@ test("失效来源行：名称旁渲染语义 token 徽标，脚注保留", () =
   assert.doesNotMatch(healthy, /data-variant="destructive"[^>]*>来源不可用/)
 })
 
-test("搜索按名称、规格、提示词、类目与店铺过滤", () => {
+test("搜索按名称、规格、商品事实、类目与店铺过滤", () => {
   const tree = [
     {
       description_category_id: 1,

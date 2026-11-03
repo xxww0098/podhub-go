@@ -4,7 +4,7 @@ import "github.com/xxww0098/podhub-go/internal/delegate/contract"
 
 // Dispatch actions implemented by public.delegate_supplier_accept,
 // delegate_supplier_reject and delegate_supplier_ship
-// (db/migrations/00259_delegate_action_locks.sql).
+// (the baseline schema, delegate_* functions).
 const (
 	ActionAccept = "accept"
 	ActionReject = "reject"
@@ -13,7 +13,7 @@ const (
 
 // ApplyDispatch is the control flow of those three functions after the row
 // locks. found is the dispatch row. An empty orderState is the order row
-// missing under the lock. member is an active sc_source_members row.
+// missing under the lock. member is an active sc_factory_members row.
 // Accept of an already accepted packet returns accepted and does not write.
 // Reject and ship are not idempotent.
 func ApplyDispatch(action, dispatchState, orderState string, member, found bool) (string, error) {

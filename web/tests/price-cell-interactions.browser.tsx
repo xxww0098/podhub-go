@@ -201,6 +201,50 @@ async function main() {
       "不匹配的其余行应被过滤",
     )
   })
+
+  await step("S4 分页保留跨页选择，搜索返回第一页", async () => {
+    const forms = Array.from({ length: 25 }, (_, index) => baseCard({
+      draft_id: `paged-${index}`,
+      display_name: `方案 ${index}`,
+    }))
+    mount(libraryProps({ forms, onSavePrice: async () => true }))
+    const search = document.querySelector<HTMLInputElement>('input[aria-label="搜索上架方案"]')!
+    setInput(search, "")
+    await settle()
+    check(document.querySelectorAll("[data-listing-card]").length === 20, "第一页应有 20 条")
+    document.querySelector<HTMLElement>('[aria-label="选择 方案 0"]')!.click()
+    document.querySelector<HTMLButtonElement>('[aria-label="下一页"]')!.click()
+    await settle()
+    check(document.querySelectorAll("[data-listing-card]").length === 5, "第二页应有 5 条")
+    document.querySelector<HTMLElement>('[aria-label="选择 方案 20"]')!.click()
+    await settle()
+    check(fixture.textContent?.includes("已选 2 个方案"), "跨页选择应一起计数")
+    document.querySelector<HTMLButtonElement>('[aria-label="上一页"]')!.click()
+    await settle()
+    check(document.querySelector('[aria-label="选择 方案 0"]')?.getAttribute("aria-checked") === "true", "返回后第一页选择仍在")
+    document.querySelector<HTMLButtonElement>('[aria-label="下一页"]')!.click()
+    await settle()
+    setInput(search, "方案 24")
+    await settle()
+    check(document.querySelector('[data-listing-card="paged-24"]'), "搜索应从第一页显示匹配行")
+    check(document.querySelector<HTMLButtonElement>('[aria-label="下一页"]')?.disabled, "筛选结果只有一页")
+  })
+
+  await step("S5 供应商商品显示目录返回的封面和编号", async () => {
+    window.fetch = async (input) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, location.href)
+      if (url.pathname !== "/api/supplier-dbs/catalog") throw new Error(`Unexpected network request: ${url}`)
+      return Response.json({ data: { dbs: [], propDefs: [], rows: [
+        { productId: "supplier-1", platformCode: "TEE-01", gallery: [{ url: "/app-icon.svg", w: 28, h: 28 }] },
+      ] } })
+    }
+    mount(libraryProps({ forms: [baseCard({ supplier_product_id: "supplier-1" })], onSavePrice: async () => true }))
+    setInput(document.querySelector<HTMLInputElement>('input[aria-label="搜索上架方案"]')!, "")
+    await settle()
+    const image = document.querySelector<HTMLImageElement>('img[alt="夏季T恤 商品图片"]')
+    check(image?.getAttribute("src") === "/app-icon.svg", "封面必须来自该商品的目录记录")
+    check(fixture.textContent?.includes("编号：TEE-01"), "编号必须来自该商品的目录记录")
+  })
 }
 
 run.addEventListener("click", () => {

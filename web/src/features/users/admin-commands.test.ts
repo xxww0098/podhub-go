@@ -33,6 +33,7 @@ function recordFetch(reply: (call: Call) => unknown): { calls: Call[], restore: 
 }
 
 const person = {
+  account_kind: "platform" as const,
   kind: "user",
   role_label: "用户",
   uuid: "u-1",

@@ -7,19 +7,6 @@ import (
 	"github.com/xxww0098/podhub-go/internal/delegate/contract"
 )
 
-func TestNormalizeUUID(t *testing.T) {
-	id := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-	got, ok := NormalizeUUID("  " + strings.ToUpper(id) + "  ")
-	if !ok || got != id {
-		t.Fatalf("%q %v", got, ok)
-	}
-	for _, bad := range []string{"", "not-a-uuid", id[:35], strings.Replace(id, "-", "", 1)} {
-		if _, ok := NormalizeUUID(bad); ok {
-			t.Fatalf("%q accepted", bad)
-		}
-	}
-}
-
 func TestNormalizeNoteAndLineIDs(t *testing.T) {
 	if _, err := NormalizeNote(strings.Repeat("字", 1001), "派发备注"); err == nil {
 		t.Fatal("1001 runes")

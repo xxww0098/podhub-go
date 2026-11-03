@@ -46,7 +46,7 @@ test("category fields refresh before send without blocking recognition or slicin
   const saveCompose = library.indexOf("async function saveCompose")
   const saveComposeEnd = library.indexOf("async function uploadComposeVideos", saveCompose)
   const refresh = edits.indexOf("async function refreshCategorySchema")
-  const refreshEnd = edits.indexOf("async function previewSkuImport", refresh)
+  const refreshEnd = edits.indexOf("async function clearGeneratedRows", refresh)
   const prepare = preparation.indexOf("async function runGuidedPreparation")
   const send = publish.indexOf("async function startPublish")
   assert.ok(selectCompose >= 0 && selectComposeEnd > selectCompose)
@@ -63,9 +63,9 @@ test("category fields refresh before send without blocking recognition or slicin
   assert.match(source, /import \{ CardLibraryHost \} from "\.\/card-library-host"/)
   assert.match(source, /<CardLibraryHost/)
   assert.match(source, /import \{ useWorkflowScreenEdits \} from "\.\/workflow-screen-edits"/)
-  assert.match(source, /const \{ updateValue, refreshCategorySchema, previewSkuImport, applySkuImport, clearGeneratedRows \} = useWorkflowScreenEdits\(\{\s*state,/)
+  assert.match(source, /const \{ updateValue, refreshCategorySchema, clearGeneratedRows \} = useWorkflowScreenEdits\(\{\s*state,/)
   assert.match(edits, /export function useWorkflowScreenEdits/)
-  assert.match(edits, /return \{ updateValue, refreshCategorySchema, previewSkuImport, applySkuImport, clearGeneratedRows \}/)
+  assert.match(edits, /return \{ updateValue, refreshCategorySchema, clearGeneratedRows \}/)
   assert.match(source, /onFetchCategorySchema=\{refreshCategorySchema\}/)
   assert.ok(refresh >= 0 && refreshEnd > refresh)
   assert.match(edits.slice(refresh, refreshEnd), /listingCardLoadCategorySchema/)
@@ -121,7 +121,7 @@ test("category fields refresh before send without blocking recognition or slicin
   const preflightBody = policy.slice(policyStart, policyEnd)
   assert.match(preflightBody, /if \(!account\) return \{ ok: false/)
   assert.match(preflightBody, /if \(composeBlockedBySignedOut\(account\)\) return \{ ok: false/)
-  assert.match(actions, /workflowSend: \(request: WorkflowRowsActionRequest, shouldStop\?: \(rowId: string\) => boolean,\s*diagnostics\?: import\("\.\/model\/publish-diagnostic"\)\.PublishDiagnosticDispatch\) => sendRows\(request, shouldStop, \{ diagnostics \}\)/)
+  assert.match(actions, /workflowSend: \(request: WorkflowRowsActionRequest, shouldStop\?: \(rowId: string\) => boolean,\s*diagnostics\?: import\("\.\/model\/publish-diagnostic"\)\.PublishDiagnosticDispatch, expectedTargets\?: ReadonlyMap<string, AutomationTarget>\) =>\s*sendRows\(request, shouldStop, \{ diagnostics, expectedTargets \}\)/)
   assert.match(sendRows, /import \{ defaultSendCore, refusedBeforeDispatch, resolveNativeRow, sendNativeChunk, type SendCore \} from "\.\/send-native"/)
   assert.match(sendRows, /await sendNativeChunk\(\{ core, storeId, rowIds: chunk, pins, shouldStop, nowMs: nowMs\(\), diagnostics: deps\.diagnostics \}\)/)
   const chunkStart = native.indexOf("export async function sendNativeChunk")
@@ -150,7 +150,7 @@ test("workflow screen renders the unified batch workbench without a redundant st
   const { prelude } = await prerender(<WorkflowScreen initialSchema={schema} />)
   const html = await new Response(prelude).text()
   assert.match(html, /默认字段/)
-  assert.doesNotMatch(html, /aria-label="PSD 与提示词"|AI 商品文案提示词/)
+  assert.doesNotMatch(html, /aria-label="PSD 与商品事实"|AI 商品文案商品事实/)
   assert.doesNotMatch(html, /共 0 行 · 识别 0\/0 · 媒体 0\/0 · 已上架 0\/0 · 异常 0/)
   assert.match(html, /拖入图片，每张建一行/)
   assert.doesNotMatch(html, /审核与发送/)
@@ -161,7 +161,7 @@ test("workflow screen renders the unified batch workbench without a redundant st
   assert.doesNotMatch(html, /输入至少 2 个字符/)
   assert.doesNotMatch(html, /aria-label="搜索 品牌"/)
   assert.doesNotMatch(html, /蓝色|现代/)
-  assert.doesNotMatch(html, /PSD 模板与 AI 提示词/)
+  assert.doesNotMatch(html, /PSD 模板与 AI 商品事实/)
   assert.doesNotMatch(html, /aria-controls="listing-runner-form-panel"/)
   assert.doesNotMatch(html, /aria-controls="listing-runner-media-panel"/)
   assert.match(html, /aria-label="商品批量操作"/)
@@ -262,7 +262,7 @@ test("workflow refreshes the Store roster when its keep-alive screen is revisite
   assert.doesNotMatch(source, /useSetWorkflowProgress\(\)/)
 })
 
-test("runner isolates one full category form with inline SKU import from row rerenders", () => {
+test("runner isolates one full category form from row rerenders", () => {
   const runner = readFileSync(
     new URL("../../src/features/workflow/card-runner.tsx", import.meta.url),
     "utf8",
@@ -281,7 +281,6 @@ test("runner isolates one full category form with inline SKU import from row rer
   assert.doesNotMatch(runner, /mountedTabs/)
   assert.match(dialog, /DefaultFieldsDialog/)
   assert.match(dialog, /当前方案默认字段/)
-  assert.match(dialog, /<SkuImportPanel/)
   assert.match(dialog, /<CategoryFieldsForm/)
   assert.doesNotMatch(dialog, /获取类目字段|schemaReady/)
   assert.doesNotMatch(dialog, /DEFAULT_FIELDS_DIALOG_TABS|role="tab"|activeTab|常用默认字段/)

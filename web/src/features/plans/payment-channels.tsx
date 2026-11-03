@@ -1,6 +1,8 @@
-import { Building2, CreditCard } from "lucide-react"
+import { useId } from "react"
+import { Building2, Check, CreditCard } from "lucide-react"
 
 import type { PaymentMethodsData } from "@/bindings/commands"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
@@ -17,6 +19,7 @@ export function PaymentChannelList({
   onChange,
   onRetry,
   emptyHint,
+  layout = "list",
 }: {
   methods?: PaymentMethodsData
   loading?: boolean
@@ -25,20 +28,25 @@ export function PaymentChannelList({
   onChange: (provider: string) => void
   onRetry: () => void
   emptyHint: string
+  /** `grid` lays the channels side by side with the hint as a tooltip, for narrow-height dialogs. */
+  layout?: "list" | "grid" | "compact"
 }) {
+  const radioGroupId = useId()
+  const compact = layout === "compact"
   const availableMethods = paymentMethodKeys(methods)
   if (loading) {
     return (
       <div className="flex flex-col gap-2" aria-hidden>
-        <div className="h-11 animate-pulse rounded-lg border border-border/60 bg-muted/20" />
-        <div className="h-11 animate-pulse rounded-lg border border-border/60 bg-muted/20" />
+        <div className="h-14 animate-pulse rounded-xl border border-border bg-muted/40" />
+        <div className="h-14 animate-pulse rounded-xl border border-border bg-muted/40" />
       </div>
     )
   }
   if (error) {
     // The refusal text already rides the live toast; the slot keeps only the retry.
     return (
-      <div className="flex items-center rounded-lg border border-border/80 bg-muted/20 px-3 py-2">
+      <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-muted/40 px-4 py-3">
+        <span className="text-compact text-muted-foreground">支付方式未能读取</span>
         <Button type="button" variant="outline" size="sm" onClick={onRetry}>
           重试
         </Button>
@@ -47,77 +55,74 @@ export function PaymentChannelList({
   }
   if (availableMethods.length === 0) {
     return (
-      <p className="rounded-lg border border-border bg-muted/20 px-3 py-2.5 text-xs leading-5 text-muted-foreground">
+      <p className="rounded-xl border border-border bg-muted/40 px-4 py-3 text-compact leading-5 text-muted-foreground">
         {emptyHint}
       </p>
     )
   }
   return (
-    <div className="flex flex-col gap-2" role="radiogroup" aria-label="支付渠道">
+    <div className={cn("gap-2", compact ? "grid grid-cols-1 @xs:grid-cols-2 @sm:grid-cols-3" : layout === "grid" ? "grid grid-cols-1 sm:grid-cols-3" : "flex flex-col")} role="radiogroup" aria-label="支付渠道">
       {availableMethods.map((method) => {
         const isAlipay = method.includes("alipay")
         const isWechat = method.includes("wechat")
         const isManual = method === "manual"
         const isSelected = value === method
+        const hint = isAlipay
+          ? "支付宝扫码 / 花呗 / 余额"
+          : isWechat
+            ? "微信扫一扫，即时到账"
+            : isManual
+              ? "对公汇款 / 线下转账"
+              : "在线结算"
         return (
-          <button
+          <label
             key={method}
-            type="button"
-            role="radio"
-            aria-checked={isSelected}
-            onClick={() => onChange(method)}
+            title={hint}
             className={cn(
-              "flex items-center gap-2.5 rounded-lg border px-3 py-2 text-left transition-all cursor-pointer",
+              "flex min-h-12 cursor-pointer items-center gap-3 rounded-xl border px-3.5 py-2 text-left outline-none transition-[border-color,box-shadow,background-color] duration-150 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring",
               isSelected
-                ? "border-brand/70 bg-brand-soft/40 ring-1 ring-brand/40 dark:border-brand/60 dark:bg-brand-soft/25 dark:ring-brand/30"
-                : "border-border/80 bg-background hover:bg-muted/40",
+                ? "border-brand bg-brand-soft/40 shadow-[0_0_0_1px_var(--brand)]"
+                : "border-border-strong bg-card hover:border-muted-foreground/50 hover:bg-muted/40",
+              compact && "justify-center gap-2 rounded-2xl px-2.5 text-center shadow-none",
             )}
           >
-            <span className="flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-lg">
+            <input type="radio" name={`${radioGroupId}-payment`} value={method} checked={isSelected} onChange={() => onChange(method)} className="sr-only" />
+            <span className={cn("flex shrink-0 items-center justify-center overflow-hidden rounded-lg", compact ? "size-6" : "size-9")}>
               {isAlipay ? (
-                <AlipayLogo className="size-8" />
+                <AlipayLogo className={compact ? "size-6" : "size-9"} />
               ) : isWechat ? (
-                <WechatLogo className="size-8" />
+                <WechatLogo className={compact ? "size-6" : "size-9"} />
               ) : isManual ? (
-                <span className="flex size-8 items-center justify-center rounded-lg bg-st-attest-soft text-st-attest-ink">
-                  <Building2 className="size-4" />
+                <span className={cn("flex items-center justify-center rounded-lg bg-st-attest-soft text-st-attest-ink", compact ? "size-6" : "size-9")}>
+                  <Building2 aria-hidden className="size-4" />
                 </span>
               ) : (
-                <span className="flex size-8 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-                  <CreditCard className="size-4" />
+                <span className={cn("flex items-center justify-center rounded-lg bg-muted text-muted-foreground", compact ? "size-6" : "size-9")}>
+                  <CreditCard aria-hidden className="size-4" />
                 </span>
               )}
             </span>
-            <span className="min-w-0 flex-1">
-              <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+            <span className={cn("min-w-0", !compact && "flex-1")}>
+              <span className={cn("flex items-center gap-1.5 font-medium text-foreground", compact ? "text-meta" : "text-compact")}>
                 {paymentProviderLabel(method)}
-                {isAlipay ? (
-                  <span className="rounded bg-brand-soft px-1.5 py-0.5 text-meta font-semibold text-brand-ink">
-                    推荐
-                  </span>
+                {isAlipay && !compact ? (
+                  <Badge variant="brand" className="h-4.5 px-1.5">推荐</Badge>
                 ) : null}
               </span>
-              <span className="block break-words text-meta text-muted-foreground">
-                {isAlipay
-                  ? "支付宝扫码 / 花呗 / 余额"
-                  : isWechat
-                    ? "微信扫一扫，即时到账"
-                    : isManual
-                      ? "对公汇款 / 线下转账"
-                      : "在线结算"}
-              </span>
+              {layout === "list" && <span className="block break-words text-meta text-muted-foreground">{hint}</span>}
             </span>
-            <span
+            {!compact && <span
+              aria-hidden
               className={cn(
-                "flex size-4 shrink-0 items-center justify-center rounded-full border transition-all",
+                "flex size-5 shrink-0 items-center justify-center rounded-full border transition-colors",
                 isSelected
                   ? "border-brand bg-brand text-brand-foreground"
-                  : "border-muted-foreground/40",
+                  : "border-border-strong bg-card",
               )}
             >
-              {isSelected ? <span className="size-1.5 rounded-full bg-brand-foreground" /> : null}
-            </span>
-          </button>
+              {isSelected ? <Check className="size-3" strokeWidth={3} /> : null}
+            </span>}
+          </label>
         )
       })}
     </div>
@@ -161,6 +166,9 @@ const PAYMENT_ORDER_PRESENTATION = {
 export function paymentOrderPresentation(status: string, entryState?: string) {
   if (status === "pending" && entryState === "entry_confirming") {
     return { label: "待渠道确认", tone: "unknown" as const }
+  }
+  if (status === "pending" && entryState === "unselected") {
+    return { label: "待选择支付方式", tone: "unknown" as const }
   }
   if (status === "pending" && entryState === "entry_unknown") {
     return { label: "待确认", tone: "unknown" as const }

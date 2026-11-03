@@ -36,13 +36,15 @@ func TestCatalogProductEdges(t *testing.T) {
 	}
 }
 
-func TestMediaURLBasesAreRawPrefixes(t *testing.T) {
+func TestMediaURLBasesRequireOriginAndPath(t *testing.T) {
 	bases := []string{"https://media.example.invalid", "https://cdn.example/native", " ", ""}
 	pass := []string{
 		"https://media.example.invalid/a.jpg",
-		"https://media.example.invalid.evil/a.jpg",
+		"HTTPS://media.example.invalid/a.jpg",
 		"https://cdn.example/native/a.jpg",
 		"https://cdn.example/native",
+		"https://cdn.example/native/a%20b.jpg?version=1",
+		"https://cdn.example/native/%E5%9B%BE.jpg",
 	}
 	for _, url := range pass {
 		got, err := ParseCreateProduct([]byte(`{"title":"a","media":["`+url+`"]}`), bases)
@@ -51,7 +53,14 @@ func TestMediaURLBasesAreRawPrefixes(t *testing.T) {
 		}
 	}
 	reject := []string{
-		"HTTPS://media.example.invalid/a.jpg",
+		"https://media.example.invalid.evil/a.jpg",
+		"https://media.example.invalid@evil.example/a.jpg",
+		"https://media.example.invalid:444/a.jpg",
+		"https://cdn.example/native-other/a.jpg",
+		"https://cdn.example/native/../private/a.jpg",
+		"https://cdn.example/native/%2e%2e/private/a.jpg",
+		"https://cdn.example/native%2f..%2fprivate/a.jpg",
+		"https://cdn.example/native/%5c../private/a.jpg",
 		"https://other.example/a.jpg",
 	}
 	for _, url := range reject {

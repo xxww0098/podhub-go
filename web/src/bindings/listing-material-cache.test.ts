@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { afterEach, test } from "node:test"
 
+import type { components } from "@/api/schema"
 import { invalidateAllSessionCaches } from "@/lib/session-cache"
 import { listingHttp } from "./http-listing"
 import { cachedMaterial, loadMaterial, readCategorySchema } from "./listing-material-cache"
@@ -8,7 +9,7 @@ import { cachedMaterial, loadMaterial, readCategorySchema } from "./listing-mate
 const BRAND = { descriptionCategoryId: 17_027_906, typeId: 91_976, language: "zh_hans" as const }
 const OTHER = { descriptionCategoryId: 17_027_906, typeId: 91_977, language: "zh_hans" as const }
 
-function schemaData(typeId: number, withMaterial = true) {
+function schemaData(typeId: number): NonNullable<components["schemas"]["CatalogSchemaResponse"]> {
   return {
     description_category_id: BRAND.descriptionCategoryId,
     type_id: typeId,
@@ -26,30 +27,26 @@ function schemaData(typeId: number, withMaterial = true) {
       options: [{ id: "971082156", value: "Inline" }],
       options_truncated: true,
     }],
-    ...(withMaterial
-      ? {
-          nativeMaterial: {
-            snapshot: {
-              category_key: "k",
-              label: "l",
-              description_category_id: BRAND.descriptionCategoryId,
-              type_id: typeId,
-              schema_revision: `workflow:rev-${typeId}`,
-              recipe_id: 0,
-              recipe_revision: 0,
-              catalog_schema_version: 0,
-              fields: [],
-            },
-            searchMaterials: [{
-              descriptionCategoryId: BRAND.descriptionCategoryId,
-              attributeId: 85,
-              dictionaryId: 28_732_849,
-              valueId: 126_745_801,
-              label: "Нет бренда",
-            }],
-          },
-        }
-      : {}),
+    native_material: {
+      snapshot: {
+        category_key: "k",
+        label: "l",
+        description_category_id: BRAND.descriptionCategoryId,
+        type_id: typeId,
+        schema_revision: `workflow:rev-${typeId}`,
+        recipe_id: 0,
+        recipe_revision: 0,
+        catalog_schema_version: 0,
+        fields: [],
+      },
+      search_materials: [{
+        description_category_id: BRAND.descriptionCategoryId,
+        attribute_id: 85,
+        dictionary_id: 28_732_849,
+        value_id: 126_745_801,
+        label: "Нет бренда",
+      }],
+    },
   }
 }
 
@@ -67,7 +64,8 @@ function serve(handler: Handler) {
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     calls.push(`${init?.method ?? "GET"} ${url}`)
-    return json(await handler(url, init))
+    const data = await handler(url, init)
+    return init?.method === "GET" ? Response.json(data) : json(data)
   }) as typeof globalThis.fetch
 }
 
@@ -79,7 +77,12 @@ afterEach(() => {
 })
 
 test("a normal schema read makes the material resident: later loads cost zero GETs", async () => {
-  serve((url) => schemaData(Number(new URL(url, "http://x").searchParams.get("typeId"))))
+  serve((url) => {
+    const query = new URL(url, "http://x").searchParams
+    assert.deepEqual([...query], [["description_category_id", String(BRAND.descriptionCategoryId)],
+      ["type_id", String(BRAND.typeId)], ["language", BRAND.language]])
+    return schemaData(Number(query.get("type_id")))
+  })
   const entry = await readCategorySchema(BRAND)
   assert.equal(gets(), 1)
   assert.equal(entry.view.fields[0]?.key, "attr_85")
@@ -119,7 +122,7 @@ test("an invalid coordinate is refused locally before any GET", async () => {
 test("a confirmed search hit updates only its coordinate's material and signature", async () => {
   serve((url, init) => {
     if (init?.method === "POST") return [{ id: "5550001", value: "Searched" }]
-    return schemaData(Number(new URL(url, "http://x").searchParams.get("typeId")))
+    return schemaData(Number(new URL(url, "http://x").searchParams.get("type_id")))
   })
   const before = await loadMaterial(BRAND)
   const other = await loadMaterial(OTHER)
@@ -184,9 +187,19 @@ test("a search reply after an identity switch is not folded into anyone's materi
 })
 
 test("a reply without native material is refused, never an empty passing bag", async () => {
-  serve(() => schemaData(BRAND.typeId, false))
+  serve(() => {
+    const malformed: Record<string, unknown> = { ...schemaData(BRAND.typeId) }
+    delete malformed.native_material
+    return malformed
+  })
   const entry = await readCategorySchema(BRAND)
   assert.equal(entry.view.fields.length, 1)
   assert.equal(cachedMaterial(BRAND), undefined)
   await assert.rejects(loadMaterial(BRAND), { code: "workflow_schema_material_missing" })
+})
+
+test("a bare null schema miss is refused without a fabricated view or material", async () => {
+  serve(() => null)
+  await assert.rejects(readCategorySchema(BRAND), { code: "workflow_category_schema_missing" })
+  assert.equal(cachedMaterial(BRAND), undefined)
 })

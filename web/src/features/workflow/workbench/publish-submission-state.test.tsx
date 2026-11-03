@@ -42,7 +42,7 @@ test("raw receipt appears only in collapsed submission details", () => {
   assert.match(beforeDetails, /已受理/)
   assert.doesNotMatch(beforeDetails, /HTTP|batch-uuid|5666996254/)
   assert.doesNotMatch(beforeDetails, /复制响应/)
-  assert.match(markup.slice(markup.indexOf("<details")), /复制响应/)
+  assert.match(markup.slice(markup.indexOf("<details")), /aria-label="复制响应"/)
   assert.doesNotMatch(markup, /<details[^>]*\bopen/)
   assert.match(markup, /查看提交详情/)
   assert.match(markup, /不代表商品已可售/)
@@ -51,7 +51,7 @@ test("raw receipt appears only in collapsed submission details", () => {
 
 test("an unresolved submission explains how to verify it and offers no send", () => {
   const markup = renderToStaticMarkup(<PublishSubmissionState
-    rowLog="发送未执行：PSD 尚未云端保存或未绑定该类目，请重新绑定模板"
+    rowLog="发送未执行：本机 PSD 不可用，请重新绑定模板"
     lifecycle={{
       ...lifecycle, stage: "outcome_unknown", taskId: "5666996254", source_file_name: "SZ-0001.png",
       submissionReceipt: { batch_id: "batch-uuid", item_count: 1, http_status: 502, response_body: "gateway" },

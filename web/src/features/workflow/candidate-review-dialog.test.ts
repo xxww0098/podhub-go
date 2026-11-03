@@ -63,7 +63,7 @@ test("candidate review refreshes missing fields without changing the displayed d
         : Response.json({ data: { ...row, revision: 13 } })
     }
     reads.push(String(input))
-    return Response.json({ data: { description_category_id: 42, type_id: 73, language: "zh_hans", fetched_at_ms: 1, fields: [] } })
+    return Response.json({ description_category_id: 42, type_id: 73, language: "zh_hans", fetched_at_ms: 1, fields: [] })
   }
   try {
     const saved = await decideListingCandidate(row, 1, true)
@@ -72,7 +72,7 @@ test("candidate review refreshes missing fields without changing the displayed d
       { baseRevision: 12, candidateDecisions: [{ index: 1, accept: true }] },
       { baseRevision: 12, candidateDecisions: [{ index: 1, accept: true }] },
     ])
-    assert.deepEqual(reads, [`${route("catalogSchema")}?descriptionCategoryId=42&typeId=73&language=zh_hans`], "字段读取走平台密钥，不携带店铺")
+    assert.deepEqual(reads, [`${route("catalogSchema")}?description_category_id=42&type_id=73&language=zh_hans`], "字段读取走平台密钥，不携带店铺")
   } finally { globalThis.fetch = previous }
 })
 

@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
+	"github.com/xxww0098/podhub-go/internal/platform/httpx/jsonwire"
 	"github.com/xxww0098/podhub-go/internal/telemetry/domain"
 	"github.com/xxww0098/podhub-go/internal/telemetry/service"
 )
@@ -127,22 +128,6 @@ func writeFail(w http.ResponseWriter, err error) {
 	writeErr(w, http.StatusInternalServerError, msgUnavailable, "INTERNAL", "")
 }
 
-func writeJSON(w http.ResponseWriter, status int, body any) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(body); err != nil {
-		writeErr(w, http.StatusInternalServerError, msgUnavailable, "INTERNAL", "")
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(status)
-	if _, err := w.Write(bytes.TrimRight(buf.Bytes(), "\n")); err != nil {
-		slog.Error("json write", "err", err)
-	}
-}
-
 func (h handler) now() time.Time {
 	if h.Now != nil {
 		return h.Now()
@@ -205,7 +190,7 @@ func (h handler) inbox(w http.ResponseWriter, r *http.Request) {
 	if result.Rejected == nil {
 		result.Rejected = []domain.RejectedEvent{}
 	}
-	writeJSON(w, http.StatusOK, inboxResponse{
+	jsonwire.Write(w, http.StatusOK, inboxResponse{
 		Data: inboxData{OK: true, Accepted: result.Accepted, Rejected: rejectWire(result.Rejected)},
 	})
 }
@@ -259,7 +244,7 @@ func (h handler) clientLogs(w http.ResponseWriter, r *http.Request) {
 		writeFail(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, clientResponse{Data: clientData{Accepted: uint32(len(rows)), Dropped: uint32(dropped)}})
+	jsonwire.Write(w, http.StatusOK, clientResponse{Data: clientData{Accepted: uint32(len(rows)), Dropped: uint32(dropped)}})
 }
 
 type inboxResponse struct {

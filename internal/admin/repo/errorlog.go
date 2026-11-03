@@ -9,6 +9,8 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/xxww0098/podhub-go/internal/admin/domain"
+	billingcontract "github.com/xxww0098/podhub-go/internal/billing/contract"
+	"github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
 )
 
 const (
@@ -26,6 +28,7 @@ const errorFrom = `
  WHERE e.kind IN ($1, $2, $3, $4, 'error_feedback.v1')
    AND ($5::text IS NULL OR o.name ILIKE '%' || $5 || '%'
         OR e.id ILIKE '%' || $5 || '%'
+        OR (e.kind = 'error_feedback.v1' AND e.id ILIKE '%' || NULLIF(replace(btrim($5), '-', ''), '') || '%')
         OR u.email ILIKE '%' || $5 || '%'
         OR COALESCE(e.payload_json::jsonb->>'code', '') ILIKE '%' || $5 || '%'
         OR COALESCE(e.payload_json::jsonb->>'message', '') ILIKE '%' || $5 || '%'
@@ -55,6 +58,9 @@ func (r *Repo) ListErrors(ctx context.Context, actor domain.Actor, filter domain
 	}
 	defer tx.Rollback(ctx)
 	defer endLease(tx)
+	if err := tenantx.EnterAppRole(ctx, tx); err != nil {
+		return nil, domain.Internal("INTERNAL", "诊断日志读取失败，请联系管理员核对迁移与数据库状态")
+	}
 	if err := prescanErrors(ctx, tx, cutoff); err != nil {
 		return nil, domain.Internal("INTERNAL", "诊断日志读取失败，请联系管理员核对迁移与数据库状态")
 	}
@@ -93,7 +99,7 @@ func (r *Repo) ListErrors(ctx context.Context, actor domain.Actor, filter domain
 			return nil, domain.Internal("INTERNAL", "诊断日志读取失败，请联系管理员核对迁移与数据库状态")
 		}
 		_ = schema
-		row, fault := domain.ProjectErrorLog(kind, id, device, workspace, email, rfc3339Millis(received), payload)
+		row, fault := domain.ProjectErrorLog(kind, id, device, workspace, email, billingcontract.RFC3339Millis(received), payload)
 		if fault != nil {
 			return nil, fault
 		}
@@ -197,6 +203,9 @@ func (r *Repo) DeleteErrors(ctx context.Context, actor domain.Actor, body domain
 	}
 	defer tx.Rollback(ctx)
 	defer endLease(tx)
+	if err := tenantx.EnterAppRole(ctx, tx); err != nil {
+		return nil, mapBill(err, "INTERNAL", true)
+	}
 	held, err := admit(ctx, tx, "telemetry", r.now().UnixMilli(), domain.WritesDisabled("WRITES_DISABLED", "遥测域写入未启用"))
 	if err != nil {
 		return nil, mapBill(err, "INTERNAL", true)

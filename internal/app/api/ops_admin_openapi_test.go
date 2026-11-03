@@ -36,7 +36,9 @@ func TestPR8BOperationsAreInOpenAPI(t *testing.T) {
 			t.Fatal(rt.Path)
 		}
 	}
-	if len(routes) != 18+13+2+46+3+76 {
+	// The ops, automation, and telemetry tables are pinned here; the admin
+	// table pins its own size in internal/admin/http/mount_test.go.
+	if len(routes) != 18+16+2+len(adminhttp.Routes()) {
 		t.Fatalf("routes %d", len(routes))
 	}
 	for _, rt := range routes {

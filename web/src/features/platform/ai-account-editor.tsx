@@ -1,9 +1,11 @@
-import { AI_CUSTOM_CHOICE, AI_MODEL_CHOICES, DEFAULT_AI_MODEL_CHOICE, type AiModelChoice } from "@/lib/ai-model-presets"
+import { AI_CUSTOM_CHOICE, AI_MODEL_CHOICES, DEFAULT_AI_MODEL_CHOICE } from "@/lib/ai-model-presets"
 import { useRef, useState, type FormEvent } from "react"
-import type { AiAccountView, AiApiFormat, AiThinking, AiThinkingFormat } from "@/bindings/commands"
+import type { AiAccountView, AiApiFormat, AiPurpose, AiThinking, AiThinkingFormat } from "@/bindings/commands"
 import type { AiAccountDraft } from "@/bindings/integration-ai-writes"
 import { aiAccountsHttp } from "@/bindings/http-ai-accounts"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import { Input } from "@/components/ui/input"
 import { FieldLabel } from "@/components/ui/field"
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group"
@@ -12,8 +14,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
 import { notifyCommandError, notifyError, notifyInfo, notifySuccess } from "@/lib/notify"
-import { ChevronDown, RefreshCw } from "lucide-react"
+import { Activity, ChevronDown, ChevronRight, LoaderCircle, RefreshCw } from "lucide-react"
 import {
+  IMAGE_MODEL,
   accountLabelFollowsChoice,
   connectionProbe,
   endpointIdentity,
@@ -39,36 +42,59 @@ const thinkingFormatLabels: Record<AiThinkingFormat, string> = {
   anthropic_adaptive: "Anthropic 自适应",
 }
 const apiFormatLabels: Record<AiApiFormat, string> = {
-  chat_completions: "对话补全，可用于识图",
-  anthropic_messages: "Anthropic 消息，不能用于识图",
-  responses: "Responses，不能用于识图",
+  chat_completions: "对话补全",
+  anthropic_messages: "Anthropic 消息",
+  responses: "Responses",
+}
+const purposeLabels: Record<AiPurpose, string> = {
+  ocr: "识图",
+  image: "生图",
+  chat: "对话",
+}
+const ALL_FORMATS = ["chat_completions", "anthropic_messages", "responses"] as const
+
+function thinkingFormatsFor(format: AiApiFormat): readonly AiThinkingFormat[] {
+  if (format === "chat_completions") return ["none", "reasoning_effort", "enable_thinking", "thinking_type"]
+  if (format === "responses") return ["none", "reasoning_effort"]
+  return ["none", "anthropic_budget", "anthropic_adaptive"]
 }
 
 function draftFromAccount(account: AiAccountView): AiAccountDraft {
+  if (!account.purpose) throw new Error("账号用途未确认")
   return {
     id: account.id, label: account.label, base_url: account.base_url, api_format: account.api_format,
     model: account.model, apiKey: "", active: account.active, thinking: account.thinking,
-    thinking_format: account.thinking_format, priority: account.priority,
+    thinking_format: account.thinking_format, priority: account.priority, purpose: account.purpose,
   }
 }
 
-function draftFromChoice(choice: AiModelChoice): AiAccountDraft {
+/** A new account starts in the pool of the tab it was added from. */
+function newDraft(purpose: AiPurpose): AiAccountDraft {
+  if (purpose === "image") {
+    return {
+      id: null, label: "", base_url: "", api_format: "chat_completions", model: IMAGE_MODEL, apiKey: "",
+      active: true, thinking: "provider_default", thinking_format: "none", priority: 0, purpose,
+    }
+  }
+  const choice = DEFAULT_AI_MODEL_CHOICE
   return {
     id: null, label: choice.accountLabel, base_url: choice.baseUrl, api_format: "chat_completions",
     model: choice.model, apiKey: "", active: true, thinking: choice.thinking,
-    thinking_format: choice.thinkingFormat, priority: 0,
+    thinking_format: choice.thinkingFormat, priority: 0, purpose,
   }
 }
 
-export function AiAccountEditor({ account, busy, onSave, onCancel }: {
+export function AiAccountEditor({ account, purpose, busy, onSave, onCancel }: {
   account?: AiAccountView
+  /** Pool a new account joins; an edited account keeps its own. */
+  purpose: AiPurpose
   busy: boolean
   onSave: (draft: AiAccountDraft) => void | Promise<void>
   onCancel?: () => void
 }) {
-  const [draft, setDraft] = useState<AiAccountDraft>(() => account ? draftFromAccount(account) : draftFromChoice(DEFAULT_AI_MODEL_CHOICE))
-  const [choiceId, setChoiceId] = useState(() => account ? (matchModelChoice(account)?.id ?? AI_CUSTOM_CHOICE) : DEFAULT_AI_MODEL_CHOICE.id)
-  const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [draft, setDraft] = useState<AiAccountDraft>(() => account ? draftFromAccount(account) : newDraft(purpose))
+  const [choiceId, setChoiceId] = useState(() => account ? (matchModelChoice(account)?.id ?? AI_CUSTOM_CHOICE) : purpose === "image" ? AI_CUSTOM_CHOICE : DEFAULT_AI_MODEL_CHOICE.id)
+  const [advancedOpen, setAdvancedOpen] = useState(!account && purpose === "image")
   const [submitted, setSubmitted] = useState(false)
   const [saving, setSaving] = useState(false)
   const [probing, setProbing] = useState(false)
@@ -82,9 +108,11 @@ export function AiAccountEditor({ account, busy, onSave, onCancel }: {
   ))
   const keyRequired = !account || connectionChanged
   const keyInvalid = keyRequired && !draft.apiKey.trim() && (submitted || connectionChanged)
-  const thinkingFormats = draft.api_format === "chat_completions"
-    ? ["none", "reasoning_effort", "enable_thinking", "thinking_type"] as const
-    : ["none", "reasoning_effort", "enable_thinking", "thinking_type", "anthropic_budget", "anthropic_adaptive"] as const
+  const purposeLabel = purposeLabels[draft.purpose]
+  const showsModelChoice = draft.purpose === "ocr" || draft.purpose === "chat"
+  const showsThinking = draft.purpose !== "image"
+  const thinkingFormats = thinkingFormatsFor(draft.api_format)
+  const freeFormatChoice = draft.purpose === "chat" || Boolean(account && draft.purpose === "ocr" && account.api_format !== "chat_completions")
 
   function change(patch: Partial<AiAccountDraft>) {
     const next = { ...draft, ...patch }
@@ -197,9 +225,9 @@ export function AiAccountEditor({ account, busy, onSave, onCancel }: {
       const result = await aiAccountsHttp.verifyModel(probe.request)
       setConnection(result.model_present ? "ok" : "missing")
       if (result.model_present) {
-        notifySuccess("连接正常", { description: `密钥有效，目录中有该模型。${result.latency_ms} ms。未发起识图。` })
+        notifySuccess("连接正常", { description: `密钥有效，目录中有该模型。${result.latency_ms} ms。未发起${purposeLabel}。` })
       } else {
-        notifyInfo("密钥有效，但目录未列出该模型", { description: "部分服务不公开目录，识图仍可能可用。" })
+        notifyInfo("密钥有效，但目录未列出该模型", { description: `部分服务不公开目录，${purposeLabel}仍可能可用。` })
       }
     } catch (reason) {
       setConnection("failed")
@@ -227,7 +255,7 @@ export function AiAccountEditor({ account, busy, onSave, onCancel }: {
     submitting.current = true
     setSaving(true)
     try {
-      await onSave(draft)
+      await onSave(draft.purpose === "image" ? { ...draft, thinking: "provider_default", thinking_format: "none" } : draft)
     } catch (reason) {
       notifyCommandError(reason, "账号保存失败，请重试。")
     } finally {
@@ -244,7 +272,7 @@ export function AiAccountEditor({ account, busy, onSave, onCancel }: {
   return (
     <form className="flex min-h-0 flex-col" noValidate aria-busy={locked} onSubmit={(event) => void submit(event)}>
       <div className="flex min-h-0 flex-col gap-4 overflow-y-auto p-5">
-        <div className="flex flex-col gap-2">
+        {showsModelChoice ? <div className="flex flex-col gap-2">
           <FieldLabel htmlFor="ai-choice">模型</FieldLabel>
           <Select items={choiceItems} value={choiceId} onValueChange={selectChoice} disabled={locked}>
             <SelectTrigger id="ai-choice" aria-describedby="ai-choice-help"><SelectValue /></SelectTrigger>
@@ -256,10 +284,13 @@ export function AiAccountEditor({ account, busy, onSave, onCancel }: {
           <p id="ai-choice-help" className="text-meta text-muted-foreground">
             {choice ? choice.summary : "自定义请在高级设置中填写服务地址和模型标识。"}
           </p>
-        </div>
+        </div> : null}
         <div className="flex flex-col gap-2">
-          <FieldLabel htmlFor="ai-key">密钥{keyRequired ? "（必填）" : ""}</FieldLabel>
-          <Input id="ai-key" type="password" autoComplete="new-password" value={draft.apiKey}
+          <div className="flex items-center justify-between gap-2">
+            <FieldLabel htmlFor="ai-key">密钥{keyRequired ? "（必填）" : ""}</FieldLabel>
+            {account ? <Badge variant={account.configured && !connectionChanged ? "good" : "outline"}>{account.configured && !connectionChanged ? "已保存" : "需重新填写"}</Badge> : null}
+          </div>
+          <Input id="ai-key" type="password" autoComplete="new-password" value={draft.apiKey} className="font-mono"
             onChange={(event) => change({ apiKey: event.target.value })}
             placeholder={account && !connectionChanged ? "留空则保留已保存的密钥" : "粘贴服务商密钥"}
             required={keyRequired} aria-invalid={keyInvalid} aria-describedby="ai-key-help" disabled={locked} />
@@ -267,31 +298,39 @@ export function AiAccountEditor({ account, busy, onSave, onCancel }: {
             {connectionChanged ? "服务地址或接口格式已改变，需要重新填写密钥。" : "密钥不会回显。编辑时留空表示保留已保存的密钥。"}
           </p>
         </div>
-        <div className="flex items-center justify-between gap-3">
-          <FieldLabel htmlFor="ai-active">启用</FieldLabel>
-          <Switch id="ai-active" checked={draft.active} disabled={locked} onCheckedChange={(active) => change({ active: active === true })} />
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button type="button" variant="outline" disabled={locked} onClick={() => void testConnection()}>
-            {probing ? <Spinner aria-hidden /> : null}测试连接
-          </Button>
-          <AiConnectionChip state={connection} />
+        <div className="divide-y divide-border overflow-hidden rounded-xl border border-border">
+          <div className="flex items-center justify-between gap-3 px-3.5 py-3">
+            <FieldLabel htmlFor="ai-active">启用</FieldLabel>
+            <Switch id="ai-active" checked={draft.active} disabled={locked} onCheckedChange={(active) => change({ active: active === true })} />
+          </div>
+          <div className="flex flex-wrap items-center gap-3 px-3.5 py-3">
+            <IconButton
+              icon={probing ? LoaderCircle : Activity}
+              iconClassName={probing ? "animate-spin" : undefined}
+              label="测试连接"
+              variant="outline"
+              disabled={locked}
+              onClick={() => void testConnection()}
+            />
+            <AiConnectionChip state={connection} />
+          </div>
         </div>
 
-        <details open={advancedOpen} onToggle={(event) => setAdvancedOpen(event.currentTarget.open)} className="border-y border-border">
-          <summary className="cursor-pointer py-3 text-compact font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
-            高级设置<span className="mt-1 block text-meta font-normal text-muted-foreground sm:ml-2 sm:mt-0 sm:inline">名称、服务地址、思考与优先级</span>
+        <details open={advancedOpen} onToggle={(event) => setAdvancedOpen(event.currentTarget.open)} className="group/adv overflow-hidden rounded-xl border border-border">
+          <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-2 gap-y-0.5 bg-muted/50 px-3.5 py-2.5 text-compact font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
+            <ChevronRight aria-hidden className="size-4 text-muted-foreground transition-transform group-open/adv:rotate-90" />
+            高级设置<span className="text-meta font-normal text-muted-foreground">{showsModelChoice ? "名称、服务地址、思考与优先级" : "名称、服务地址、模型与优先级"}</span>
           </summary>
-          <div className="flex flex-col gap-4 pb-4">
+          <div className="flex flex-col gap-4 border-t border-border p-3.5">
             <div className="flex flex-col gap-2">
               <FieldLabel htmlFor="ai-label">账号名称</FieldLabel>
               <Input id="ai-label" value={draft.label} onChange={(event) => change({ label: event.target.value })}
-                placeholder="例如：识图主账号" required disabled={locked} aria-invalid={submitted && !draft.label.trim()} />
+                placeholder={`例如：${purposeLabel}主账号`} required disabled={locked} aria-invalid={submitted && !draft.label.trim()} />
             </div>
             <div className="flex flex-col gap-2">
               <FieldLabel htmlFor="ai-url">服务地址</FieldLabel>
               <Input id="ai-url" type="url" value={draft.base_url} onChange={(event) => change({ base_url: event.target.value })}
-                placeholder="https://api.example.com/v1" maxLength={512} required disabled={locked}
+                placeholder={draft.purpose === "image" ? "https://example.cn-beijing.maas.aliyuncs.com/compatible-mode/v1" : "https://api.example.com/v1"} maxLength={512} required disabled={locked}
                 aria-invalid={submitted && !URL.canParse(draft.base_url)} />
             </div>
             <div className="flex flex-col gap-2">
@@ -328,50 +367,49 @@ export function AiAccountEditor({ account, busy, onSave, onCancel }: {
                       </ul>
                       <div className="flex items-center justify-between gap-2 px-1 text-meta text-muted-foreground">
                         <span>{catalogue ? `上游目录 ${catalogueRows.length}/${catalogue.length}` : "只读取模型目录，不消耗额度"}</span>
-                        <Button type="button" variant="ghost" size="icon-xs" aria-label="重新拉取模型目录" disabled={catalogueLoading} onClick={() => void loadCatalogue()}>
-                          <RefreshCw aria-hidden />
-                        </Button>
+                        <IconButton icon={RefreshCw} label="重新拉取模型目录" size="icon-xs" disabled={catalogueLoading} onClick={() => void loadCatalogue()} />
                       </div>
                     </PopoverContent>
                   </Popover>
                 </InputGroupAddon>
               </InputGroup>
             </div>
-            {account && account.api_format !== "chat_completions" ? (
-              <div className="flex flex-col gap-2">
-                <FieldLabel htmlFor="ai-format">接口格式</FieldLabel>
-                <Select items={apiFormatLabels} value={draft.api_format} onValueChange={(value) => {
-                  if (value === "chat_completions" || value === account.api_format) {
-                    change({ api_format: value, thinking: "provider_default", thinking_format: "none" })
-                  }
-                }} disabled={locked}>
-                  <SelectTrigger id="ai-format"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="chat_completions">{apiFormatLabels.chat_completions}</SelectItem>
-                    <SelectItem value={account.api_format}>{apiFormatLabels[account.api_format]}</SelectItem>
-                  </SelectContent>
-                </Select>
+            {showsThinking ? <>
+              {freeFormatChoice ? (
+                <div className="flex flex-col gap-2">
+                  <FieldLabel htmlFor="ai-format">接口格式</FieldLabel>
+                  <Select items={apiFormatLabels} value={draft.api_format} onValueChange={(value) => {
+                    if (value === "chat_completions" || value === "anthropic_messages" || value === "responses") {
+                      change({ api_format: value, thinking: "provider_default", thinking_format: "none" })
+                    }
+                  }} disabled={locked}>
+                    <SelectTrigger id="ai-format"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {ALL_FORMATS.map((value) => <SelectItem key={value} value={value}>{apiFormatLabels[value]}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : <p className="text-meta text-muted-foreground">接口格式：对话补全，可用于识图。</p>}
+              {draft.purpose === "ocr" && draft.api_format !== "chat_completions" ? (
+                <p className="text-compact text-muted-foreground">当前格式不能用于识图。可改为对话补全，并重新填写密钥。</p>
+              ) : null}
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="flex flex-col gap-2">
+                  <FieldLabel htmlFor="ai-thinking">思考</FieldLabel>
+                  <Select items={{ ...thinkingLabels, off: "关闭" }} value={thinkingValue(draft.thinking)} onValueChange={(value) => { if (value) change({ thinking: thinkingOf(value) }) }} disabled={locked}>
+                    <SelectTrigger id="ai-thinking"><SelectValue /></SelectTrigger>
+                    <SelectContent>{Object.entries({ ...thinkingLabels, off: "关闭" }).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <FieldLabel htmlFor="ai-thinking-format">思考参数</FieldLabel>
+                  <Select items={thinkingFormats.map((value) => ({ value, label: thinkingFormatLabels[value] }))} value={draft.thinking_format} onValueChange={(value) => { if (value) change({ thinking_format: value as AiThinkingFormat }) }} disabled={locked}>
+                    <SelectTrigger id="ai-thinking-format"><SelectValue /></SelectTrigger>
+                    <SelectContent>{thinkingFormats.map((value) => <SelectItem key={value} value={value}>{thinkingFormatLabels[value]}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
               </div>
-            ) : <p className="text-meta text-muted-foreground">接口格式：对话补全，可用于识图。</p>}
-            {draft.api_format !== "chat_completions" ? (
-              <p className="text-compact text-muted-foreground">当前格式不能用于识图。可改为对话补全，并重新填写密钥。</p>
-            ) : null}
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div className="flex flex-col gap-2">
-                <FieldLabel htmlFor="ai-thinking">思考</FieldLabel>
-                <Select items={{ ...thinkingLabels, off: "关闭" }} value={thinkingValue(draft.thinking)} onValueChange={(value) => { if (value) change({ thinking: thinkingOf(value) }) }} disabled={locked}>
-                  <SelectTrigger id="ai-thinking"><SelectValue /></SelectTrigger>
-                  <SelectContent>{Object.entries({ ...thinkingLabels, off: "关闭" }).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
-                </Select>
-              </div>
-              <div className="flex flex-col gap-2">
-                <FieldLabel htmlFor="ai-thinking-format">思考参数</FieldLabel>
-                <Select items={thinkingFormats.map((value) => ({ value, label: thinkingFormatLabels[value] }))} value={draft.thinking_format} onValueChange={(value) => { if (value) change({ thinking_format: value as AiThinkingFormat }) }} disabled={locked}>
-                  <SelectTrigger id="ai-thinking-format"><SelectValue /></SelectTrigger>
-                  <SelectContent>{thinkingFormats.map((value) => <SelectItem key={value} value={value}>{thinkingFormatLabels[value]}</SelectItem>)}</SelectContent>
-                </Select>
-              </div>
-            </div>
+            </> : null}
             <div className="flex flex-col gap-2">
               <FieldLabel htmlFor="ai-priority">优先级</FieldLabel>
               <Input id="ai-priority" type="number" step={1} min={-2147483648} max={2147483647}
@@ -384,7 +422,7 @@ export function AiAccountEditor({ account, busy, onSave, onCancel }: {
           </div>
         </details>
       </div>
-      <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-border px-5 py-4">
+      <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-border bg-muted/30 px-5 py-3">
         {onCancel ? <Button type="button" variant="outline" disabled={locked} onClick={onCancel}>取消</Button> : null}
         <Button type="submit" disabled={locked}>
           {saving ? <Spinner aria-hidden /> : null}{saving ? "保存中…" : "保存"}

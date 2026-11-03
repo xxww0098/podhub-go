@@ -18,7 +18,7 @@
         "createdAtMs": "<unix_ms>",
         "updatedAtMs": "<unix_ms>",
         "createdBy": "<actor_public_id>",
-        "creatorName": "平台货源管理员"
+        "creatorName": "供应商商品库管理员"
       },
       "propDefs": [],
       "rows": ["见 post-row-staff-crud.response.json 的 row"]

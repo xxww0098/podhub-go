@@ -19,7 +19,7 @@ const MsgForbidden = "没有这家货源库的商品维护权限"
 const MsgUnavailable = "服务暂不可用"
 
 // MsgWritesDisabled is the writer-lease refusal for this surface.
-const MsgWritesDisabled = "平台货源写入未启用"
+const MsgWritesDisabled = "供应商商品库写入未启用"
 
 // Fault is an HTTP-shaped outcome. The handler maps it once and does not
 // invent a second code.
@@ -77,22 +77,16 @@ func ValidationMissing(message string, missing []string) error {
 // Forbidden is the manager gate refusal.
 func Forbidden() error { return fail(403, "FORBIDDEN", MsgForbidden) }
 
+func SuperAdminRequired() error { return fail(403, "FORBIDDEN", "需要超级管理员权限") }
+
 // NotFound is a missing source, row, or prop definition.
 func NotFound() error { return fail(404, "NOT_FOUND", "资源不存在") }
 
 // Conflict is an optimistic-concurrency or uniqueness refusal.
 func Conflict(message string) error { return fail(409, "CONFLICT", message) }
 
-// MediaRetired is p0m01: the object is in the recycle path.
-func MediaRetired() error {
-	return fail(409, "CONFLICT", "媒体对象已进入回收，请重新上传")
-}
-
 // Unavailable is 55p03: the row is locked by another writer.
 func Unavailable() error { return fail(503, "INTERNAL", "资源正在更新，请稍后重试") }
 
 // Internal is the generic 500.
 func Internal() error { return fail(500, "INTERNAL", MsgUnavailable) }
-
-// WritesDisabled is the writer-lease refusal.
-func WritesDisabled() error { return fail(503, "WRITES_DISABLED", MsgWritesDisabled) }

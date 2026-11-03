@@ -5,7 +5,7 @@
  * browser orchestration and no feature imports. Workflow lives in
  * `web/src/features/workflow/workflow-actions.ts`.
  */
-import { api, request } from "@/api/client"
+import { api, getBytes, request, SESSION_REFRESH_EVENT } from "@/api/client"
 import { hashUploadBody, putDirectUpload } from "./direct-upload"
 import { route } from "@/api/routes"
 import type { components } from "@/api/schema"
@@ -25,18 +25,13 @@ import type {
   AgentWithdrawal,
   AgentWorkbench,
   AiRechargeOrderView,
-  CreateWorkspaceInvitationRequest,
   NotificationReadView,
   NotificationsView,
-  OcrQuotaData,
   PaymentMethodsData,
   PaymentOrderView,
   RedeemResultView,
-  SeatCatalogData,
   AvatarSubjectView,
-  WorkspaceBillingOverviewData,
   WorkspaceDirectoryView,
-  WorkspaceInvitationCreatedView,
   WorkspaceStandingView,
   UsageStatsView,
 } from "./commands"
@@ -109,28 +104,16 @@ function workspaceDirectory(data: components["schemas"]["WorkspaceMembersData"])
 }
 
 /**
- * `GET /api/ai/wallet` answers three facts in one read: the balance, the
- * ledger page, and recent recharge orders. Callers that only want the balance
- * take `accountGetWallet`; the recharge dialog polls the detail for the
- * pending order's status flip.
+ * `GET /api/ai/wallet` answers three facts in one read for the session's active
+ * Workspace: the balance, the ledger page, and recent recharge orders. The
+ * wallet cache and the recharge dialog (pending order status flip) both read
+ * the detail.
  */
-function walletDetail() {
-  return api.get<components["schemas"]["WalletData"]>(route("aiWallet"))
-}
-
-/** The redeem receipt flattens Cloud's nested plan; the screen prints both. */
-function redeemResult(data: components["schemas"]["RedeemData"]): RedeemResultView {
-  return {
-    plan_key: data.plan.key,
-    plan_name: data.plan.name,
-    member_seats: data.member_seats,
-    ocr_credits: data.ocr_credits ?? 0,
-    wallet_cents: data.wallet_cents ?? 0,
-    replaced_lots: data.replaced_lots ?? 0,
-    replaced_seats: data.replaced_seats ?? 0,
-    plan_expires_at: data.plan_expires_at ?? undefined,
-    ocr_expires_at: data.ocr_expires_at ?? undefined,
-  }
+async function walletDetail(): Promise<components["schemas"]["WalletData"]> {
+  const { ledger, recharges, ...wallet } = await request<components["schemas"]["AIWalletResponse"]>(
+    "GET", route("aiWallet"), undefined, {}, undefined, undefined, { responseBody: "json" },
+  )
+  return { wallet, ledger, recharges }
 }
 
 export type AvatarSetRequest = { subject: AvatarSubjectView, image: Blob | Uint8Array, signal?: AbortSignal }
@@ -250,32 +233,8 @@ export const accountHttp = {
     code: string
     expected_workspace_uuid: string
   }) =>
-    redeemResult(await api.post<components["schemas"]["RedeemData"]>(route("redeem"), request)),
-  // One attempt id per purchase intent: a retry with the same id resumes the
-  // pending order that attempt already committed (same public_id) instead of
-  // answering PENDING_ORDER_EXISTS. Callers rotate it when the content changes.
-  accountCreatePaymentIntent: async (request: components["schemas"]["PaymentIntentRequest"]): Promise<PaymentOrderView> =>
-    (
-      await api.post<components["schemas"]["PaymentOrderData"]>(route("paymentIntent"), request)
-    ).order,
-  accountCreateRenewalIntent: async (request: components["schemas"]["RenewalIntentRequest"]): Promise<PaymentOrderView> =>
-    (
-      await api.post<components["schemas"]["PaymentOrderData"]>(
-        route("paymentIntentRenewal"),
-        request,
-      )
-    ).order,
-  accountGetOcrQuota: () => api.get<OcrQuotaData>(route("ocrQuota")),
-  accountGetPaymentMethods: () => api.get<PaymentMethodsData>(route("paymentMethods")),
-  // The purchasable seat catalog — Cloud's `billing::seats` price book as a
-  // read projection; the `plans` rows on the same response are display
-  // metadata the UI does not need.
-  accountGetSeatCatalog: async (): Promise<SeatCatalogData> =>
-    (await api.get<components["schemas"]["PlansData"]>(route("plans"))).seat_catalog,
-  // The Workspace's entitlement overview: purchased lots, overrides, usage
-  // and the next lot boundary — the plans page's per-lot truth.
-  accountGetBillingOverview: (): Promise<WorkspaceBillingOverviewData> =>
-    api.get<WorkspaceBillingOverviewData>(route("workspaceBillingOverview")),
+    api.post<RedeemResultView>(route("redeem"), request),
+  accountGetPaymentMethods: () => request<PaymentMethodsData>("GET", route("paymentMethods"), undefined, {}, undefined, undefined, { responseBody: "json" }),
   accountListPaymentOrders: async (filter?: {
     status?: string
     limit?: number
@@ -291,36 +250,28 @@ export const accountHttp = {
     if (filter?.limit != null) params.set("limit", String(filter.limit))
     if (filter?.cursor) params.set("cursor", filter.cursor)
     const suffix = params.size > 0 ? `?${params.toString()}` : ""
-    return api.get<components["schemas"]["PaymentOrderListData"]>(`${route("orders")}${suffix}`)
+    return request<components["schemas"]["PaymentOrderListData"]>("GET", `${route("orders")}${suffix}`, undefined, {}, undefined, undefined, { responseBody: "json" })
   },
   accountGetPaymentOrder: async (publicId: string): Promise<PaymentOrderView> =>
     (
-      await api.get<components["schemas"]["PaymentOrderData"]>(
-        route("ordersByPublicId", { public_id: publicId }),
-      )
+      await request<components["schemas"]["PaymentOrderData"]>("GET", route("ordersByPublicId", { public_id: publicId }), undefined, {}, undefined, undefined, { responseBody: "json" })
     ).order,
   // The hosted checkout is the provider's own page, so it opens in a tab of
   // its own rather than replacing the workspace mid-purchase.
   accountOpenPaymentOrder: async (publicId: string) => {
-    const { order } = await api.get<components["schemas"]["PaymentOrderData"]>(
-      route("ordersByPublicId", { public_id: publicId }),
-    )
+    const { order } = await request<components["schemas"]["PaymentOrderData"]>("GET", route("ordersByPublicId", { public_id: publicId }), undefined, {}, undefined, undefined, { responseBody: "json" })
     if (order.pay_url) window.open(order.pay_url, "_blank", "noopener")
   },
   accountCancelPaymentOrder: async (publicId: string): Promise<PaymentOrderView> =>
     (
-      await api.post<components["schemas"]["PaymentOrderData"]>(
-        route("ordersByPublicIdCancel", { public_id: publicId }),
-      )
+      await request<components["schemas"]["PaymentOrderData"]>("POST", route("ordersByPublicIdCancel", { public_id: publicId }), undefined, {}, undefined, undefined, { responseBody: "json" })
     ).order,
   // Query-first recovery of a pending order's payment entry. Cloud asks the
   // provider by merchant order id before anything is re-created; a re-issued
   // entry, entry_confirming, or the settled row comes back as the order.
   accountRecoverPaymentOrder: async (publicId: string): Promise<PaymentOrderView> =>
     (
-      await api.post<components["schemas"]["PaymentOrderData"]>(
-        route("ordersByPublicIdRecover", { public_id: publicId }),
-      )
+      await request<components["schemas"]["PaymentOrderData"]>("POST", route("ordersByPublicIdRecover", { public_id: publicId }), undefined, {}, undefined, undefined, { responseBody: "json" })
     ).order,
   accountLogin: async (request: AccountLoginRequest) => {
     await withAccountContextChange(() => api.post(route("authLogin"), request))
@@ -332,25 +283,21 @@ export const accountHttp = {
   },
   accountForgotPassword: (email: string) =>
     api.post<void>(route("authForgot"), { email }),
-  accountResetPassword: (token: string, password: string) =>
-    api.post<void>(route("authReset"), { token, password }),
-  accountVerifyEmail: (token: string) =>
-    api.post<void>(route("authVerify"), { token }),
-  accountResendVerification: () =>
-    api.post<void>(route("authVerifyResend")),
+  accountRequestEmailChange: (email: string, currentPassword: string) =>
+    api.post<void>(route("authEmailChange"), { email, current_password: currentPassword }),
+  accountConfirmEmailChange: async (token: string) => {
+    await withAccountContextChange(() => api.post<void>(route("authEmailConfirm"), { token }))
+    if (typeof window !== "undefined") window.dispatchEvent(new Event(SESSION_REFRESH_EVENT))
+  },
+  accountResetPassword: async (token: string, password: string) => {
+    await withAccountContextChange(() => api.post<void>(route("authReset"), { token, password }))
+    // The reset revokes the token owner's sessions. A different signed-in
+    // account can remain valid; only an actual 401 retires the painted shell.
+    // This read cannot change the already-confirmed password reset result.
+    try { await accountOverview() } catch { /* The API's 401 event refreshes the session host. */ }
+  },
   accountLogout: async () => {
     await withAccountContextChange(() => api.post<void>(route("authLogout")))
-    clearInvitationCredential()
-  },
-  // Account switching is cookie plumbing plus a repaint: Cloud promotes the
-  // stacked session to `sid`, and the shell repaints from a fresh overview.
-  accountSwitchAccount: async (uuid: string) => {
-    await withAccountContextChange(() => api.post(route("authSwitch"), { uuid }))
-    return accountOverview()
-  },
-  // Sign one stacked account out of this browser — the switcher row's "…".
-  accountLogoutAccount: async (uuid: string) => {
-    await withAccountContextChange(() => api.del<void>(route("authAccountsByUuid", { uuid })))
     clearInvitationCredential()
   },
   accountListWorkspaces: accountOverview,
@@ -360,8 +307,6 @@ export const accountHttp = {
   },
   accountGetWorkspaceDirectory: async () =>
     workspaceDirectory(await api.get<components["schemas"]["WorkspaceMembersData"]>(route("workspacesMembers"))),
-  accountCreateWorkspaceInvitation: (request: CreateWorkspaceInvitationRequest) =>
-    api.post<WorkspaceInvitationCreatedView>(route("invitations"), request),
   accountCreateWorkspace: async (name: string) => {
     await withAccountContextChange(() => api.post(route("workspaces"), { name }))
     return workspaceStanding(await accountOverview())
@@ -386,39 +331,41 @@ export const accountHttp = {
     ))
     return accountOverview()
   },
-  accountGetWallet: async () => (await walletDetail()).wallet,
   accountGetWalletDetail: walletDetail,
-  // A top-up order is a Payment Order on the `wallet_topup` product: the
-  // generic `/api/orders/*` reads are member-seats only, so recharge status
-  // comes back through the wallet detail's `recharges` page.
-  accountCreateRechargeOrder: async (request: {
+  /** One page of the active Workspace's AI consume logs, newest first. */
+  accountListAiLogs: (page: number, pageSize: number) => {
+    const query = new URLSearchParams({ p: String(page), page_size: String(pageSize) })
+    return request<components["schemas"]["AILogPageResponse"]>(
+      "GET", `${route("aiLogs")}?${query.toString()}`, undefined, {}, undefined, undefined, { responseBody: "json" },
+    )
+  },
+  /** The server's CSV export (at most 10000 rows, one export per user at a time). */
+  accountExportAiLogs: async (): Promise<Uint8Array<ArrayBuffer>> =>
+    (await getBytes(route("aiLogsExport"))).bytes,
+  // The wallet detail's recharges page preserves a resumable top-up order.
+  accountCreateRechargeOrder: async (body: {
     operation_id: string
     amount_cents: number
     provider: string
     expected_workspace_uuid: string
   }): Promise<AiRechargeOrderView> =>
     (
-      await api.post<components["schemas"]["AiRechargeOrderData"]>(
-        route("aiRechargeOrders"),
-        request,
-      )
+      await request<components["schemas"]["AiRechargeOrderData"]>("POST", route("aiRechargeOrders"), body, {}, undefined, undefined, { responseBody: "json" })
     ).order,
   accountRecoverRechargeOrder: async (publicId: string): Promise<AiRechargeOrderView> =>
     (
-      await api.post<components["schemas"]["AiRechargeOrderData"]>(
-        route("aiRechargeOrdersByPublicIdRecover", { public_id: publicId }),
-      )
+      await request<components["schemas"]["AiRechargeOrderData"]>("POST", route("aiRechargeOrdersByPublicIdRecover", { public_id: publicId }), undefined, {}, undefined, undefined, { responseBody: "json" })
     ).order,
   accountAcceptWorkspaceInvitation: async (uuid: string, token: string) => {
-    await api.post<void>(route("invitationsByUuidAccept", { uuid }), { token: invitationToken(token) } satisfies components["schemas"]["InvitationProofRequest"])
+    await request("POST", route("invitationsByUuidAccept", { uuid }), { token: invitationToken(token) } satisfies components["schemas"]["InvitationProofRequest"], {}, undefined, undefined, { responseBody: "json" })
     clearInvitationCredential(uuid)
   },
   accountDeclineWorkspaceInvitation: async (uuid: string, token: string) => {
-    await api.post<void>(route("invitationsByUuidDecline", { uuid }), { token: invitationToken(token) } satisfies components["schemas"]["InvitationProofRequest"])
+    await request("POST", route("invitationsByUuidDecline", { uuid }), { token: invitationToken(token) } satisfies components["schemas"]["InvitationProofRequest"], {}, undefined, undefined, { responseBody: "json" })
     clearInvitationCredential(uuid)
   },
   accountRevokeWorkspaceInvitation: (uuid: string) =>
-    api.del<void>(route("invitationsByUuid", { uuid })),
+    request("DELETE", route("invitationsByUuid", { uuid }), undefined, {}, undefined, undefined, { responseBody: "json" }),
   accountRemoveWorkspaceMember: (membershipId: number) =>
     api.del<void>(route("workspacesMembersById", { id: membershipId })),
   /** Owner-only roster edit: move one non-Owner member between 主管 and 运营. */

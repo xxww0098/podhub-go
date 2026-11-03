@@ -9,6 +9,7 @@ import { RECOGNITION_CONTRACT_VERSION } from "./ai-job"
 import { requestStop, setCardContext } from "./execution-context"
 import { RENDERER_CONTRACT_VERSION } from "./media-job"
 import { waitLabel } from "./executor/row-feedback"
+import { settledRowMessage } from "../batch-operation"
 import {
   COMPLETION,
   FIXED_TAGS,
@@ -19,6 +20,26 @@ import {
   SLICE_DIGEST,
   withStubbedDevice,
 } from "./executor-test-support"
+
+for (const verb of ["recognize", "prepare"] as const) {
+  test(`${verb} retains an actionable missing-model blocker from its actual planning response`, async () => {
+    setCardContext({ psdTemplateSha256: "" })
+    const stub = record(call => call.url.endsWith("/prepare")
+      ? verb === "recognize"
+        ? Response.json({ code: "validation", error: "请先配置识别模型", blockers: ["missing_model"] }, { status: 422 })
+        : { outcome: "blocked", jobs: [], issues: [{ kind: "ai.recognize", blockers: ["missing_model"], message: "请先配置识别模型" }] }
+      : ROW)
+    try {
+      const { runRows } = await import("./run-rows")
+      const [result] = await withStubbedDevice(() => runRows({ row_ids: ["row-1"], expected_revisions: [] }, verb))
+      assert.deepEqual(result?.blockers, ["missing_model"])
+      const feedback = settledRowMessage(result, "准备已完成")
+      assert.equal(feedback.failed, true)
+      assert.match(feedback.message, /配置识别模型/)
+      assert.equal(stub.calls.some(call => call.url.endsWith("/ocr/completions")), false)
+    } finally { stub.restore() }
+  })
+}
 
 test("waiting still carries out queued browser jobs after a reload", async () => {
   setCardContext({ psdTemplateSha256: "template-sha" })
@@ -57,9 +78,9 @@ test("prepare and AI settlement recover expired fields without buying recognitio
     }] }
     if (call.url.endsWith("/ocr/completions")) return COMPLETION
     if (call.url.endsWith("/ai/settle")) return ++settles === 1 ? missing() : RECOGNISED
-    if (call.url.startsWith(route("catalogSchema"))) return {
+    if (call.url.startsWith(route("catalogSchema"))) return Response.json({
       description_category_id: 42, type_id: 73, language: "zh_hans", fetched_at_ms: 1, fields: [],
-    }
+    })
     return { ...ROW, payload: coordinate }
   })
   try {
@@ -73,8 +94,8 @@ test("prepare and AI settlement recover expired fields without buying recognitio
     const writes = stub.calls.filter((call) => call.url.endsWith("/ai/settle"))
     assert.deepEqual(writes[0]!.body, writes[1]!.body, "retry consumes the same paid answer and Job lease")
     assert.deepEqual(stub.calls.filter((call) => call.url.startsWith(route("catalogSchema"))).map((call) => call.url), [
-      `${route("catalogSchema")}?descriptionCategoryId=42&typeId=73&language=zh_hans`,
-      `${route("catalogSchema")}?descriptionCategoryId=42&typeId=73&language=zh_hans`,
+      `${route("catalogSchema")}?description_category_id=42&type_id=73&language=zh_hans`,
+      `${route("catalogSchema")}?description_category_id=42&type_id=73&language=zh_hans`,
     ])
   } finally {
     stub.restore()
@@ -95,7 +116,7 @@ test("stop while refreshing expired fields prevents another prepare request", as
     if (call.url.startsWith(route("catalogSchema"))) {
       sawSchema()
       await heldSchema
-      return { description_category_id: 42, type_id: 73, language: "zh_hans", fetched_at_ms: 1, fields: [] }
+      return Response.json({ description_category_id: 42, type_id: 73, language: "zh_hans", fetched_at_ms: 1, fields: [] })
     }
     return { ...ROW, payload: { descriptionCategoryId: 42, typeId: 73, language: "zh_hans" } }
   })

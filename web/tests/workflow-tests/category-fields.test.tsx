@@ -169,12 +169,11 @@ test("fixed selects pin the Ozon wire values; 尺寸/重量单位只列英文符
     { value: "in", label: "in" },
   ])
   assert.deepEqual(fixedSelectOptions("weight_unit")?.map((option) => option.value), ["g", "kg", "lb"])
-  assert.deepEqual(fixedSelectOptions("currency_code")?.map((option) => option.value), [
-    "RUB",
-    "CNY",
-    "USD",
-    "EUR",
-  ])
+  assert.equal(
+    fixedSelectOptions("currency_code"),
+    undefined,
+    "币种由店铺合同决定，不再是可编辑的固定选项",
+  )
   assert.deepEqual(fixedSelectOptions("vat")?.map((option) => option.value), ["0", "0.1", "0.2"])
   assert.equal(fixedSelectOptions("price"), undefined)
 })

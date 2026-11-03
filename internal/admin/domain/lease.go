@@ -3,7 +3,7 @@ package domain
 import "fmt"
 
 // Lease domains in status order.
-var LeaseDomains = []string{"auth", "entitlement", "catalog", "recipe", "telemetry", "admin", "release"}
+var LeaseDomains = []string{"auth", "entitlement", "catalog", "recipe", "telemetry", "admin", "release", "billing"}
 
 const (
 	HolderAxum = "axum"
@@ -11,10 +11,10 @@ const (
 	leaseTTL   = int64(60_000)
 )
 
-// ParseLeaseDomain accepts the seven capability domains.
+// ParseLeaseDomain accepts every capability domain.
 func ParseLeaseDomain(raw string) (string, bool) {
 	switch raw {
-	case "auth", "entitlement", "catalog", "recipe", "telemetry", "admin", "release":
+	case "auth", "entitlement", "catalog", "recipe", "telemetry", "admin", "release", "billing":
 		return raw, true
 	default:
 		return "", false

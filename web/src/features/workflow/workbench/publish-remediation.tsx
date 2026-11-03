@@ -1,4 +1,5 @@
 import type { ErrorFeedback } from "@/lib/error-feedback"
+import { formatErrorId } from "@/lib/error-id"
 import { useReducer } from "react"
 import { Button } from "@/components/ui/button"
 import type { PreparationVerb } from "../prepare/preparation-tracks"
@@ -52,12 +53,13 @@ export function RemediationDetails({
           <dt className="text-muted-foreground">{view.feedback ? "建议" : "处理步骤"}</dt>
           <dd>
             <ol className="list-decimal pl-4 text-foreground">
-              {(view.feedback?.outcome === "unknown" ? ["刷新核对结果，请勿重复提交。"] : view.steps).map((step) => <li key={step} className="break-words">{step}</li>)}
+              {(view.feedback?.outcome === "unknown" ? ["刷新核对结果，请勿重复提交。"]
+                : view.feedback?.action ? [view.feedback.action] : view.steps).map((step) => <li key={step} className="break-words">{step}</li>)}
             </ol>
           </dd>
         </div>
         {view.feedback ? <div><dt className="text-muted-foreground">编号</dt>
-          <dd className="break-words font-mono">{view.feedback.errorId}</dd></div> : null}
+          <dd className="select-text break-words font-mono">{formatErrorId(view.feedback.errorId)}</dd></div> : null}
       </dl>
       {view.diagnosticId || view.traceId ? <details>
         <summary className="cursor-pointer text-muted-foreground">技术详情</summary>

@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { route } from "@/api/routes"
 import type { ListingIntent } from "@/bindings/http-listing-intents"
-import { createOzonSendCapability } from "../platforms/ozon"
+import { createOzonSendCapability } from "../platforms/ozon/adapter"
 import { createSendQueue } from "./send-queue"
 import { finalQueueHarness, golden, goldenSchema, nativePayload, serve, wasmCore } from "./send-test-support"
 

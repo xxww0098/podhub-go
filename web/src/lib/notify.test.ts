@@ -6,6 +6,7 @@ import { toast } from "@/components/ui/toast"
 import { route } from "@/api/routes"
 import { setErrorTelemetryContext } from "./error-telemetry"
 import { diagLog, reportError } from "./diag-log"
+import { formatErrorId } from "./error-id"
 import { clearLive, notifyCommandError, notifyError, notifyInfo, notifyLive, notifySuccess } from "./notify"
 
 test("every error entry point exposes a unique receipt and keeps its code, copy and trace searchable", () => {
@@ -32,7 +33,7 @@ test("every error entry point exposes a unique receipt and keeps its code, copy 
     for (const [index, notice] of notices.entries()) {
       assert.equal(notice.type, "error")
       const description = renderToStaticMarkup(notice.description as ReactNode)
-      const id = />([0-9]{20})</.exec(description)?.[1]
+      const id = />([0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{5})</.exec(description)?.[1]?.replaceAll("-", "")
       assert.ok(id)
       ids.add(id)
       const code = index < 3 ? "offer_busy" : index === 4 ? "LOCAL_IO" : "operation_failed"
@@ -72,20 +73,20 @@ test("every error entry point exposes a unique receipt and keeps its code, copy 
     const beforeReceipt = lines.filter(line => line.startsWith("[notify]")).length
     notifyError("本地数据未保存", { reason: { code: "LOCAL_IO" } })
     assert.equal(lines.filter(line => line.startsWith("[notify]")).length, beforeReceipt + 1, "an earlier unnumbered log cannot hide the new receipt")
-    const id = />([0-9]{20})</.exec(renderToStaticMarkup(notices.at(-1)!.description as ReactNode))![1]!
+    const id = />([0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{5})</.exec(renderToStaticMarkup(notices.at(-1)!.description as ReactNode))![1]!.replaceAll("-", "")
     assert.ok(lines.at(-1)!.includes(`errorId=${id}`))
 
     const originalNow = Date.now
     try {
       Date.now = () => originalNow() + 30_001
       notifyError("本地数据未保存", { reason: { code: "LOCAL_IO" } })
-      assert.ok(!renderToStaticMarkup(notices.at(-1)!.description as ReactNode).includes(id), "a later occurrence gets a new receipt")
+      assert.ok(!renderToStaticMarkup(notices.at(-1)!.description as ReactNode).includes(formatErrorId(id)), "a later occurrence gets a new receipt")
       assert.equal(lines.filter(line => line.startsWith("[notify]")).length, beforeReceipt + 2)
     } finally { Date.now = originalNow }
   } finally { toast.add = originalAdd; toast.close = originalClose; console.log = originalLog }
 })
 
-test("displayed numeric receipt reaches the backend without UI copy and is fenced on account switch", async () => {
+test("displayed Base32 receipt reaches the backend without UI copy and is fenced on account switch", async () => {
   const notices: Parameters<typeof toast.add>[0][] = []
   const payloads: Array<{ errorId: string; code: string; traceId: string }> = []
   const originalFetch = globalThis.fetch, originalAdd = toast.add, originalLog = console.log
@@ -107,7 +108,7 @@ test("displayed numeric receipt reaches the backend without UI copy and is fence
     notifyError("上传失败", { reason })
     await new Promise(resolve => setTimeout(resolve, 10))
     assert.equal(payloads.length, 1)
-    assert.match(renderToStaticMarkup(notices[0]!.description as ReactNode), new RegExp(payloads[0]!.errorId))
+    assert.match(renderToStaticMarkup(notices[0]!.description as ReactNode), new RegExp(formatErrorId(payloads[0]!.errorId)))
     assert.equal(payloads[0]!.traceId, "request-502")
     setErrorTelemetryContext({ sessionKey: "feedback-account-b" })
     notifyError("上传失败", { reason })

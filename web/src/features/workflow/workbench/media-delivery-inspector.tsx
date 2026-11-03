@@ -2,6 +2,8 @@ import { useState } from "react"
 import { Check, Copy, ExternalLink, RefreshCw } from "lucide-react"
 import type { WorkflowImageLifecycle } from "@/bindings/commands"
 import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
+import { cn } from "@/lib/utils"
 import { notifyError, notifySuccess } from "@/lib/notify"
 import { formatFileSize, useSlicePreviews } from "../media/rendered-image"
 import { MEDIA_ROLE_LABEL, type MediaRoleKey } from "../media/workflow-media-roles"
@@ -60,27 +62,15 @@ export function MediaDeliveryInspector({
             {urls.length} 张已就绪
           </span>
         </div>
-        <Button
-          type="button"
-          size="xs"
+        <IconButton
+          icon={copiedAll ? Check : Copy}
+          label="复制全部公网链接"
+          size="icon-xs"
           variant="outline"
-          className="h-6 shrink-0 gap-1 px-2 text-meta"
+          className={cn("shrink-0", copiedAll && "[&_svg]:text-st-good-ink")}
           onClick={copyAll}
           disabled={!urls.length}
-          aria-label="复制全部公网链接"
-        >
-          {copiedAll ? (
-            <>
-              <Check className="size-3 text-st-good-ink" />
-              <span>已复制</span>
-            </>
-          ) : (
-            <>
-              <Copy className="size-3" />
-              <span>复制全部链接</span>
-            </>
-          )}
-        </Button>
+        />
       </div>
 
       <div className="max-h-60 divide-y divide-border/40 overflow-y-auto p-1">
@@ -126,21 +116,13 @@ export function MediaDeliveryInspector({
 
               {url ? (
                 <div className="flex shrink-0 items-center gap-1">
-                  <Button
-                    type="button"
+                  <IconButton
+                    icon={isCopied ? Check : Copy}
+                    label={`复制第 ${image.index + 1} 张图片链接`}
                     size="icon-xs"
-                    variant="ghost"
-                    className="size-6 text-muted-foreground hover:text-foreground"
-                    title="复制此链接"
-                    aria-label={`复制第 ${image.index + 1} 张图片链接`}
+                    className={cn("text-muted-foreground hover:text-foreground", isCopied && "[&_svg]:text-st-good-ink")}
                     onClick={() => copySingle(url, image.index)}
-                  >
-                    {isCopied ? (
-                      <Check className="size-3 text-st-good-ink" />
-                    ) : (
-                      <Copy className="size-3" />
-                    )}
-                  </Button>
+                  />
                   <Button
                     render={<a href={url} target="_blank" rel="noreferrer" />}
                     nativeButton={false}
@@ -158,18 +140,15 @@ export function MediaDeliveryInspector({
               ) : (
                 // No public URL means nothing to copy or open — the only honest
                 // control here is the one that tries again.
-                <Button
-                  type="button"
-                  size="xs"
+                <IconButton
+                  icon={RefreshCw}
+                  label={`重试第 ${image.index + 1} 张图片`}
+                  size="icon-xs"
                   variant="outline"
-                  className="h-6 shrink-0 gap-1 px-2 text-meta"
+                  className="shrink-0"
                   title={image.error_code ? `失败：${image.error_code}` : "尚未交付"}
-                  aria-label={`重试第 ${image.index + 1} 张图片`}
                   onClick={onRetryMedia}
-                >
-                  <RefreshCw className="size-3" />
-                  <span>重试</span>
-                </Button>
+                />
               )}
             </div>
           )

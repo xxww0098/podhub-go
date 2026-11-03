@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	adminbillingrepo "github.com/xxww0098/podhub-go/internal/admin/billing/repo"
@@ -23,26 +25,31 @@ import (
 	automationhttp "github.com/xxww0098/podhub-go/internal/automation/http"
 	automationrepo "github.com/xxww0098/podhub-go/internal/automation/repo"
 	automationsvc "github.com/xxww0098/podhub-go/internal/automation/service"
+	billingrepo "github.com/xxww0098/podhub-go/internal/billing/repo"
 	delegaterepo "github.com/xxww0098/podhub-go/internal/delegate/repo"
 	delegatesvc "github.com/xxww0098/podhub-go/internal/delegate/service"
-	"github.com/xxww0098/podhub-go/internal/identity"
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
 	"github.com/xxww0098/podhub-go/internal/mcp/domain"
 	mcphttp "github.com/xxww0098/podhub-go/internal/mcp/http"
 	mcprepo "github.com/xxww0098/podhub-go/internal/mcp/repo"
 	mcpsvc "github.com/xxww0098/podhub-go/internal/mcp/service"
+	media "github.com/xxww0098/podhub-go/internal/media/contract"
 	"github.com/xxww0098/podhub-go/internal/ops/contract"
 	opshttp "github.com/xxww0098/podhub-go/internal/ops/http"
 	opsrepo "github.com/xxww0098/podhub-go/internal/ops/repo"
 	opssvc "github.com/xxww0098/podhub-go/internal/ops/service"
 	"github.com/xxww0098/podhub-go/internal/platform/config"
 	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
-	ozon "github.com/xxww0098/podhub-go/internal/platform/egressgate"
+	sign "github.com/xxww0098/podhub-go/internal/platform/r2/sigv4"
+	managercatalogrepo "github.com/xxww0098/podhub-go/internal/suppliercatalog/repo"
+
 	"github.com/xxww0098/podhub-go/internal/platform/seal"
-	"github.com/xxww0098/podhub-go/internal/seller"
-	sellerrepo "github.com/xxww0098/podhub-go/internal/seller/repo"
+	sellercontract "github.com/xxww0098/podhub-go/internal/seller/contract"
+	seller "github.com/xxww0098/podhub-go/internal/seller/ozon"
+	sellerrepo "github.com/xxww0098/podhub-go/internal/seller/ozon/repo"
 	shippingrepo "github.com/xxww0098/podhub-go/internal/shipping/repo"
 	shippingsvc "github.com/xxww0098/podhub-go/internal/shipping/service"
+	storehttp "github.com/xxww0098/podhub-go/internal/store/http"
 	telemetryhttp "github.com/xxww0098/podhub-go/internal/telemetry/http"
 	telemetryrepo "github.com/xxww0098/podhub-go/internal/telemetry/repo"
 	telemetrysvc "github.com/xxww0098/podhub-go/internal/telemetry/service"
@@ -71,10 +78,15 @@ func mountPR8B(r chi.Router, s *httpapi.Server) {
 	}
 	var store *opsrepo.Store
 	if s.Pool != nil {
-		store = opsrepo.New(s.Pool, ring, ready)
+		keyID := cfg.SellerCredentialKeyID
+		if keyID == "" {
+			keyID = seal.DefaultSellerKeyID
+		}
+		store = opsrepo.New(s.Pool, ring, ready, keyID)
 	}
 	opshttp.Mount(r, opshttp.Deps{Resolve: opsResolve(s.Access), Screen: &opssvc.Screen{
 		Stores: store, Ledger: store, Console: store, Refresh: store, Seller: sellerPort{egress: eg},
+		PromotionRead: sellerPort{egress: eg}.promotionRead,
 	}})
 	var actions *automationsvc.Service
 	if s.Pool != nil {
@@ -88,11 +100,12 @@ func mountPR8B(r chi.Router, s *httpapi.Server) {
 		Now:     s.Now,
 	})
 	deps := adminDeps(s, cfg)
-	deps.Ported = httpapi.AdminPorted(s)
+	accounts, _ := configuredStorage(cfg)
+	deps.Ported = httpapi.AdminPorted(s, accounts)
 	if s.Pool != nil {
 		deps.DelegateWrites = delegatePort{inner: delegatesvc.Admin{Store: delegaterepo.New(s.Pool, tenant.BeginApp)}}
 		deps.ShippingWrites = shippingPort{inner: shippingsvc.Admin{
-			Store:              shippingrepo.Repo{Pool: s.Pool, Ring: ring, KeyReady: ready},
+			Store:              shippingrepo.Repo{Pool: s.Pool, Ring: ring, KeyReady: ready, KeyID: cfg.SellerCredentialKeyID},
 			Ozon:               shippingOzon{egress: eg},
 			InjectWrites:       cfg.ShippingInjectOzonWrites(),
 			OzonWritesDisabled: cfg.OzonWritesDisabled(),
@@ -146,9 +159,19 @@ func (p sellerPort) Call(ctx context.Context, lane contract.Lane, method, path s
 	}
 	write := lane == contract.LaneWrite || lane == contract.LaneInteractiveWrite
 	interactive := lane == contract.LaneInteractiveRead || lane == contract.LaneInteractiveWrite
-	reply, err := p.egress.Call(ctx, method, path, body, write, interactive, secret.ClientID, secret.APIKey)
+	call := p.egress.Call
+	if !write {
+		call = p.egress.SellerReadCall
+	} else if path == "/v1/product/import/prices" {
+		call = p.egress.ProductPriceCall
+	} else if path == "/v2/products/stocks" || path == "/v1/product/archive" || path == "/v1/product/unarchive" || path == "/v2/products/delete" {
+		call = p.egress.ProductMutationCall
+	} else if path == "/v1/actions/products/update" || path == "/v2/actions/products/deactivate" {
+		call = p.egress.PromotionCall
+	}
+	reply, err := call(ctx, method, path, body, write, interactive, secret.ClientID, secret.APIKey)
 	switch {
-	case errors.Is(err, ozon.ErrWritesDisabled):
+	case errors.Is(err, sellercontract.ErrWritesDisabled):
 		return 0, "", contract.ErrWritesDisabled
 	case errors.Is(err, seller.ErrRefusedOrigin):
 		return 0, "", contract.ErrUnreachable
@@ -186,39 +209,50 @@ func adminDeps(s *httpapi.Server, cfg config.Config) adminhttp.Deps {
 	store := adminrepo.New(s.Pool, tenant.BeginApp)
 	store.Key = cfg.IntegrationConfigKey
 	rows := x1repo.NewX1(s.Pool, tenant.BeginApp)
-	portal := supplierrepo.Portal{Pool: s.Pool, Begin: tenant.BeginApp, Key: cfg.IntegrationConfigKey}
+	rows.ValidateConfig = validateSupplierConfig
+	portal := supplierrepo.Portal{Pool: s.Pool, Begin: tenant.BeginApp}
 	supplier := adminsvc.New(supplierStore{Repo: store, Portal: portal, X1: rows})
-	supplier.Origin = adminhttp.LoopbackOrigin{}
-	supplier.Accounts = portal.SupplierAccount
+	supplier.CatalogAccess = managercatalogrepo.Repo{Pool: s.Pool}
+	supplier.Origin = adminhttp.R2Origin{}
+	supplier.Accounts = func(context.Context) (sign.Account, bool, error) {
+		account, err := configuredR2Account(cfg, media.RoleAssets)
+		if errors.Is(err, errR2NotConfigured) {
+			return sign.Account{}, false, nil
+		}
+		return account, err == nil, err
+	}
 	deps := adminhttp.Deps{Resolve: adminResolve(s.Access, s.Pool), Supplier: &supplier}
 	if s.Pool == nil {
 		return deps
 	}
 	deps.AdminB = adminBilling{
 		Repo:        adminrepo.NewBilling(s.Pool, cfg.IntegrationConfigKey),
-		Entitlement: adminbillingrepo.NewEntitlement(s.Pool),
-		Observe:     observerepo.NewObserve(s.Pool, observerepo.LoopbackFetch),
+		Entitlement: newEntitlement(s.Pool),
+		Observe:     observerepo.NewObserve(s.Pool, storehttp.FetchOzonThumbnail),
 	}
 	deps.API = &adminsvc.API{
 		DB:             adminDB{Store: adminrepo.NewStore(s.Pool, s.Now), Users: adminusersrepo.NewUsers(s.Pool, s.Now)},
 		Now:            s.Now,
-		TotpKey:        cfg.AdminTotpKey,
 		IntegrationKey: cfg.IntegrationConfigKey,
 		Loopback:       cfg.AIEgressAllowLoopback,
-		Fetch:          adminhttp.NewCatalogue(cfg.AIEgressAllowLoopback, cfg.AIEgressAllowPublic),
+		Fetch:          adminhttp.NewCatalogue(cfg.AIEgressAllowLoopback),
 	}
 	pool := s.Pool
-	deps.Catalog = adminsvc.NewCatalog(catalogrepo.CatalogRepo{Pool: pool, Key: cfg.IntegrationConfigKey}, adminsvc.CatalogOptions{Blobs: adminhttp.LoopbackBlob{}})
+	accounts, _ := configuredStorage(cfg)
+	bases := make([]string, 0, len(accounts))
+	for _, account := range accounts {
+		if account.PublicBaseURL != "" {
+			bases = append(bases, account.PublicBaseURL)
+		}
+	}
+	deps.Catalog = adminsvc.NewCatalog(catalogrepo.CatalogRepo{Pool: pool, PublicBases: bases}, adminsvc.CatalogOptions{Blobs: adminhttp.LoopbackBlob{}})
 	deps.Procure = adminsvc.NewProcure(adminrepo.ProcureRepo{Pool: pool}, adminsvc.ProcureOptions{})
 	deps.Agents = adminsvc.NewAgents(adminrepo.AgentsRepo{Pool: pool}, adminsvc.AgentsOptions{})
 	deps.Shipping = adminsvc.NewShipping(adminshippingrepo.ShippingRepo{Pool: pool}, adminsvc.ShippingOptions{
 		OzonWritesDisabled: cfg.OzonWritesDisabled(),
 		InjectWrites:       cfg.ShippingInjectWrites(),
 	})
-	deps.Relay = adminsvc.NewRelay(adminrepo.RelayRepo{Pool: pool}, adminsvc.RelayOptions{
-		Dir:       cfg.SellerRelayDir(),
-		SwitchDir: cfg.SellerRelaySwitchDir(),
-	})
+	deps.Relay = adminsvc.NewRelay(adminrepo.RelayRepo{Pool: pool}, sellerRelayOptions(cfg))
 	deps.Delegate = adminsvc.NewDelegateAdmin(admindelegaterepo.DelegateRepo{Pool: pool})
 	return deps
 }
@@ -230,6 +264,22 @@ type adminBilling struct {
 	*adminrepo.Repo
 	*adminbillingrepo.Entitlement
 	*observerepo.Observe
+}
+
+// newEntitlement wires the manual payment confirmation path. The entitlement
+// store may only import the billing contract, so the repo functions are
+// passed here from the assembly point.
+func newEntitlement(pool *pgxpool.Pool) *adminbillingrepo.Entitlement {
+	ent := adminbillingrepo.NewEntitlement(pool)
+	ent.SettleFirstOrderCommission = billingrepo.SettleFirstOrderCommission
+	ent.FulfillSubscriptionOrder = func(ctx context.Context, tx pgx.Tx, publicID string, now time.Time) error {
+		order, err := billingrepo.LoadOrder(ctx, tx, publicID)
+		if err != nil {
+			return err
+		}
+		return billingrepo.FulfillPaidSubscription(ctx, tx, order, now)
+	}
+	return ent
 }
 
 // supplierStore is the supplier service port: grants stay on admin Repo,
@@ -267,18 +317,6 @@ func adminResolve(res access.Resolver, pool *pgxpool.Pool) adminhttp.Resolve {
 			WorkspaceRole: p.WorkspaceRole, PlatformRole: p.PlatformRole,
 			Email: p.Email, PublicID: p.PublicID, TokenHash: p.TokenHash,
 		}
-		if pool == nil || p.UserID == 0 {
-			return sess, nil, nil
-		}
-		standing, err := adminrepo.LoadStanding(r.Context(), pool, p.UserID, identity.SessionCredentials(r.Header).Presented())
-		if err != nil {
-			return nil, nil, err
-		}
-		if standing.PublicID != "" {
-			sess.PublicID = standing.PublicID
-		}
-		sess.TotpEnrolled = standing.Enrolled
-		sess.StepUpElevated = standing.Elevated
 		return sess, nil, nil
 	}
 }

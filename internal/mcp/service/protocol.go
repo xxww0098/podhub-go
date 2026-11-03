@@ -280,6 +280,31 @@ func (s *Service) run(ctx context.Context, grant domain.Grant, claim domain.Clai
 			return "failed", nil, asHost(err), 1
 		}
 		return "completed", envelopeRaw(env), nil, 1
+	case "workspace.listingRows.getState":
+		var body struct {
+			CardID  string `json:"cardId"`
+			RowID   string `json:"rowId"`
+			StoreID string `json:"storeId"`
+		}
+		decoder := json.NewDecoder(bytes.NewReader(input))
+		decoder.DisallowUnknownFields()
+		if decoder.Decode(&body) != nil {
+			return "failed", nil, domain.NewHost("invalid_arguments", "Invalid SDK arguments"), 0
+		}
+		for _, value := range []string{body.CardID, body.RowID, body.StoreID} {
+			if _, err := uuid.Parse(value); err != nil {
+				return "failed", nil, domain.NewHost("invalid_arguments", "cardId, rowId and storeId must be UUIDs"), 0
+			}
+		}
+		reader, ok := s.store.(domain.ListingStateReader)
+		if !ok {
+			return "failed", nil, domain.NewHost("method_not_found", "SDK method is not available"), 0
+		}
+		value, err := reader.ListingState(ctx, grant, claim, body.CardID, body.RowID, body.StoreID)
+		if err != nil {
+			return "failed", nil, asHost(err), 1
+		}
+		return "completed", value, nil, 1
 	default:
 		return "failed", nil, domain.NewHost("method_not_found", "SDK method is not available"), 0
 	}

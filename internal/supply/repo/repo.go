@@ -17,8 +17,8 @@ import (
 // The process passes tenant.BeginApp. This package does not import tenant.
 type BeginApp func(ctx context.Context, begin func(context.Context) (pgx.Tx, error), orgID int64) (pgx.Tx, error)
 
-// Repo reads sc_listing_bindings. The table has no RLS, so every query
-// carries the session org_id and refuses a missing org before it begins.
+// Repo reads sc_listing_bindings under tenant RLS. Every query also carries
+// the session org_id and refuses a missing org before it begins.
 type Repo struct {
 	pool  *pgxpool.Pool
 	begin BeginApp

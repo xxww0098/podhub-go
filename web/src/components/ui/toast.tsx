@@ -202,8 +202,8 @@ function ToastList() {
         <div className="flex min-w-0 flex-1 flex-col gap-0.5 pt-0.5">
           <ToastTitle />
           <ToastDescription />
+          {toastItem.actionProps ? <ToastAction {...toastItem.actionProps} className="mt-2 self-start" /> : null}
         </div>
-        {toastItem.actionProps ? <ToastAction {...toastItem.actionProps} /> : null}
         <ToastClose />
       </ToastContent>
     </Toast>

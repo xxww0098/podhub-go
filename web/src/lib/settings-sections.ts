@@ -44,13 +44,6 @@ export const SETTINGS_SECTIONS = [
     description: "头像、名字与登录密码",
   },
   {
-    id: "notifications",
-    group: "个人",
-    label: "通知",
-    title: "通知",
-    description: "邀请、任务与状态更新都在通知中心",
-  },
-  {
     id: "appearance",
     group: "个人",
     label: "外观",
@@ -63,6 +56,15 @@ export const SETTINGS_SECTIONS = [
     label: "本机存储",
     title: "本机存储",
     description: "此浏览器保存的模板、切片与本地缓存",
+    wide: true,
+  },
+  {
+    id: "changelog",
+    group: "个人",
+    label: "更新日志",
+    title: "更新日志",
+    description: "最近 3 个已发布版本的更新说明",
+    wide: true,
   },
   {
     id: "workspace",
@@ -78,12 +80,21 @@ export const SETTINGS_SECTIONS = [
     label: "升级方案",
     wide: true,
     title: "升级方案",
-    description: "成员名额、店铺位与计费说明",
+    description: "店铺订阅与计费说明",
+  },
+  {
+    id: "workspace-storage",
+    group: "工作空间",
+    label: "存储桶",
+    wide: true,
+    title: "存储桶",
+    description: "工作空间共用的 R2 存储桶，由所有者创建和管理",
   },
   {
     id: "mcp",
     group: "工作空间",
     label: "MCP",
+    wide: true,
     title: "MCP",
     description: "申请和管理智能体令牌，权限随当前角色决定",
   },
@@ -100,38 +111,20 @@ export const SETTINGS_SECTIONS = [
   {
     id: "supplier-accounts",
     group: "平台管理",
-    label: "厂家账号",
+    label: "工厂管理",
     admin: true,
     wide: true,
-    title: "厂家账号",
-    description: "管理厂家成员账号、登录状态与排单权限",
-  },
-  {
-    id: "ocr",
-    group: "平台管理",
-    label: "OCR",
-    admin: true,
-    wide: true,
-    title: "OCR",
-    description: "识图模型与定价",
+    title: "工厂管理",
+    description: "管理工厂资料、成员账号与授权",
   },
   {
     id: "ai-accounts",
     group: "平台管理",
-    label: "AI 账号池",
+    label: "AI 账号",
     admin: true,
     wide: true,
-    title: "AI 账号池",
-    description: "填写密钥、选择模型、启停并测试连接",
-  },
-  {
-    id: "media",
-    group: "平台管理",
-    label: "对象存储",
-    admin: true,
-    wide: true,
-    title: "对象存储",
-    description: "S3 兼容对象存储与媒体源站",
+    title: "AI 账号",
+    description: "识图与生图账号、识图模型定价和运行限制",
   },
   {
     id: "payment",
@@ -153,21 +146,12 @@ export const SETTINGS_SECTIONS = [
     description: "Ozon Seller API 经选中的 VLESS 节点出站，节点不可用时自动直连",
   },
   {
-    id: "prompts",
-    group: "平台管理",
-    label: "提示词",
-    admin: true,
-    wide: true,
-    title: "提示词",
-    description: "批量维护平台货源已提交的提示词",
-  },
-  {
     id: "banned-tags",
     group: "平台管理",
-    label: "受限标签",
+    label: "全局受限标签",
     admin: true,
     wide: true,
-    title: "受限标签",
+    title: "全局受限标签",
     description: "全平台禁止出现在商品标签里的词，保存和推送 Ozon 前都会拦截",
   },
   {
@@ -213,7 +197,7 @@ export const SETTINGS_SECTIONS = [
     admin: true,
     wide: true,
     title: "订单",
-    description: "加购订单与支付状态",
+    description: "订阅订单与支付状态",
   },
 ] as const satisfies readonly SettingsSectionMeta[]
 
@@ -242,7 +226,7 @@ export const ADMIN_SETTINGS_ROWS = SETTINGS_ROWS.filter((row) => row.admin)
 /**
  * The rows a rank may open: platform management is a `super_admin` surface.
  *
- * An `admin` rank runs the main-menu platform screens (货源管理 on `/admin`,
+ * An `admin` rank runs the main-menu platform screens (平台商品库管理 on `/admin`,
  * gated by `isPlatformStaffRole` and Cloud's `require_platform_staff`), but
  * never these panes — that split is one function so the rail, the settings page's
  * search, the pane resolver and the admin surface's own rail cannot drift
@@ -282,7 +266,7 @@ export function resolveSettingsPane(input: {
   available: readonly SettingsSectionRow[]
   adminSurface: boolean
 }): SettingsPaneResolution {
-  if (input.available.some((row) => row.id === input.requested)) {
+  if (input.available.some((row) => row.id === input.requested && (!row.admin || input.adminSurface))) {
     return { kind: "pane", section: input.requested }
   }
   return input.adminSurface

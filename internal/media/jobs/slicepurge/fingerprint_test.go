@@ -55,7 +55,7 @@ func TestSelectTargetsKeepsOneTransitBucket(t *testing.T) {
 	}
 	selected, err := SelectTargets([]Account{
 		base,
-		{Role: "assets", Provider: "cloudflare", Endpoint: base.Endpoint, Region: "auto", Bucket: "podhub-assets", ForcePathStyle: true, AccessKeyID: "k", SecretAccessKey: "s"},
+		{Role: "assets", Provider: "cloudflare", Endpoint: base.Endpoint, Region: "auto", Bucket: "podhub-supplier", ForcePathStyle: true, AccessKeyID: "k", SecretAccessKey: "s"},
 	})
 	if err != nil || len(selected) != 1 || selected[0].Bucket != "podhub-transit" || selected[0].KeyPrefix != "" {
 		t.Fatalf("%v %+v", err, selected)

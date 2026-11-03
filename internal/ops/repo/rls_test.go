@@ -15,6 +15,7 @@ import (
 	"github.com/xxww0098/podhub-go/internal/platform/db"
 	"github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
 	"github.com/xxww0098/podhub-go/internal/platform/seal"
+	"github.com/xxww0098/podhub-go/tests/testkit"
 )
 
 func TestLedgerAndConsoleRLS(t *testing.T) {
@@ -43,7 +44,7 @@ func TestLedgerAndConsoleRLS(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := New(pool, seal.Ring{}, false)
+	store := New(pool, seal.Ring{}, false, seal.DefaultSellerKeyID)
 	row, err := store.Begin(ctx, orgA, storeA, "k-a", "h-a", "chat_send", []byte(`{}`))
 	if err != nil || !row.Inserted || row.State != "dispatching" {
 		t.Fatalf("begin %+v %v", row, err)
@@ -173,10 +174,8 @@ var (
 func parityDB(t *testing.T) (*pgxpool.Pool, context.Context) {
 	t.Helper()
 	dsn := os.Getenv("PODHUB_PARITY_DSN")
-	if dsn == "" {
-		if _, err := os.Stat("/var/run/docker.sock"); err != nil {
-			t.Skip("docker daemon is not available")
-		}
+	if dsn == "" && !testkit.DockerAvailable() {
+		t.Skip("docker daemon is not available")
 	}
 	parityOnce.Do(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)

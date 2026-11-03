@@ -198,18 +198,13 @@ test("商品：未确认的写入变成 Result Unknown 行，只提供对账；�
   )
   assert.equal(commandErrorCode(disabled), WRITES_DISABLED_CODE)
 
-  // The products screen is the read-only mirror now — the write paths these
-  // refusals belong to stay live on the surfaces that still own them (the
-  // console's reconcile action keeps the unknown-write contract).
-  const consoleScreen = source("features/console/console-screen.tsx")
-  assert.match(consoleScreen, /result_unknown/)
-  assert.match(consoleScreen, /consoleReconcileActiveWorkspace\(\)/)
 })
 
 // --- 客服 --------------------------------------------------------------------
 
-test("客服：未确认的发送清掉草稿并禁止重发，读取失败仍是读取失败的原话", async () => {
+test("客服：未确认发送保留结果未知码，读取失败仍是读取失败的原话", async () => {
   const send = {
+    operation_id: "11111111-1111-4111-8111-111111111111",
     store_id: "store-1",
     chat_id: "chat-9",
     text: "Здравствуйте",
@@ -229,10 +224,6 @@ test("客服：未确认的发送清掉草稿并禁止重发，读取失败仍�
   assert.equal(commandErrorCode(readFailure), "cloud_ozon_message_center_failed")
   assert.equal(inboxError(readFailure), "Ozon 会话列表暂不可用")
 
-  const screen = source("features/message-center/message-center-screen.tsx")
-  assert.match(screen, /SELLER_RESULT_UNKNOWN_CODE/)
-  assert.match(screen, /setDraftRu\(""\)\n\s*notifyError\("结果未知"/)
-  assert.match(screen, /notifyError\("写入已停用"/)
 })
 
 // --- 概览 --------------------------------------------------------------------

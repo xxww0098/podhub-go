@@ -7258,6 +7258,13 @@ pub struct ReadOptions {
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub skip_thumbnail: Option<bool>,
+    /// Image resource IDs to decode. `None` reads all implemented resources;
+    /// layer links and alpha-channel names are always retained.
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub image_resources_whitelist: Option<Vec<u16>>,
     /// Does not load linked files (used in smart-objects).
     #[cfg_attr(
         feature = "serde",
@@ -7305,7 +7312,7 @@ pub struct ReadOptions {
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub strict: Option<bool>,
-    /// Treat undecodable ZIP channel data as a hard parse error.
+    /// Treat undecodable ZIP or incomplete RLE channel data as a hard parse error.
     ///
     /// The decoder has always recovered from a corrupt zlib stream by leaving
     /// the channel's samples at zero and returning success, because the
@@ -7314,9 +7321,9 @@ pub struct ReadOptions {
     /// so a damaged template renders as a plausible-looking but wrong image
     /// and the damage is only visible after the product ships.
     ///
-    /// When this is `Some(true)`, a ZIP-compressed channel that fails to
-    /// decompress (or that decompresses past the declared geometry) and whose
-    /// samples the caller is actually going to consume produces
+    /// When this is `Some(true)`, a ZIP channel that fails to decompress or
+    /// exceeds its allocation ceiling, or an RLE row with missing samples,
+    /// whose samples the caller is actually going to consume produces
     /// [`ReadError::CorruptChannel`](crate::reader::ReadError::CorruptChannel)
     /// instead. Channels the caller skips (raw-data-only reads, channel
     /// offsets beyond the interleaved step, empty planes) stay lenient, so the

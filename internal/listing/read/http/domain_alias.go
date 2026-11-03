@@ -36,7 +36,6 @@ var (
 	ResetData             = domain.ResetData
 	PrepareCard           = domain.PrepareCard
 	CreateFingerprint     = domain.CreateFingerprint
-	AssociationIdentity   = domain.AssociationIdentity
 	ProjectRow            = domain.ProjectRow
 	SummaryOf             = domain.SummaryOf
 	HydratePayload        = domain.HydratePayload

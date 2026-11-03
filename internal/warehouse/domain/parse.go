@@ -36,6 +36,7 @@ type ParsedWarehouses struct {
 // ParsedMethods is one delivery-method page.
 type ParsedMethods struct {
 	Rows     []contract.Method
+	Cursor   string
 	HasNext  bool
 	Obsolete bool
 }
@@ -95,16 +96,20 @@ func ParseWarehouses(raw []byte) (ParsedWarehouses, error) {
 	if err := json.Unmarshal(raw, &body); err != nil {
 		return ParsedWarehouses{}, err
 	}
-	rows := decodeHouses(body.Warehouses)
-	if len(rows) == 0 {
-		rows = decodeHouses(body.Result.Warehouses)
+	list := body.Warehouses
+	if len(list) == 0 {
+		list = body.Result.Warehouses
+	}
+	rows, err := decodeHouses(list)
+	if err != nil {
+		return ParsedWarehouses{}, err
 	}
 	return ParsedWarehouses{Rows: rows, Cursor: strings.TrimSpace(body.Cursor), HasNext: body.HasNext}, nil
 }
 
-func decodeHouses(raw json.RawMessage) []contract.Warehouse {
+func decodeHouses(raw json.RawMessage) ([]contract.Warehouse, error) {
 	if len(bytes.TrimSpace(raw)) == 0 || string(bytes.TrimSpace(raw)) == "null" {
-		return nil
+		return nil, contract.Ozon()
 	}
 	var rows []struct {
 		WarehouseID int64  `json:"warehouse_id"`
@@ -112,15 +117,15 @@ func decodeHouses(raw json.RawMessage) []contract.Warehouse {
 		Status      string `json:"status"`
 		IsRFBS      bool   `json:"is_rfbs"`
 	}
-	if json.Unmarshal(raw, &rows) != nil {
-		return nil
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		return nil, err
 	}
 	out := make([]contract.Warehouse, 0, len(rows))
 	seen := map[int64]int{}
 	for _, row := range rows {
 		name := strings.TrimSpace(row.Name)
 		if row.WarehouseID <= 0 || name == "" {
-			continue
+			return nil, contract.Ozon()
 		}
 		item := contract.Warehouse{
 			WarehouseID: row.WarehouseID,
@@ -135,34 +140,32 @@ func decodeHouses(raw json.RawMessage) []contract.Warehouse {
 		seen[row.WarehouseID] = len(out)
 		out = append(out, item)
 	}
-	return out
+	return out, nil
 }
 
-// ParseMethods reads the verified result[] fields. If result is empty and
-// delivery_methods is present, that array is accepted because the existing
-// delivery-method reader in this repository uses it.
+// ParseMethods reads the v2 delivery-method list and its continuation cursor.
 func ParseMethods(raw []byte) (ParsedMethods, error) {
 	if Obsolete(raw) {
 		return ParsedMethods{Obsolete: true}, nil
 	}
 	var body struct {
+		Cursor          string          `json:"cursor"`
 		HasNext         bool            `json:"has_next"`
-		Result          json.RawMessage `json:"result"`
 		DeliveryMethods json.RawMessage `json:"delivery_methods"`
 	}
 	if err := json.Unmarshal(raw, &body); err != nil {
 		return ParsedMethods{}, err
 	}
-	rows := decodeMethods(body.Result)
-	if len(rows) == 0 {
-		rows = decodeMethods(body.DeliveryMethods)
+	rows, err := decodeMethods(body.DeliveryMethods)
+	if err != nil {
+		return ParsedMethods{}, err
 	}
-	return ParsedMethods{Rows: rows, HasNext: body.HasNext}, nil
+	return ParsedMethods{Rows: rows, Cursor: strings.TrimSpace(body.Cursor), HasNext: body.HasNext}, nil
 }
 
-func decodeMethods(raw json.RawMessage) []contract.Method {
+func decodeMethods(raw json.RawMessage) ([]contract.Method, error) {
 	if len(bytes.TrimSpace(raw)) == 0 || string(bytes.TrimSpace(raw)) == "null" {
-		return nil
+		return nil, contract.Ozon()
 	}
 	var rows []struct {
 		ID          int64           `json:"id"`
@@ -176,15 +179,15 @@ func decodeMethods(raw json.RawMessage) []contract.Method {
 		CreatedAt   json.RawMessage `json:"created_at"`
 		UpdatedAt   json.RawMessage `json:"updated_at"`
 	}
-	if json.Unmarshal(raw, &rows) != nil {
-		return nil
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		return nil, err
 	}
 	out := make([]contract.Method, 0, len(rows))
 	seen := map[int64]int{}
 	for _, row := range rows {
 		name := strings.TrimSpace(row.Name)
 		if row.ID <= 0 || row.WarehouseID <= 0 || name == "" {
-			continue
+			return nil, contract.Ozon()
 		}
 		item := contract.Method{
 			MethodID:    row.ID,
@@ -205,7 +208,7 @@ func decodeMethods(raw json.RawMessage) []contract.Method {
 		seen[row.ID] = len(out)
 		out = append(out, item)
 	}
-	return out
+	return out, nil
 }
 
 // ParseOperation reads status and result.warehouse_id.

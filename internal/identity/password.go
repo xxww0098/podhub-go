@@ -1,11 +1,9 @@
 package identity
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -14,7 +12,7 @@ import (
 )
 
 func (s *Service) Password(r *http.Request) Result {
-	cred, _, acc, res, ok := s.requireAccount(r)
+	_, _, acc, res, ok := s.requireAccount(r)
 	if !ok {
 		return res
 	}
@@ -32,7 +30,7 @@ func (s *Service) Password(r *http.Request) Result {
 	if utf8.RuneCountInString(body.New) < 8 || len(body.New) > maxPasswordBytes {
 		return authResult(http.StatusBadRequest, msgPasswordBounds, "VALIDATION")
 	}
-	user, err := s.q(r.Context()).FindUserByEmail(r.Context(), acc.email)
+	user, err := s.findUserByEmail(r.Context(), acc.email)
 	if err != nil {
 		return dbResult(err)
 	}
@@ -46,17 +44,17 @@ func (s *Service) Password(r *http.Request) Result {
 	if err != nil {
 		return dbResult(err)
 	}
-	token, err := s.sessionToken(r, nextHash)
+	token, err := s.sessionToken(r, nextHash, user.SessionRevision)
 	if err != nil {
 		return dbResult(err)
 	}
 	var revoked int64
-	err = s.inTx(r.Context(), func(q *sqlc.Queries) (bool, error) {
+	err = s.inTx(r.Context(), func(_ pgx.Tx, q *sqlc.Queries) (bool, error) {
 		row, err := q.AssertPassword(r.Context(), acc.id)
 		if err != nil {
 			return false, err
 		}
-		if row.PasswordHash != user.PasswordHash || row.Disabled {
+		if row.PasswordHash != user.PasswordHash || row.SessionRevision != user.SessionRevision || row.Disabled {
 			return true, errDrift
 		}
 		if err := q.ReplacePassword(r.Context(), sqlc.ReplacePasswordParams{PasswordHash: nextHash, ID: acc.id}); err != nil {
@@ -101,60 +99,22 @@ func (s *Service) Password(r *http.Request) Result {
 	if err != nil {
 		return dbResult(err)
 	}
-	live, err := s.liveStack(r.Context(), cred)
-	if err != nil {
-		return dbResult(err)
-	}
-	stack := MergedStack(live, acc.id, token)
 	_ = revoked
 	return Result{
 		Status:  http.StatusOK,
 		Body:    loginBody(token, user.PublicID, user.Role, user.Email, acc.name, user.SupplierID, user.Target),
-		Cookies: SessionCookies(token, stack),
+		Cookies: SessionCookies(token),
 	}
 }
 
 func (s *Service) Forgot(r *http.Request) Result {
-	if s.pool == nil {
-		return dbResult(errors.New("no pool"))
-	}
 	var body struct {
 		Email string `json:"email"`
 	}
 	if err := strictJSON(r, &body); err != nil {
 		return authResult(http.StatusBadRequest, msgBadJSON, "VALIDATION")
 	}
-	email := strings.TrimSpace(body.Email)
-	if EmailShaped(email) {
-		user, err := s.q(r.Context()).FindUserByEmail(r.Context(), email)
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return dbResult(err)
-		}
-		if err == nil && !user.Disabled {
-			if err := s.maybeEmailToken(r.Context(), user.ID, "reset", time.Hour); err != nil {
-				return dbResult(err)
-			}
-		}
-	}
-	return Result{Status: http.StatusOK, Body: []byte(`{"data":{"ok":true}}`)}
-}
-
-func (s *Service) maybeEmailToken(ctx context.Context, userID int64, purpose string, ttl time.Duration) error {
-	n, err := s.q(ctx).RecentOpenEmailToken(ctx, sqlc.RecentOpenEmailTokenParams{UserID: userID, Purpose: purpose})
-	if err != nil {
-		return err
-	}
-	if n > 0 {
-		return nil
-	}
-	token, err := randomToken()
-	if err != nil {
-		return err
-	}
-	return s.q(ctx).InsertEmailToken(ctx, sqlc.InsertEmailTokenParams{
-		TokenHash: hashToken(token), UserID: userID, Purpose: purpose,
-		Column4: time.Now().UTC().Add(ttl).Format(time.RFC3339Nano),
-	})
+	return s.forgot(r, body.Email)
 }
 
 func (s *Service) Reset(r *http.Request) Result {
@@ -171,12 +131,19 @@ func (s *Service) Reset(r *http.Request) Result {
 	if utf8.RuneCountInString(body.Password) < 8 || len(body.Password) > maxPasswordBytes {
 		return authResult(http.StatusBadRequest, msgPasswordBounds, "VALIDATION")
 	}
+	if !IsSessionToken(body.Token) {
+		return authResult(http.StatusBadRequest, msgBadLink, "VALIDATION")
+	}
+	if !s.acquirePassword() {
+		return authResult(http.StatusTooManyRequests, msgBusyHash, "RATE_LIMITED")
+	}
+	defer s.releasePassword()
 	hash, err := hashPassword(body.Password)
 	if err != nil {
 		return dbResult(err)
 	}
-	err = s.inTx(r.Context(), func(q *sqlc.Queries) (bool, error) {
-		userID, err := q.ConsumeEmailToken(r.Context(), sqlc.ConsumeEmailTokenParams{TokenHash: hashToken(body.Token), Purpose: "reset"})
+	err = s.inTx(r.Context(), func(_ pgx.Tx, q *sqlc.Queries) (bool, error) {
+		userID, err := q.ResetTokenOwner(r.Context(), hashToken(body.Token))
 		if errors.Is(err, pgx.ErrNoRows) {
 			return true, errBadLink
 		}
@@ -189,6 +156,14 @@ func (s *Service) Reset(r *http.Request) Result {
 		}
 		if state.Disabled {
 			return true, errDisabled
+		}
+		// All recovery writers lock user before token, including two different
+		// links for the same user. Consumption rechecks validity after the lock.
+		if _, err := q.ConsumeEmailToken(r.Context(), sqlc.ConsumeEmailTokenParams{TokenHash: hashToken(body.Token), Purpose: "reset"}); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return true, errBadLink
+			}
+			return false, err
 		}
 		if err := q.ReplacePassword(r.Context(), sqlc.ReplacePasswordParams{PasswordHash: hash, ID: userID}); err != nil {
 			return false, err

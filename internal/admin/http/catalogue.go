@@ -22,25 +22,24 @@ const (
 )
 
 // catalogue is the model-list client. It does not follow redirects and does
-// not use a proxy. public is the explicit public-dial switch. Off, which is
-// the default, refuses a public address with the same dns refusal as a
-// disallowed loopback address, and does not resolve or dial it.
+// not use a proxy. Each fetch carries the stored allow_public_egress switch.
+// Off, which is the default, refuses a public address with the same dns
+// refusal as a disallowed loopback address, and does not resolve or dial it.
 type catalogue struct {
 	loopback bool
-	public   bool
 }
 
-// NewCatalogue builds the probe client. loopback and public are the flags
-// already parsed by config.Load.
-func NewCatalogue(loopback, public bool) service.Catalogue {
-	return catalogue{loopback: loopback, public: public}
+// NewCatalogue builds the probe client. loopback is the local-test flag parsed
+// by config.Load; the public-dial switch arrives with each Fetch.
+func NewCatalogue(loopback bool) service.Catalogue {
+	return catalogue{loopback: loopback}
 }
 
 type dnsRefused struct{}
 
 func (dnsRefused) Error() string { return "dns refused" }
 
-func (c catalogue) Fetch(ctx context.Context, endpoint, format, apiKey string) (int, []byte, bool, error) {
+func (c catalogue) Fetch(ctx context.Context, endpoint, format, apiKey string, allowPublic bool) (int, []byte, bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
@@ -57,7 +56,7 @@ func (c catalogue) Fetch(ctx context.Context, endpoint, format, apiKey string) (
 		req.Header.Set("User-Agent", probeUserAgent)
 		req.Header.Set("x-opencode-session", "podhub-ai-model-probe")
 	}
-	res, err := c.client().Do(req)
+	res, err := c.client(allowPublic).Do(req)
 	if err != nil {
 		var refused dnsRefused
 		if errors.As(err, &refused) {
@@ -99,11 +98,11 @@ func probeIndex(loopback, public bool) int {
 	return n
 }
 
-// client is the process-wide probe client for this loopback and public
-// policy. Proxy stays nil. The transport is not the plain or loopback
+// client is the process-wide probe client for this loopback policy and the
+// given public policy. Proxy stays nil. The transport is not the plain or loopback
 // bucket: those either follow the environment proxy or refuse every
 // public address.
-func (c catalogue) client() *http.Client {
+func (c catalogue) client(public bool) *http.Client {
 	probeOnce.Do(func() {
 		for _, allowLoop := range [2]bool{false, true} {
 			for _, allowPublic := range [2]bool{false, true} {
@@ -122,7 +121,7 @@ func (c catalogue) client() *http.Client {
 			}
 		}
 	})
-	return probeCli[probeIndex(c.loopback, c.public)]
+	return probeCli[probeIndex(c.loopback, public)]
 }
 
 func dialPinned(ctx context.Context, network, addr string, allowLoopback, allowPublic bool) (net.Conn, error) {
@@ -169,7 +168,7 @@ func dialPinned(ctx context.Context, network, addr string, allowLoopback, allowP
 
 // literalAllowed is the dial gate for an address that is already an IP.
 // A loopback IP needs the loopback flag. Any other IP needs the public
-// flag, which is off unless config.Load saw the explicit switch.
+// flag, which is off unless the stored allow_public_egress switch is on.
 func literalAllowed(ip net.IP, allowLoopback, allowPublic bool) bool {
 	if ip == nil {
 		return false

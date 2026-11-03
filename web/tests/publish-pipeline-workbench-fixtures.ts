@@ -22,17 +22,16 @@ export const workbenchSchema = { ...baseSchema, fields: [...baseSchema.fields, {
 }] }
 export const workbenchIds = { row: "fixture-workbench-row", store: "fixture-workbench-store", card: "fixture-workbench-card", intent: "fixture-exact-intent" } as const
 const fixtureAccount: AccountOverview = {
-  session: { authenticated: true }, owned_count: 1, owned_limit: 1,
-  accounts: [{ active: true, uuid: "fixture-account", email: "fixture@example.test", name: "本地夹具" }],
+  session: { authenticated: true, uuid: "fixture-account", email: "fixture@example.test" }, owned_count: 1, owned_limit: 1,
   active_workspace: { id: 1, uuid: "fixture-workspace", is_owned: true, name: "本地夹具", plan: "test", role: "owner" }, workspaces: [],
 }
 export function seedFixtureIdentity() {
   rememberAccountOverview(fixtureAccount)
   const store: OzonStoreView = {
     id: workbenchIds.store, cloud_store_uuid: workbenchIds.store, active: true, label: "本地模拟店铺", configured: true, cloud_status: "active",
-    can_manage: true, can_edit_credential: false, assignee_key_manage: false, client_id: "", advertising_client_id: "",
+    can_manage: true, can_edit_credential: false, client_id: "", advertising_client_id: "",
     advertising_configured: false, needs_reentry: false, ref_id: "", secret_status: "present", updated_at_ms: 1, watermark_name: "",
-    permissions: { manage_store: true, manage_key: false, manage_key_grants: false, delete_store: false, edit_name: false, manage_tags: false, test_key: false },
+    permissions: { manage_store: true, manage_key: false, delete_store: false, edit_name: false, manage_tags: false, test_key: false },
   }
   rememberStoreRoster({ stores: [store] }, 1)
 }

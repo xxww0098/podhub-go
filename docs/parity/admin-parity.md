@@ -1,5 +1,11 @@
 # admin 对拍
 
+本文保留 T-A1/T-A2 与后续移植批次的历史对拍。下面的路由数量、守卫表和 501 清单不代表当前挂载状态；当前契约见 `api/openapi.yaml`，供应商账号与商品授权的后续变化见 [账号与权限模型](../architecture/account-permission-model.md)。
+
+2026-10-24 核对：管理端物流路由已不在当前路由表与 OpenAPI 中；`ShippingWrites` 仍有内部装配，但没有 HTTP 调用入口。下文的物流 reconcile / safe-continue 是历史实现记录，底层服务与生产数据库角色的本地集成测试不能代表产品入口或真实 Ozon 链路已通过。
+
+当前本地证据：`tests/integration/shipping_production_role_test.go` 使用正式 `db.Connect` 和 `podhub_login_api`（NOINHERIT、非超级用户、不能绕过 RLS），分别验证现有管理端 HTTP 门禁，以及物流服务经正式 Seller egress 到本地 HTTP 服务的调用、回读与持久化；单连接池验证角色与租户作用域不泄漏。`shipping_settlement_test.go` 在配送 ID 写入处注入 PostgreSQL 失败，验证状态、操作记录与 ID 同事务回滚。
+
 层级：L6。`internal/admin/http` 按供应商、平台目录、平台管理分文件。它不是第二个 `httpapi`：chi `Mount` 只注册这三组。全局禁用标签 4 条仍在 `internal/platform`（GET 在生成路由，写在 `MountBannedWrites`），本包的 `Routes` 不含 `banned-tags`。
 
 T-A1 改了供应商 41 条里规格已经写全请求、SQL 和成功 JSON 的路由。没有改 `internal/supplier`。T-A2 改平台目录、采购、物流、Seller 中转、代理管理和委托单读接口。账单与观察见 `docs/parity/admin-billing-parity.md`。用户与 AI 鉴权见 `docs/parity/admin-users-ai-auth-parity.md`。官方字段包、类目提示词、类目视频和媒体见 `docs/parity/adminb-misc-parity.md`。委托派发、收货、取消，以及物流 reconcile / safe-continue 已按 X2 规格实现。
@@ -19,9 +25,9 @@ Rust 仓库克隆 404。账单与观察按随任务附带的规格移植，见 `
 
 ## 已挂上的行为
 
-157 条都已注册。未登录 401。守卫失败 403。
+已挂上的路由都已注册。未登录 401。守卫失败 403。
 
-用户目录、席位、解散、support grant、writer lease、AI 账本、价格、探测、连接配置和验证器这 25 条已按上传的 adminB 规格实现，见 `docs/parity/admin-users-ai-auth-parity.md`。平台目录、采购、物流预设、中转文件和代理管理在超级管理员完成 TOTP 与 15 分钟 step-up 之后走已实现的 SQL。官方字段包、类目提示词、类目视频和媒体管理这 18 条见 `docs/parity/adminb-misc-parity.md`。账单、兑换码、支付配置、钱包、平台观察和错误日志见 `docs/parity/admin-billing-parity.md`。供应商已实现的路由见下面的逐项登记。原先 501 的 22 条供应商存储、货源行、Ozon 配置和提示词写路径已按上传规格接上。委托三条写和物流 reconcile / safe-continue 已实现。
+用户目录、席位、解散、support grant、writer lease、AI 账本、价格、探测和连接配置这批 adminB 路由（规格 25 条，验证器 enroll、confirm、step-up 三条已随 TOTP 删除撤下）已按上传的 adminB 规格实现，见 `docs/parity/admin-users-ai-auth-parity.md`。平台目录、采购、物流预设、中转文件和代理管理只由平台角色 `super_admin` 守卫，没有验证器、恢复码或 step-up 窗口。官方字段包、类目提示词、类目视频和媒体管理这 18 条见 `docs/parity/adminb-misc-parity.md`。账单、兑换码、支付配置、钱包、平台观察和错误日志见 `docs/parity/admin-billing-parity.md`。供应商已实现的路由见下面的逐项登记。原先 501 的 22 条供应商存储、货源行、Ozon 配置和提示词写路径已按上传规格接上。委托三条写和物流 reconcile / safe-continue 已实现。
 
 供应商门户的员工拒绝是「需要平台管理员权限」。其余 legacy 路由的员工拒绝正文仍是 `forbidden` / `FORBIDDEN`。
 
@@ -33,7 +39,7 @@ go test ./internal/admin/... ./tests/archtest/ -count=1
 
 `TestAdminGuards` 覆盖：超级管理员打提现支付在未接线时得到 500 `internal`；平台 `admin` 可以过供应商列表的 staff 守卫然后 500；普通用户被 staff 拒绝（「需要平台管理员权限」）；平台 `admin` 打 `/api/admin/users` 得到超级管理员拒绝；非超管打 `/api/admin/ai-requests` 403（守卫按规格改为 super，未接线时超管仍 501）；未登录打 AI 账本得到 `AUTH_REQUIRED`；登录用户 DELETE 视频在没有替换处理器时得到 501（登录守卫，不要求 org）。`TestPortedSkipsInventoryGuard` 锁住已替换的路由不再走这道库存守卫。
 
-有 Docker 或 `PODHUB_PARITY_DSN` 时还会跑 `TestOwnershipStaffRLSAndCash`：admin 只看见自己创建的库；另一个 admin 看不见；super_admin 看得见；缺 `app.staff_access` 时 `supplier_withdrawals` 与 `sc_source_members` 行数为 0；打款把冻结和余额同时减去金额，第二次 409；授权只列给创建它的用户，别人撤销 404，第二次撤销 404。用户与 AI 鉴权的库测是 `TestAdminUsersAIAuth`。
+有 Docker 或 `PODHUB_PARITY_DSN` 时还会跑 `TestOwnershipStaffRLSAndCash`：admin 只看见自己创建的库；另一个 admin 看不见；super_admin 看得见；缺 `app.staff_access` 时 `supplier_withdrawals` 与 `sc_factory_members` 行数为 0；打款把冻结和余额同时减去金额，第二次 409；授权只列给创建它的用户，别人撤销 404，第二次撤销 404。用户与 AI 鉴权的库测是 `TestAdminUsersAIAuth`。
 
 字节测试：`TestSupplierListBytesAndHeaders`、`TestSupplierValidationAndAuthBytes`、`TestGrantAndWithdrawalInput`、`TestDecodeSupplierDb`、`TestAdminGuards`。
 
@@ -56,16 +62,16 @@ go test ./internal/admin/... ./tests/archtest/ -count=1
 | 物流预设与注入开关 | `TestNormalizePayloadMessages` `TestWriteGates` `TestSafeContinueBlock` |
 | sing-box 配置字节 | `TestSingBoxMatchesFixture` |
 | 委托单查询与 uuid | `TestOrderQuery` `TestCanonicalUUID` |
-| A2 在供应商守卫之前要求 TOTP | `TestA2GatesBeforePort` |
+| A2 在供应商守卫之前要求超级管理员角色 | `TestA2GatesBeforePort` |
 
 ## 改了哪个流程、结果为什么不变
 
-账单与观察路由的流程变化写在 `docs/parity/admin-billing-parity.md`。供应商写路径仍在同一个 `tenantx.BeginApp` 事务里完成插入、审计和提交。没有把多次往返并成结果会变的批处理。各写域共用 `internal/platform/writer.Assert`：匹配本进程 `axum` + `CLOUD_INSTANCE_ID` 的未过期行允许并心跳，否则 503，文案仍按调用点。厂家门户看的是 `admin` 域，不是 `entitlement`。平台货源行、Ozon 配置和提示词写路径也走同一 `Assert`，域是 `admin`，关闭文案是「平台货源写入未启用」。存储 6 条不进写租约。这 22 条不读 `OZON_WRITE_KILL_SWITCH` 或 `CLOUD_MEDIA_GC_DELETE`，确认不删除暂存对象，也不调用 Seller。官方字段包、提示词和视频的写闸见 `docs/parity/adminb-misc-parity.md`。一次性密码仍是 `dzp-` 加 UUID。用户与 AI 鉴权这 25 条走另一套普通事务，租约判断与其它域相同，流程对照写在 `admin-users-ai-auth-parity.md`。禁用标签的既有写路径没有改。路径和 operationId 数量没变。没有第二套 `OZON_WRITE_KILL_SWITCH` 解析。OpenAPI tag `admin` 已用于 banned-tags，所以账单新增 operation 用 operationId 从根代码生成里排除，生成的 `Server` 不变。
+账单与观察路由的流程变化写在 `docs/parity/admin-billing-parity.md`。供应商写路径仍在同一个 `tenantx.BeginApp` 事务里完成插入、审计和提交。没有把多次往返并成结果会变的批处理。各写域共用 `internal/platform/writer.Assert`：匹配本进程 `axum` + `CLOUD_INSTANCE_ID` 的未过期行允许并心跳，否则 503，文案仍按调用点。厂家门户看的是 `admin` 域，不是 `entitlement`。供应商商品库行、Ozon 配置和提示词写路径也走同一 `Assert`，域是 `admin`，关闭文案是「供应商商品库写入未启用」。存储 6 条不进写租约。这 22 条不读 `OZON_WRITE_KILL_SWITCH` 或 `CLOUD_MEDIA_GC_DELETE`，确认不删除暂存对象，也不调用 Seller。官方字段包、提示词和视频的写闸见 `docs/parity/adminb-misc-parity.md`。一次性密码仍是 `dzp-` 加 UUID。用户与 AI 鉴权这 25 条走另一套普通事务，租约判断与其它域相同，流程对照写在 `admin-users-ai-auth-parity.md`。禁用标签的既有写路径没有改。路径和 operationId 数量没变。没有第二套 `OZON_WRITE_KILL_SWITCH` 解析。OpenAPI tag `admin` 已用于 banned-tags，所以账单新增 operation 用 operationId 从根代码生成里排除，生成的 `Server` 不变。
 
 ## 需要用户决定
 
 1. 生产成功路径已经不是整段 501。还对不齐的是各文档里的未确认句子，不是「守卫通过后一律 501」。用户与 AI 鉴权的未确认点见 `admin-users-ai-auth-parity.md`。账单与观察里无法证明与 Rust 一致的差异见 `admin-billing-parity.md`。官方字段包、提示词、视频和媒体的未确认点见 `adminb-misc-parity.md`。
-2. 「路径推断」的真实守卫。失败闭合为 super_admin 可能比 Rust 更严（例如只要求 platform admin）。`require_price_publisher` 在价格规格里就是 `require_super_admin`。守卫仍记为 GuardPrice，行为与 super 相同。物流 readiness 在路由表里标的是工作区守卫，处理函数按规格改成超级管理员加 TOTP。
+2. 「路径推断」的真实守卫。失败闭合为 super_admin 可能比 Rust 更严（例如只要求 platform admin）。`require_price_publisher` 在价格规格里就是 `require_super_admin`。守卫仍记为 GuardPrice，行为与 super 相同。物流 readiness 在路由表里标的是工作区守卫，处理函数按规格改成只要求超级管理员角色。
 3. staff 拒绝的中文正文。
 4. 供应商 admin 与另一代理的 `internal/supplier` 如何共享表。本 PR 不建第二套 repo；以后查询应走本域 sqlc，不改对方文件。`db/schema` 现在没有这些表，所以没有生成 sqlc。
 5. 规则表即时生效和审计已经由 banned-tags 写路径完成，本 PR 没有第二套。
@@ -74,11 +80,11 @@ go test ./internal/admin/... ./tests/archtest/ -count=1
 8. 提示词 diff、preview、publish、PATCH、sync 已实现，成功都是 200。preview 与空 sync 的成功字节对过夹具。GET `/api/admin/supplier-prompts` 仍是原来的 200。准入 429 正文和未知 query 的 expected 列表用词见第 18、19 条。本包不安装限流器。
 9. 提现审计的 `module` / `entity_type` 没有逐字段贴出。本实现写成 `supplier_portal` / `supplier_withdrawal`，action、path、payload 键按规格。若 Rust 的 module 不是这两个值，需要改审计行。
 10. 提现 path 不是 UUID 时，规格同时写了「SQL `$1::uuid` 失败 → 500」和「未确认」。本实现把 `22P02` 收成 500 `internal` / `服务暂不可用`。
-11. 供应商开通厂家账号目前只检查角色。平台目录、采购、物流、中转和代理路由，以及账单与观察路由，额外要求 `account_admin_totp.confirmed_at` 与未过期的 `admin_step_up_until`，文案是「请先绑定验证器」「管理操作需要重新验证」。用户与 AI 鉴权这 25 条用自己的 step-up。官方字段包、提示词、视频和媒体这 18 条在请求带会话凭据时会查 TOTP standing，见 `docs/parity/adminb-misc-parity.md`。账单细节见 `docs/parity/admin-billing-parity.md`。
+11. 供应商开通厂家账号目前只检查角色。平台目录、采购、物流、中转和代理路由，以及账单与观察路由，只要求平台角色 `super_admin`；验证器、恢复码和 step-up 窗口已整体删除（迁移 `00004_drop_admin_totp.sql` 删掉 `account_admin_totp` 与 `account_sessions.admin_step_up_until`），`POST /api/admin/totp/enroll`、`POST /api/admin/totp/confirm`、`POST /api/admin/step-up` 三条路由已不存在。用户与 AI 鉴权这 25 条同样只看角色。官方字段包、提示词、视频和媒体这 18 条见 `docs/parity/adminb-misc-parity.md`。账单细节见 `docs/parity/admin-billing-parity.md`。
 12. 平台目录、采购、物流预设与绑定、中转节点文件、代理管理和委托单读取已实现。委托单 dispatch/receipt/cancel 与物流 reconcile / safe-continue 已按 X2 规格实现，见逐项登记。用户与 AI 鉴权 25 条、账单与观察，以及官方字段包、类目提示词、类目视频和媒体这 18 条已经实现。
-13. 已确认。写闸共用 `writer.Assert`（规格 X3-B）。平台目录、采购、物流预设、代理管理、字段包、提示词、视频、权益、连接配置、厂家门户和平台货源都按 holder `axum` 与 `CLOUD_INSTANCE_ID` 判断，并在持有时心跳。503 文案仍是各调用点原来的句子。店铺名册写路径没有移植，没有新路由。
+13. 已确认。写闸共用 `writer.Assert`（规格 X3-B）。平台目录、采购、物流预设、代理管理、字段包、提示词、视频、权益、连接配置、厂家门户和供应商商品库都按 holder `axum` 与 `CLOUD_INSTANCE_ID` 判断，并在持有时心跳。503 文案仍是各调用点原来的句子。店铺名册写路径没有移植，没有新路由。
 14. 连接配置密文已按 camelCase 解密，管理端、支付、媒体、委托和目录白名单读同一份文档。`CatalogRepo.Bases` 只取 `mediaAccounts[].publicBaseUrl`：去掉空字符串，不 trim、不去尾部斜杠，停用账号也算。没有配置行时是空列表，并且不检查密钥。非空媒体在前缀对不上时 400 `图片须先通过图片上传接口写入媒体存储`。`supplierDbStorage`、`delegateAssetsStorage`、AI 和支付不是白名单。上传票据仍是本地 HMAC，不是已证明的 Rust `upload_receipt`。`storage_identity` 公式未确认。`sc_products` 没有 RLS，越权靠超级管理员门。
-15. `CLOUD_SELLER_EGRESS_ROUTES` 的完整切分没有钉死，所以 probe 看不到 socks5h 标签时返回 200 不可达，不拨号。有 socks5h 标签时仍是这一条的 501，因为规格没有钉死代理拨号，本进程不打开真实代理。这不是整段管理路由的 501。目录来自已解析的 `CLOUD_SELLER_RELAY_DIR` / `CLOUD_SELLER_RELAY_SWITCH_DIR`。注入开关 A 是已解析的 `SHIPPING_INJECT_OZON_WRITES`。开关 B 只用 `Config.OzonWritesDisabled()`，HTTP 正文是现有 egress 哨兵的英文 `Error()`，不是 Rust Display 的中文句子。
+15. `CLOUD_SELLER_EGRESS_ROUTES` 在启动时捕获并校验，以逗号或空白分隔有序的 `socks5h://host:port`，可选末尾 `direct`；空配置为直连。代理 probe 真实经配置的 SOCKS 路由访问固定官方 `/v1/roles`，不带店铺凭据、不回退直连，返回 200 与实际 `reachable`，成功时附 `latencyMs`；无代理路由、节点停用或拨号失败为不可达。管理页选定节点经 sidecar 实际影响业务及 worker 的显式官方请求。目录来自已解析的 `CLOUD_SELLER_RELAY_DIR` / `CLOUD_SELLER_RELAY_SWITCH_DIR`。代理只负责传输；既有凭据、固定路径、租户和写闸规则继续在原调用方执行。
 16. 生产快照 JSON 字段名未确认。未知形状变成空的 `productionFiles`。代理非法 uuid、reference 超长、拒绝原因超长走 `mapAdmin` 的 500，不单列 `22P02`。
 17. 委托单表有 RLS。员工事务只设 `app.staff_access=1`，不设 `app.current_org_id`。缺 staff GUC 时这些行对 `podhub_app` 不可见。目录、采购、代理表没有 RLS。`sc_products`、`sc_skus`、`sc_price_versions` 没有 RLS，本 PR 不加。
 18. 准入超预算的 429 正文没有展开。这 22 条不安装限流器。
@@ -89,7 +95,7 @@ go test ./internal/admin/... ./tests/archtest/ -count=1
 
 ## 逐项登记
 
-下表「结果」列写明已实现的成功状态。标「已移植」的见 `docs/parity/admin-billing-parity.md`。生产成功路径没有整段 501。个别未钉死的分支仍在表内写明（例如有 socks5h 标签的 probe）。写闸关闭的 ops 两条在表中仍标 501，代码是 `OZON_WRITES_DISABLED`。
+下表「结果」列写明已实现的成功状态。标「已移植」的见 `docs/parity/admin-billing-parity.md`。生产成功路径没有整段 501。其他尚未实现的分支仍在表内写明。写闸关闭的 ops 两条在表中仍标 501，代码是 `OZON_WRITES_DISABLED`。
 
 | 方法 | 路径 | Rust operationId | 守卫 | 结果 |
 |---|---|---|---|---|
@@ -108,7 +114,7 @@ go test ./internal/admin/... ./tests/archtest/ -count=1
 | POST | `/api/admin/supplier-db-storage/uploads/confirm` | `admin_supplier_db_storage_uploads_confirm` | GuardSuper | 200 confirmed；不删暂存 |
 | GET | `/api/admin/supplier-dbs` | `list_supplier_dbs` | GuardStaff | 200 dbs |
 | POST | `/api/admin/supplier-dbs` | `create_supplier_db` | GuardStaff | 201 db |
-| DELETE | `/api/admin/supplier-dbs/{source_id}` | `delete_supplier_db` | GuardStaff | 200 sourceId |
+| DELETE | `/api/admin/supplier-dbs/{source_id}` | `delete_supplier_db` | GuardStaff | 200 sourceId；库内商品、价格及账号关联一并删除，订单等受保护关联存在时整笔回滚；系统默认库在新建平台商品时按需重建 |
 | GET | `/api/admin/supplier-dbs/{source_id}` | `get_supplier_db` | GuardStaff | 200 detail |
 | PUT | `/api/admin/supplier-dbs/{source_id}` | `update_supplier_db` | GuardStaff | 200 db |
 | POST | `/api/admin/supplier-dbs/{source_id}/props` | `create_supplier_db_prop` | GuardStaff | 201 prop |
@@ -123,8 +129,8 @@ go test ./internal/admin/... ./tests/archtest/ -count=1
 | GET | `/api/admin/supplier-dbs/{source_id}/rows/{product_id}/prompt/diff` | `diff_supplier_prompt` | GuardStaff | 200 diff |
 | POST | `/api/admin/supplier-dbs/{source_id}/rows/{product_id}/prompt/preview` | `preview_supplier_prompt` | GuardStaff | 200 preview |
 | POST | `/api/admin/supplier-dbs/{source_id}/rows/{product_id}/prompt/publish` | `publish_supplier_prompt_revision` | GuardStaff | 200 publish |
-| POST | `/api/admin/supplier-dbs/{source_id}/rows/{product_id}/publish` | `publish_supplier_db_row` | GuardStaff | 200 row |
-| POST | `/api/admin/supplier-dbs/{source_id}/rows/{product_id}/unpublish` | `unpublish_supplier_db_row` | GuardStaff | 200 row |
+| POST | `/api/admin/supplier-dbs/{source_id}/rows/{product_id}/publish` | `publish_supplier_db_row` | GuardSuper | 200 row |
+| POST | `/api/admin/supplier-dbs/{source_id}/rows/{product_id}/unpublish` | `unpublish_supplier_db_row` | GuardSuper | 200 row |
 | POST | `/api/admin/supplier-dbs/{source_id}/uploads` | `presign_supplier_db_upload` | GuardStaff | 200 upload |
 | POST | `/api/admin/supplier-dbs/{source_id}/uploads/abort` | `abort_supplier_db_upload` | GuardStaff | 204 空体 |
 | POST | `/api/admin/supplier-dbs/{source_id}/uploads/confirm` | `confirm_supplier_db_upload` | GuardStaff | 200 confirmed |
@@ -134,7 +140,7 @@ go test ./internal/admin/... ./tests/archtest/ -count=1
 | GET | `/api/admin/supplier-withdrawals` | `list_factory_withdrawals` | GuardStaff | 200 withdrawals |
 | POST | `/api/admin/supplier-withdrawals/{withdrawal_id}/pay` | `pay_withdrawal` | GuardStaff | 200 单元素 withdrawals |
 | POST | `/api/admin/supplier-withdrawals/{withdrawal_id}/reject` | `reject_withdrawal` | GuardStaff | 200 单元素 withdrawals |
-| GET | `/api/admin/platform-catalog` | `admin_list` | GuardSuper | 200 目录；超级管理员+TOTP+step-up |
+| GET | `/api/admin/platform-catalog` | `admin_list` | GuardSuper | 200 目录；仅超级管理员角色 |
 | POST | `/api/admin/platform-catalog/products` | `create_product` | GuardSuper | 201 商品 |
 | PUT | `/api/admin/platform-catalog/products/{product_id}` | `update_product` | GuardSuper | 200；CAS 失败 409 |
 | POST | `/api/admin/platform-catalog/products/{product_id}/images` | `upload_product_image` | GuardSuper | 确认图片；无媒体配置 503/400 |
@@ -210,29 +216,26 @@ go test ./internal/admin/... ./tests/archtest/ -count=1
 | PUT | `/api/admin/seller-relay/active` | `seller_relay_switch` | GuardSuper | 200 切换并写 config.json |
 | POST | `/api/admin/seller-relay/nodes` | `seller_relay_import` | GuardSuper | 200 导入 |
 | DELETE | `/api/admin/seller-relay/nodes/{node_id}` | `seller_relay_delete` | GuardSuper | 200 删除 |
-| POST | `/api/admin/seller-relay/probe` | `seller_relay_probe` | GuardSuper | 无 socks5h 时 200 不可达；有路由则 501 |
+| POST | `/api/admin/seller-relay/probe` | `seller_relay_probe` | GuardSuper | 200，真实 reachable；成功附 latencyMs |
 | GET | `/api/admin/shipping-injections` | `list_injections_route` | GuardSuper | 200 诊断 |
 | GET | `/api/admin/shipping-injections/{store_uuid}/{preset_id}` | `get_injection_route` | GuardSuper | 200 诊断 |
-| POST | `/api/admin/shipping-injections/{store_uuid}/{preset_id}/reconcile` | `reconcile_route` | GuardSuper | 已实现。超管 + 验证器，SCREAMING code。不看两个写入开关 |
-| POST | `/api/admin/shipping-injections/{store_uuid}/{preset_id}/safe-continue` | `safe_continue_route` | GuardSuper | 已实现。先看 `ShippingInjectWrites()`，写路径再看 kill switch |
+| POST | `/api/admin/shipping-injections/{store_uuid}/{preset_id}/reconcile` | `reconcile_route` | GuardSuper | 历史实现；当前未挂载 HTTP 入口 |
+| POST | `/api/admin/shipping-injections/{store_uuid}/{preset_id}/safe-continue` | `safe_continue_route` | GuardSuper | 历史实现；当前未挂载 HTTP 入口 |
 | GET | `/api/admin/shipping-presets` | `list_presets_route` | GuardSuper | 200 预设 |
 | POST | `/api/admin/shipping-presets` | `create_preset` | GuardSuper | 201 预设 |
 | DELETE | `/api/admin/shipping-presets/{preset_id}` | `delete_preset_route` | GuardSuper | 200 删除 |
 | GET | `/api/admin/shipping-presets/{preset_id}` | `get_preset_route` | GuardSuper | 200 预设 |
 | PUT | `/api/admin/shipping-presets/{preset_id}` | `update_preset` | GuardSuper | 200 新版本 |
 | POST | `/api/admin/shipping-presets/{preset_id}/apply-product` | `apply_product` | GuardSuper | 200 绑定 |
-| GET | `/api/admin/shipping-readiness/{sku_id}` | `readiness_route` | GuardWorkspace | 200；实际守卫是超级管理员+TOTP |
+| GET | `/api/admin/shipping-readiness/{sku_id}` | `readiness_route` | GuardWorkspace | 200；实际守卫是超级管理员角色 |
 | POST | `/api/admin/shipping-sku-bindings` | `bind_sku` | GuardSuper | 200 绑定 |
 | DELETE | `/api/admin/shipping-sku-bindings/{sku_id}` | `unbind_sku` | GuardSuper | 200 解绑 |
-| POST | `/api/admin/step-up` | `step_up` | GuardSuper | 已实现 |
 | GET | `/api/admin/stores/products` | `admin_observation_products` | GuardInferred | 已移植，见 admin-billing-parity.md |
 | GET | `/api/admin/stores/products/overview` | `admin_observation_products_overview` | GuardInferred | 已移植，见 admin-billing-parity.md |
 | GET | `/api/admin/stores/{store_id}/products/{store_product_id}/thumbnail` | `admin_observation_thumbnail` | GuardInferred | 已移植，见 admin-billing-parity.md |
 | GET | `/api/admin/support-grants` | `support_grants` | GuardSuper | 已实现 |
 | POST | `/api/admin/support-grants` | `issue_grant` | GuardSuper | 已实现 |
 | POST | `/api/admin/support-grants/{id}/revoke` | `revoke_grant` | GuardSuper | 已实现 |
-| POST | `/api/admin/totp/confirm` | `confirm` | GuardSuper | 已实现 |
-| POST | `/api/admin/totp/enroll` | `enroll` | GuardSuper | 已实现 |
 | GET | `/api/admin/users` | `list_users` | GuardSuper | 已实现 |
 | POST | `/api/admin/users` | `create_user` | GuardSuper | 已实现 |
 | POST | `/api/admin/users/{uuid}/admin` | `set_user_admin` | GuardSuper | 已实现 |

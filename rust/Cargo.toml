@@ -2,12 +2,10 @@
 members = [
     "crates/listing-core",
     "crates/listing-core-wasm",
-    "crates/listing-tags",
     "crates/op-workflow",
     "crates/psd-x",
     "crates/render",
     "crates/render-wasm",
-    "crates/wasm-host-probe",
 ]
 resolver = "3"
 

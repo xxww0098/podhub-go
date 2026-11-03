@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/xxww0098/podhub-go/internal/platform/httpx/jsonwire"
 	"github.com/xxww0098/podhub-go/internal/store/contract"
 	"github.com/xxww0098/podhub-go/internal/store/domain"
 )
@@ -17,6 +18,8 @@ const (
 	PathCredentialTest = "/api/workspaces/stores/{uuid}/credential/test"
 	// PathCredentialExport is the one surface plaintext leaves through.
 	PathCredentialExport = "/api/workspaces/stores/credentials/export"
+	// PathCredentialName reads a name without registering or rotating a key.
+	PathCredentialName = "/api/workspaces/stores/credentials/resolve-name"
 	// PathProductQuotaRefresh refills the Ozon upload-quota snapshots.
 	PathProductQuotaRefresh = "/api/workspaces/stores/product-quotas/refresh"
 	// PathFinanceBalanceRefresh refills the Finance → Balance snapshots.
@@ -25,10 +28,40 @@ const (
 
 // CredentialActions is the key-custody half of the store service.
 type CredentialActions interface {
+	ResolveCredentialName(ctx context.Context, orgID, userID int64, storeUUID, clientID, apiKey string) (string, *contract.APIError)
 	RegisterCredential(ctx context.Context, orgID, userID int64, uuid, clientID, apiKey string, expectedStoreRevision int64, expectedCredentialRevision *int64, confirmUpload bool) (domain.RegisterOutcome, *contract.APIError)
 	DeleteCredential(ctx context.Context, orgID, userID int64, uuid string, expectedStoreRevision, expectedCredentialRevision int64) (string, int64, *contract.APIError)
 	TestCredential(ctx context.Context, orgID, userID int64, uuid string) (domain.VerifyResult, *contract.APIError)
 	ExportCredentials(ctx context.Context, orgID, userID int64) ([]domain.ExportedCredential, *contract.APIError)
+}
+
+type resolveCredentialNameBody struct {
+	StoreUUID string `json:"store_uuid"`
+	ClientID  string `json:"client_id"`
+	APIKey    string `json:"api_key"`
+}
+
+type resolveCredentialNameData struct {
+	Name string `json:"name"`
+}
+
+func (h handler) resolveCredentialName(w http.ResponseWriter, r *http.Request) {
+	p, _, ok := h.requireActor(w, r)
+	if !ok {
+		return
+	}
+	var body resolveCredentialNameBody
+	if !readStrict(r, &body) {
+		writeAPIError(w, contract.Validation(contract.MsgInvalidJSON))
+		return
+	}
+	name, api := h.Credential.ResolveCredentialName(r.Context(), p.OrgID, p.UserID, body.StoreUUID, body.ClientID, body.APIKey)
+	if api != nil {
+		writeAPIError(w, api)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	jsonwire.Write(w, http.StatusOK, resolveCredentialNameData{Name: name})
 }
 
 // RefreshActions is the two snapshot refresh loops. Both answer with the whole
@@ -58,6 +91,7 @@ type registerCredentialData struct {
 	Revision           int64  `json:"revision"`
 	FingerprintChanged bool   `json:"fingerprint_changed"`
 	Rotated            bool   `json:"rotated"`
+	NameFilled         bool   `json:"name_filled"`
 }
 
 type deleteCredentialData struct {
@@ -104,10 +138,11 @@ func (h handler) registerCredential(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, api)
 		return
 	}
-	writeJSON(w, http.StatusOK, registerCredentialData{
+	jsonwire.Write(w, http.StatusOK, registerCredentialData{
 		StoreUUID: outcome.StoreUUID, CredentialRevision: outcome.CredentialRevision,
 		Revision: outcome.Revision, FingerprintChanged: outcome.FingerprintChanged,
-		Rotated: outcome.Rotated,
+		Rotated:    outcome.Rotated,
+		NameFilled: outcome.NameFilled,
 	})
 }
 
@@ -132,7 +167,7 @@ func (h handler) deleteCredential(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, api)
 		return
 	}
-	writeJSON(w, http.StatusOK, deleteCredentialData{
+	jsonwire.Write(w, http.StatusOK, deleteCredentialData{
 		StoreUUID: storeUUID, CredentialState: "absent", Revision: revision,
 	})
 }
@@ -152,7 +187,7 @@ func (h handler) testCredential(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, api)
 		return
 	}
-	writeJSON(w, http.StatusOK, verifyCredentialData{
+	jsonwire.Write(w, http.StatusOK, verifyCredentialData{
 		StoreUUID: result.StoreUUID, CredentialRevision: result.CredentialRevision,
 		VerifiedAtMS: result.VerifiedAtMS,
 	})
@@ -179,7 +214,7 @@ func (h handler) exportCredentials(w http.ResponseWriter, r *http.Request) {
 	}
 	// A plaintext export must never be cached by an intermediary.
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, body)
+	jsonwire.Write(w, http.StatusOK, body)
 }
 
 // refreshProductQuotas is POST PathProductQuotaRefresh.
@@ -204,5 +239,5 @@ func (h handler) refreshRoster(w http.ResponseWriter, r *http.Request, refresh f
 		writeAPIError(w, api)
 		return
 	}
-	writeJSON(w, http.StatusOK, toRosterData(roster, actor, domain.NowMS()))
+	jsonwire.Write(w, http.StatusOK, toRosterData(roster, actor, domain.NowMS()))
 }

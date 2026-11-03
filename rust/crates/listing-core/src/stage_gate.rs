@@ -87,12 +87,6 @@ pub struct OcrFacts {
     pub original_usable: Option<bool>,
     #[serde(default)]
     pub original_request_id: String,
-    #[serde(default)]
-    pub retry_status: String,
-    #[serde(default)]
-    pub retry_usable: Option<bool>,
-    #[serde(default)]
-    pub retry_request_id: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -101,7 +95,6 @@ pub enum OcrStep {
     Wait,
     Settle,
     Unusable,
-    SimpleRetry,
     Pause,
     PurchaseOriginal,
 }
@@ -244,20 +237,11 @@ pub fn plan_ocr(facts: &OcrFacts) -> OcrPlan {
             display,
         };
     }
-    let retry_present = !facts.retry_status.is_empty() && facts.retry_status != "absent";
-    let (status, usable, request_id) = if retry_present {
-        (
-            facts.retry_status.as_str(),
-            facts.retry_usable,
-            facts.retry_request_id.as_str(),
-        )
-    } else {
-        (
-            facts.original_status.as_str(),
-            facts.original_usable,
-            facts.original_request_id.as_str(),
-        )
-    };
+    let (status, usable, request_id) = (
+        facts.original_status.as_str(),
+        facts.original_usable,
+        facts.original_request_id.as_str(),
+    );
     if status == "settled" && usable == Some(true) && !request_id.is_empty() {
         return OcrPlan {
             step: OcrStep::Settle,
@@ -265,17 +249,9 @@ pub fn plan_ocr(facts: &OcrFacts) -> OcrPlan {
             display,
         };
     }
-    let original_rejected = rejected_answer(&facts.original_status, facts.original_usable);
-    if original_rejected && rejected_answer(&facts.retry_status, facts.retry_usable) {
+    if rejected_answer(status, usable) {
         return OcrPlan {
             step: OcrStep::Unusable,
-            request_id: None,
-            display,
-        };
-    }
-    if original_rejected && !retry_present {
-        return OcrPlan {
-            step: OcrStep::SimpleRetry,
             request_id: None,
             display,
         };
@@ -333,8 +309,19 @@ fn reject_reason(candidate: &ConfirmCandidate) -> Option<(&'static str, &'static
         return Some(("media_confirm_workspace", "工作空间无效，未请求确认"));
     }
     let suffix = format!("{digest}.{extension}");
-    let marker = format!("/teams/{workspace}/");
-    if !candidate.object_key.ends_with(&suffix) || !candidate.object_key.contains(&marker) {
+    let tail = candidate.object_key.strip_prefix("uploads/").or_else(|| {
+        candidate
+            .object_key
+            .rsplit_once("/uploads/")
+            .map(|(_, tail)| tail)
+    });
+    let valid_key = tail.is_some_and(|tail| {
+        let mut parts = tail.split('/');
+        matches!((parts.next(), parts.next(), parts.next(), parts.next()),
+            (Some(date), Some(batch), Some(file), None)
+                if !date.is_empty() && !batch.is_empty() && file == suffix)
+    });
+    if !valid_key {
         return Some(("media_confirm_key", "对象键与切片不一致，未请求确认"));
     }
     None

@@ -29,8 +29,7 @@ const ActiveStatus = "created"
 // Allows is the named edge table. Any other pair is illegal.
 func Allows(from, to string) bool {
 	switch from + "->" + to {
-	case StateGranted + "->" + StateAccepted,
-		StateGranted + "->" + StateRejected,
+	case StateGranted + "->" + StateRejected,
 		StateGranted + "->" + StateUnknown:
 		return true
 	default:
@@ -40,7 +39,8 @@ func Allows(from, to string) bool {
 
 // ClassifyReport maps a browser report onto one legal edge.
 // A nil or non-positive status is unknown and keeps the fence.
-// 2xx without an operation id is unknown. 4xx releases the fence.
+// 2xx only acknowledges an asynchronous operation and keeps the fence.
+// 4xx releases the fence.
 // 5xx and every other status keep the fence as unknown.
 func ClassifyReport(status *int, operationID string) (state, code string) {
 	if status == nil || *status <= 0 {
@@ -51,7 +51,8 @@ func ClassifyReport(status *int, operationID string) (state, code string) {
 		if operationID == "" {
 			return StateUnknown, CodeInterrupted
 		}
-		return StateAccepted, ""
+		// shortcut: terminal operation receipts are unverified; retain the fence until verified reconciliation exists.
+		return StateUnknown, ""
 	case *status == 403:
 		return StateRejected, CodeAccess
 	case *status >= 400 && *status < 500:

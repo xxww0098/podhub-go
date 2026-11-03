@@ -60,23 +60,3 @@ func TestFoldSSEMatchesGateway(t *testing.T) {
 		t.Fatal("missing usage")
 	}
 }
-
-func TestStampRejectsStreamAfterShape(t *testing.T) {
-	got, err := Stamp([]byte(`{"model":"client","n":1}`), "upstream")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var object map[string]any
-	if err := json.Unmarshal(got, &object); err != nil {
-		t.Fatal(err)
-	}
-	if object["stream"] != false || object["model"] != "upstream" {
-		t.Fatalf("%s", got)
-	}
-	if _, err := Stamp([]byte(`{"stream":true}`), "m"); err != errStreaming {
-		t.Fatal(err)
-	}
-	if _, err := Stamp([]byte(`{"stream":"yes"}`), "m"); err != errInvalid {
-		t.Fatal(err)
-	}
-}

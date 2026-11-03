@@ -5,7 +5,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
+	"encoding/xml"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -18,7 +19,7 @@ import (
 // These routes do not delete stage objects, so they do not read the
 // already-parsed media purge switch. They also do not call Seller.
 
-func (s Service) callOrigin(ctx context.Context, account sign.Account, method, key, contentType string, expires time.Duration, query, headers [][2]string, body []byte, timeout time.Duration) (ObjectResponse, error) {
+func (s Service) callOrigin(ctx context.Context, account sign.Account, method, key, contentType string, expires time.Duration, query, headers [][2]string, body []byte, timeout time.Duration, maxBytes int64) (ObjectResponse, error) {
 	if s.Origin == nil {
 		return ObjectResponse{}, storageDown()
 	}
@@ -33,7 +34,7 @@ func (s Service) callOrigin(ctx context.Context, account sign.Account, method, k
 	for _, h := range headers {
 		hdr[h[0]] = h[1]
 	}
-	resp, err := s.Origin.Do(ctx, ObjectRequest{Method: method, URL: rawURL, Headers: hdr, Body: body, Timeout: timeout})
+	resp, err := s.Origin.Do(ctx, ObjectRequest{Account: account, Method: method, URL: rawURL, Headers: hdr, Body: body, Timeout: timeout, MaxBytes: maxBytes})
 	if err != nil {
 		return ObjectResponse{}, storageDown()
 	}
@@ -61,7 +62,7 @@ func (s Service) referenced(ctx context.Context, actor contract.Actor, keys ...s
 		return err
 	}
 	if hit {
-		return &contract.Fail{Kind: contract.KindConflict, Message: "对象仍被平台货源商品引用；请先移除 URL 引用再操作"}
+		return &contract.Fail{Kind: contract.KindConflict, Message: "对象仍被供应商商品库商品引用；请先移除 URL 引用再操作"}
 	}
 	return nil
 }
@@ -80,7 +81,7 @@ func (s Service) CreateDirectory(ctx context.Context, actor contract.Actor, body
 		return domain.DirectoryCreated{}, err
 	}
 	key := root + path + "/"
-	resp, err := s.callOrigin(ctx, account, "PUT", key, "application/x-directory", 300*time.Second, nil, nil, nil, 30*time.Second)
+	resp, err := s.callOrigin(ctx, account, "PUT", key, "application/x-directory", 300*time.Second, nil, nil, nil, 30*time.Second, 0)
 	if err != nil {
 		return domain.DirectoryCreated{}, err
 	}
@@ -120,7 +121,7 @@ func (s Service) ListObjects(ctx context.Context, actor contract.Actor, prefix s
 	if cursor != nil {
 		query = append(query, [2]string{"continuation-token", *cursor})
 	}
-	resp, err := s.callOrigin(ctx, account, "GET", "", "", 60*time.Second, query, nil, nil, 30*time.Second)
+	resp, err := s.callOrigin(ctx, account, "GET", "", "", 60*time.Second, query, nil, nil, 30*time.Second, 0)
 	if err != nil {
 		return domain.StoragePage{}, err
 	}
@@ -151,7 +152,7 @@ func (s Service) DeleteObjects(ctx context.Context, actor contract.Actor, body [
 		prefix := root + in.Path + "/"
 		resp, err := s.callOrigin(ctx, account, "GET", "", "", 60*time.Second, [][2]string{
 			{"list-type", "2"}, {"max-keys", "501"}, {"prefix", prefix},
-		}, nil, nil, 30*time.Second)
+		}, nil, nil, 30*time.Second, 0)
 		if err != nil {
 			return domain.DeleteTally{}, err
 		}
@@ -175,7 +176,7 @@ func (s Service) DeleteObjects(ctx context.Context, actor contract.Actor, body [
 	}
 	tally := domain.DeleteTally{Path: in.Path, Kind: in.Kind}
 	for _, key := range keys {
-		resp, err := s.callOrigin(ctx, account, "DELETE", key, "", 60*time.Second, nil, nil, nil, 30*time.Second)
+		resp, err := s.callOrigin(ctx, account, "DELETE", key, "", 60*time.Second, nil, nil, nil, 30*time.Second, 0)
 		switch {
 		case err != nil:
 			tally.Failed++
@@ -210,7 +211,7 @@ func (s Service) MoveObject(ctx context.Context, actor contract.Actor, body []by
 		return domain.MovedObject{}, err
 	}
 	copySource := "/" + sign.EncodePathSegment(account.Bucket) + "/" + sign.EncodeObjectPath(source)
-	resp, err := s.callOrigin(ctx, account, "PUT", dest, "", 60*time.Second, nil, [][2]string{{"x-amz-copy-source", copySource}}, nil, 60*time.Second)
+	resp, err := s.callOrigin(ctx, account, "PUT", dest, "", 60*time.Second, nil, [][2]string{{"x-amz-copy-source", copySource}}, nil, 60*time.Second, 0)
 	if err != nil {
 		return domain.MovedObject{}, err
 	}
@@ -220,7 +221,7 @@ func (s Service) MoveObject(ctx context.Context, actor contract.Actor, body []by
 	if resp.Status < 200 || resp.Status >= 300 || bytes.Contains(resp.Body, []byte("<Error>")) || bytes.Contains(resp.Body, []byte("<Error ")) {
 		return domain.MovedObject{}, storageDown()
 	}
-	del, err := s.callOrigin(ctx, account, "DELETE", source, "", 60*time.Second, nil, nil, nil, 30*time.Second)
+	del, err := s.callOrigin(ctx, account, "DELETE", source, "", 60*time.Second, nil, nil, nil, 30*time.Second, 0)
 	if err != nil || (del.Status != 404 && (del.Status < 200 || del.Status >= 300)) {
 		return domain.MovedObject{}, storageDown()
 	}
@@ -244,7 +245,7 @@ func (s Service) IssueStorageUpload(ctx context.Context, actor contract.Actor, b
 	if err := s.referenced(ctx, actor, final); err != nil {
 		return domain.UploadBody{}, err
 	}
-	head, err := s.callOrigin(ctx, account, "HEAD", final, "", 60*time.Second, nil, nil, nil, 30*time.Second)
+	head, err := s.callOrigin(ctx, account, "HEAD", final, "", 60*time.Second, nil, nil, nil, 30*time.Second, 0)
 	if err != nil {
 		return domain.UploadBody{}, err
 	}
@@ -343,7 +344,7 @@ func (s Service) ConfirmStorageUpload(ctx context.Context, actor contract.Actor,
 }
 
 func (s Service) replay(ctx context.Context, account sign.Account, key string, receipt domain.UploadReceipt) (bool, error) {
-	resp, err := s.callOrigin(ctx, account, "HEAD", key, "", 60*time.Second, nil, nil, nil, 30*time.Second)
+	resp, err := s.callOrigin(ctx, account, "HEAD", key, "", 60*time.Second, nil, nil, nil, 30*time.Second, 0)
 	if err != nil {
 		return false, err
 	}
@@ -361,7 +362,9 @@ func (s Service) replay(ctx context.Context, account sign.Account, key string, r
 }
 
 func (s Service) verifyObject(ctx context.Context, account sign.Account, receipt domain.UploadReceipt) ([]byte, error) {
-	resp, err := s.callOrigin(ctx, account, "GET", receipt.Key, "", 300*time.Second, nil, nil, nil, 30*time.Second)
+	// Small objects can have a larger error XML response; successful bodies still require the exact receipt length.
+	readLimit := max(int64(receipt.ByteLength), 1<<20)
+	resp, err := s.callOrigin(ctx, account, "GET", receipt.Key, "", 300*time.Second, nil, nil, nil, 2*time.Minute, readLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -378,7 +381,7 @@ func (s Service) verifyObject(ctx context.Context, account sign.Account, receipt
 	if i := strings.IndexByte(gotType, ';'); i >= 0 {
 		gotType = strings.TrimSpace(gotType[:i])
 	}
-	if gotType != "" && gotType != receipt.ContentType {
+	if gotType != receipt.ContentType {
 		return nil, &contract.Fail{Kind: contract.KindConflict, Message: "上传对象文件类型与授权不一致"}
 	}
 	if uint64(len(resp.Body)) != receipt.ByteLength {
@@ -395,7 +398,7 @@ func (s Service) verifyObject(ctx context.Context, account sign.Account, receipt
 }
 
 func (s Service) promote(ctx context.Context, account sign.Account, receipt domain.UploadReceipt, dest string) error {
-	head, err := s.callOrigin(ctx, account, "HEAD", dest, "", 60*time.Second, nil, nil, nil, 30*time.Second)
+	head, err := s.callOrigin(ctx, account, "HEAD", dest, "", 60*time.Second, nil, nil, nil, 30*time.Second, 0)
 	if err != nil {
 		return err
 	}
@@ -418,12 +421,12 @@ func (s Service) promote(ctx context.Context, account sign.Account, receipt doma
 		{"if-none-match", "*"},
 		{"x-amz-meta-podhub-upload", marker},
 	}
-	put, err := s.callOrigin(ctx, account, "PUT", dest, receipt.ContentType, sign.PutTTL, nil, headers, body, 60*time.Second)
+	put, err := s.callOrigin(ctx, account, "PUT", dest, receipt.ContentType, sign.PutTTL, nil, headers, body, 60*time.Second, 0)
 	if err != nil {
 		return err
 	}
 	if put.Status == 412 {
-		again, err := s.callOrigin(ctx, account, "HEAD", dest, "", 60*time.Second, nil, nil, nil, 30*time.Second)
+		again, err := s.callOrigin(ctx, account, "HEAD", dest, "", 60*time.Second, nil, nil, nil, 30*time.Second, 0)
 		if err != nil {
 			return err
 		}
@@ -449,11 +452,7 @@ func header(resp ObjectResponse, name string) string {
 }
 
 func (s Service) IssueRowUpload(ctx context.Context, actor contract.Actor, sourceID string, body []byte, checksumHeader string) (domain.UploadBody, error) {
-	in, err := domain.DecodeStorageUpload(body)
-	if err != nil {
-		return domain.UploadBody{}, err
-	}
-	ext, err := domain.FileExt(in.Path)
+	in, err := domain.DecodeRowUpload(body)
 	if err != nil {
 		return domain.UploadBody{}, err
 	}
@@ -464,6 +463,49 @@ func (s Service) IssueRowUpload(ctx context.Context, actor contract.Actor, sourc
 	if _, err := cat.Detail(ctx, actor, sourceID, s.nowMs()); err != nil {
 		return domain.UploadBody{}, err
 	}
+	return s.issueRowUpload(ctx, actor, sourceID, in, checksumHeader)
+}
+
+func (s Service) catalogUploadAccess(ctx context.Context, actor contract.Actor, sourceID string) error {
+	if s.CatalogAccess == nil {
+		return unavailable(nil)
+	}
+	allowed, err := s.CatalogAccess.CanMaintain(ctx, actor.UserID, sourceID)
+	if err != nil {
+		return unavailable(err)
+	}
+	if !allowed {
+		return &contract.Fail{Kind: contract.KindForbidden, Message: "没有这家货源库的商品维护权限"}
+	}
+	return nil
+}
+
+func (s Service) IssueCatalogUpload(ctx context.Context, actor contract.Actor, sourceID string, body []byte, checksumHeader string) (domain.UploadBody, error) {
+	if err := s.catalogUploadAccess(ctx, actor, sourceID); err != nil {
+		return domain.UploadBody{}, err
+	}
+	in, err := domain.DecodeRowUpload(body)
+	if err != nil {
+		return domain.UploadBody{}, err
+	}
+	return s.issueRowUpload(ctx, actor, sourceID, in, checksumHeader)
+}
+
+func (s Service) ConfirmCatalogUpload(ctx context.Context, actor contract.Actor, sourceID string, body []byte) (domain.ConfirmedUpload, error) {
+	if err := s.catalogUploadAccess(ctx, actor, sourceID); err != nil {
+		return domain.ConfirmedUpload{}, err
+	}
+	return s.ConfirmRowUpload(ctx, actor, sourceID, body)
+}
+
+func (s Service) AbortCatalogUpload(ctx context.Context, actor contract.Actor, sourceID string, body []byte) error {
+	if err := s.catalogUploadAccess(ctx, actor, sourceID); err != nil {
+		return err
+	}
+	return s.AbortRowUpload(ctx, actor, sourceID, body)
+}
+
+func (s Service) issueRowUpload(ctx context.Context, actor contract.Actor, sourceID string, in domain.RowUpload, checksumHeader string) (domain.UploadBody, error) {
 	account, err := s.storageAccount(ctx)
 	if err != nil {
 		return domain.UploadBody{}, err
@@ -473,7 +515,7 @@ func (s Service) IssueRowUpload(ctx context.Context, actor contract.Actor, sourc
 		return domain.UploadBody{}, err
 	}
 	now := s.clock()
-	if domain.LargePSD(ext, in.Bytes) {
+	if domain.LargePSD(in.Extension, in.Bytes) {
 		return s.issueLargePSD(ctx, actor, account, root, sourceID, in, now)
 	}
 	a, err := s.publicID()
@@ -485,7 +527,7 @@ func (s Service) IssueRowUpload(ctx context.Context, actor contract.Actor, sourc
 		return domain.UploadBody{}, unavailable(err)
 	}
 	name := strings.ReplaceAll(a, "-", "") + strings.ReplaceAll(b, "-", "")
-	key := root + "supplier-dbs/" + sourceID + "/" + name + "." + ext
+	key := root + "supplier-dbs/" + sourceID + "/" + name + "." + in.Extension
 	issued, err := domain.IssueUpload(account, domain.PurposeForKey(key), actor.UserID, key, in.ContentType, in.SHA256, in.Bytes, now, wantsStoreChecksum(checksumHeader))
 	if err != nil {
 		return domain.UploadBody{}, err
@@ -493,23 +535,36 @@ func (s Service) IssueRowUpload(ctx context.Context, actor contract.Actor, sourc
 	return uploadFromIssued(issued, now), nil
 }
 
-func (s Service) issueLargePSD(ctx context.Context, actor contract.Actor, account sign.Account, root, sourceID string, in domain.StorageUpload, now time.Time) (domain.UploadBody, error) {
+func (s Service) issueLargePSD(ctx context.Context, actor contract.Actor, account sign.Account, root, sourceID string, in domain.RowUpload, now time.Time) (domain.UploadBody, error) {
 	lengths, err := domain.PartPlan(in.Bytes)
 	if err != nil {
 		return domain.UploadBody{}, err
 	}
 	key := root + "supplier-dbs/" + sourceID + "/" + strings.ToLower(in.SHA256) + ".psd"
-	created, err := s.callOrigin(ctx, account, "POST", key, "", 60*time.Second, [][2]string{{"uploads", ""}}, nil, nil, 30*time.Second)
+	created, err := s.callOrigin(ctx, account, "POST", key, in.ContentType, 60*time.Second, [][2]string{{"uploads", ""}}, nil, nil, 30*time.Second, 0)
 	if err != nil {
 		return domain.UploadBody{}, err
 	}
 	if created.Status < 200 || created.Status >= 300 {
 		return domain.UploadBody{}, storageDown()
 	}
-	uploadID := between(string(created.Body), "<UploadId>", "</UploadId>")
+	var creation struct {
+		XMLName  xml.Name `xml:"InitiateMultipartUploadResult"`
+		UploadID string   `xml:"UploadId"`
+	}
+	if err := xml.Unmarshal(created.Body, &creation); err != nil {
+		return domain.UploadBody{}, storageDown()
+	}
+	uploadID := creation.UploadID
 	if err := domain.UploadIDOK(uploadID); err != nil {
 		return domain.UploadBody{}, err
 	}
+	issuedOK := false
+	defer func() {
+		if !issuedOK {
+			s.abortOwnMultipart(ctx, account, key, uploadID)
+		}
+	}()
 	issued, err := domain.IssueMultipart(account, domain.PurposeForKey(key), actor.UserID, key, in.ContentType, in.SHA256, uploadID, in.Bytes, partBytes, now)
 	if err != nil {
 		return domain.UploadBody{}, err
@@ -526,6 +581,7 @@ func (s Service) issueLargePSD(ctx context.Context, actor contract.Actor, accoun
 			PartNumber: i + 1, URL: rawURL, ByteLength: n, ExpiresAtMs: now.UnixMilli() + 3_600_000,
 		})
 	}
+	issuedOK = true
 	return domain.UploadBody{UploadTicket: issued.Ticket, Multipart: &plan}, nil
 }
 
@@ -543,18 +599,18 @@ func (s Service) AbortRowUpload(ctx context.Context, actor contract.Actor, sourc
 	if err != nil {
 		return err
 	}
-	receipt, err := domain.OpenSealed(account, ticket, actor.UserID, s.clock())
-	if err != nil || receipt.MultipartUploadID == "" {
-		return nil
-	}
-	resp, err := s.callOrigin(ctx, account, "DELETE", receipt.Key, "", 60*time.Second, [][2]string{{"uploadId", receipt.MultipartUploadID}}, nil, nil, 30*time.Second)
+	root, err := s.root(account)
 	if err != nil {
 		return err
 	}
-	if resp.Status < 200 || resp.Status >= 300 {
-		return storageDown()
+	receipt, err := openRowTicket(account, ticket, actor.UserID, s.clock(), root+"supplier-dbs/"+sourceID+"/")
+	if err != nil {
+		return err
 	}
-	return nil
+	if receipt.MultipartUploadID == "" {
+		return nil
+	}
+	return s.abortMultipart(ctx, account, receipt.Key, receipt.MultipartUploadID)
 }
 
 func (s Service) ConfirmRowUpload(ctx context.Context, actor contract.Actor, sourceID string, body []byte) (domain.ConfirmedUpload, error) {
@@ -575,6 +631,16 @@ func (s Service) ConfirmRowUpload(ctx context.Context, actor contract.Actor, sou
 	if err != nil {
 		return domain.ConfirmedUpload{}, err
 	}
+	multipartDone := receipt.MultipartUploadID == ""
+	if !multipartDone {
+		originalAccount := account
+		defer func() {
+			if !multipartDone {
+				s.abortOwnMultipart(ctx, originalAccount, receipt.Key, receipt.MultipartUploadID)
+			}
+		}()
+	}
+	mustAbort := false
 	if receipt.MultipartUploadID != "" {
 		lengths, err := domain.PartPlan(receipt.ByteLength)
 		if err != nil {
@@ -583,13 +649,20 @@ func (s Service) ConfirmRowUpload(ctx context.Context, actor contract.Actor, sou
 		if err := domain.CheckParts(in.Parts, len(lengths)); err != nil {
 			return domain.ConfirmedUpload{}, err
 		}
-		if err := s.completeMultipart(ctx, account, receipt, in.Parts); err != nil {
+		mustAbort, err = s.completeMultipart(ctx, account, receipt, in.Parts)
+		if err != nil {
 			return domain.ConfirmedUpload{}, err
 		}
 	}
 	if _, err := s.verifyObject(ctx, account, receipt); err != nil {
 		return domain.ConfirmedUpload{}, err
 	}
+	if mustAbort {
+		if err := s.abortMultipart(ctx, account, receipt.Key, receipt.MultipartUploadID); err != nil {
+			return domain.ConfirmedUpload{}, err
+		}
+	}
+	multipartDone = true
 	account, err = s.storageAccount(ctx)
 	if err != nil {
 		return domain.ConfirmedUpload{}, err
@@ -606,19 +679,6 @@ func (s Service) ConfirmRowUpload(ctx context.Context, actor contract.Actor, sou
 	return domain.ConfirmedUpload{Key: receipt.Key, PublicURL: sign.PublicURL(account, receipt.Key)}, nil
 }
 
-func between(s, start, end string) string {
-	i := strings.Index(s, start)
-	if i < 0 {
-		return ""
-	}
-	s = s[i+len(start):]
-	j := strings.Index(s, end)
-	if j < 0 {
-		return ""
-	}
-	return s[:j]
-}
-
 func openRowTicket(account sign.Account, ticket string, actor int64, now time.Time, prefix string) (domain.UploadReceipt, error) {
 	raw, err := domain.OpenSealed(account, ticket, actor, now)
 	if err != nil {
@@ -630,21 +690,62 @@ func openRowTicket(account sign.Account, ticket string, actor int64, now time.Ti
 	return raw, nil
 }
 
-func (s Service) completeMultipart(ctx context.Context, account sign.Account, receipt domain.UploadReceipt, parts []domain.PartETag) error {
-	var buf bytes.Buffer
-	buf.WriteString("<CompleteMultipartUpload>")
-	for _, part := range parts {
-		fmt.Fprintf(&buf, "<Part><PartNumber>%d</PartNumber><ETag>%s</ETag></Part>", part.Number, domain.QuoteETag(part.ETag))
+// completeMultipart returns whether this upload still needs aborting after the caller proves the object.
+func (s Service) completeMultipart(ctx context.Context, account sign.Account, receipt domain.UploadReceipt, parts []domain.PartETag) (bool, error) {
+	ordered := append([]domain.PartETag(nil), parts...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Number < ordered[j].Number })
+	type completedPart struct {
+		Number int    `xml:"PartNumber"`
+		ETag   string `xml:"ETag"`
 	}
-	buf.WriteString("</CompleteMultipartUpload>")
-	resp, err := s.callOrigin(ctx, account, "POST", receipt.Key, "application/xml", 60*time.Second, [][2]string{{"uploadId", receipt.MultipartUploadID}}, nil, buf.Bytes(), 60*time.Second)
+	completion := struct {
+		XMLName xml.Name        `xml:"CompleteMultipartUpload"`
+		Parts   []completedPart `xml:"Part"`
+	}{}
+	for _, part := range ordered {
+		completion.Parts = append(completion.Parts, completedPart{part.Number, domain.QuoteETag(part.ETag)})
+	}
+	body, err := xml.Marshal(completion)
+	if err != nil {
+		return false, storageDown()
+	}
+	resp, err := s.callOrigin(ctx, account, "POST", receipt.Key, "application/xml", 60*time.Second, [][2]string{{"uploadId", receipt.MultipartUploadID}}, [][2]string{{"if-none-match", "*"}}, body, 60*time.Second, 0)
+	if err != nil {
+		return false, err
+	}
+	if resp.Status == 412 {
+		// An earlier attempt may have completed before confirmation was interrupted.
+		// The caller must still verify exact size, MIME and full SHA before using it.
+		return true, nil
+	}
+	if resp.Status == 404 {
+		// A completed upload ID disappears; the caller's same full-object check proves this retry.
+		return false, nil
+	}
+	var result struct {
+		XMLName xml.Name `xml:"CompleteMultipartUploadResult"`
+	}
+	if resp.Status < 200 || resp.Status >= 300 || xml.Unmarshal(resp.Body, &result) != nil {
+		return false, storageDown()
+	}
+	return false, nil
+}
+
+func (s Service) abortMultipart(ctx context.Context, account sign.Account, key, uploadID string) error {
+	resp, err := s.callOrigin(ctx, account, "DELETE", key, "", 60*time.Second, [][2]string{{"uploadId", uploadID}}, nil, nil, 30*time.Second, 0)
 	if err != nil {
 		return err
 	}
-	if resp.Status < 200 || resp.Status >= 300 || bytes.Contains(resp.Body, []byte("<Error>")) {
+	if resp.Status != 404 && (resp.Status < 200 || resp.Status >= 300) {
 		return storageDown()
 	}
 	return nil
+}
+
+func (s Service) abortOwnMultipart(ctx context.Context, account sign.Account, key, uploadID string) {
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	_ = s.abortMultipart(cleanup, account, key, uploadID)
 }
 
 func (s Service) writeSidecar(ctx context.Context, account sign.Account, receipt domain.UploadReceipt, actor int64, token string) error {
@@ -657,12 +758,12 @@ func (s Service) writeSidecar(ctx context.Context, account sign.Account, receipt
 		{"content-length", strconv.Itoa(len(body))},
 		{"if-none-match", "*"},
 	}
-	resp, err := s.callOrigin(ctx, account, "PUT", key, "application/json", 60*time.Second, nil, headers, body, 30*time.Second)
+	resp, err := s.callOrigin(ctx, account, "PUT", key, "application/json", 60*time.Second, nil, headers, body, 30*time.Second, 0)
 	if err != nil {
 		return err
 	}
 	if resp.Status == 412 {
-		prev, err := s.callOrigin(ctx, account, "GET", key, "", 60*time.Second, nil, nil, nil, 30*time.Second)
+		prev, err := s.callOrigin(ctx, account, "GET", key, "", 60*time.Second, nil, nil, nil, 30*time.Second, 0)
 		if err != nil {
 			return err
 		}

@@ -2,6 +2,8 @@ import { useState } from "react"
 
 import type { OzonStoresOverview } from "@/bindings/commands"
 import { rememberStoreRoster } from "./store-roster-cache"
+import { Pencil, Trash2 } from "lucide-react"
+
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import {
@@ -12,6 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { IconButton } from "@/components/ui/icon-button"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { notifyCommandError, notifySuccess } from "@/lib/notify"
@@ -134,28 +137,28 @@ export function StoreTaxonomyDialog({
                       保存
                     </Button>
                   ) : (
-                    <Button
-                      type="button"
-                      size="sm"
+                    <IconButton
+                      icon={Pencil}
+                      label={`重命名${noun} ${item.name}`}
+                      tip="重命名"
+                      size="icon-sm"
                       variant="outline"
                       disabled={busy !== undefined}
                       onClick={() => {
                         setEditing(item.uuid)
                         setEditingName(item.name)
                       }}
-                    >
-                      重命名
-                    </Button>
+                    />
                   )}
-                  <Button
-                    type="button"
-                    size="sm"
+                  <IconButton
+                    icon={Trash2}
+                    label={`删除${noun} ${item.name}`}
+                    tip="删除"
+                    size="icon-sm"
                     variant="destructive"
                     disabled={busy !== undefined}
                     onClick={() => setDeleteUuid(item.uuid)}
-                  >
-                    删除
-                  </Button>
+                  />
                 </div>
               ))}
               {items.length === 0 ? (

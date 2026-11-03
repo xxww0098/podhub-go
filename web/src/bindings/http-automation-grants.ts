@@ -27,7 +27,7 @@ function collection(scope: GrantScopeKind): string {
   return route("adminSupplierAutomationGrants")
 }
 function project(row: components["schemas"]["AutomationGrantView"] | components["schemas"]["ScopedAutomationGrantView"], scope: GrantScopeKind): AutomationGrant {
-  return { ...row, scopeKind: scope, sourceIds: "source_ids" in row ? row.source_ids ?? null : null }
+  return { ...row, scopeKind: scope, sourceIds: "source_ids" in row ? row.source_ids ?? null : null, expiresAtMs: row.expires_at_ms, lastUsedAtMs: row.last_used_at_ms, revokedAtMs: row.revoked_at_ms }
 }
 
 export async function listAutomationGrants(scope: GrantScopeKind, signal?: AbortSignal): Promise<AutomationGrant[]> {
@@ -35,7 +35,7 @@ export async function listAutomationGrants(scope: GrantScopeKind, signal?: Abort
   return data.grants.map((row) => project(row, scope))
 }
 export async function createAutomationGrant(scope: GrantScopeKind, input: GrantInput): Promise<{ grant: AutomationGrant; token: string }> {
-  const body = { name: input.name, actions: input.actions, expiresInDays: input.expiresInDays, ...(scope === "supplier_catalog" ? { sourceIds: input.sourceIds === undefined ? [] : input.sourceIds } : {}) }
+  const body = { name: input.name, actions: input.actions, expires_in_days: input.expiresInDays, ...(scope === "supplier_catalog" ? { source_ids: input.sourceIds === undefined ? [] : input.sourceIds } : {}) }
   const data = await request<components["schemas"]["CreateAutomationGrantData"] | components["schemas"]["CreateScopedAutomationGrantData"]>("POST", collection(scope), body, {}, 15_000, undefined, { reportOwner: "caller" })
   return { grant: project(data.grant, scope), token: data.token }
 }

@@ -9,11 +9,9 @@ import { applyAiDefaultModel } from "@/bindings/integration-ai-writes"
  */
 import { route } from "@/api/routes"
 import assert from "node:assert/strict"
-import { createHash } from "node:crypto"
 import test from "node:test"
 
 import { integrationsHttp } from "@/bindings/http-integrations"
-import { HEALTHCHECK_PNG, healthcheckDigest } from "@/bindings/integration-writes"
 
 type Call = { url: string, method: string, body: unknown }
 
@@ -39,7 +37,9 @@ function recordFetch(
         headers: { "Content-Type": "application/json" },
       })
     }
-    return new Response(JSON.stringify({ data: reply(call) }), {
+    const value = reply(call)
+    const body = call.url.startsWith(route("workspacesStores")) ? value : { data: value }
+    return new Response(JSON.stringify(body), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     })
@@ -67,11 +67,11 @@ const store = {
   quota_suspended: false,
   revision: 7,
   status: "active",
-  assignee_key_manage: true,
+
   permissions: {
     manage_store: true,
     edit_name: true,
-    manage_key_grants: true,
+
     test_key: true,
     manage_key: true,
     manage_tags: true,
@@ -83,8 +83,9 @@ function rosterReply(
   stores: unknown[],
   tombstones: unknown[] = [],
   tags?: unknown[],
+  groups?: unknown[],
 ): unknown {
-  return { stores, store_limit: 3, stores_used: stores.length, suspended: 0, tombstones, tags }
+  return { stores, store_limit: 3, stores_used: stores.length, suspended: 0, tombstones, tags, groups }
 }
 
 const config = {
@@ -92,6 +93,7 @@ const config = {
   ai_default_model: "gpt-test",
   revision: 12,
   cache_ttl_seconds: 300,
+  ai_runtime: { max_concurrency_global: 0, max_concurrency_user: 0, max_concurrency_account: 0, user_rate_per_minute: 0, lease_ttl_seconds: 90, allow_public_egress: false },
   ai_accounts: [
     {
       id: "ai_one",
@@ -100,24 +102,10 @@ const config = {
       api_format: "chat_completions" as const,
       model: "gpt-test",
       active: true,
-      thinking: false as const,
+      thinking: "disabled" as const,
       thinking_format: "enable_thinking" as const,
       priority: 0,
-    },
-  ],
-  storage_buckets: [
-    {
-      id: "s3_transit",
-      label: "中转桶",
-      role: "transit" as const,
-      provider: "cloudflare" as const,
-      endpoint: "https://s3.example.test",
-      region: "auto",
-      bucket: "podhub-transit",
-      key_prefix: "",
-      public_base_url: "https://transit.podhub.si",
-      force_path_style: true,
-      active: true,
+      purpose: "ocr" as const,
     },
   ],
 }
@@ -129,6 +117,29 @@ function integrationsReply(call: Call): unknown {
   }
   return config
 }
+
+test("name lookup only sends credentials to the read-only resolve route", async () => {
+  const stub = recordFetch(() => ({ name: "Seller 店铺名" }))
+  try {
+    assert.deepEqual(await integrationsHttp.integrationsResolveOzonStoreName({ client_id: "12345", api_key: "fixture-key" }), { name: "Seller 店铺名" })
+    assert.deepEqual(stub.calls, [{ url: route("workspacesStoresCredentialsResolveName"), method: "POST", body: { client_id: "12345", api_key: "fixture-key" } }])
+  } finally { stub.restore() }
+})
+
+test("a blank new Store name stays automatic and returns the Seller fill outcome", async () => {
+  const created = { ...store, uuid: "new-store", name: "新店铺", client_id: null, credential_configured: false }
+  const stub = recordFetch((call) => {
+    if (call.url === route("viewAccountOverview")) return overview
+    if (call.method === "GET") return rosterReply(call.url === route("workspacesStores") ? [] : [created])
+    if (call.url.endsWith("/credential")) return { name_filled: true }
+    return { store: created }
+  })
+  try {
+    const result = await integrationsHttp.integrationsUpsertOzonStore({ id: "", label: "  ", client_id: "12345", api_key: "fixture-key" })
+    assert.equal(result.name_filled, true)
+    assert.deepEqual(stub.calls.find((call) => call.method === "POST" && call.url === route("workspacesStores"))?.body, { name: "" })
+  } finally { stub.restore() }
+})
 
 test("saving an existing Store re-keys it through the credential route", async () => {
   const stub = recordFetch(integrationsReply)
@@ -397,14 +408,14 @@ test("a repeated Client ID inside one batch adopts the Store the first line mint
   }
 })
 
-test("batch import resolves #tag names, minting the ones the library lacks", async () => {
+test("batch import resolves the #group name, minting it when the library lacks it", async () => {
   const stub = recordFetch((call) => {
     if (call.method === "GET" && call.url === route("workspacesStores")) {
-      return rosterReply([store], [], [{ uuid: "tag-1", name: "华东", store_count: 1 }])
+      return rosterReply([store], [], [], [{ uuid: "group-1", name: "华东", store_count: 1 }])
     }
-    if (call.method === "POST" && call.url === route("workspacesStoresTags")) {
+    if (call.method === "POST" && call.url === route("workspacesStoresGroups")) {
       const body = call.body as { name: string }
-      return { tag: { uuid: `tag-${body.name}`, name: body.name, store_count: 0 } }
+      return { group: { uuid: `group-${body.name}`, name: body.name, store_count: 0 } }
     }
     if (call.method === "POST" && call.url.endsWith("/credential")) {
       return {
@@ -428,7 +439,7 @@ test("batch import resolves #tag names, minting the ones the library lacks", asy
           name: "改名",
           client_id: "12345",
           api_key: "k-1",
-          tag_names: ["华东", "vip"],
+          group_name: "vip",
         },
       ],
     })
@@ -436,18 +447,18 @@ test("batch import resolves #tag names, minting the ones the library lacks", asy
       stub.calls.map((call) => `${call.method} ${call.url}`),
       [
         "GET /api/workspaces/stores",
-        "POST /api/workspaces/stores/tags",
+        "POST /api/workspaces/stores/groups",
         "POST /api/workspaces/stores/store-1/credential",
         "PUT /api/workspaces/stores/store-1",
         "GET /api/workspaces/stores",
         "GET /api/view/account-overview",
       ],
     )
-    // Only the missing name is minted; the PUT carries both, CAS on the
-    // revision the credential write returned.
+    // The PUT carries the minted group, CAS on the revision the credential
+    // write returned.
     assert.deepEqual(stub.calls[1].body, { name: "vip" })
     assert.deepEqual(stub.calls[3].body, {
-      tag_uuids: ["tag-1", "tag-vip"],
+      group_uuid: "group-vip",
       revision: 9,
     })
     assert.equal(outcome.results[0].status, "updated")
@@ -456,25 +467,25 @@ test("batch import resolves #tag names, minting the ones the library lacks", asy
   }
 })
 
-test("a line whose tag cannot be created fails before any credential write", async () => {
+test("a line whose group cannot be created fails before any credential write", async () => {
   const stub = recordFetch(
     (call) => integrationsReply(call),
     (call) =>
-      call.method === "POST" && call.url === route("workspacesStoresTags")
+      call.method === "POST" && call.url === route("workspacesStoresGroups")
         ? "需要主管权限"
         : undefined,
   )
   try {
     const outcome = await integrationsHttp.integrationsImportOzonStores({
       items: [
-        { source_ref: "1", name: "店", client_id: "12345", api_key: "k", tag_names: ["新标签"] },
+        { source_ref: "1", name: "店", client_id: "12345", api_key: "k", group_name: "新分组" },
       ],
     })
     assert.deepEqual(
       stub.calls.map((call) => `${call.method} ${call.url}`),
       [
         "GET /api/workspaces/stores",
-        "POST /api/workspaces/stores/tags",
+        "POST /api/workspaces/stores/groups",
         "GET /api/workspaces/stores",
         "GET /api/view/account-overview",
       ],
@@ -482,18 +493,18 @@ test("a line whose tag cannot be created fails before any credential write", asy
     assert.equal(outcome.results[0].status, "failed")
     assert.equal(
       outcome.results[0].reason,
-      "标签「新标签」未能创建：需要主管权限",
+      "分组「新分组」未能创建：需要主管权限",
     )
   } finally {
     stub.restore()
   }
 })
 
-test("a failed tag write fails the line without deleting the minted Store", async () => {
+test("a failed group write fails the line without deleting the minted Store", async () => {
   const stub = recordFetch(
     (call) => {
       if (call.method === "GET" && call.url === route("workspacesStores")) {
-        return rosterReply([store], [], [{ uuid: "tag-1", name: "华东", store_count: 1 }])
+        return rosterReply([store], [], [], [{ uuid: "group-1", name: "华东", store_count: 1 }])
       }
       if (call.method === "POST" && call.url === route("workspacesStores")) {
         return {
@@ -531,7 +542,7 @@ test("a failed tag write fails the line without deleting the minted Store", asyn
           name: "新店",
           client_id: "77777",
           api_key: "k-1",
-          tag_names: ["华东"],
+          group_name: "华东",
         },
       ],
     })
@@ -547,7 +558,7 @@ test("a failed tag write fails the line without deleting the minted Store", asyn
       ],
     )
     assert.equal(outcome.results[0].status, "failed")
-    assert.match(outcome.results[0].reason ?? "", /密钥已登记，但标签未能应用/)
+    assert.match(outcome.results[0].reason ?? "", /密钥已登记，但分组未能应用/)
     assert.equal(outcome.results[0].uuid, "minted-77777")
   } finally {
     stub.restore()
@@ -627,209 +638,23 @@ test("the roster acknowledges every tombstone it still carries", async () => {
   }
 })
 
-test("a first media account must carry its own credential", async () => {
+test("deleting a Store reads Cloud's bare DTO and then repaints the roster", async () => {
   const stub = recordFetch((call) =>
-    call.url === route("integrationsConfig")
-      ? { ...config, ai_accounts: [], storage_buckets: [] }
+    call.method === "DELETE"
+      ? { uuid: "store-1", deleted: true, revision: 2 }
       : integrationsReply(call),
   )
   try {
-    await assert.rejects(
-      integrationsHttp.integrationsUpsertMediaAccount({
-        role: "assets",
-        label: "素材桶",
-        provider: "cloudflare",
-        endpoint: "https://s3.example.test",
-        region: "auto",
-        bucket: "podhub-assets",
-        key_prefix: "",
-        public_base_url: "https://assets.podhub.si",
-        force_path_style: true,
-        access_key_id: "",
-        secret_access_key: "",
-        session_token: "",
-      }),
-      /首次配置必须填写 Access Key/,
-    )
-    assert.deepEqual(stub.calls.map((call) => call.method), ["GET"])
-  } finally {
-    stub.restore()
-  }
-})
-
-test("deleting a bucket removes only that role", async () => {
-  const assets = {
-    ...config.storage_buckets[0],
-    id: "s3_assets",
-    label: "素材桶",
-    role: "assets" as const,
-    bucket: "podhub-assets",
-    publicBaseUrl: "https://assets.podhub.si",
-  }
-  const twoRoles = { ...config, storage_buckets: [...config.storage_buckets, assets] }
-  const stub = recordFetch((call) =>
-    call.url === route("integrationsConfig") ? twoRoles : integrationsReply(call),
-  )
-  try {
-    await integrationsHttp.integrationsDeleteMediaAccount({ role: "transit" })
-    const put = stub.calls.find(
-      (call) => call.method === "PUT" && call.url === route("adminIntegrationsConfig"),
-    )?.body as { storage_buckets: Array<{ role: string }> }
-    assert.deepEqual(put.storage_buckets.map((row) => row.role), ["assets"])
-  } finally {
-    stub.restore()
-  }
-})
-
-const healthcheckPresign = {
-  transport: "direct",
-  account_id: "s3_one",
-  workspace_uuid: "workspace-uuid",
-  object_key: "uploads/fixture/healthcheck.png",
-  public_url: "https://cdn.example.test/uploads/fixture/healthcheck.png",
-  storage_revision: 3,
-  byte_length: HEALTHCHECK_PNG.byteLength,
-  upload: {
-    url: "https://bucket.example.test/fixture",
-    headers: { content_type: "image/png", if_none_match: "*" },
-    expires_at_ms: Date.now() + 600_000,
-  },
-  upload_ticket: "healthcheck-ticket",
-}
-
-test("the media connection test probes the shared object, then uploads it directly", async () => {
-  const digest = createHash("sha256").update(HEALTHCHECK_PNG).digest("hex")
-  assert.equal(await healthcheckDigest(), digest)
-  const presign = healthcheckPresign
-  const stub = recordFetch((call) => {
-    if (call.url.endsWith("/presign")) return presign
-    if (call.url.startsWith("https://bucket.example.test")) return null
-    return {
-      account_id: "s3_one",
-      object_key: "k",
-      public_url: "https://cdn.example.test/k",
-      exists: false,
-    }
-  })
-  try {
-    const result = await integrationsHttp.integrationsTestMediaAccount({ id: "s3_one", workspaceUuid: "workspace-uuid" })
+    await integrationsHttp.integrationsDeleteOzonStore({ id: "store-1" })
     assert.deepEqual(
       stub.calls.map((call) => `${call.method} ${call.url}`),
       [
-        `POST /api/media/objects/${digest}/png/probe?accountId=s3_one`,
-        `POST /api/media/objects/${digest}/png/presign`,
-        "PUT https://bucket.example.test/fixture",
-        `POST /api/media/objects/${digest}/png/complete`,
+        "GET /api/workspaces/stores",
+        "DELETE /api/workspaces/stores/store-1",
+        "GET /api/workspaces/stores",
+        "GET /api/view/account-overview",
       ],
     )
-    assert.deepEqual(stub.calls[1].body, {
-      account_id: "s3_one",
-      workspace_uuid: "workspace-uuid",
-      byte_length: HEALTHCHECK_PNG.byteLength,
-    })
-    assert.ok(stub.calls[2].body instanceof Uint8Array)
-    assert.deepEqual(stub.calls[2].body, HEALTHCHECK_PNG)
-    assert.deepEqual(stub.calls[3].body, {
-      account_id: "s3_one",
-      workspace_uuid: "workspace-uuid",
-      byte_length: HEALTHCHECK_PNG.byteLength,
-      object_key: presign.object_key,
-      storage_revision: 3,
-      upload_ticket: "healthcheck-ticket",
-    })
-    assert.ok(result.latency_ms >= 0)
-  } finally {
-    stub.restore()
-  }
-})
-
-test("the media connection test fixes the caller's Workspace across digest and presign awaits", async () => {
-  const target = { id: "s3_one", workspaceUuid: "workspace-uuid" }
-  const stub = recordFetch((call) => {
-    if (call.url.endsWith("/presign")) {
-      target.workspaceUuid = "workspace-after-presign"
-      return healthcheckPresign
-    }
-    if (call.method === "PUT") return null
-    return { exists: false }
-  })
-  try {
-    const pending = integrationsHttp.integrationsTestMediaAccount(target)
-    target.workspaceUuid = "workspace-after-digest"
-    await pending
-    assert.deepEqual(stub.calls[1].body, {
-      account_id: "s3_one", workspace_uuid: "workspace-uuid", byte_length: HEALTHCHECK_PNG.byteLength,
-    })
-    assert.deepEqual(stub.calls[3].body, {
-      account_id: "s3_one", workspace_uuid: "workspace-uuid", byte_length: HEALTHCHECK_PNG.byteLength,
-      object_key: healthcheckPresign.object_key, storage_revision: healthcheckPresign.storage_revision,
-      upload_ticket: healthcheckPresign.upload_ticket,
-    })
-  } finally {
-    stub.restore()
-  }
-})
-
-test("the media connection test completes when the direct PUT outcome is unknown", async () => {
-  const stub = recordFetch((call) => {
-    if (call.url.endsWith("/presign")) return { ...healthcheckPresign, account_id: "s3_two" }
-    if (call.method === "PUT") throw new TypeError("PUT response lost")
-    return { exists: false }
-  })
-  try {
-    const result = await integrationsHttp.integrationsTestMediaAccount({ id: " s3_two ", workspaceUuid: "workspace-uuid" })
-    const digest = await healthcheckDigest()
-    assert.deepEqual(stub.calls.map((call) => `${call.method} ${call.url}`), [
-      `POST /api/media/objects/${digest}/png/probe?accountId=s3_two`,
-      `POST /api/media/objects/${digest}/png/presign`,
-      "PUT https://bucket.example.test/fixture",
-      `POST /api/media/objects/${digest}/png/complete`,
-    ])
-    assert.deepEqual(stub.calls[1].body, {
-      account_id: "s3_two", workspace_uuid: "workspace-uuid", byte_length: HEALTHCHECK_PNG.byteLength,
-    })
-    assert.deepEqual(stub.calls[3].body, {
-      account_id: "s3_two", workspace_uuid: "workspace-uuid", byte_length: HEALTHCHECK_PNG.byteLength,
-      object_key: healthcheckPresign.object_key, storage_revision: healthcheckPresign.storage_revision,
-      upload_ticket: healthcheckPresign.upload_ticket,
-    })
-    assert.ok(result.latency_ms >= 0)
-  } finally {
-    stub.restore()
-  }
-})
-
-test("an existing healthcheck object needs only the account probe", async () => {
-  const stub = recordFetch(() => ({ exists: true }))
-  try {
-    await integrationsHttp.integrationsTestMediaAccount({ id: "s3_one", workspaceUuid: "workspace-uuid" })
-    assert.deepEqual(stub.calls.map((call) => `${call.method} ${call.url}`), [
-      `POST /api/media/objects/${await healthcheckDigest()}/png/probe?accountId=s3_one`,
-    ])
-  } finally {
-    stub.restore()
-  }
-})
-
-test("the media connection test refuses an empty Workspace scope before Cloud", async () => {
-  const stub = recordFetch(() => ({}))
-  try {
-    for (const workspaceUuid of ["", "   "]) {
-      await assert.rejects(integrationsHttp.integrationsTestMediaAccount({ id: "s3_one", workspaceUuid }), /请先选择工作空间/)
-    }
-    assert.equal(stub.calls.length, 0)
-  } finally {
-    stub.restore()
-  }
-})
-
-test("a healthcheck without a confirmation ticket refuses before direct PUT", async () => {
-  const stub = recordFetch((call) => {
-    return call.url.endsWith("/presign") ? { ...healthcheckPresign, upload_ticket: null } : { exists: false }
-  })
-  try {
-    await assert.rejects(integrationsHttp.integrationsTestMediaAccount({ id: "s3_one", workspaceUuid: "workspace-uuid" }), /未返回上传授权/)
-    assert.deepEqual(stub.calls.map((call) => call.method), ["POST", "POST"])
   } finally {
     stub.restore()
   }
@@ -846,6 +671,8 @@ test("setting the default model preserves account models and writes the snapshot
     assert.equal(body.ai_accounts[0].model, "gpt-test")
     assert.equal(body.ai_accounts[0].base_url, "https://api.example.test/v1")
     assert.equal(body.ai_accounts[0].api_key, "")
+    assert.equal(body.ai_accounts[0].purpose, "ocr")
+    assert.deepEqual((body as { ai_runtime?: unknown }).ai_runtime, config.ai_runtime)
   } finally {
     stub.restore()
   }

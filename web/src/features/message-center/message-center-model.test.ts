@@ -17,6 +17,9 @@ import {
   inboxRequestOf,
   inboxStoresFromRoster,
   invisibleUnreadNote,
+  messageBody,
+  messageImageLinks,
+  messageSender,
   sendRequestOf,
   sessionKindOf,
   unreadLiveStatus,
@@ -78,8 +81,8 @@ test("roster stores without a Cloud session stay in the inbox request", () => {
       needs_reentry: false,
       can_manage: true,
     can_edit_credential: true,
-    assignee_key_manage: true,
-    permissions: { manage_store: true, edit_name: true, manage_key_grants: true, manage_tags: true, test_key: true, manage_key: true, delete_store: true },
+
+    permissions: { manage_store: true, edit_name: true, manage_tags: true, test_key: true, manage_key: true, delete_store: true },
     },
     {
       id: "local-2",
@@ -105,8 +108,8 @@ test("roster stores without a Cloud session stay in the inbox request", () => {
       needs_reentry: false,
       can_manage: true,
     can_edit_credential: true,
-    assignee_key_manage: true,
-    permissions: { manage_store: true, edit_name: true, manage_key_grants: true, manage_tags: true, test_key: true, manage_key: true, delete_store: true },
+
+    permissions: { manage_store: true, edit_name: true, manage_tags: true, test_key: true, manage_key: true, delete_store: true },
     },
   ]
   const request = inboxRequestOf(inboxStoresFromRoster(stores))
@@ -140,8 +143,8 @@ test("a lapsed Seller key never enters the inbox request", () => {
     needs_reentry: false,
     can_manage: true,
     can_edit_credential: true,
-    assignee_key_manage: true,
-    permissions: { manage_store: true, edit_name: true, manage_key_grants: true, manage_tags: true, test_key: true, manage_key: true, delete_store: true },
+
+    permissions: { manage_store: true, edit_name: true, manage_tags: true, test_key: true, manage_key: true, delete_store: true },
   }
   const request = inboxRequestOf(
     inboxStoresFromRoster([
@@ -225,9 +228,16 @@ test("session tabs keep buyer tickets and platform apart", () => {
       session_kind: "platform",
     }),
   ]
-  assert.equal(filterSessions(chats, "buyer").length, 1)
-  assert.equal(filterSessions(chats, "ticket")[0]?.chat_id, "c-ticket")
+  assert.equal(filterSessions(chats, "buyer", "", "all").length, 1)
+  assert.equal(filterSessions(chats, "ticket", "", "all")[0]?.chat_id, "c-ticket")
   assert.equal(sessionKindOf(chats[2]), "platform")
+})
+
+test("session search and status use the returned chat fields", () => {
+  const chats = [chat({ preview: "Здравствуйте" }), chat({ chat_id: "closed-42", chat_status: "CLOSED" })]
+  assert.equal(filterSessions(chats, "buyer", "ЗДРАВ", "opened")[0]?.chat_id, "c-buyer")
+  assert.equal(filterSessions(chats, "buyer", "42", "closed")[0]?.chat_id, "closed-42")
+  assert.equal(filterSessions(chats, "buyer", "42", "opened").length, 0)
 })
 
 test("send payload is the Russian text on chats.send_message_v1 types", () => {
@@ -239,6 +249,8 @@ test("send payload is the Russian text on chats.send_message_v1 types", () => {
   assert.equal(request.store_id, "11111111-1111-4111-8111-111111111111")
   assert.equal(request.chat_id, "c-buyer")
   assert.equal(request.text, "Здравствуйте")
+  assert.notEqual(sendRequestOf(request.store_id, request.chat_id, request.text).operation_id, request.operation_id)
+  assert.equal(sendRequestOf(request.store_id, request.chat_id, request.text, request.operation_id).operation_id, request.operation_id)
   assert.equal(discloseUnread(413), "413")
   assert.equal(unreadLiveStatus(3), "3 条未读")
 })
@@ -247,4 +259,15 @@ test("invisible-unread note discloses the metadata count", () => {
   assert.equal(invisibleUnreadNote(1), "1 条消息暂不可见（已归档或过期）")
   assert.equal(invisibleUnreadNote(1200), "1,200 条消息暂不可见（已归档或过期）")
   assert.equal(invisibleUnreadNote(0), "0 条消息暂不可见（已归档或过期）")
+})
+
+test("message data tolerates missing and malformed parts without hiding readable text", () => {
+  assert.equal(messageBody({ data: [" привет ", "", "мир"] }), "привет\nмир")
+  assert.equal(messageBody(null), "")
+  assert.equal(messageBody({ data: null }), "")
+  assert.equal(messageBody({ data: ["hello", null, 5] } as never), "hello")
+  assert.deepEqual(messageImageLinks({ data: ["https://example.test/a.png", "javascript:alert(1)", "not a URL"] }), ["https://example.test/a.png"])
+  assert.equal(messageSender("Support"), "客服")
+  assert.equal(messageSender("OtherUser"), "OtherUser")
+  assert.equal(messageSender(undefined), "发送方未知")
 })

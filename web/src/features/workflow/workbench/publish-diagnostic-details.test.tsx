@@ -4,6 +4,7 @@ import test from "node:test"
 import { Children, isValidElement, type ReactElement, type ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import { toast } from "@/components/ui/toast"
 import { createDiagnosticMemory, type DiagnosticDetail, type OriginalUnavailableReason } from "@/lib/diagnostic-memory"
 import { captureDiagnostic, getDiagnosticDetail, setErrorTelemetryContext } from "@/lib/error-telemetry"
@@ -49,7 +50,7 @@ function rendered(props: PublishDiagnosticDetailsProps, reporter?: PublishDiagno
     button.props.onClick({ stopPropagation() { stopped++ } })
     assert.equal(stopped, 1)
   }, click() {
-    const button = elements.find((node) => node.type === Button && node.props.children === "复制诊断信息")
+    const button = elements.find((node) => node.type === IconButton && node.props.label === "复制诊断信息")
     assert.ok(button, "the real component must emit its explicit copy button")
     const click = button.props.onClick
     assert.ok(typeof click === "function")

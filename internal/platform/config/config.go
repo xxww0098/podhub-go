@@ -31,7 +31,11 @@ import (
 
 const (
 	envDatabaseURL       = "DATABASE_URL"
+	envDatabaseRemote    = "CLOUD_DATABASE_ALLOW_REMOTE_HOST"
+	envAPIDBPassword     = "PODHUB_API_DB_PASSWORD"
+	envWorkerDBPassword  = "PODHUB_WORKER_DB_PASSWORD"
 	envBind              = "CLOUD_BIND"
+	envDNSServer         = "CLOUD_DNS_SERVER"
 	envOzonKillSwitch    = "OZON_WRITE_KILL_SWITCH"
 	envMediaGCDelete     = "CLOUD_MEDIA_GC_DELETE"
 	envR2Endpoint        = "R2_ENDPOINT"
@@ -58,9 +62,7 @@ const (
 	envSellerKeyPrevious = "CLOUD_SELLER_CREDENTIAL_KEY_PREVIOUS"
 	envIntegrationKey    = "CLOUD_INTEGRATION_CONFIG_KEY"
 	envInstanceID        = "CLOUD_INSTANCE_ID"
-	envAdminTotpKey      = "CLOUD_ADMIN_TOTP_KEY"
 	envAILoopback        = "CLOUD_AI_EGRESS_ALLOW_LOOPBACK"
-	envAIPublic          = "CLOUD_AI_EGRESS_ALLOW_PUBLIC"
 	envSellerBase        = "CLOUD_SELLER_BASE_URL"
 	envRatingSync        = "STORE_RATING_SYNC_INTERVAL"
 	envRatingKeep        = "STORE_RATING_RETENTION"
@@ -73,8 +75,14 @@ const (
 
 // Config is the only parsed view of the environment.
 type Config struct {
-	DatabaseURL string
-	Bind        string
+	DatabaseURL                 string
+	Bind                        string
+	DNSServer                   string
+	PublicURL                   string
+	SMTP                        SMTPSettings
+	CloudflareOAuthClientID     string
+	CloudflareOAuthClientSecret string
+	CloudflareOAuthScopes       string
 
 	// ozonWritesDisabled is true only when OZON_WRITE_KILL_SWITCH is truthy.
 	ozonWritesDisabled bool
@@ -89,6 +97,7 @@ type Config struct {
 	R2Bucket    string
 	R2AccessKey string
 	R2Secret    string
+	R2Storage   []R2StorageAccount
 
 	LoadTestMode string
 
@@ -116,6 +125,7 @@ type Config struct {
 	// An empty value is the same as unset.
 	sellerRelayDir       string
 	sellerRelaySwitchDir string
+	sellerEgressRoutes   []string
 
 	// Credential secrets are captured here. Callers decrypt with the bytes.
 	// They are not the two protected switches.
@@ -123,12 +133,7 @@ type Config struct {
 	SellerCredentialKeyID       string
 	SellerCredentialKeyPrevious string
 	IntegrationConfigKey        string
-	AdminTotpKey                string
 	AIEgressAllowLoopback       bool
-	// AIEgressAllowPublic is the public model-probe switch. Only the trimmed
-	// value 1 turns it on. Unset and every other value leave it off. It does
-	// not share a parser with the Ozon kill switch or the media-delete switch.
-	AIEgressAllowPublic bool
 	// sellerBaseURL is CLOUD_SELLER_BASE_URL trimmed at Load. The seller
 	// domain turns a non-loopback value into the official host.
 	sellerBaseURL string
@@ -143,6 +148,19 @@ type Config struct {
 
 	// writerInstance is CLOUD_INSTANCE_ID trimmed. Blank becomes axum-{pid}.
 	writerInstance string
+
+	// databaseAllowRemote is CLOUD_DATABASE_ALLOW_REMOTE_HOST. Only 1/true/
+	// yes/on lets CheckDatabase accept a non-loopback database host. It is
+	// deliberately a separate switch from the DSN.
+	databaseAllowRemote bool
+
+	// apiDBPassword is PODHUB_API_DB_PASSWORD. Only cmd/migrate reads it to
+	// set the podhub_login_api role password after migrations.
+	apiDBPassword string
+
+	// workerDBPassword is PODHUB_WORKER_DB_PASSWORD. Only cmd/migrate reads
+	// it to set the three NOINHERIT worker login passwords.
+	workerDBPassword string
 
 	// otlpTraces is OTEL_EXPORTER_OTLP_TRACES_ENDPOINT trimmed. Empty is off.
 	otlpTraces string
@@ -178,12 +196,19 @@ func Load() Config {
 	return Config{
 		DatabaseURL:                 strings.TrimSpace(os.Getenv(envDatabaseURL)),
 		Bind:                        bind,
+		DNSServer:                   strings.TrimSpace(os.Getenv(envDNSServer)),
+		PublicURL:                   strings.TrimSpace(os.Getenv("CLOUD_PUBLIC_URL")),
+		SMTP:                        loadSMTP(),
+		CloudflareOAuthClientID:     strings.TrimSpace(os.Getenv("CLOUDFLARE_OAUTH_CLIENT_ID")),
+		CloudflareOAuthClientSecret: os.Getenv("CLOUDFLARE_OAUTH_CLIENT_SECRET"),
+		CloudflareOAuthScopes:       strings.TrimSpace(os.Getenv("CLOUDFLARE_OAUTH_SCOPES")),
 		ozonWritesDisabled:          ozonSet && isTruthy(ozonRaw),
 		mediaDeleteEnabled:          mediaDeleteEnabled(mediaRaw, mediaSet),
 		R2Endpoint:                  strings.TrimSpace(os.Getenv(envR2Endpoint)),
 		R2Bucket:                    strings.TrimSpace(os.Getenv(envR2Bucket)),
 		R2AccessKey:                 strings.TrimSpace(os.Getenv(envR2AccessKeyID)),
 		R2Secret:                    strings.TrimSpace(os.Getenv(envR2Secret)),
+		R2Storage:                   loadR2Storage(),
 		LoadTestMode:                strings.TrimSpace(os.Getenv(envLoadTestMode)),
 		productSyncDisabled:         syncSet && isTruthy(syncRaw),
 		delegateSync:                durationMS(os.Getenv(envDelegateSync), defaultDelegate),
@@ -197,18 +222,20 @@ func Load() Config {
 		shippingInjectWrites:        injectSet && isTruthy(injectRaw),
 		sellerRelayDir:              relayDir,
 		sellerRelaySwitchDir:        switchDir,
+		sellerEgressRoutes:          sellerEgressRoutesFromEnv(),
 		SellerCredentialKey:         os.Getenv(envSellerKey),
 		SellerCredentialKeyID:       strings.TrimSpace(os.Getenv(envSellerKeyID)),
 		SellerCredentialKeyPrevious: os.Getenv(envSellerKeyPrevious),
 		IntegrationConfigKey:        os.Getenv(envIntegrationKey),
-		AdminTotpKey:                os.Getenv(envAdminTotpKey),
 		AIEgressAllowLoopback:       strings.TrimSpace(os.Getenv(envAILoopback)) == "1",
-		AIEgressAllowPublic:         strings.TrimSpace(os.Getenv(envAIPublic)) == "1",
 		sellerBaseURL:               strings.TrimSpace(os.Getenv(envSellerBase)),
 		ratingSync:                  ratingInterval(os.Getenv(envRatingSync)),
 		ratingKeep:                  ratingRetention(os.Getenv(envRatingKeep)),
 		ratingRank:                  ratingRanks(os.Getenv(envRatingRank)),
 		writerInstance:              writerInstanceID(),
+		databaseAllowRemote:         isTruthy(os.Getenv(envDatabaseRemote)),
+		apiDBPassword:               os.Getenv(envAPIDBPassword),
+		workerDBPassword:            os.Getenv(envWorkerDBPassword),
 		otlpTraces:                  strings.TrimSpace(os.Getenv(envOTLPTraces)),
 	}
 }
@@ -242,6 +269,12 @@ func (c Config) WriterInstanceID() string {
 	return c.writerInstance
 }
 
+// WriterInstancePinned reports whether CLOUD_INSTANCE_ID was explicitly set.
+// The lease keeper refuses an ephemeral axum-{pid} identity.
+func (c Config) WriterInstancePinned() bool {
+	return strings.TrimSpace(c.writerInstance) != ""
+}
+
 func writerInstanceID() string {
 	id := strings.TrimSpace(os.Getenv(envInstanceID))
 	if id == "" {
@@ -249,6 +282,17 @@ func writerInstanceID() string {
 	}
 	return id
 }
+
+// DatabaseAllowRemote reports CLOUD_DATABASE_ALLOW_REMOTE_HOST.
+func (c Config) DatabaseAllowRemote() bool { return c.databaseAllowRemote }
+
+// APIDBPassword is PODHUB_API_DB_PASSWORD. cmd/migrate uses it to set the
+// podhub_login_api password after the roles migration; no server reads it.
+func (c Config) APIDBPassword() string { return c.apiDBPassword }
+
+// WorkerDBPassword is PODHUB_WORKER_DB_PASSWORD. cmd/migrate sets it on the
+// three NOINHERIT worker logins; no server reads it.
+func (c Config) WorkerDBPassword() string { return c.workerDBPassword }
 
 // OTLPTracesEndpoint is OTEL_EXPORTER_OTLP_TRACES_ENDPOINT captured by Load.
 // Unset or blank returns "" and nil: no exporter, nothing is dialed. A set
@@ -352,7 +396,9 @@ func (c Config) R2Configured() bool {
 }
 
 // CheckDatabase allows an empty URL (the process will not connect) and
-// otherwise only loopback hosts. Production endpoints are refused.
+// otherwise loopback hosts. A non-loopback host needs the explicit
+// CLOUD_DATABASE_ALLOW_REMOTE_HOST switch; this keeps a copied DSN from
+// silently pointing production data at an unapproved server.
 func (c Config) CheckDatabase() error {
 	if c.DatabaseURL == "" {
 		return nil
@@ -369,7 +415,10 @@ func (c Config) CheckDatabase() error {
 	case "", "localhost", "127.0.0.1", "::1":
 		return nil
 	default:
-		return fmt.Errorf("refusing database host %q; this process only dials loopback", host)
+		if c.databaseAllowRemote {
+			return nil
+		}
+		return fmt.Errorf("refusing database host %q; set CLOUD_DATABASE_ALLOW_REMOTE_HOST=1 to allow a non-loopback host", host)
 	}
 }
 

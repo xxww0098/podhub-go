@@ -1,26 +1,27 @@
 import { cn } from "@/lib/utils"
+import { ChevronRight } from "lucide-react"
 
 type BreadcrumbProps = {
   moduleLabel: string
+  groupLabel?: string
+  alwaysVisible?: boolean
   trail?: {
     label: string
     onExit: () => void
   }
 }
 
-/**
- * Segment-track location chrome. Notion-style: bare text segments joined by a
- * hairline "/" divider, no rail or boxed current page. Ancestors stay ghost
- * buttons that exit on click; hover is the only fill. Tenant scope lives in
- * the sidebar switcher, not here.
- *
- * Trail mount/unmount keeps a reserved slot so the header does not reflow when
- * a record drill opens or closes.
- */
-export function Breadcrumb({ moduleLabel, trail }: BreadcrumbProps) {
+/** Show the path when a detail needs a way back; keep static page names off the canvas. */
+export function Breadcrumb({ moduleLabel, groupLabel, alwaysVisible = false, trail }: BreadcrumbProps) {
   return (
-    <nav aria-label="面包屑" className="flex min-w-0 items-center">
+    <nav aria-label="面包屑" className={cn("flex min-w-0 items-center", !trail && !alwaysVisible && "sr-only")}>
       <ol className="flex min-w-0 items-center">
+        {groupLabel ? (
+          <li className="shell-breadcrumb-group flex shrink-0 items-center text-muted-foreground">
+            <span>{groupLabel}</span>
+            <ChevronRight aria-hidden className="mx-2 size-4" />
+          </li>
+        ) : null}
         <li className="min-w-0">
           {trail ? (
             <button
@@ -43,10 +44,11 @@ export function Breadcrumb({ moduleLabel, trail }: BreadcrumbProps) {
           )}
           aria-hidden={!trail}
         >
-          <span className="px-1 text-sm text-faint-foreground">/</span>
+          <ChevronRight aria-hidden className="mx-2 size-4 shrink-0 text-faint-foreground" />
           <span
             aria-current={trail ? "page" : undefined}
             className={segmentClass("max-w-[16rem]")}
+            title={trail?.label}
           >
             {trail?.label ?? "\u00a0"}
           </span>

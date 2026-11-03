@@ -78,6 +78,11 @@ func (r Repo) Dispatch(ctx context.Context, cmd domain.AdminCommand, in domain.D
 			return err
 		}
 		if len(written) == 0 {
+			for _, line := range kept {
+				if line.FulfillerCount == 0 {
+					return contract.Conflict("工厂未绑定履约账号，无法推单；请先在工厂配置中完成绑定")
+				}
+			}
 			return contract.Conflict("这些行所在厂家已有在途派发包，没有新的包")
 		}
 		var lineIDs []string
@@ -134,7 +139,7 @@ func (r Repo) Receipt(ctx context.Context, cmd domain.AdminCommand, in domain.Re
 			SET state = 'shipped',
 			    receipt = jsonb_build_object('tracking_no', $3::text, 'note', $4::text, 'recorded_by', $5::text, 'at_ms', $6::bigint),
 			    updated_at_ms = $6
-			WHERE dispatch_id = $2::uuid AND state IN ('dispatched', 'accepted')`,
+			WHERE order_id = $1::uuid AND dispatch_id = $2::uuid AND state IN ('dispatched', 'accepted')`,
 			cmd.OrderID, dispatchID, in.TrackingNo, in.Note, "admin:"+itoa(cmd.UserID), cmd.NowMS)
 		if err != nil {
 			return mapDB(err)

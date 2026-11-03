@@ -10,10 +10,10 @@
  * 类目未选只留提示，schema 或配置读取失败只留重试按钮（错误走
  * notifyCommandError）；409 CAS 冲突不自动拉新基线再写 —— 那会是静默
  * 最后写赢 —— 而是把行锁回「重新读取」，用户确认后重拉再改。
- * 本组件不渲染内联错误。
+ * 字段问题随配置回读并传给共享编辑器。
  */
 import { useEffect, useMemo, useRef, useState } from "react"
-import { RefreshCw } from "lucide-react"
+import { RefreshCw, RotateCcw } from "lucide-react"
 
 import type {
   CategorySchemaRequest,
@@ -23,8 +23,10 @@ import type {
 } from "@/bindings/commands"
 import type { SupplierDbRow } from "@/bindings/http-supplier-dbs"
 import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import { Spinner } from "@/components/ui/spinner"
 import { categorySchemaFlight } from "@/features/category-schema/schema-sync"
+import { SupplierCategoryGate } from "./supplier-category-gate"
 import { SupplierRowDefaultsForm } from "./supplier-row-defaults-form"
 import {
   DurableAutosave,
@@ -37,11 +39,12 @@ import {
   writeWorkflowValue,
   type WorkflowValueLocation,
 } from "@/features/workflow/workflow-draft"
-import { notifyCommandError, notifyError } from "@/lib/notify"
+import { notifyCommandError, notifyError, notifyInfo, notifySuccess } from "@/lib/notify"
 
 import { OzonConfigSession } from "./supplier-ozon-config-session"
 import {
   seedSupplierRowDefaults,
+  supplierConfigIssues,
   supplierOzonConfigIO,
   type SupplierOzonConfigData,
   type SupplierOzonConfigIO,
@@ -67,16 +70,18 @@ export function SupplierRowDefaults({
   onNavigate,
   configEpoch = 0,
   onConfigSaved,
+  flushRef,
 }: {
   row: SupplierDbRow
   configEpoch?: number
   onConfigSaved?: () => void
+  flushRef?: React.RefObject<(() => Promise<boolean>) | null>
   /** 测试与宿主注入；生产走 `/api/catalog/schema`。 */
   loadSchema?: (request: CategorySchemaRequest) => Promise<CategorySchemaView>
   /** 测试注入；生产走 GET/PUT `…/ozon-config`。 */
   io?: SupplierOzonConfigIO
   /**
-   * 类目在当前平台内，媒体在主要信息；宿主负责导航并聚焦。
+   * 类目在当前平台内，媒体在商品信息；宿主负责导航并聚焦。
    */
   onNavigate?: (target: "category" | "media") => void
 }) {
@@ -91,6 +96,7 @@ export function SupplierRowDefaults({
   const [configFetched, setConfigFetched] = useState(false)
   const [draft, setDraft] = useState<WorkflowCategoryDraft | undefined>(undefined)
   const [phase, setPhase] = useState<DurableAutosavePhase>("idle")
+  const [validationAttempt, setValidationAttempt] = useState(0)
 
   const savedCallback = useRef(onConfigSaved)
   savedCallback.current = onConfigSaved
@@ -143,7 +149,7 @@ export function SupplierRowDefaults({
         (saved) => {
           if (session.disposed) return
           setConfig(saved)
-          sentJsonRef.current = JSON.stringify(saved.values)
+          sentJsonRef.current = JSON.stringify([saved.values,saved.complex_values])
           savedCallback.current?.()
         },
         (next) => {
@@ -157,6 +163,16 @@ export function SupplierRowDefaults({
   const coordinateKey = coordinateReady
     ? `${row.descriptionCategoryId}:${row.typeId}`
     : ""
+
+  useEffect(() => {
+    if (!flushRef) return
+    const flush = async () => {
+      try { await autosave.flush(); return !autosave.hasPendingChanges() && !session.conflicted }
+      catch { return false }
+    }
+    flushRef.current = flush
+    return () => { if (flushRef.current === flush) flushRef.current = null }
+  }, [flushRef, autosave, session])
 
   // StrictMode 会重放 effect；每次接管恢复 UI 回调，cleanup 仍落盘旧挂账。
   useEffect(() => {
@@ -226,7 +242,7 @@ export function SupplierRowDefaults({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, coordinateKey, loadNonce])
 
-  // 行 PUT / 提示词 PATCH 可能推进共用的配置 revision：本地干净时跟上基线。
+  // 商品行 PUT 可能推进共用的配置 revision：本地干净时跟上基线。
   useEffect(() => {
     void session
       .followRowRevision(row.revision, !autosave.hasPendingChanges())
@@ -239,7 +255,7 @@ export function SupplierRowDefaults({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, row.revision])
 
-  // 提示词页的识图开关也写同一配置；本地干净时刷新CAS基线，有草稿则保留。
+  // 商品文案区的识图开关也写同一配置；本地干净时刷新CAS基线，有草稿则保留。
   useEffect(() => {
     if (seenEpoch.current === configEpoch || autosave.hasPendingChanges() || session.conflicted) return
     seenEpoch.current = configEpoch
@@ -255,7 +271,7 @@ export function SupplierRowDefaults({
   // 编辑初值：schema 与配置都就位后起稿（坐标键重盖到行当前坐标）；外部改写
   // 在本地干净时采纳，本地有未落盘编辑时保留本地（下一次落盘仍是最后写赢）。
   const valuesJson = configFetched
-    ? JSON.stringify(config?.values ?? {})
+    ? JSON.stringify([config?.values ?? {},config?.complex_values ?? []])
     : ""
   useEffect(() => {
     if (!schema || !coordinateKey || !configFetched) return
@@ -265,7 +281,7 @@ export function SupplierRowDefaults({
     const next = seedSupplierRowDefaults(schema, config?.values, {
       description_category_id: row.descriptionCategoryId!,
       type_id: row.typeId!,
-    })
+    },config?.complex_values)
     draftRef.current = next
     setDraft(next)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -296,19 +312,10 @@ export function SupplierRowDefaults({
 
   if (!coordinateReady) {
     return (
-      <div
-        className="flex items-center justify-between gap-3 rounded-lg border border-dashed border-border/70 bg-muted/20 px-3 py-2.5"
-        data-supplier-row-defaults-empty=""
-      >
-        <p className="text-meta leading-5 text-muted-foreground">
-          先选择 Ozon 类目，字段会随类目变化。
-        </p>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="shrink-0"
-          onClick={() => {
+      <div data-supplier-row-defaults-empty="">
+        <SupplierCategoryGate
+          description="类目决定 Ozon 必填字段与可选属性。选定后会读取该类目的字段清单。"
+          onAction={() => {
             if (onNavigate) {
               onNavigate("category")
               return
@@ -319,9 +326,7 @@ export function SupplierRowDefaults({
             cell?.scrollIntoView({ block: "nearest", behavior: "smooth" })
             cell?.querySelector("button")?.focus()
           }}
-        >
-          去选择类目
-        </Button>
+        />
       </div>
     )
   }
@@ -334,16 +339,14 @@ export function SupplierRowDefaults({
         <p className="text-meta leading-5 text-muted-foreground">
           默认字段暂未读到。
         </p>
-        <Button
-          type="button"
+        <IconButton
+          icon={RefreshCw}
+          label="重新读取"
           variant="outline"
-          size="sm"
+          size="icon-sm"
           className="shrink-0"
           onClick={() => setLoadNonce((nonce) => nonce + 1)}
-        >
-          <RefreshCw data-icon="inline-start" aria-hidden />
-          重新读取
-        </Button>
+        />
       </div>
     )
   }
@@ -356,12 +359,18 @@ export function SupplierRowDefaults({
     )
   }
   return (
-    <div className="flex flex-col gap-2" data-supplier-row-defaults="">
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-supplier-row-defaults="">
+      <SupplierRowDefaultsForm
+        schema={schema}
+        draft={draft}
+        issues={supplierConfigIssues(config)}
+        validationAttempt={validationAttempt}
+        action={<>
         <Button
           type="button"
-          variant="outline"
+          variant="default"
           size="sm"
+          title="保存当前修改并校验全部 Ozon 字段"
           disabled={phase === "saving"}
           onClick={() => {
             if (!schema) return
@@ -374,38 +383,43 @@ export function SupplierRowDefaults({
                 typeId: row.typeId!,
               },
             })
-            void autosave.flush()
+            void autosave.flush().then((saved) => {
+              if (!saved || session.disposed) return
+              setValidationAttempt((attempt) => attempt + 1)
+              if (session.baseline?.state === "valid") {
+                notifySuccess("配置校验通过")
+              } else {
+                notifyInfo("配置校验未通过")
+              }
+            })
           }}
         >
-          保存并校验 Ozon 配置
+          校验配置
         </Button>
         <span
-          className="ml-auto inline-flex items-center"
+          className="inline-flex items-center"
           role="status"
           aria-live="polite"
         >
           {phase === "error" ? (
-            <Button
-              type="button"
+            <><span className="text-meta text-destructive">保存失败</span>
+            <IconButton
+              icon={RotateCcw}
+              label="重试保存"
               variant="ghost"
-              size="sm"
+              size="icon-sm"
               onClick={() => void autosave.flush()}
-            >
-              <RefreshCw data-icon="inline-start" aria-hidden />
-              重试保存
-            </Button>
+            />
+            </>
           ) : phase === "saving" ? (
             <span className="text-meta text-muted-foreground">保存中…</span>
           ) : phase === "saved" ? (
-            <span className="text-meta text-muted-foreground">已自动保存</span>
+            <span className="text-meta text-muted-foreground">{config?.state==="valid"?"已保存 · 校验通过":"已保存 · 校验未通过"}</span>
           ) : phase === "dirty" ? (
             <span className="text-meta text-muted-foreground">待保存…</span>
-          ) : null}
+          ) : <span className="text-meta text-muted-foreground">{config?.revision ? config.state === "valid" ? "已保存 · 校验通过" : "已保存 · 校验未通过" : "尚未保存"}</span>}
         </span>
-      </div>
-      <SupplierRowDefaultsForm
-        schema={schema}
-        draft={draft}
+        </>}
         onUpdateValue={(
           fieldKey: string,
           value: WorkflowDraftValue | undefined,
@@ -415,19 +429,7 @@ export function SupplierRowDefaults({
             writeWorkflowValue(current, fieldKey, value, location),
           )
         }
-        onAddComplexItem={(complexId) => {
-          // 配置模型对一个复杂组只存一份值 —— 多条目没有 wire 槽位。
-          if (
-            draft.complex_values.some(
-              (group) =>
-                group.complex_id === complexId && group.items.length >= 1,
-            )
-          ) {
-            notifyError("此字段组只支持一条")
-            return
-          }
-          queueEdit((current) => addComplexItem(current, complexId))
-        }}
+        onAddComplexItem={(complexId) => queueEdit((current) => addComplexItem(current, complexId))}
         onRemoveComplexItem={(complexId, itemIndex) =>
           queueEdit((current) =>
             removeComplexItem(current, complexId, itemIndex),

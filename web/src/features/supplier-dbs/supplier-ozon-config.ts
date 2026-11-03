@@ -1,18 +1,5 @@
-/**
- * `supplier_ozon_configs` 的行级读写 —— 「默认字段」分区的事实来源
- * （行上的默认字段 jsonb 槽位已退场，行 PUT 不再携带默认字段）。
- *
- * Wire 形状（`SupplierOzonConfigData.values` / `PutSupplierOzonConfigRequest.values`）：
- * 键是 `fixed:{field}` 或 `attribute:{attribute_id}:{complex_id}`，值是带
- * kind 的 `SupplierOzonConfigValue[]`（decimal 走字符串、选项带 optionId）。
- * 草稿 ↔ wire 的转换逐条镜像 `src/listing/kernel/supplier_projection.rs` 的
- * `supplier_defaults` 与 `workflow_value`：读侧由首值类型驱动，`complex_id = 0` 落普通字段；写侧
- * 按 schema 反查 `complex_id`，`fixed:` 只收 9 个单品字段，坐标键与行内
- * 生成的字段永远不写进 values。
- *
- * GET 404 = 还没有配置，首个 PUT 用 `expectedRevision: 0` 创建；PUT 是整配
- * 置写回，promptText / fixedTags / aiOutput / language 一律原样回带。
- * 服务端校验是软口径（问题挂在配置 issues 上不拒写），前端只做编码不做裁决。
+/** Supplier defaults use flat ordinary values and ordered complex group items.
+ * Encoding preserves IDs and values; the server's Rust/WASM validator judges them.
  */
 import { api } from "@/api/client"
 import type { CloudRefusal } from "@/api/client"
@@ -22,6 +9,7 @@ import type {
   CategorySchemaView,
   WorkflowCategoryDraft,
   WorkflowDraftValue,
+  WorkflowValidationIssue,
 } from "@/bindings/commands"
 import {
   createSupplierConfigDraft,
@@ -32,11 +20,13 @@ import { reportError } from "@/lib/diag-log"
 
 import { LISTING_DEFAULT_COORDINATE_KEYS } from "./supplier-listing-defaults"
 import { numericAttributeValue } from "./supplier-ozon-config-numeric"
+import type { SupplierDbRow } from "@/bindings/http-supplier-dbs"
 
 type Schema = components["schemas"]
 
 export type SupplierOzonConfigValue = Schema["SupplierOzonConfigValue"]
 export type SupplierOzonConfigData = Schema["SupplierOzonConfigData"]
+export type SupplierOzonComplexGroup = Schema["SupplierOzonComplexGroup"]
 export type PutSupplierOzonConfigBody = Schema["PutSupplierOzonConfigRequest"]
 
 const configPath = (sourceId: string, productId: string) =>
@@ -117,9 +107,28 @@ export async function copySupplierOzonConfig(
     ...coordinate,
     language: from.language,
     values: from.values,
+    complex_values: from.complex_values,
     ai_output: from.ai_output,
     prompt_text: to?.prompt_text ?? from.prompt_text,
     fixed_tags: to?.fixed_tags ?? from.fixed_tags,
+    expected_revision: to?.revision ?? 0,
+  })
+  return true
+}
+
+/** 同款只同步平台字段，目标规格的识图事实、标签及开关保持独立。 */
+export async function copySupplierOzonFields(io: SupplierOzonConfigIO, sourceId: string, fromProductId: string, target: SupplierDbRow): Promise<boolean> {
+  const [from, to] = await Promise.all([io.get(sourceId, fromProductId), io.get(sourceId, target.productId)])
+  if (!from || from.description_category_id !== target.descriptionCategoryId || from.type_id !== target.typeId) return false
+  await io.put(sourceId, target.productId, {
+    description_category_id: from.description_category_id,
+    type_id: from.type_id,
+    language: from.language,
+    values: from.values,
+    complex_values: from.complex_values,
+    ai_output: to?.ai_output ?? from.ai_output,
+    prompt_text: to?.prompt_text ?? target.promptContent,
+    fixed_tags: to?.fixed_tags ?? target.fixedTags,
     expected_revision: to?.revision ?? 0,
   })
   return true
@@ -265,9 +274,9 @@ function toDraftValue(
 export function draftFromOzonConfigValues(
   values: SupplierOzonConfigData["values"],
   schema: CategorySchemaView,
+  complexValues: SupplierOzonComplexGroup[] = [],
 ): WorkflowCategoryDraft {
   const plain: Record<string, WorkflowDraftValue> = {}
-  const complex = new Map<number, Record<string, WorkflowDraftValue>>()
   for (const [rawKey, entries] of Object.entries(values)) {
     const splitAt = rawKey.indexOf(":")
     const namespace = rawKey.slice(0, splitAt)
@@ -292,23 +301,28 @@ export function draftFromOzonConfigValues(
       const fieldKey = `attribute_${attributeId}`
       if (complexId === 0) {
         plain[fieldKey] = value
-      } else {
-        const group = complex.get(complexId) ?? {}
-        group[fieldKey] = value
-        complex.set(complexId, group)
-      }
+      } else { reportError("[supplier-ozon-config] 复杂字段必须存入条目", {key:rawKey}) }
       continue
     }
     reportError("[supplier-ozon-config] 跳过非法配置键", { key: rawKey })
   }
   return {
     values: plain,
-    complex_values: [...complex.entries()]
-      .sort(([a], [b]) => a - b)
-      .map(([complex_id, groupValues]) => ({
-        complex_id,
-        items: [{ values: groupValues }],
+    complex_values: complexValues.map((group) => ({
+      complex_id:group.complex_id,
+      items:group.items.map((item) => ({
+        item_id:item.item_id,
+        values:Object.fromEntries(Object.entries(item.values).flatMap(([key,entries]) => {
+          const [namespace,id,complexId]=key.split(":")
+          const field=fieldByAttributeId(schema,Number(id))
+          if(namespace!=="attribute" || Number(complexId)!==group.complex_id || field?.complex_id!==group.complex_id) {
+            reportError("[supplier-ozon-config] 复杂字段位置不属于当前类目",{key}); return []
+          }
+          const value=toDraftValue(entries,field)
+          return value?[[field.key,value]]:[]
+        })),
       })),
+    })),
   }
 }
 
@@ -418,8 +432,7 @@ function encodeAttributeValue(
 
 /**
  * 草稿 → wire values。坐标键与不可映射的键不写；cleared 与空值自然缺键。
- * `attribute:{id}:{complex_id}` 只存一份值，表达不了同组多条目 —— 表单
- * 入口已限制每组一条，这里对越界的草稿直接报错而不是末项覆盖。
+ * 普通值独立存放；复杂组通过 draftToOzonConfigComplexValues 保留条目边界。
  */
 export function draftToOzonConfigValues(
   draft: WorkflowCategoryDraft,
@@ -448,17 +461,32 @@ export function draftToOzonConfigValues(
   for (const [key, value] of Object.entries(draft.values)) {
     write(key, value, fieldByKey(schema, key)?.complex_id ?? 0)
   }
-  for (const group of draft.complex_values) {
-    if (group.items.length > 1) {
-      throw new Error(
-        `Ozon 配置存不下复杂组 ${group.complex_id} 的多条目草稿`,
-      )
-    }
-    for (const [key, value] of Object.entries(group.items[0]?.values ?? {})) {
-      write(key, value, group.complex_id)
-    }
-  }
   return out
+}
+
+export function draftToOzonConfigComplexValues(
+  draft: WorkflowCategoryDraft,
+  schema: CategorySchemaView,
+): SupplierOzonComplexGroup[] {
+  return draft.complex_values.map((group) => ({
+    complex_id: group.complex_id,
+    items: group.items.map((item) => ({
+      item_id: item.item_id || crypto.randomUUID(),
+      values: Object.fromEntries(Object.entries(item.values).flatMap(([key, value]) => {
+        const field = fieldByKey(schema, key)
+        const wireKey = configKeyFor(schema, key, group.complex_id)
+        if (!wireKey || field?.complex_id !== group.complex_id) {
+          throw new Error(`复杂字段 ${key} 不属于组 ${group.complex_id}`)
+        }
+        const entries = encodeAttributeValue(value, field)
+        return entries.length ? [[wireKey, entries]] : []
+      })),
+    })),
+  }))
+}
+
+export function supplierConfigIssues(config: SupplierOzonConfigData | undefined): WorkflowValidationIssue[] {
+  return config?.issues.flatMap((issue) => issue.issue === "field_validation" ? [issue] : []) ?? []
 }
 
 /**
@@ -470,10 +498,11 @@ export function seedSupplierRowDefaults(
   schema: CategorySchemaView,
   stored: SupplierOzonConfigData["values"] | undefined,
   coordinate: { description_category_id: number; type_id: number },
+  complexValues: SupplierOzonComplexGroup[] = [],
 ): WorkflowCategoryDraft {
   const draft =
-    stored && Object.keys(stored).length
-      ? draftFromOzonConfigValues(stored, schema)
+    stored && (Object.keys(stored).length || complexValues.length)
+      ? draftFromOzonConfigValues(stored, schema, complexValues)
       : createSupplierConfigDraft(schema)
   return {
     ...draft,

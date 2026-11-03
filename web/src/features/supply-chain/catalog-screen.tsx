@@ -1,5 +1,5 @@
 /**
- * 平台货源 — 卖家/工作区画廊屏（docs/supplier-dbs.md §6/§7）：
+ * 平台商品库 — 卖家/工作区画廊屏（docs/supplier-dbs.md §6/§7）：
  * GET /api/supplier-dbs/catalog 的只读卡墙 + 上架导航/独立物流注入。管理端的
  * 「列表管理」是独立主菜单屏（`supplier-dbs`，SupplierDbsScreen），
  * 不在本屏内。
@@ -15,8 +15,8 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react"
-import { Boxes, ListChecks, PackageOpen, Store, Unplug } from "lucide-react"
-
+import { ArrowLeft, Boxes, ListChecks, PackageOpen, Unplug } from "lucide-react"
+import { StoreIcon } from "@/components/store-icon"
 import type { CategoryTreeNodeView, OzonStoreView } from "@/bindings/commands"
 import {
   supplyChainHttp,
@@ -32,6 +32,7 @@ import { loadCategoryTree as loadSharedCategoryTree } from "@/features/category-
 import { useTrailSegment } from "@/app/app-shell"
 import { useScreenActive } from "@/components/screen-pane"
 import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import {
   Empty,
   EmptyContent,
@@ -125,7 +126,7 @@ export type CatalogScreenProps = {
   workspaceId?: number
   onOpenStores?: () => void
   /** 单件与上架清单批量导入共用同一交接：最小商品身份数组。 */
-  onOpenListing: (products: CatalogListingIdentity[]) => void
+  onOpenListing: (products: CatalogListingIdentity[]) => void | Promise<void>
   /**
    * 选品模式的回程：回「批量上架」列表。壳层跳转时顺手收掉 `?pick=1`，
    * 所以这里只说「回哪儿」（见 `workflow-navigation.ts`）。
@@ -157,15 +158,13 @@ function CatalogPickingBar({ onExit }: { onExit?: () => void }) {
         选品模式：把商品加进「上架清单」，再一次批量导入。
       </p>
       {onExit ? (
-        <Button
-          type="button"
-          size="sm"
+        <IconButton
+          icon={ArrowLeft}
+          label="返回批量上架"
           variant="outline"
-          className="cursor-pointer"
+          size="icon-sm"
           onClick={onExit}
-        >
-          返回批量上架
-        </Button>
+        />
       ) : null}
     </div>
   )
@@ -194,7 +193,7 @@ function CatalogStatusEmpty({
   children?: ReactNode
 }) {
   return (
-    <Empty role="status" className="min-h-64" data-gallery-empty={kind}>
+    <Empty role="status" className="min-h-40" data-gallery-empty={kind}>
       <EmptyHeader>
         <EmptyMedia variant="icon">{icon}</EmptyMedia>
         <EmptyTitle>{title}</EmptyTitle>
@@ -301,13 +300,14 @@ export function CatalogScreen({
       setCatalog(next)
       setLoadFailed(false)
       clearLive(CATALOG_READ_LIVE)
+      return next
     } catch (reason) {
       setLoadFailed(true)
       notifyLive({
         id: CATALOG_READ_LIVE,
         type: "error",
         reason,
-        title: "读不到平台货源",
+        title: "读不到平台商品库",
         description: errorMessage(reason, "请稍后重试。"),
         action: { label: "重试", onClick: () => void loadCatalog() },
       })
@@ -435,7 +435,7 @@ export function CatalogScreen({
         className="cursor-pointer"
         onClick={onOpenStores}
       >
-        <Store />
+        <StoreIcon />
         先配置店铺
       </Button>
     )
@@ -443,7 +443,7 @@ export function CatalogScreen({
   return (
     <div
       data-catalog-screen=""
-      className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-hidden scroll-pt-14"
+      className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-hidden scroll-pt-14"
     >
       {/* 选品模式（`?pick=1`）：模式条常驻所有分支（加载/空态/详情/画廊），
           不挡住工具行。 */}
@@ -453,7 +453,7 @@ export function CatalogScreen({
         <CatalogStatusEmpty
           kind="error"
           icon={<Unplug />}
-          title="读不到平台货源"
+          title="读不到平台商品库"
           body="稍后重试。货盘只列出已上架的货品。"
         >
           <EmptyContent>
@@ -487,21 +487,19 @@ export function CatalogScreen({
           picking={picking}
           /* 清单行的店铺/PSD 绑定：店铺列表与「去店铺页添加」的出口都从屏上透传，
              画廊不自己读 roster、也不自己找路。 */
-          stores={configured}
-          onOpenStores={onOpenStores}
           onOpenListing={onOpenListing}
           onOpenShipping={(row) => void openShipping(row)}
           refreshing={loading}
-          onRefresh={() => {
-            void loadCatalog()
+          onRefresh={async () => {
             void loadReadiness()
+            return (await loadCatalog())?.rows
           }}
         />
       ) : (
         <CatalogStatusEmpty
           kind="empty"
           icon={<PackageOpen />}
-          title="平台货源还没有上架货品"
+          title="平台商品库还没有上架货品"
           body="货品上架后会出现在这里。"
         />
       )}
@@ -537,17 +535,15 @@ function ProductShopView({
   onBack: () => void
 }) {
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto">
+    <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto">
       <div className="flex flex-wrap items-center gap-3">
-        <Button
-          type="button"
-          size="sm"
+        <IconButton
+          icon={ArrowLeft}
+          label={backLabel}
           variant="ghost"
-          className="cursor-pointer"
+          size="icon-sm"
           onClick={onBack}
-        >
-          {backLabel}
-        </Button>
+        />
         <span className="text-sm font-medium text-foreground">目标店铺</span>
         {storePicker}
       </div>

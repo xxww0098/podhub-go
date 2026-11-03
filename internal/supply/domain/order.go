@@ -1,7 +1,7 @@
 package domain
 
 // Order statuses are ck_sc_orders_status after
-// db/migrations/00122_supply_chain_procurements.sql. No function in
+// the baseline schema. No function in
 // db/migrations updates sc_orders.status; this package validates filters only.
 func ValidOrderStatus(status string) bool {
 	switch status {

@@ -339,8 +339,8 @@ export function openListedStockOrExplain(
   if (targets.length === 0) {
     notifyError(
       selected
-        ? "尚未找到已选行的 Ozon SKU，请先到店铺商品同步后重试"
-        : "尚未找到带 SKU 的商品，请先到店铺商品同步后重试",
+        ? "尚未找到已选行的 Ozon SKU，请核对店铺商品数据后重试"
+        : "尚未找到带 SKU 的商品，请核对店铺商品数据后重试",
     )
     return
   }

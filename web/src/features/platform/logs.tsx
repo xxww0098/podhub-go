@@ -1,8 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { Fragment, useCallback, useEffect, useId, useRef, useState } from "react"
 import {
+  ChartNoAxesColumn,
+  ChevronLeft,
+  ChevronRight,
   Copy,
+  ListFilter,
+  RotateCcw,
   ScrollText,
-  SlidersHorizontal,
   Trash2,
   TriangleAlert,
 } from "lucide-react"
@@ -19,7 +23,6 @@ import type {
 import { adminHttp } from "@/bindings/http-admin"
 import {
   PlatformAdminEmpty,
-  PlatformAdminPagination,
   PlatformAdminRefresh,
   PlatformAdminSearch,
   PlatformAdminSurface,
@@ -42,11 +45,12 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableExpandedRow,
   TableHead,
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { IconButton } from "@/components/ui/icon-button"
 import { formatUsageNumber } from "@/features/usage/usage-charts"
 import { errorMessage } from "@/lib/error-message"
 import { formatDateTime } from "@/lib/format"
@@ -66,7 +70,7 @@ import {
 
 export { formatGenerationSpeed } from "./usage-summary"
 
-const PAGE_SIZE = 50
+const DEFAULT_PAGE_SIZE = 10
 type Period = "24h" | "7d" | "30d"
 
 const ADMIN_USAGE_READ_LIVE = "admin-usage-read"
@@ -127,26 +131,61 @@ function FilterActions({
 }) {
   return (
     <>
-      <Button
-        size="sm"
+      <IconButton
+        icon={ListFilter}
+        label="筛选"
+        size="icon-sm"
         variant="secondary"
-        className="cursor-pointer"
         disabled={loading}
         onClick={onApply}
-      >
-        <SlidersHorizontal className="size-3.5" aria-hidden />
-        筛选
-      </Button>
-      <Button
-        size="sm"
+      />
+      <IconButton
+        icon={RotateCcw}
+        label="重置"
+        size="icon-sm"
         variant="ghost"
-        className="cursor-pointer"
         disabled={loading || !dirty}
         onClick={onReset}
-      >
-        重置
-      </Button>
+      />
     </>
+  )
+}
+
+function ReadFailure({ stale, onRetry }: { stale: boolean; onRetry: () => void }) {
+  return (
+    <div role="alert" className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3 text-compact">
+      <TriangleAlert className="size-4 text-destructive" aria-hidden />
+      <span>{stale ? "读取失败，当前显示上次读取结果。" : "日志读取失败，请重试。"}</span>
+      <Button size="sm" variant="outline" onClick={onRetry}>重试</Button>
+    </div>
+  )
+}
+
+function LogPagination({ page, pageCount, total, pageSize, busy, onPage, onPageSize }: {
+  page: number
+  pageCount: number
+  total: number
+  pageSize: number
+  busy: boolean
+  onPage: (page: number) => void
+  onPageSize: (pageSize: number) => void
+}) {
+  return (
+    <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 px-1 py-3 text-sm text-muted-foreground">
+      <div className="flex items-center gap-2">
+        <span>共 {total.toLocaleString("zh-CN")} 条，每页</span>
+        <Select value={String(pageSize)} onValueChange={(value) => { if (value) onPageSize(Number(value)) }}>
+          <SelectTrigger size="sm" aria-label="每页日志条数" disabled={busy}><SelectValue>{(value) => `${value} 条`}</SelectValue></SelectTrigger>
+          <SelectContent><SelectItem value="10">10 条</SelectItem><SelectItem value="20">20 条</SelectItem><SelectItem value="50">50 条</SelectItem></SelectContent>
+        </Select>
+      </div>
+      <div className="flex items-center gap-2">
+        <IconButton icon={ChevronLeft} label="上一页" size="icon-sm" variant="outline" disabled={busy || page <= 1} onClick={() => onPage(page - 1)} />
+        <span aria-current="page" className="flex size-9 items-center justify-center rounded-md bg-brand text-sm font-medium text-white">{page}</span>
+        {page < pageCount ? <Button variant="outline" size="icon-sm" aria-label={`第 ${page + 1} 页`} disabled={busy} onClick={() => onPage(page + 1)}>{page + 1}</Button> : null}
+        <IconButton icon={ChevronRight} label="下一页" size="icon-sm" variant="outline" disabled={busy || page >= pageCount} onClick={() => onPage(page + 1)} />
+      </div>
+    </div>
   )
 }
 
@@ -154,7 +193,7 @@ export function endpointLabel(apiFormat?: string | null): string {
   if (apiFormat === "chat_completions") return "chat/completions"
   if (apiFormat === "responses") return "responses"
   if (apiFormat === "anthropic_messages") return "messages"
-  return ""
+  return apiFormat ?? ""
 }
 
 function statusMeta(status: string): {
@@ -188,34 +227,22 @@ function statusMeta(status: string): {
  */
 export function RequestRow({ row }: { row: AdminUsageRequestView }) {
   const status = statusMeta(row.status)
+  const [expanded, setExpanded] = useState(false)
+  const detailsId = useId()
   return (
+    <Fragment>
     <TableRow>
-      <TableCell className="whitespace-nowrap text-compact text-muted-foreground">
+      <TableCell className="whitespace-nowrap font-mono text-meta tabular-nums text-muted-foreground">
         {formatDateTime(row.created_at)}
       </TableCell>
-      <TableCell
-        className="max-w-48 truncate font-medium text-foreground"
-        title={row.workspace_name}
-      >
-        {row.workspace_name}
+      <TableCell className="whitespace-nowrap text-compact text-muted-foreground">
+        <Badge variant="outline">{operationLabel(row.operation) || "未知"}</Badge>
       </TableCell>
-      <TableCell className="whitespace-nowrap text-foreground">
-        {row.email}
-      </TableCell>
-      <TableCell className="min-w-40">
-        <div className="text-compact text-foreground">{row.model}</div>
-        <div
-          className="mt-0.5 max-w-40 truncate font-mono text-meta text-faint-foreground"
-          title={row.request_id}
-        >
-          {row.request_id}
+      <TableCell className="min-w-0">
+        <div className="truncate font-medium text-foreground" title={row.model}>{row.model}</div>
+        <div className="truncate text-meta text-muted-foreground" title={`${row.workspace_name} / ${row.email}`}>
+          {row.workspace_name} · {row.email}
         </div>
-      </TableCell>
-      <TableCell className="whitespace-nowrap text-foreground">
-        {row.channel_name ?? ""}
-      </TableCell>
-      <TableCell className="font-mono text-compact text-muted-foreground">
-        {row.thinking_depth ?? ""}
       </TableCell>
       <TableCell className="whitespace-nowrap">
         <Badge variant={status.variant}>
@@ -223,57 +250,54 @@ export function RequestRow({ row }: { row: AdminUsageRequestView }) {
           {status.label}
         </Badge>
       </TableCell>
-      <TableCell className="whitespace-nowrap font-mono text-compact text-muted-foreground">
-        {endpointLabel(row.api_format)}
-      </TableCell>
-      <TableCell className="whitespace-nowrap text-compact text-muted-foreground">
-        {operationLabel(row.operation)}
-      </TableCell>
-      <TableCell className="text-right font-mono tabular-nums">
+      <TableCell className="whitespace-nowrap text-right font-mono tabular-nums">
         {formatLatency(row.latency_ms)}
       </TableCell>
-      <TableCell className="text-right font-mono tabular-nums">
-        {formatGenerationSpeed(row.generation_speed_milli_tps)}
-      </TableCell>
-      <TableCell className="text-right font-mono tabular-nums">
-        {formatUsageNumber(row.input_tokens)}
-      </TableCell>
-      <TableCell className="text-right font-mono tabular-nums">
-        {formatUsageNumber(row.cached_input_tokens)}
-      </TableCell>
-      <TableCell className="text-right font-mono tabular-nums">
-        {formatUsageNumber(row.output_tokens)}
-      </TableCell>
-      <TableCell className="text-right font-mono tabular-nums">
-        {formatUsageNumber(row.reasoning_output_tokens)}
-      </TableCell>
-      <TableCell className="text-right font-mono tabular-nums">
-        <div className="flex items-center justify-end gap-1.5">
-          {formatYuan(row.charged_microfen)}
-          {row.absorbed_microfen > 0 ? (
-            <Badge
-              variant="secondary"
-              title={`平台封顶减免 ${formatYuan(row.absorbed_microfen)}`}
-            >
-              减免 {formatYuan(row.absorbed_microfen)}
-            </Badge>
-          ) : null}
+      <TableCell className="font-mono tabular-nums">
+        <div className="truncate">{formatUsageNumber(row.input_tokens)} / {formatUsageNumber(row.output_tokens)}</div>
+        <div className="truncate text-meta text-muted-foreground" title={row.absorbed_microfen > 0 ? `平台封顶减免 ${formatYuan(row.absorbed_microfen)}` : undefined}>
+          {formatYuan(row.charged_microfen)}{row.absorbed_microfen > 0 ? " · 减免" : null}
         </div>
       </TableCell>
-      <TableCell className="max-w-96 text-compact text-muted-foreground">
-        <div title={row.error_class ?? undefined}>{row.error_class ?? "—"}</div>
-        {row.upstream_error ? (
-          <details className="mt-1">
-            <summary className="cursor-pointer text-foreground">
-              完整上游错误
-            </summary>
-            <pre className="mt-2 max-h-80 max-w-2xl overflow-auto rounded-md border border-border p-3 text-meta whitespace-pre-wrap text-foreground">
-              {row.upstream_error}
-            </pre>
-          </details>
-        ) : null}
+      <TableCell>
+        <Button variant="ghost" size="sm" aria-expanded={expanded} aria-controls={expanded ? detailsId : undefined} onClick={() => setExpanded(!expanded)}>
+          {expanded ? "收起" : "详情"}
+          <span className="sr-only">请求 {row.request_id}</span>
+        </Button>
       </TableCell>
     </TableRow>
+    {expanded ? (
+      <TableExpandedRow id={detailsId} colSpan={7}>
+        <dl className="grid grid-cols-2 gap-x-6 gap-y-3 px-2 py-3 text-compact sm:grid-cols-3 lg:grid-cols-6">
+          {[
+            ["请求 ID", row.request_id],
+            ["工作空间", row.workspace_name],
+            ["用户邮箱", row.email],
+            ["费用", formatYuan(row.charged_microfen)],
+            ["平台封顶减免", formatYuan(row.absorbed_microfen)],
+            ["渠道", row.channel_name || "—"],
+            ["思考深度", row.thinking_depth || "—"],
+            ["端点", endpointLabel(row.api_format) || "—"],
+            ["生成速度", formatGenerationSpeed(row.generation_speed_milli_tps)],
+            ["缓存读取", formatUsageNumber(row.cached_input_tokens)],
+            ["推理", formatUsageNumber(row.reasoning_output_tokens)],
+            ["错误信息", row.error_class || "—"],
+          ].map(([label, value]) => (
+            <div key={label} className="min-w-0 break-words">
+              <dt className="text-muted-foreground">{label}</dt>
+              <dd className="mt-1 font-mono">{value}</dd>
+            </div>
+          ))}
+        </dl>
+        {row.upstream_error ? (
+          <div className="px-2 pb-3">
+            <div className="text-compact text-muted-foreground">完整上游错误</div>
+            <pre className="mt-1 max-h-80 overflow-auto rounded-md border border-border p-3 text-meta whitespace-pre-wrap text-foreground">{row.upstream_error}</pre>
+          </div>
+        ) : null}
+      </TableExpandedRow>
+    ) : null}
+    </Fragment>
   )
 }
 
@@ -297,9 +321,12 @@ const EMPTY_USAGE_DRAFT: UsageFilterDraft = {
 export function AdminUsageScreen() {
   const active = useScreenActive()
   const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
   const [data, setData] = useState<AdminUsageData | null>(null)
   const [summary, setSummary] = useState<AdminUsageSummaryData | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [showSummary, setShowSummary] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [readFailed, setReadFailed] = useState(false)
   const [draft, setDraft] = useState<UsageFilterDraft>(EMPTY_USAGE_DRAFT)
   const [filters, setFilters] = useState<AdminUsageFilters>(EMPTY_USAGE_FILTERS)
   const generationRef = useRef(0)
@@ -308,15 +335,17 @@ export function AdminUsageScreen() {
     (targetPage: number) => {
       const generation = ++generationRef.current
       setLoading(true)
+      const effectiveFilters = { ...filters, since: filters.since ?? sinceForPeriod("30d") }
       // The page and its aggregate read the same filtered window together, so
       // the strip and the rows can never disagree about what was measured.
       Promise.all([
-        adminHttp.adminListAiRequests(targetPage, PAGE_SIZE, filters),
-        adminHttp.adminAiUsageSummary(filters),
+        adminHttp.adminListAiRequests(targetPage, pageSize, effectiveFilters),
+        adminHttp.adminAiUsageSummary(effectiveFilters),
       ])
         .then(([next, nextSummary]) => {
           if (generation !== generationRef.current) return
           clearLive(ADMIN_USAGE_READ_LIVE)
+          setReadFailed(false)
           setData(next)
           setSummary(nextSummary)
           // The server clamps a page past the end, so the control reflects the
@@ -325,6 +354,7 @@ export function AdminUsageScreen() {
         })
         .catch((reason) => {
           if (generation !== generationRef.current) return
+          setReadFailed(true)
           notifyLive({
             id: ADMIN_USAGE_READ_LIVE,
             type: "error",
@@ -338,7 +368,7 @@ export function AdminUsageScreen() {
           if (generation === generationRef.current) setLoading(false)
         })
     },
-    [filters],
+    [filters, pageSize],
   )
 
   useEffect(() => {
@@ -367,7 +397,7 @@ export function AdminUsageScreen() {
       status: draft.status,
       api_format: draft.api_format,
       operation: draft.operation,
-      since: draft.period === "30d" ? undefined : sinceForPeriod(draft.period),
+      since: sinceForPeriod(draft.period),
     })
   }
 
@@ -378,19 +408,18 @@ export function AdminUsageScreen() {
   }
 
   return (
-    <div className="flex min-w-0 w-full flex-col gap-4">
+    <div className="flex min-h-0 min-w-0 w-full flex-1 flex-col gap-3">
 
       <PlatformAdminSurface
+        bodyClassName="flex min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-card"
         toolbar={
           <>
-            <PlatformAdminSearch
-              value={draft.query}
-              onChange={(query) =>
-                setDraft((current) => ({ ...current, query }))
+            <PeriodSelect
+              value={draft.period}
+              onChange={(period) =>
+                setDraft((current) => ({ ...current, period }))
               }
-              onSubmit={applyFilters}
-              label="搜索 API 请求日志"
-              placeholder="搜索 Workspace、邮箱、模型或请求 ID"
+              ariaLabel="按访问时间筛选"
             />
             <Select
               value={draft.status || "all"}
@@ -470,12 +499,14 @@ export function AdminUsageScreen() {
                 <SelectItem value="ai_token">Chat</SelectItem>
               </SelectContent>
             </Select>
-            <PeriodSelect
-              value={draft.period}
-              onChange={(period) =>
-                setDraft((current) => ({ ...current, period }))
+            <PlatformAdminSearch
+              value={draft.query}
+              onChange={(query) =>
+                setDraft((current) => ({ ...current, query }))
               }
-              ariaLabel="按访问时间筛选"
+              onSubmit={applyFilters}
+              label="搜索 API 请求日志"
+              placeholder="搜索 Workspace、邮箱、模型或请求 ID"
             />
             <FilterActions
               loading={loading}
@@ -483,6 +514,9 @@ export function AdminUsageScreen() {
               onApply={applyFilters}
               onReset={resetFilters}
             />
+            <Button variant="outline" size="sm" aria-expanded={showSummary} onClick={() => setShowSummary((open) => !open)}>
+              <ChartNoAxesColumn data-icon="inline-start" />统计
+            </Button>
             <span className="ml-auto">
               <PlatformAdminRefresh
                 busy={loading}
@@ -493,55 +527,57 @@ export function AdminUsageScreen() {
           </>
         }
       >
-        {summary ? <UsageSummaryStrip data={summary} /> : null}
-        {data && data.rows.length > 0 ? (
-          <Table containerClassName="max-h-[40rem]" aria-busy={loading}>
+        {readFailed && !loading ? <ReadFailure stale={data !== null} onRetry={() => load(page)} /> : null}
+        {loading && data ? <div role="status" className="border-b border-border px-4 py-2 text-compact text-muted-foreground">正在读取，当前显示上次读取结果。</div> : null}
+        {summary && showSummary ? <UsageSummaryStrip data={summary} /> : null}
+        <div className="flex min-h-0 flex-1 flex-col overflow-auto">
+          <Table
+            containerClassName="shrink-0 overflow-visible"
+            className="min-w-[48rem] table-fixed"
+            variant="directory"
+            aria-busy={loading}
+          >
             <TableHeader className="sticky top-0 z-10 bg-popover">
               <TableRow>
-                <TableHead>访问时间</TableHead>
-                <TableHead>Workspace</TableHead>
-                <TableHead>用户邮箱</TableHead>
-                <TableHead>模型 / 请求</TableHead>
-                <TableHead>渠道</TableHead>
-                <TableHead>思考深度</TableHead>
-                <TableHead>状态</TableHead>
-                <TableHead>端点</TableHead>
-                <TableHead>操作</TableHead>
-                <TableHead className="text-right">总延迟</TableHead>
-                <TableHead className="text-right">生成速度</TableHead>
-                <TableHead className="text-right">输入</TableHead>
-                <TableHead className="text-right">缓存读取</TableHead>
-                <TableHead className="text-right">输出</TableHead>
-                <TableHead className="text-right">推理</TableHead>
-                <TableHead className="text-right">费用</TableHead>
-                <TableHead>错误信息</TableHead>
+                <TableHead className="w-36">时间</TableHead>
+                <TableHead className="w-20">类型</TableHead>
+                <TableHead>请求名称</TableHead>
+                <TableHead className="w-24">状态</TableHead>
+                <TableHead className="w-20 text-right">耗时</TableHead>
+                <TableHead className="w-32">输入 / 输出 · 费用</TableHead>
+                <TableHead className="w-20">操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {data.rows.map((row) => (
+              {data?.rows.map((row) => (
                 <RequestRow key={row.request_id} row={row} />
               ))}
             </TableBody>
           </Table>
-        ) : loading ? (
+        {loading && !data ? (
           <div className="p-4">
             <Skeleton className="h-80 w-full" />
           </div>
-        ) : (
+        ) : data && data.rows.length === 0 ? (
           <PlatformAdminEmpty
             icon={ScrollText}
-            title={hasFilters ? "没有符合当前筛选条件的请求。" : "暂无 API 请求日志。"}
+            className="min-h-80 flex-1"
+            title={loading || readFailed ? "上次读取结果为空。" : hasFilters ? "没有符合当前筛选条件的请求。" : "暂无 API 请求日志。"}
           />
-        )}
+        ) : null}
+        </div>
 
-        <PlatformAdminPagination
-          page={page}
+        {data ? (
+        <LogPagination
+          page={data.page}
           pageCount={pageCount}
-          total={data?.total_rows ?? 0}
-          pageSize={PAGE_SIZE}
-          busy={loading}
+          total={data.total_rows}
+          pageSize={pageSize}
+          busy={loading || readFailed}
           onPage={setPage}
+          onPageSize={(size) => { setPage(1); setPageSize(size) }}
         />
+        ) : null}
       </PlatformAdminSurface>
     </div>
   )
@@ -637,52 +673,54 @@ function rowKey(row: Pick<AdminErrorLogView, "event_id" | "device_uid">): string
 function ErrorRow({
   row,
   selected,
+  disabled,
   onSelectedChange,
   onCopy,
 }: {
   row: AdminErrorLogView
   selected: boolean
+  disabled: boolean
   onSelectedChange: (selected: boolean) => void
   onCopy: () => void
 }) {
+  const [detailOpen, setDetailOpen] = useState(false)
+  const detail = detailLabel(row)
+  const detailId = useId()
   return (
+    <Fragment>
     <TableRow data-state={selected ? "selected" : undefined}>
-      <TableCell className="w-10 pr-0">
+      <TableCell>
+        <div className="flex items-center gap-1">
         <Checkbox
           checked={selected}
+          disabled={disabled}
           aria-label={`选择错误日志 ${row.code}`}
           onCheckedChange={(checked) => onSelectedChange(checked === true)}
         />
+        <IconButton
+          icon={Copy}
+          label={`复制错误日志 ${row.code}`}
+          tip="复制此条"
+          size="icon-xs"
+          tooltipSide="top"
+          disabled={disabled}
+          onClick={onCopy}
+        />
+        </div>
       </TableCell>
-      <TableCell className="w-12 px-2">
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                type="button"
-                size="icon-xs"
-                variant="ghost"
-                aria-label={`复制错误日志 ${row.code}`}
-                onClick={onCopy}
-              />
-            }
-          >
-            <Copy aria-hidden />
-          </TooltipTrigger>
-          <TooltipContent>复制此条</TooltipContent>
-        </Tooltip>
-      </TableCell>
-      <TableCell className="whitespace-nowrap text-compact text-muted-foreground">
+      <TableCell className="whitespace-nowrap font-mono text-meta tabular-nums text-muted-foreground">
         {formatDateTime(row.received_at)}
       </TableCell>
-      <TableCell className="whitespace-nowrap">{row.workspace_name}</TableCell>
-      <TableCell className="whitespace-nowrap">{row.email}</TableCell>
-      <TableCell className="whitespace-nowrap">
-        <Badge variant="outline">{sourceLabel(row.source)}</Badge>
+      <TableCell className="min-w-0">
+        <div className="truncate" title={row.workspace_name}>{row.workspace_name}</div>
+        <div className="truncate text-meta text-muted-foreground" title={row.email}>{row.email}</div>
       </TableCell>
-      <TableCell className="whitespace-nowrap">
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-compact">{row.code}</span>
+      <TableCell className="min-w-0">
+        <Badge variant="outline" className="max-w-full"><span className="truncate" title={sourceLabel(row.source)}>{sourceLabel(row.source)}</span></Badge>
+      </TableCell>
+      <TableCell className="min-w-0">
+        <div className="flex flex-col items-start gap-1">
+          <span className="max-w-full truncate font-mono text-compact" title={row.code}>{row.code}</span>
           {row.severity ? (
             <Badge
               variant={
@@ -694,28 +732,28 @@ function ErrorRow({
           ) : null}
         </div>
       </TableCell>
-      <TableCell className="max-w-md whitespace-normal">
-        {detailLabel(row)}
+      <TableCell className="min-w-0 whitespace-normal">
+        <p className="line-clamp-2 break-all">{detail || "—"}</p>
       </TableCell>
-      <TableCell className="whitespace-nowrap">
-        {row.fingerprint ? (
-          <Badge variant="code" title={row.fingerprint}>
-            {row.fingerprint.slice(0, 12)}
-          </Badge>
-        ) : null}
-      </TableCell>
-      <TableCell className="whitespace-nowrap">
-        <Badge variant="code" title={row.device_uid}>
-          {row.device_uid.slice(0, 8)}
-        </Badge>
-      </TableCell>
-      <TableCell className="whitespace-nowrap text-compact text-muted-foreground">
-        {row.app_version}
-      </TableCell>
-      <TableCell className="whitespace-nowrap text-compact text-muted-foreground">
-        {row.os}
+      <TableCell>
+        <Button variant="ghost" size="sm" aria-expanded={detailOpen} aria-controls={detailOpen ? detailId : undefined} aria-label={`${detailOpen ? "收起" : "展开"}错误详情 ${row.code}`} onClick={() => setDetailOpen((open) => !open)}>
+          {detailOpen ? "收起" : "详情"}
+        </Button>
       </TableCell>
     </TableRow>
+    {detailOpen ? (
+      <TableExpandedRow id={detailId} colSpan={7}>
+        <div className="px-2 py-3 text-compact">
+          <p className="break-all">{detail || "—"}</p>
+          <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4">
+            {[["工作空间", row.workspace_name], ["用户邮箱", row.email], ["来源", sourceLabel(row.source)], ["错误码", row.code], ["指纹", row.fingerprint], ["设备", row.device_uid], ["版本", row.app_version], ["系统", row.os]].map(([label, value]) => (
+              <div key={label} className="min-w-0 break-all"><dt className="text-muted-foreground">{label}</dt><dd>{value || "—"}</dd></div>
+            ))}
+          </dl>
+        </div>
+      </TableExpandedRow>
+    ) : null}
+    </Fragment>
   )
 }
 
@@ -737,8 +775,10 @@ const EMPTY_ERROR_DRAFT: ErrorFilterDraft = {
 export function AdminErrorsScreen() {
   const active = useScreenActive()
   const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
   const [data, setData] = useState<AdminErrorLogData | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [readFailed, setReadFailed] = useState(false)
   const [draft, setDraft] = useState<ErrorFilterDraft>(EMPTY_ERROR_DRAFT)
   const [filters, setFilters] = useState<AdminErrorLogFilters>(EMPTY_ERROR_FILTERS)
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set())
@@ -750,17 +790,22 @@ export function AdminErrorsScreen() {
     (targetPage: number) => {
       const generation = ++generationRef.current
       setLoading(true)
+      setSelectedKeys(new Set())
+      setDeleteOpen(false)
+      const effectiveFilters = { ...filters, since: filters.since ?? sinceForPeriod("30d") }
       adminHttp
-        .adminListErrorLogs(targetPage, PAGE_SIZE, filters)
+        .adminListErrorLogs(targetPage, pageSize, effectiveFilters)
         .then((next) => {
           if (generation !== generationRef.current) return
           clearLive(ADMIN_ERRORS_READ_LIVE)
+          setReadFailed(false)
           setData(next)
           setPage(next.page)
           setSelectedKeys(new Set())
         })
         .catch((reason) => {
           if (generation !== generationRef.current) return
+          setReadFailed(true)
           notifyLive({
             id: ADMIN_ERRORS_READ_LIVE,
             type: "error",
@@ -774,7 +819,7 @@ export function AdminErrorsScreen() {
           if (generation === generationRef.current) setLoading(false)
         })
     },
-    [filters],
+    [filters, pageSize],
   )
 
   useEffect(() => {
@@ -804,7 +849,7 @@ export function AdminErrorsScreen() {
   }
 
   async function deleteSelected() {
-    if (selectedRows.length === 0) return
+    if (selectedRows.length === 0 || loading || readFailed) return
     setDeleting(true)
     try {
       const result = await adminHttp.adminDeleteErrorLogs(
@@ -828,7 +873,7 @@ export function AdminErrorsScreen() {
     setFilters({
       query: draft.query.trim(),
       source: draft.source,
-      since: draft.period === "30d" ? undefined : sinceForPeriod(draft.period),
+      since: sinceForPeriod(draft.period),
     })
   }
 
@@ -839,19 +884,18 @@ export function AdminErrorsScreen() {
   }
 
   return (
-    <div className="flex min-w-0 w-full flex-col gap-4">
+    <div className="flex min-h-0 min-w-0 w-full flex-1 flex-col gap-3">
 
       <PlatformAdminSurface
+        bodyClassName="flex min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-card"
         toolbar={
           <>
-            <PlatformAdminSearch
-              value={draft.query}
-              onChange={(query) =>
-                setDraft((current) => ({ ...current, query }))
+            <PeriodSelect
+              value={draft.period}
+              onChange={(period) =>
+                setDraft((current) => ({ ...current, period }))
               }
-              onSubmit={applyFilters}
-              label="搜索错误日志"
-              placeholder="搜索 Workspace、邮箱、错误码或消息"
+              ariaLabel="按接收时间筛选"
             />
             <Select
               value={draft.source || "all"}
@@ -884,12 +928,14 @@ export function AdminErrorsScreen() {
                 <SelectItem value="child_process_gone">子进程退出</SelectItem>
               </SelectContent>
             </Select>
-            <PeriodSelect
-              value={draft.period}
-              onChange={(period) =>
-                setDraft((current) => ({ ...current, period }))
+            <PlatformAdminSearch
+              value={draft.query}
+              onChange={(query) =>
+                setDraft((current) => ({ ...current, query }))
               }
-              ariaLabel="按接收时间筛选"
+              onSubmit={applyFilters}
+              label="搜索错误日志"
+              placeholder="搜索编号、Workspace、邮箱、错误码或消息"
             />
             <FilterActions
               loading={loading}
@@ -907,8 +953,10 @@ export function AdminErrorsScreen() {
           </>
         }
       >
+        {readFailed && !loading ? <ReadFailure stale={data !== null} onRetry={() => load(page)} /> : null}
+        {loading && data ? <div role="status" className="border-b border-border px-4 py-2 text-compact text-muted-foreground">正在读取，当前显示上次读取结果。</div> : null}
         {selectedRows.length > 0 ? (
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-2.5 py-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-brand-soft/40 px-4 py-2">
             <span className="text-compact font-medium">
               已选择 {selectedRows.length} 条
             </span>
@@ -916,7 +964,7 @@ export function AdminErrorsScreen() {
               <Button
                 size="sm"
                 variant="outline"
-                disabled={deleting}
+                disabled={deleting || loading || readFailed}
                 onClick={() => void copyRows(selectedRows)}
               >
                 <Copy aria-hidden />
@@ -925,7 +973,7 @@ export function AdminErrorsScreen() {
               <Button
                 size="sm"
                 variant="destructive"
-                disabled={deleting}
+                disabled={deleting || loading || readFailed}
                 onClick={() => setDeleteOpen(true)}
               >
                 <Trash2 aria-hidden />
@@ -935,13 +983,19 @@ export function AdminErrorsScreen() {
           </div>
         ) : null}
 
-        {data && data.rows.length > 0 ? (
-          <Table containerClassName="max-h-[40rem]" aria-busy={loading}>
+        <div className="flex min-h-0 flex-1 flex-col overflow-auto">
+          <Table
+            containerClassName="shrink-0 overflow-visible"
+            className="min-w-[52rem] table-fixed"
+            variant="directory"
+            aria-busy={loading}
+          >
             <TableHeader className="sticky top-0 z-10 bg-popover">
               <TableRow>
-                <TableHead className="w-10 pr-0">
+                <TableHead className="w-20 pr-0">
                   <Checkbox
                     checked={allSelected}
+                    disabled={loading || readFailed || deleting || rows.length === 0}
                     indeterminate={someSelected}
                     aria-label="选择本页错误日志"
                     onCheckedChange={() =>
@@ -953,27 +1007,21 @@ export function AdminErrorsScreen() {
                     }
                   />
                 </TableHead>
-                <TableHead className="w-12 px-2">
-                  <span className="sr-only">复制</span>
-                </TableHead>
-                <TableHead>接收时间</TableHead>
-                <TableHead>Workspace</TableHead>
-                <TableHead>用户邮箱</TableHead>
-                <TableHead>来源</TableHead>
-                <TableHead>错误码</TableHead>
+                <TableHead className="w-36">接收时间</TableHead>
+                <TableHead className="w-40">Workspace / 用户邮箱</TableHead>
+                <TableHead className="w-28">来源</TableHead>
+                <TableHead className="w-36">错误码</TableHead>
                 <TableHead>详情</TableHead>
-                <TableHead>指纹</TableHead>
-                <TableHead>设备</TableHead>
-                <TableHead>版本</TableHead>
-                <TableHead>系统</TableHead>
+                <TableHead className="w-20">操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {data.rows.map((row) => (
+              {data?.rows.map((row) => (
                 <ErrorRow
                   key={rowKey(row)}
                   row={row}
                   selected={selectedKeys.has(rowKey(row))}
+                  disabled={loading || readFailed || deleting}
                   onSelectedChange={(selected) =>
                     setSelectedKeys((current) => {
                       const next = new Set(current)
@@ -987,25 +1035,30 @@ export function AdminErrorsScreen() {
               ))}
             </TableBody>
           </Table>
-        ) : loading ? (
+        {loading && !data ? (
           <div className="p-4">
             <Skeleton className="h-80 w-full" />
           </div>
-        ) : (
+        ) : data && data.rows.length === 0 ? (
           <PlatformAdminEmpty
             icon={TriangleAlert}
-            title={hasFilters ? "没有符合当前筛选条件的错误。" : "暂无错误日志。"}
+            className="min-h-80 flex-1"
+            title={loading || readFailed ? "上次读取结果为空。" : hasFilters ? "没有符合当前筛选条件的错误。" : "暂无错误日志。"}
           />
-        )}
+        ) : null}
+        </div>
 
-        <PlatformAdminPagination
-          page={page}
+        {data ? (
+        <LogPagination
+          page={data.page}
           pageCount={pageCount}
-          total={data?.total_rows ?? 0}
-          pageSize={PAGE_SIZE}
-          busy={loading}
+          total={data.total_rows}
+          pageSize={pageSize}
+          busy={loading || readFailed}
           onPage={setPage}
+          onPageSize={(size) => { setPage(1); setPageSize(size) }}
         />
+        ) : null}
       </PlatformAdminSurface>
       <ConfirmDialog
         open={deleteOpen}
@@ -1013,7 +1066,7 @@ export function AdminErrorsScreen() {
         title={`删除 ${selectedRows.length} 条错误日志？`}
         description="删除后不可恢复。"
         confirmText="确认删除"
-        busy={deleting}
+        busy={deleting || loading || readFailed}
         icon={<Trash2 aria-hidden />}
         onConfirm={deleteSelected}
       />
@@ -1025,7 +1078,7 @@ type LogTab = "requests" | "errors"
 
 const LOG_TABS: { id: LogTab; label: string }[] = [
   { id: "requests", label: "API 请求" },
-  { id: "errors", label: "错误" },
+  { id: "errors", label: "异常记录" },
 ]
 
 /**
@@ -1047,11 +1100,11 @@ export function AdminLogsScreen() {
   }
 
   return (
-    <div className="flex min-w-0 w-full flex-col gap-4">
+    <div className="flex min-h-0 min-w-0 w-full flex-1 flex-col gap-3">
       <div
         role="tablist"
         aria-label="日志类型"
-        className="flex shrink-0 items-center gap-1"
+        className="flex shrink-0 items-center gap-1 border-b border-border [&_[role=tab]]:h-12 [&_[role=tab]]:px-4 [&_[role=tab]]:text-base [&_[role=tab][data-active]]:text-brand"
       >
         {LOG_TABS.map((item) => (
           <PlatformAdminTab
@@ -1064,12 +1117,12 @@ export function AdminLogsScreen() {
         ))}
       </div>
       {visited.has("requests") ? (
-        <div hidden={tab !== "requests"}>
+        <div hidden={tab !== "requests"} className={tab === "requests" ? "flex min-h-0 flex-1" : undefined}>
           <AdminUsageScreen />
         </div>
       ) : null}
       {visited.has("errors") ? (
-        <div hidden={tab !== "errors"}>
+        <div hidden={tab !== "errors"} className={tab === "errors" ? "flex min-h-0 flex-1" : undefined}>
           <AdminErrorsScreen />
         </div>
       ) : null}

@@ -79,39 +79,29 @@ type workspaceWire struct {
 	AvatarRevision *int64 `json:"avatar_revision,omitempty"`
 }
 
-type sessionAccountWire struct {
-	UUID           string `json:"uuid"`
-	Email          string `json:"email"`
-	Name           string `json:"name"`
-	Active         bool   `json:"active"`
-	AvatarRevision *int64 `json:"avatar_revision,omitempty"`
-}
-
 type sessionWire struct {
 	Data sessionDataWire `json:"data"`
 }
 
 type sessionDataWire struct {
-	Authenticated      bool                 `json:"authenticated"`
-	IsAdmin            *bool                `json:"is_admin,omitempty"`
-	Email              *string              `json:"email,omitempty"`
-	Name               *string              `json:"name,omitempty"`
-	Role               *string              `json:"role,omitempty"`
-	SupplierID         *string              `json:"supplier_id,omitempty"`
-	ActiveWorkspace    *workspaceWire       `json:"active_workspace"`
-	Workspaces         []workspaceWire      `json:"workspaces"`
-	UnusableWorkspaces []workspaceWire      `json:"unusable_workspaces"`
-	AccountMode        *string              `json:"account_mode,omitempty"`
-	AvatarRevision     *int64               `json:"avatar_revision,omitempty"`
-	NameChangedAtMS    *int64               `json:"name_changed_at_ms,omitempty"`
-	Accounts           []sessionAccountWire `json:"accounts"`
-	EmailVerified      *bool                `json:"email_verified,omitempty"`
+	Authenticated      bool            `json:"authenticated"`
+	IsAdmin            *bool           `json:"is_admin,omitempty"`
+	UUID               *string         `json:"uuid,omitempty"`
+	Email              *string         `json:"email,omitempty"`
+	Name               *string         `json:"name,omitempty"`
+	Role               *string         `json:"role,omitempty"`
+	SupplierID         *string         `json:"supplier_id,omitempty"`
+	ActiveWorkspace    *workspaceWire  `json:"active_workspace"`
+	Workspaces         []workspaceWire `json:"workspaces"`
+	UnusableWorkspaces []workspaceWire `json:"unusable_workspaces"`
+	AccountMode        *string         `json:"account_mode,omitempty"`
+	AvatarRevision     *int64          `json:"avatar_revision,omitempty"`
+	NameChangedAtMS    *int64          `json:"name_changed_at_ms,omitempty"`
 	// AccountKind and MustChangePassword are authenticated-only: the anonymous
 	// body is a separate literal (anonymousSessionBody), so neither appears
 	// there. account_kind is always non-empty for a signed-in session.
-	// must_change_password is omitted while false — absence reads as false, the
-	// same shape email_verified already uses — and present as true while the
-	// account is locked to the §4.2 whitelist.
+	// must_change_password is omitted while false and present as true while
+	// the account is locked to the §4.2 whitelist.
 	AccountKind        string `json:"account_kind,omitempty"`
 	MustChangePassword bool   `json:"must_change_password,omitempty"`
 }
@@ -120,7 +110,6 @@ func anonymousSessionBody() []byte {
 	body := sessionWire{Data: sessionDataWire{
 		Workspaces:         []workspaceWire{},
 		UnusableWorkspaces: []workspaceWire{},
-		Accounts:           []sessionAccountWire{},
 	}}
 	raw, _ := json.Marshal(body)
 	return raw
@@ -154,21 +143,46 @@ type handoffWire struct {
 	} `json:"data"`
 }
 
+type directoryMemberPerms struct {
+	ChangeRoles []string `json:"change_roles,omitempty"`
+	Remove      bool     `json:"remove"`
+}
+
 type directoryMember struct {
-	ID          int64  `json:"id"`
-	Email       string `json:"email"`
-	Role        string `json:"role"`
-	DisplayName string `json:"displayName"`
-	Status      string `json:"status"`
+	ID          int64                `json:"id"`
+	Name        string               `json:"name"`
+	Email       string               `json:"email"`
+	Role        string               `json:"role"`
+	Status      string               `json:"status"`
+	JoinedAtMS  int64                `json:"joined_at_ms"`
+	Permissions directoryMemberPerms `json:"permissions"`
+}
+
+type directoryInvitation struct {
+	ID             int64  `json:"id"`
+	UUID           string `json:"uuid"`
+	Email          string `json:"email"`
+	Role           string `json:"role"`
+	InvitedByEmail string `json:"invited_by_email"`
+	CreatedAtMS    int64  `json:"created_at_ms"`
+	ExpiresAtMS    int64  `json:"expires_at_ms"`
 }
 
 type directoryPerms struct {
-	InviteRoles []string `json:"inviteRoles"`
+	Dissolve         bool     `json:"dissolve"`
+	EditProfile      bool     `json:"edit_profile"`
+	InviteRoles      []string `json:"invite_roles"`
+	Leave            bool     `json:"leave"`
+	RevokeInvitation bool     `json:"revoke_invitation"`
 }
 
 type directoryData struct {
-	Members     []directoryMember `json:"members"`
-	Permissions directoryPerms    `json:"permissions"`
+	Invitations  []directoryInvitation `json:"invitations"`
+	Members      []directoryMember     `json:"members"`
+	PendingLimit int64                 `json:"pending_limit"`
+	PendingUsed  int64                 `json:"pending_used"`
+	Permissions  directoryPerms        `json:"permissions"`
+	SeatsUsed    int64                 `json:"seats_used"`
 }
 
 type directoryWire struct {

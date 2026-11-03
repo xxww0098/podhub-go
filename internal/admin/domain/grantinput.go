@@ -21,7 +21,7 @@ var knownActions = []string{
 }
 
 // GrantInput is a normalized CreateScopedAutomationGrantRequest.
-// Sources nil means every source. An empty slice means none.
+// Sources nil means every source. An empty or omitted slice means none.
 type GrantInput struct {
 	Name    string
 	Actions []string
@@ -29,10 +29,10 @@ type GrantInput struct {
 	Sources *[]string
 }
 
-// DecodeGrant rejects unknown fields. expiresInDays and sourceIds may be absent.
+// DecodeGrant rejects unknown fields. expires_in_days and source_ids may be absent.
 func DecodeGrant(body []byte) (GrantInput, error) {
 	raw, err := strictObject(body)
-	if err != nil || !hasOnly(raw, []string{"name", "actions", "expiresInDays", "sourceIds"}) || !requireKeys(raw, []string{"name", "actions"}) {
+	if err != nil || !hasOnly(raw, []string{"name", "actions", "expires_in_days", "source_ids"}) || !requireKeys(raw, []string{"name", "actions"}) {
 		return GrantInput{}, failMsg("请求格式无效")
 	}
 	var name string
@@ -45,15 +45,19 @@ func DecodeGrant(body []byte) (GrantInput, error) {
 		return GrantInput{}, failMsg("名称不能为空且不超过 120 字符")
 	}
 	var expires *int64
-	if v, ok := raw["expiresInDays"]; ok && string(v) != "null" {
+	if v, ok := raw["expires_in_days"]; ok && !bytes.Equal(bytes.TrimSpace(v), []byte("null")) {
 		n, ok := jsonNumber(v)
 		if !ok || n < 1 || n > 3650 {
 			return GrantInput{}, failMsg("有效期须在 1 到 3650 天之间")
 		}
 		expires = &n
 	}
-	var sources *[]string
-	if v, ok := raw["sourceIds"]; ok && string(v) != "null" {
+	noSources := []string{}
+	sources := &noSources
+	if v, ok := raw["source_ids"]; ok && bytes.Equal(bytes.TrimSpace(v), []byte("null")) {
+		sources = nil
+	}
+	if v, ok := raw["source_ids"]; ok && !bytes.Equal(bytes.TrimSpace(v), []byte("null")) {
 		var ids []string
 		if !unmarshal(v, &ids) || ids == nil {
 			return GrantInput{}, failMsg("源库范围无效，最多 200 个源库")

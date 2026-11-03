@@ -18,7 +18,45 @@ import (
 	"github.com/xxww0098/podhub-go/internal/admin/service"
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
 	sign "github.com/xxww0098/podhub-go/internal/platform/r2/sigv4"
+	"github.com/xxww0098/podhub-go/tests/testkit"
 )
+
+func TestSupplierOzonConfigUsesDocumentedWireFields(t *testing.T) {
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(mustRead(t, "requests/put-ozon-ready-config.json"), &body); err != nil {
+		t.Fatal(err)
+	}
+	delete(body, "_note")
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in, err := domain.DecodeOzon(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cat := &x1Cat{cfg: domain.OzonConfig{
+		ProductID: "scp_1", DescriptionCategoryID: in.Category, TypeID: in.TypeID, Language: in.Language,
+		Values: in.Values, ComplexValues: in.ComplexJSON, FixedTags: in.Tags, PromptText: in.Prompt, AI: in.AI, Revision: 1,
+		State: "valid", Issues: json.RawMessage(`[]`),
+	}}
+	svc := x1Service(cat, &scriptOrigin{}, nil, time.Now())
+	handler := mountX1(svc, "admin")
+	const path = "/api/admin/supplier-dbs/src/rows/scp_1/ozon-config"
+	spec, err := testkit.LoadOpenAPI()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, method := range []string{http.MethodPut, http.MethodGet} {
+		rec := jsonCall(handler, method, path, string(raw))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", method, rec.Code, rec.Body.String())
+		}
+		if err := spec.CheckResponse(method, "/api/admin/supplier-dbs/{source_id}/rows/{product_id}/ozon-config", rec.Code, rec.Header(), rec.Body.Bytes()); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
 
 func TestSupplierX1SuccessBytes(t *testing.T) {
 	fixed := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
@@ -79,7 +117,7 @@ func TestSupplierX1SuccessBytes(t *testing.T) {
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), ".direct-uploads/pub-fixed") || !strings.Contains(rec.Body.String(), "X-Amz-Expires=600") || strings.Contains(rec.Body.String(), "sk-test-secret") {
 		t.Fatalf("upload %d %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `"expiresAtMs":1577934845000`) || !strings.Contains(rec.Body.String(), `"ifNoneMatch":"*"`) {
+	if !strings.Contains(rec.Body.String(), `"expires_at_ms":1577934845000`) || !strings.Contains(rec.Body.String(), `"if_none_match":"*"`) {
 		t.Fatalf("grant %s", rec.Body.String())
 	}
 
@@ -92,18 +130,6 @@ func TestSupplierX1SuccessBytes(t *testing.T) {
 	rec = jsonCall(super, http.MethodPost, "/api/admin/supplier-dbs/src/rows/scp_1/price", string(mustRead(t, "requests/price.json")))
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"platformPriceCents":null`) {
 		t.Fatalf("price envelope %d %s", rec.Code, rec.Body.String())
-	}
-
-	var rev int32 = 2
-	var published int32 = 1
-	cat.diff = domain.PromptDiff{Revision: 2, PublishedRevision: &published, Lines: []domain.DiffLine{{Label: "Товар:", Published: "a", Draft: "b", Changed: true}}, PublishedFixedTags: []string{}, DraftFixedTags: []string{"#новый"}, FixedTagsChanged: true, PublishedAiOutput: domain.DefaultAI(), DraftAiOutput: domain.DefaultAI()}
-	cat.seen = &rev
-	rec = jsonCall(staff, http.MethodGet, "/api/admin/supplier-dbs/src/rows/scp_1/prompt/diff?revision=2&ignored=1", "")
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"publishedRevision":1`) || !strings.Contains(rec.Body.String(), `"fixedTagsChanged":true`) {
-		t.Fatalf("diff %d %s", rec.Code, rec.Body.String())
-	}
-	if cat.gotRev == nil || *cat.gotRev != 2 {
-		t.Fatalf("revision query %v", cat.gotRev)
 	}
 
 	previewBody := mustRead(t, "hand/preview-chernovik.json")
@@ -119,28 +145,16 @@ func TestSupplierX1SuccessBytes(t *testing.T) {
 		t.Fatalf("preview %d %s", rec.Code, rec.Body.String())
 	}
 
-	cat.sync = domain.EmptySync()
-	rec = jsonCall(super, http.MethodPost, "/api/admin/supplier-prompts/sync", "")
-	var syncWrap struct {
-		Response json.RawMessage `json:"response"`
-	}
-	if err := json.Unmarshal(mustRead(t, "hand/sync-empty.json"), &syncWrap); err != nil {
-		t.Fatal(err)
-	}
-	if rec.Code != http.StatusOK || compactJSON(rec.Body.String()) != compactJSON(string(syncWrap.Response)) {
-		t.Fatalf("sync %d %s", rec.Code, rec.Body.String())
-	}
-
-	cat.prompt = domain.Prompt{ProductID: "scp_1", SourceID: "src", ProductTitle: "马克杯", DescriptionCategoryID: 1, TypeID: 2, PromptName: "草稿", PromptFileName: "draft.md", PromptContent: "ЧЕРНОВИК", FixedTags: []string{"#новый"}, Revision: 4}
-	rec = jsonCall(staff, http.MethodPatch, "/api/admin/supplier-prompts/scp_1", string(mustRead(t, "requests/patch-prompt-chernovik.json")))
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"prompt":{"productId":"scp_1"`) || !strings.Contains(rec.Body.String(), "ЧЕРНОВИК") {
-		t.Fatalf("patch %d %s", rec.Code, rec.Body.String())
-	}
-
-	cat.pub = domain.PromptPublish{ProductID: "scp_1", Revision: 2, PublishedRevision: 2, ProductRevision: 5, ConfigRevision: 3}
-	rec = jsonCall(staff, http.MethodPost, "/api/admin/supplier-dbs/src/rows/scp_1/prompt/publish", string(mustRead(t, "requests/prompt-publish.json")))
-	if rec.Code != http.StatusOK || rec.Body.String() != `{"data":`+domain.JSONText(cat.pub)+`}` {
-		t.Fatalf("publish prompt %d %s", rec.Code, rec.Body.String())
+	for _, retired := range []struct{ method, path string }{
+		{http.MethodGet, "/api/admin/supplier-prompts"},
+		{http.MethodPost, "/api/admin/supplier-prompts/sync"},
+		{http.MethodPatch, "/api/admin/supplier-prompts/scp_1"},
+		{http.MethodGet, "/api/admin/supplier-dbs/src/rows/scp_1/prompt/diff"},
+		{http.MethodPost, "/api/admin/supplier-dbs/src/rows/scp_1/prompt/publish"},
+	} {
+		if got := jsonCall(super, retired.method, retired.path, `{}`); got.Code != http.StatusNotFound {
+			t.Fatalf("retired route %s %s: %d", retired.method, retired.path, got.Code)
+		}
 	}
 
 	before := origin.calls
@@ -172,10 +186,6 @@ func TestSupplierX1ErrorBranches(t *testing.T) {
 	if rec.Code != http.StatusBadRequest || rec.Header().Get("Content-Type") != "text/plain; charset=utf-8" || !strings.HasPrefix(rec.Body.String(), "Failed to deserialize query string: ") || !strings.Contains(rec.Body.String(), "foo") || strings.HasPrefix(rec.Body.String(), "{") {
 		t.Fatalf("unknown query %d %s %s", rec.Code, rec.Header().Get("Content-Type"), rec.Body.String())
 	}
-	rec = jsonCall(staff, http.MethodGet, "/api/admin/supplier-dbs/src/rows/scp_1/prompt/diff?revision=abc", "")
-	if rec.Code != http.StatusBadRequest || rec.Body.String() != "Failed to deserialize query string: revision: invalid digit found in string" {
-		t.Fatalf("revision %d %s", rec.Code, rec.Body.String())
-	}
 	rec = jsonCall(super, http.MethodGet, "/api/admin/supplier-db-storage/objects?cursor=", "")
 	if rec.Code != http.StatusBadRequest || rec.Body.String() != `{"error":"cursor 无效","code":"VALIDATION"}` {
 		t.Fatalf("cursor %d %s", rec.Code, rec.Body.String())
@@ -192,7 +202,7 @@ func TestSupplierX1ErrorBranches(t *testing.T) {
 
 	bare := x1Service(cat, origin, nil, fixed)
 	rec = jsonCall(mountX1(bare, "super_admin"), http.MethodGet, "/api/admin/supplier-db-storage/objects", "")
-	if rec.Code != http.StatusServiceUnavailable || rec.Body.String() != `{"error":"先配置平台货源存储桶","code":"STORAGE_NOT_CONFIGURED"}` {
+	if rec.Code != http.StatusServiceUnavailable || rec.Body.String() != `{"error":"先配置供应商商品库存储桶","code":"STORAGE_NOT_CONFIGURED"}` {
 		t.Fatalf("unconfigured %d %s", rec.Code, rec.Body.String())
 	}
 
@@ -229,7 +239,7 @@ func TestSupplierX1ErrorBranches(t *testing.T) {
 		return service.ObjectResponse{Status: 200}, nil
 	}
 	rec = jsonCall(super, http.MethodPost, "/api/admin/supplier-db-storage/objects/delete", `{"path":"a.txt","kind":"file"}`)
-	if rec.Code != http.StatusConflict || rec.Body.String() != `{"error":"对象仍被平台货源商品引用；请先移除 URL 引用再操作","code":"CONFLICT"}` {
+	if rec.Code != http.StatusConflict || rec.Body.String() != `{"error":"对象仍被供应商商品库商品引用；请先移除 URL 引用再操作","code":"CONFLICT"}` {
 		t.Fatalf("referenced %d %s", rec.Code, rec.Body.String())
 	}
 	cat.referenced = false
@@ -263,24 +273,24 @@ func TestSupplierX1ErrorBranches(t *testing.T) {
 
 	cat.err = &contract.Fail{Kind: contract.KindWritesDisabled}
 	rec = jsonCall(staff, http.MethodPost, "/api/admin/supplier-dbs/src/rows", fixtureBody(t, "requests/post-row-staff-crud.json"))
-	if rec.Code != http.StatusServiceUnavailable || rec.Body.String() != `{"error":"平台货源写入未启用","code":"WRITES_DISABLED"}` {
+	if rec.Code != http.StatusServiceUnavailable || rec.Body.String() != `{"error":"供应商商品库写入未启用","code":"WRITES_DISABLED"}` {
 		t.Fatalf("lease %d %s", rec.Code, rec.Body.String())
 	}
 	cat.err = &contract.Fail{Kind: contract.KindValidation, Message: "商品尚未满足上架条件", Missing: []string{"category", "prompt", "fixedTags", "platformPrice", "ozonConfig"}}
-	rec = jsonCall(staff, http.MethodPost, "/api/admin/supplier-dbs/src/rows/scp_1/publish", "")
+	rec = jsonCall(super, http.MethodPost, "/api/admin/supplier-dbs/src/rows/scp_1/publish", "")
 	if rec.Code != http.StatusBadRequest || rec.Body.String() != `{"error":"商品尚未满足上架条件","code":"VALIDATION","missing":["category","prompt","fixedTags","platformPrice","ozonConfig"]}` {
 		t.Fatalf("missing %d %s", rec.Code, rec.Body.String())
 	}
 
 	remote := testStorageAccount()
 	remote.Endpoint = "https://example.com"
-	remoteSvc := x1Service(&x1Cat{}, LoopbackOrigin{}, &remote, fixed)
+	remoteSvc := x1Service(&x1Cat{}, R2Origin{}, &remote, fixed)
 	rec = jsonCall(mountX1(remoteSvc, "super_admin"), http.MethodGet, "/api/admin/supplier-db-storage/objects", "")
 	if rec.Code != http.StatusBadGateway || rec.Body.String() != `{"error":"对象存储暂不可用","code":"STORAGE_UNAVAILABLE"}` {
-		t.Fatalf("non-loopback %d %s", rec.Code, rec.Body.String())
+		t.Fatalf("unconfigured origin %d %s", rec.Code, rec.Body.String())
 	}
-	if _, err := (LoopbackOrigin{}).Do(context.Background(), service.ObjectRequest{Method: http.MethodGet, URL: "http://example.com/bucket"}); err == nil {
-		t.Fatal("loopback origin dialed a public host")
+	if _, err := (R2Origin{}).Do(context.Background(), service.ObjectRequest{Method: http.MethodGet, URL: "http://example.com/bucket"}); err == nil {
+		t.Fatal("R2 origin dialed an unconfigured public host")
 	}
 }
 
@@ -377,10 +387,6 @@ func (s *scriptOrigin) Do(_ context.Context, req service.ObjectRequest) (service
 type x1Cat struct {
 	row        domain.RowData
 	cfg        domain.OzonConfig
-	diff       domain.PromptDiff
-	pub        domain.PromptPublish
-	prompt     domain.Prompt
-	sync       domain.SyncReport
 	referenced bool
 	err        error
 	seen       *int32
@@ -411,25 +417,7 @@ func (c *x1Cat) LoadOzon(context.Context, contract.Actor, string, string, int64)
 func (c *x1Cat) SaveOzon(context.Context, contract.Actor, string, string, domain.OzonPut, int64) (domain.OzonConfig, error) {
 	return c.cfg, c.err
 }
-func (c *x1Cat) PromptDiff(_ context.Context, _ contract.Actor, _, _ string, revision *int32) (domain.PromptDiff, error) {
-	c.gotRev = revision
-	return c.diff, c.err
-}
-func (c *x1Cat) PublishPrompt(context.Context, contract.Actor, string, string, int32, int64) (domain.PromptPublish, error) {
-	return c.pub, c.err
-}
-func (c *x1Cat) PatchPrompt(context.Context, contract.Actor, string, domain.PromptPatchInput, int64) (domain.Prompt, error) {
-	return c.prompt, c.err
-}
-func (c *x1Cat) SyncPrompts(context.Context, contract.Actor, int64) (domain.SyncReport, error) {
-	if c.err != nil {
-		return domain.SyncReport{}, c.err
-	}
-	if c.sync.Updated == nil {
-		c.sync = domain.EmptySync()
-	}
-	return c.sync, nil
-}
+
 func (c *x1Cat) Referenced(context.Context, contract.Actor, []string) (bool, error) {
 	return c.referenced, nil
 }

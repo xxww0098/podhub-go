@@ -26,7 +26,7 @@ func (s Service) clock() time.Time {
 }
 
 func notConfigured() error {
-	return &contract.Fail{Kind: contract.KindUnavailable, Code: "STORAGE_NOT_CONFIGURED", Message: "先配置平台货源存储桶"}
+	return &contract.Fail{Kind: contract.KindUnavailable, Code: "STORAGE_NOT_CONFIGURED", Message: "先配置供应商商品库存储桶"}
 }
 
 func storageDown() error {
@@ -138,55 +138,12 @@ func (s Service) SaveOzon(ctx context.Context, actor contract.Actor, sourceID, p
 	return cfg, fillDisabled(err, msgDbWrites)
 }
 
-func (s Service) PromptDiff(ctx context.Context, actor contract.Actor, sourceID, productID string, revision *int32) (domain.PromptDiff, error) {
-	cat, err := s.catalog()
-	if err != nil {
-		return domain.PromptDiff{}, err
-	}
-	return cat.PromptDiff(ctx, actor, sourceID, productID, revision)
-}
-
 func (s Service) PreviewPrompt(body []byte) (domain.Preview, error) {
 	in, err := domain.DecodePreview(body)
 	if err != nil {
 		return domain.Preview{}, err
 	}
 	return domain.BuildPreview(in.Brief, in.Tags)
-}
-
-func (s Service) PublishPrompt(ctx context.Context, actor contract.Actor, sourceID, productID string, body []byte) (domain.PromptPublish, error) {
-	revision, err := domain.DecodeRevision(body)
-	if err != nil {
-		return domain.PromptPublish{}, err
-	}
-	cat, err := s.catalog()
-	if err != nil {
-		return domain.PromptPublish{}, err
-	}
-	out, err := cat.PublishPrompt(ctx, actor, sourceID, productID, revision, s.nowMs())
-	return out, fillDisabled(err, msgDbWrites)
-}
-
-func (s Service) PatchPrompt(ctx context.Context, actor contract.Actor, productID string, body []byte) (domain.Prompt, error) {
-	in, err := domain.DecodePromptPatch(body)
-	if err != nil {
-		return domain.Prompt{}, err
-	}
-	cat, err := s.catalog()
-	if err != nil {
-		return domain.Prompt{}, err
-	}
-	row, err := cat.PatchPrompt(ctx, actor, productID, in, s.nowMs())
-	return row, fillDisabled(err, msgDbWrites)
-}
-
-func (s Service) SyncPrompts(ctx context.Context, actor contract.Actor) (domain.SyncReport, error) {
-	cat, err := s.catalog()
-	if err != nil {
-		return domain.SyncReport{}, err
-	}
-	report, err := cat.SyncPrompts(ctx, actor, s.nowMs())
-	return report, fillDisabled(err, msgDbWrites)
 }
 
 func wantsStoreChecksum(header string) bool {

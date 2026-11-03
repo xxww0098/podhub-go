@@ -72,7 +72,7 @@ const ozonContext = (stage: string, offerId: string) => ({
 
 test("an explicit Ozon context stays local; normalized v4 uses the refusal trace and exact submitted body once", async () => {
   const { events, inboxBodies, requests } = serve(() => json(502, {
-    code: "OZON_DOWN", error: "upstream said token=abc", ocrRecovery: { requestId: "ocr-business-123" },
+    code: "OZON_DOWN", error: "upstream said token=abc", ocr_recovery: { request_id: "ocr-business-123" },
   }, { "x-request-id": "Cloud-Trace_123", "Retry-After": "2" }))
   const item = { offer_id: "ART-001", name: "Картина", images: ["https://cdn.invalid/1.jpg"], api_key: "k" }
   const failure = await api.post(route("listingSubmit"), { store_id: "store-secret", row_ids: ["row-secret"],

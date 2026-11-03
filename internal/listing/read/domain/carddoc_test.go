@@ -35,11 +35,4 @@ func TestCreateFingerprintIsStable(t *testing.T) {
 	if got != again {
 		t.Fatal(again)
 	}
-	id, msg := AssociationIdentity(7, "src", "red", strings.Repeat("ab", 32))
-	if msg != "" || !strings.HasPrefix(id.Model, "PHM-") || len(id.ID) != 36 {
-		t.Fatalf("%+v %s", id, msg)
-	}
-	if _, msg := AssociationIdentity(7, "", "red", "aa"); msg != "同款关联需要非空的货源库编号与款号" {
-		t.Fatal(msg)
-	}
 }

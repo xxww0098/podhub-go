@@ -10,12 +10,9 @@ import {
   isFavorite,
   isQueued,
   queueEntriesFromStored,
-  queueEntryById,
   queueEntryFromRow,
   removeQueued,
   resetCollectionForTests,
-  setQueuedPsd,
-  setQueuedStore,
   toggleFavorite,
   toggleQueued,
 } from "./listing-queue"
@@ -150,7 +147,7 @@ test("toggleFavorite 来回切换", () => {
   assert.equal(isFavorite("prd_1"), false)
 })
 
-/** 清单键是对外承诺：老数据还在这个 key 下，增量字段也必须落在这里。 */
+/** 收藏与清单各自持久化。 */
 const QUEUE_KEY = "podhub.supplier-dbs-gallery.listing-queue"
 
 function fakeStorage(seed: Record<string, string> = {}) {
@@ -183,82 +180,27 @@ function storedQueue(storage: ReturnType<typeof fakeStorage>): Array<Record<stri
   return JSON.parse(storage.getItem(QUEUE_KEY) ?? "[]")
 }
 
-test("店铺/PSD 绑定只改目标条目，清除即摘字段，并随清单落进 localStorage", () => {
+test("选品清单持久化商品身份，不包含店铺和 PSD 设置", () => {
   const storage = fakeStorage()
   withFakeWindow(storage, () => {
     toggleQueued(row({ productId: "prd_1" }))
     toggleQueued(row({ productId: "prd_2" }))
-    setQueuedStore("prd_1", " store-moscow ")
-    setQueuedStore("prd_2", "store-spb")
-    setQueuedPsd("prd_1", { sha256: " a1b2 ", fileName: "海报.psd" })
-
-    assert.equal(queueEntryById("prd_1")?.storeId, "store-moscow")
-    assert.deepEqual(queueEntryById("prd_1")?.psd, {
-      sha256: "a1b2",
-      fileName: "海报.psd",
-    })
-    assert.equal(queueEntryById("prd_2")?.storeId, "store-spb")
-    assert.equal(queueEntryById("prd_2")?.psd, undefined)
-
-    // 老 key 不变，两笔字段跟着条目一起持久化。
-    const persisted = storedQueue(storage).find((entry) => entry.productId === "prd_1")
-    assert.equal(persisted?.storeId, "store-moscow")
-    assert.deepEqual(persisted?.psd, { sha256: "a1b2", fileName: "海报.psd" })
-
-    // 改绑覆盖前值，clear（空串 / null）把字段整个摘掉——导入时才按「没绑定」走。
-    setQueuedStore("prd_1", "store-spb")
-    setQueuedPsd("prd_1", { sha256: "c3d4", fileName: "油画.psd" })
-    assert.equal(queueEntryById("prd_1")?.storeId, "store-spb")
-    setQueuedStore("prd_1", "")
-    setQueuedPsd("prd_1", null)
-    const cleared = queueEntryById("prd_1")
-    assert.ok(cleared)
-    assert.equal("storeId" in cleared, false)
-    assert.equal("psd" in cleared, false)
-    const clearedStored = storedQueue(storage).find((entry) => entry.productId === "prd_1")
-    assert.ok(clearedStored)
-    assert.equal("storeId" in clearedStored, false)
-    assert.equal("psd" in clearedStored, false)
-
-    // 不在清单里的商品不会被绑定「凭空补」进来。
-    setQueuedStore("prd_ghost", "store-x")
-    setQueuedPsd("prd_ghost", { sha256: "e5", fileName: "ghost.psd" })
-    assert.equal(isQueued("prd_ghost"), false)
-    assert.equal(queueEntryById("prd_ghost"), undefined)
+    const persisted = storedQueue(storage)
+    assert.deepEqual(persisted.map((entry) => entry.productId), ["prd_1", "prd_2"])
+    assert.deepEqual(queueEntriesFromStored(persisted), persisted)
+    removeQueued("prd_1")
+    assert.deepEqual(storedQueue(storage).map((entry) => entry.productId), ["prd_2"])
   })
 })
 
-test("存储解析容忍老清单：没有绑定字段照读，坏绑定丢掉", () => {
-  const entries = queueEntriesFromStored([
-    {
-      productId: "prd_old",
-      sourceId: "src_1",
-      title: "旧货",
-      platformCode: "P0",
-      coverUrl: "",
-      platformPriceCents: null,
-      addedAtMs: 1,
-    },
-    {
-      productId: "prd_new",
-      storeId: " store-1 ",
-      psd: { sha256: " ab ", fileName: "t.psd" },
-    },
-    { productId: "prd_bad", psd: { sha256: 7 } },
-    { productId: "", title: "没有身份" },
-    null,
-    "junk",
+test("存储解析只保留清单字段，忽略无商品身份的条目", () => {
+  const entry = queueEntryFromRow(row({ productId: "prd_1" }))
+  const [parsed] = queueEntriesFromStored([
+    { ...entry, storeId: "store-1", psd: { sha256: "ab", fileName: "t.psd" } },
+    { productId: "" }, null, "junk",
   ])
-  assert.deepEqual(
-    entries.map((entry) => entry.productId),
-    ["prd_old", "prd_new", "prd_bad"],
-  )
-  // 加字段之前存下的条目：读回照旧，只是没有绑定。
-  assert.equal("storeId" in entries[0]!, false)
-  assert.equal("psd" in entries[0]!, false)
-  assert.equal(entries[1]?.storeId, "store-1")
-  assert.deepEqual(entries[1]?.psd, { sha256: "ab", fileName: "t.psd" })
-  assert.equal("psd" in entries[2]!, false)
+  assert.deepEqual(parsed, entry)
+  assert.equal("storeId" in parsed!, false)
+  assert.equal("psd" in parsed!, false)
   assert.deepEqual(queueEntriesFromStored("not-an-array"), [])
 })
-

@@ -1,3 +1,4 @@
+import { route } from "@/api/routes"
 import { listingProjection } from "../../../tests/listing-row-fixture"
 /**
  * The workbench thunks that became HTTP calls: catalog reads, Field Packs,
@@ -8,14 +9,13 @@ import { listingProjection } from "../../../tests/listing-row-fixture"
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { cardDraftView, listingHttp, patchListingRow, recoverListingIntent, reconcileListingCard } from "@/bindings/http-listing"
+import { cardDraftView, listingHttp, patchListingRow, recoverListingIntent } from "@/bindings/http-listing"
 import { packsHttp } from "@/bindings/http-packs"
 import { workflowActions } from "./workflow-actions"
 import { cardPayload, catalogSchemaView, catalogTreeNodes } from "@/bindings/listing-projection"
 import { resetCardSessions } from "./card/card-session"
 import { stubOpfs, restoreOpfsTestGlobals } from "@/render/opfs-test-support"
 import { putTemplate } from "@/render/opfs"
-import { persistUserTemplate } from "./card/template-assets"
 import {
   listingCardSaveCategoryDraft,
   listingCardSaveDefaultPrice,
@@ -46,7 +46,7 @@ function recordFetch(reply: (call: Call) => unknown): { calls: Call[], restore: 
     calls.push(call)
     const response = reply(call)
     if (response instanceof Response) return response
-    return new Response(JSON.stringify({ data: response }), {
+    return new Response(JSON.stringify(call.method === "GET" && call.url.startsWith(`${route("catalogSchema")}?`) ? response : { data: response }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     })
@@ -74,6 +74,20 @@ test("a cached Schema becomes the view the field table reads, complex groups inc
     type_id: 91976,
     language: "zh_hans",
     fetched_at_ms: 0,
+    native_material: {
+      snapshot: {
+        category_key: "17027906:91976",
+        label: "海报",
+        description_category_id: 17027906,
+        type_id: 91976,
+        schema_revision: "workflow:projection-test",
+        recipe_id: 0,
+        recipe_revision: 0,
+        catalog_schema_version: 0,
+        fields: [],
+      },
+      search_materials: [],
+    },
     fields: [
       {
         key: "attribute_9048",
@@ -124,8 +138,8 @@ test("a cached Schema becomes the view the field table reads, complex groups inc
 test("the category tree keeps its shape and an absent child list reads as none", () => {
   assert.deepEqual(
     catalogTreeNodes([
-      { description_category_id: 1, category_name: "家居", type_id: 0, type_name: "", disabled: false, parent_id: null },
-      { description_category_id: 1, category_name: "家居", type_id: 2, type_name: "海报", disabled: true, parent_id: 0 },
+      { description_category_id: 1, category_name: "家居", type_id: 0, type_name: "", disabled: false, parent_index: null },
+      { description_category_id: 1, category_name: "家居", type_id: 2, type_name: "海报", disabled: true, parent_index: 0 },
     ]),
     [
       {
@@ -149,6 +163,20 @@ test("the category tree keeps its shape and an absent child list reads as none",
   )
 })
 
+test("category branches with type_id zero keep their own children", () => {
+  const nodes = [
+    { description_category_id: 10, category_name: "家居", type_id: 0, type_name: "", disabled: false, parent_index: null },
+    { description_category_id: 11, category_name: "装饰", type_id: 0, type_name: "", disabled: false, parent_index: 0 },
+    { description_category_id: 11, category_name: "", type_id: 7, type_name: "画", disabled: false, parent_index: 1 },
+    { description_category_id: 20, category_name: "办公", type_id: 0, type_name: "", disabled: false, parent_index: null },
+    { description_category_id: 20, category_name: "", type_id: 8, type_name: "垫", disabled: false, parent_index: 3 },
+  ]
+  const tree = catalogTreeNodes(nodes)
+  assert.equal(tree.length, 2)
+  assert.equal(tree[0]!.children[0]!.children[0]!.type_id, 7)
+  assert.equal(tree[1]!.children[0]!.type_id, 8)
+})
+
 test("category schema uses platform credentials even when a caller supplies a Store", async () => {
   const stub = recordFetch(() => null)
   try {
@@ -162,7 +190,7 @@ test("category schema uses platform credentials even when a caller supplies a St
       /平台类目密钥/,
     )
     assert.deepEqual(stub.calls.map((call) => `${call.method} ${call.url}`), [
-      "GET /api/catalog/schema?descriptionCategoryId=17027906&typeId=91976&language=zh_hans",
+      "GET /api/catalog/schema?description_category_id=17027906&type_id=91976&language=zh_hans",
     ])
   } finally {
     stub.restore()
@@ -183,36 +211,12 @@ test("dictionary search uses the platform route without a Store", async () => {
     })
     assert.deepEqual(options, [{ id: 7, value: "红", info: "", picture: "" }])
     assert.deepEqual(stub.calls.map((call) => `${call.method} ${call.url}`), [
-      "GET /api/catalog/schema?descriptionCategoryId=11&typeId=101&language=default",
+      "GET /api/catalog/schema?description_category_id=11&type_id=101&language=default",
       "POST /api/catalog/schema/dictionary-search",
     ])
     assert.deepEqual(stub.calls[1].body, {
       attribute_id: 4191, description_category_id: 11, type_id: 101, language: "default", limit: 100, value: "红色",
     })
-  } finally {
-    stub.restore()
-  }
-})
-
-test("card reconcile schedules by card and manual recovery uses the exact selected intent", async () => {
-  const stub = recordFetch((call) => {
-    if (call.url.endsWith("/reconcile")) return { scheduledCount: 2 }
-    return {
-      items: [{
-        rowId: "row-1", created: true, intent: {
-          id: "new-intent", state: "queued", client_operation_id: "op-2", updated_at_ms: 2,
-        },
-      }],
-    }
-  })
-  try {
-    assert.deepEqual(await reconcileListingCard("card/1"), { scheduledCount: 2 })
-    const recovered = await recoverListingIntent("original-intent")
-    assert.equal(recovered.operation.intent_id, "new-intent")
-    assert.deepEqual(stub.calls.map((call) => `${call.method} ${call.url}`), [
-      "POST /api/listing/cards/card%2F1/reconcile",
-      "POST /api/listing/intents/original-intent/recover",
-    ])
   } finally {
     stub.restore()
   }
@@ -408,7 +412,7 @@ test("opening a card reads the card and fills its coordinate's Schema through pl
     assert.deepEqual(stub.calls.map((call) => `${call.method} ${call.url}`), [
       "GET /api/listing/cards/card-1",
       // Schema reads are platform-wide, independent of the bound Store.
-      "GET /api/catalog/schema?descriptionCategoryId=17027906&typeId=91976&language=zh_hans",
+      "GET /api/catalog/schema?description_category_id=17027906&type_id=91976&language=zh_hans",
     ])
     assert.equal(card.kind, "template")
     assert.equal(card.ai_prompt, "识图提示词")
@@ -427,7 +431,6 @@ test("saving a card template is a PATCH under its own revision that keeps the qu
   const templateSha = await putTemplate(new Uint8Array([1, 2, 3]))
   const stub = recordFetch((call) => call.method === "GET" && call.url === "/api/listing/cards/card-1"
     ? { ...CARD, payload: { ...CARD.payload, internalNotes: "保留旧字段" } }
-    : call.url === "/api/listing/templates" ? { ...call.body, ready: true }
     : cardReply(call))
   try {
     await listingCardSaveCategoryDraft({
@@ -443,11 +446,9 @@ test("saving a card template is a PATCH under its own revision that keeps the qu
       target_store_id: "store-1,store-2",
       ai_allowed_field_keys: ["offer_id"],
     })
-    await persistUserTemplate(templateSha, "poster-2.psd", 17027906, 91976)
     assert.deepEqual(stub.calls.map((call) => `${call.method} ${call.url}`), [
       "GET /api/listing/cards/card-1",
       "PATCH /api/listing/cards/card-1",
-      "POST /api/listing/templates",
     ])
     const write = stub.calls[1]!.body
     assert.equal(write.baseRevision, 7, "the read is what supplies the CAS pin")
@@ -492,7 +493,7 @@ test("a row write syncs an expired category once and retries the same revision a
     assert.deepEqual(stub.calls.map((call) => `${call.method} ${call.url}`), [
       `PATCH /api/listing/rows/${row.id}`,
       `GET /api/listing/rows/${row.id}`,
-      "GET /api/catalog/schema?descriptionCategoryId=42&typeId=73&language=zh_hans",
+      "GET /api/catalog/schema?description_category_id=42&type_id=73&language=zh_hans",
       `PATCH /api/listing/rows/${row.id}`,
     ])
     assert.deepEqual(stub.calls[0]!.body, body)
@@ -613,7 +614,7 @@ test("hashless pool videos coexist and one can be removed by its public URL", as
 test("a card with no id is created, and the column takes the first bound Store", async () => {
   stubOpfs()
   const templateSha = await putTemplate(new Uint8Array([1, 2, 3]))
-  const stub = recordFetch((call) => call.url === "/api/listing/templates" ? { ...call.body, ready: true } : cardReply(call))
+  const stub = recordFetch(cardReply)
   try {
     await listingCardSaveCategoryDraft({
       display_name: "新卡片",
@@ -627,10 +628,8 @@ test("a card with no id is created, and the column takes the first bound Store",
       target_store_id: "store-2,store-3",
       ai_allowed_field_keys: [],
     })
-    await persistUserTemplate(templateSha, "poster.psd", 17027906, 91976)
     assert.deepEqual(stub.calls.map((call) => `${call.method} ${call.url}`), [
       "POST /api/listing/cards",
-      "POST /api/listing/templates",
     ])
     assert.equal(stub.calls[0]!.body.storeId, "store-2")
     assert.equal(stub.calls[0]!.body.createMode, "blank")
@@ -787,33 +786,6 @@ test("a later edit PATCH does not resend createMode", async () => {
     assert.equal(stub.calls[0]!.method, "GET")
     assert.equal(stub.calls[1]!.method, "PATCH")
     assert.equal(stub.calls[1]!.body.createMode, undefined)
-  } finally {
-    stub.restore()
-  }
-})
-
-test("SKU preview remains a read-only card route", async () => {
-  const preview = {
-    source_sku: 123,
-    source_product_id: 456,
-    source_offer_id: "offer-1",
-    source_name: "商品",
-    source_description_category_id: 17027906,
-    source_type_id: 91976,
-    category_matches: true,
-    candidates: [],
-    skipped_fields: 0,
-  }
-  const stub = recordFetch(() => preview)
-  try {
-    assert.deepEqual(
-      await listingHttp.listingCardPreviewSkuImport({ draft_id: "card-1", sku: "123" }),
-      preview,
-    )
-    assert.deepEqual(stub.calls.map((call) => `${call.method} ${call.url}`), [
-      "POST /api/listing/cards/card-1/sku-import/preview",
-    ])
-    assert.deepEqual(stub.calls[0]!.body, { sku: "123" })
   } finally {
     stub.restore()
   }

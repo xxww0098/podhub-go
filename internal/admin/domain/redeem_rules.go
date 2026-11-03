@@ -6,33 +6,29 @@ import (
 	"unicode/utf8"
 )
 
-// RedeemDraft is a create request after JSON decode. Zero values are the serde defaults.
+// RedeemDraft is a create request after JSON decode.
 type RedeemDraft struct {
-	Product      string
-	MemberSeats  int64
-	Tier         string
-	OcrCredits   int64
-	WalletCents  int64
-	Quantity     int32
-	DurationDays int32
-	ExpiresAt    *string
-	Note         *string
+	WalletCents int64
+	PlanKey     string
+	PlanStores  int32
+	PlanMonths  int32
+	Quantity    int32
+	ExpiresAt   *string
+	Note        *string
 }
 
 // ValidateRedeemCreate checks the body before the writer gate.
-// A nil fault with NeedsPlan means the caller must load plans.key = PlanKey.
 func ValidateRedeemCreate(in RedeemDraft, now time.Time) (RedeemSpec, *Fault) {
-	product := strings.TrimSpace(in.Product)
-	if product != "wallet_credits" {
-		return RedeemSpec{}, Validation("VALIDATION", "仅支持创建钱包额度兑换码，成员席位批次已停用")
+	if in.PlanKey == "" {
+		if in.WalletCents < 100 || in.WalletCents > 1_000_000 {
+			return RedeemSpec{}, Validation("VALIDATION", "钱包额度需在 ¥1-¥10000 之间")
+		}
+	} else if in.WalletCents != 0 || (in.PlanKey != "lite" && in.PlanKey != "pro" && in.PlanKey != "max") ||
+		in.PlanStores < 1 || in.PlanStores > 100 ||
+		(in.PlanMonths != 1 && in.PlanMonths != 3 && in.PlanMonths != 6 && in.PlanMonths != 12) {
+		return RedeemSpec{}, Validation("VALIDATION", "套餐、店铺数量或有效月数无效")
 	}
-	if in.OcrCredits != 0 || in.MemberSeats != 0 || strings.TrimSpace(in.Tier) != "" {
-		return RedeemSpec{}, Validation("VALIDATION", "钱包兑换码不能包含成员或识别额度")
-	}
-	if in.WalletCents < 100 || in.WalletCents > 1_000_000 {
-		return RedeemSpec{}, Validation("VALIDATION", "钱包额度需在 ¥1-¥10000 之间")
-	}
-	spec := RedeemSpec{Product: product, PlanKey: "wallet", PlanName: "钱包额度", WalletCents: in.WalletCents, DurationDays: 1}
+	spec := RedeemSpec{WalletCents: in.WalletCents, PlanKey: in.PlanKey, PlanStores: in.PlanStores, PlanMonths: in.PlanMonths}
 	if in.Quantity < 1 || in.Quantity > 500 {
 		return RedeemSpec{}, Validation("VALIDATION", "兑换码数量需在 1-500 之间")
 	}

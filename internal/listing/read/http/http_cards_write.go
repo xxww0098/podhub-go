@@ -126,7 +126,7 @@ func (h Host) patchCard(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if item.supplier {
-			writeErr(w, http.StatusBadRequest, "供应商商品方案配置由在线平台货源管理，不能在方案中修改", "validation")
+			writeErr(w, http.StatusBadRequest, "供应商商品方案配置由在线平台商品库管理，不能在方案中修改", "validation")
 			return
 		}
 	}
@@ -235,7 +235,7 @@ func (h Host) applyCardWrite(w http.ResponseWriter, r *http.Request, p access.Pr
 			payloadSQL = string(body)
 		} else {
 			if payloadHasSupplier(raw) {
-				writeErr(w, http.StatusBadRequest, "请从平台货源选择规格创建方案", "validation")
+				writeErr(w, http.StatusBadRequest, "请从平台商品库选择规格创建方案", "validation")
 				return
 			}
 			body, err := PrepareCard(raw, defaultsOf(item.payload))
@@ -283,14 +283,14 @@ func (h Host) applyCardWrite(w http.ResponseWriter, r *http.Request, p access.Pr
 }
 
 func supplierOverlay(stored, patch json.RawMessage) (json.RawMessage, string, bool) {
-	const denied = "供应商商品方案配置由在线平台货源管理，不能在方案中修改"
+	const denied = "供应商商品方案配置由在线平台商品库管理，不能在方案中修改"
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(patch, &obj); err != nil || len(obj) == 0 {
 		return nil, denied, false
 	}
 	for key, raw := range obj {
 		switch key {
-		case "queue", "targetStoreId", "defaults", "psdTemplateAssetId", "psdTemplateSha256", "psdTemplateFileName":
+		case "queue", "targetStoreId", "defaults", "psdTemplateAssetId", "psdTemplateSha256", "psdTemplateFileName", "pricingAssumptions":
 		default:
 			return nil, denied, false
 		}
@@ -307,6 +307,16 @@ func supplierOverlay(stored, patch json.RawMessage) (json.RawMessage, string, bo
 	var base map[string]json.RawMessage
 	if err := json.Unmarshal(stored, &base); err != nil || base == nil {
 		return nil, denied, false
+	}
+	// Supplier trials may save assumptions. Price application is not admitted:
+	// the card does not carry an authoritative online pricing configuration.
+	if _, ok := obj["pricingAssumptions"]; ok {
+		var defaults struct {
+			Values map[string]json.RawMessage `json:"values"`
+		}
+		if json.Unmarshal(obj["defaults"], &defaults) == nil && defaults.Values["price"] != nil {
+			return nil, "供应方案当前仅可试算和保存参数", false
+		}
 	}
 	for key, raw := range obj {
 		base[key] = raw
@@ -463,9 +473,7 @@ func (h Host) snapshotCard(w http.ResponseWriter, r *http.Request) {
 		}
 		found = true
 		listed, err := tx.Query(r.Context(), `
-			SELECT id::text, card_id::text, store_id::text, revision, view_revision,
-			       content_state, media_state, validation_state, submission_state,
-			       payload, build_state, build_sources, updated_at
+			SELECT `+rowColumns+`
 			FROM listing_rows
 			WHERE org_id = $1 AND card_id = $2::uuid
 			ORDER BY queue_position ASC, created_at ASC, id ASC`, p.OrgID, id)
@@ -495,15 +503,15 @@ func (h Host) snapshotCard(w http.ResponseWriter, r *http.Request) {
 	}
 	jsonwire.Write(w, http.StatusOK, struct {
 		Data struct {
-			WorkspaceID string          `json:"workspaceId"`
-			CardID      string          `json:"cardId"`
+			WorkspaceID string          `json:"workspace_id"`
+			CardID      string          `json:"card_id"`
 			Cursor      string          `json:"cursor"`
 			Rows        []RowView       `json:"rows"`
 			Summary     SnapshotSummary `json:"summary"`
 		} `json:"data"`
 	}{Data: struct {
-		WorkspaceID string          `json:"workspaceId"`
-		CardID      string          `json:"cardId"`
+		WorkspaceID string          `json:"workspace_id"`
+		CardID      string          `json:"card_id"`
 		Cursor      string          `json:"cursor"`
 		Rows        []RowView       `json:"rows"`
 		Summary     SnapshotSummary `json:"summary"`

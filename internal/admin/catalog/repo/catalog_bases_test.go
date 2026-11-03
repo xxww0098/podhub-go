@@ -1,23 +1,23 @@
 package catalogrepo
 
 import (
-	"errors"
+	"context"
 	"testing"
-
-	"github.com/jackc/pgx/v5/pgconn"
-
-	"github.com/xxww0098/podhub-go/internal/admin/domain"
 )
 
-func TestMediaReadErrLock(t *testing.T) {
-	err := mediaReadErr(&pgconn.PgError{Code: "55P03"})
-	ae, ok := err.(*domain.APIError)
-	if !ok || ae.Status != 503 || ae.Code != "MEDIA_UNAVAILABLE" || ae.Message != "资源正在更新，请稍后重试" || ae.RetryAfter != "1" {
-		t.Fatalf("%v", err)
+func TestBasesUsesInjectedConfigurationWithoutDatabase(t *testing.T) {
+	ctx := context.Background()
+	empty, err := (CatalogRepo{}).Bases(ctx)
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("unconfigured bases=%v err=%v", empty, err)
 	}
-	err = mediaReadErr(errors.New("db"))
-	ae, ok = err.(*domain.APIError)
-	if !ok || ae.Status != 503 || ae.Code != "MEDIA_UNAVAILABLE" || ae.Message != "服务暂不可用" {
-		t.Fatalf("%v", err)
+	repo := CatalogRepo{PublicBases: []string{"https://podhub-supplier.ozon-pod.com"}}
+	bases, err := repo.Bases(ctx)
+	if err != nil || len(bases) != 1 || bases[0] != repo.PublicBases[0] {
+		t.Fatalf("configured bases=%v err=%v", bases, err)
+	}
+	bases[0] = "https://untrusted.example"
+	if repo.PublicBases[0] != "https://podhub-supplier.ozon-pod.com" {
+		t.Fatal("caller mutated server configuration")
 	}
 }

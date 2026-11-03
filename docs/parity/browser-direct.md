@@ -1,6 +1,6 @@
 # 浏览器直连发放（B1）
 
-本文件是 D2 阶段 A、B、C 里由 Go 服务端承担的那一半；浏览器侧产物在 `wasm/dist/browser/`，TypeScript 适配在 `web/src/listing-core`。没有连接 Ozon、模型供应商或对象存储。
+本文件保留浏览器直连方案阶段 A、B、C 的 Go 服务端实现和测试证据，不代表当前产品入口或外部链路已通过；准入结论见 [精铺技术验证清单](../precision-listing-verification.md)。浏览器侧产物在 `wasm/dist/browser/`，TypeScript 适配在 `web/src/listing-core`。没有连接 Ozon、模型供应商或对象存储。
 
 服务端嵌入 `wasm/dist/server/listing-core.wasm`（由 `wasm/embed.go` 嵌入 `dist/server/`），浏览器状态机是另一份文件。当前产物校验和以 [SOURCES.sha256](../../wasm/dist/SOURCES.sha256) 为准，不在文档中重复固定文件长度或哈希。
 
@@ -14,7 +14,7 @@
 
 `allowPost` 只在 `(queued, key_present)` 为真。`fetch_started` 之后为假。`submitting`、`unknown`、`accepted`、`rejected` 再遇 `key_present` 也是假。`rejected` 不会把同一行重新武装；新的一次发送从 `queued` 开始。这是本地决定，不是 Rust 证据。
 
-`TestBrowserStateWasmFreezeAndTransitions` 对这份 wasm 重放 `testdata/freeze_oracle.json` 的结果字节，并走完整张转移表。`TestCommittedBrowserWasmChecksum` 与 `TestCommittedWasmMatchesItsChecksum` 分别对照清单核对浏览器和服务端 SHA-256。WASM 在本地构建，CI 校验源码与产物指纹并重放结果 golden；`LISTING_CORE_WASM` 和 `LISTING_STATE_WASM` 始终指向已提交的 `wasm/dist/server` 与 `wasm/dist/browser` 模块。PSD 源码在 `rust/crates/`，浏览器渲染产物和 glue 也随源码提交，CI 不构建 Rust。
+`TestBrowserStateWasmFreezeAndTransitions` 对这份 wasm 重放 `testdata/freeze_oracle.json` 的结果字节，并走完整张转移表。`TestCommittedBrowserWasmChecksum` 与 `TestCommittedWasmMatchesItsChecksum` 分别对照清单核对浏览器和服务端 SHA-256。WASM 在本地构建，CI 校验源码与产物指纹并重放结果 golden；Go 测试直接读取已提交的 `wasm/dist/server` 与 `wasm/dist/browser` 模块。PSD 源码在 `rust/crates/`，浏览器渲染产物和 glue 也随源码提交，Go/Web CI 不重编 WASM；独立 Rust job 运行原生 render、psdx 和 render-wasm 测试。
 
 测试文件不能以 `_wasm_test.go` 结尾，否则 Go 把它当成 `GOARCH=wasm`，amd64 的 CI 不会编译它。转移表测试因此放在 `browser_state_test.go`。
 
@@ -22,7 +22,7 @@
 
 ## 发放与报回
 
-`POST /api/listing/browser/grant` 和 `POST /api/listing/browser/report`。两条都设 `Cache-Control: no-store`。能力位仍是 `CapListingSubmit`（审阅者 403）。租户仍是 `BeginApp`。不入队 `listing.submit` 或 `listing.submit.batch`，不写 `seller_upstream_writes`。
+`POST /api/listing/browser/grant` 和 `POST /api/listing/browser/report`。两条都设 `Cache-Control: no-store`。发放密钥只接受工作空间 owner、manager，并在事务中复查成员角色；报回使用工作空间成员闸门 `OrgMember`。租户仍是 `BeginApp`。不入队 `listing.submit` 或 `listing.submit.batch`，不写 `seller_upstream_writes`。
 
 import/info 的错误不进 report。另有 `POST /api/listing/browser/import-info`，只收白名单字段，不发密钥，也不读开关。组织内观测是 `GET /api/listing/ozon-errors`。说明见 `docs/parity/ozon-error-catalog-parity.md`。
 
@@ -34,7 +34,7 @@ import/info 的错误不进 report。另有 `POST /api/listing/browser/import-in
 
 旧 worker 仍只对 `queued` 调用 `Write`。已经是 `submitting` 的发放行走 `Recover`。这次发放没有 `seller_upstream_writes` 行，`Recover` 回滚并返回 `ErrIllegalEdge`，`Transport.Write` 计数为 0，意图停在 `submitting`。
 
-迁移 `00315_browser_grant_revocation.sql` 只追加 `credential_granted_at` 和 `revoked_at`。没有改 00001–00307，没有改 `guard_submission_offer`。触发器是 `UPDATE OF state, offer_id`，这两列的写入不会再跑一遍围栏。指纹对照把这两列登记成 Rust 头之后的追加列（`tests/testkit/fingerprint.go` 的 `postRustColumns`），前面 21 列仍逐列比较。
+迁移 `00315_browser_grant_revocation.sql` 只追加 `credential_granted_at` 和 `revoked_at`。没有改 00001–00307，没有改 `guard_submission_offer`。触发器是 `UPDATE OF state, offer_id`，这两列的写入不会再跑一遍围栏。压缩前的指纹对照把这两列登记成 Rust 头之后的追加列（当时的 `tests/testkit/fingerprint.go`，已随迁移压缩删除），前面 21 列仍逐列比较；现在两列直接写在 `00002_schema.sql` 里。
 
 ## 阶段 A 已有证据
 
@@ -45,16 +45,18 @@ import/info 的错误不进 report。另有 `POST /api/listing/browser/import-in
 - 同文件的 `kill switch writes nothing and probe still reads`。
 - `TestSubmissionOfferFence`：按今天的 `guard_submission_offer`（迁移 00260）锁定。`unknown` 且 `offer_id` 为空会挡住该店随后的具体货号，错误是 `23505` / `submission_intents_offer_busy`。两个不同的具体货号可以同时 `queued`。同一 `client_operation_id` 第二次插入仍是一行，约束名是 `submission_intents_client_op`。空店上直接插入 `queued` 且货号为空，也会 `submission_intents_offer_busy`。缺 `app.current_org_id` 时 `podhub_app` 看不到行，插入失败。
 
-## 前端契约
+## 历史前端方案（当前正式发送未采用）
 
-本仓库没有页面。下面是给前端仓库的约定，来自 D2 第 2 节。
+前端已并入本仓库 `web/src`。当前正式路径是 `createOzonSendCapability.send` → `POST /api/listing/submit` → 服务端校验与冻结 → 持久队列 → listing worker 的绑定传输；正式 capability 不调用 browser-direct 的 grant/report。实现与验收范围见 [精铺技术验证清单](../precision-listing-verification.md)。
+
+下面仅保留当时浏览器直连方案的设计约定与失败边界，不是当前产品接线说明。删除服务端冻结是当时未采用的设想，当前服务端冻结仍保留。
 
 应用壳不加载这两个文件。
 
 - 打开上架编辑：只加载 listing 状态机 wasm。不加载 PSD wasm。
 - 用户选择 PSD，或对还没有清单摘要的图执行渲染：再加载 PSD wasm。渲染结束可以丢掉实例，清单 JSON 已经在 JS 里。
 - 按下发送：若 listing wasm 还没加载则加载它。图上已经有 `manifestDigest` 时，发送路径不加载 PSD wasm。
-- 服务端 wazero 继续用现有 `listing-core.wasm`，直到删除服务端冻结的那一步。不要让浏览器去实例化带 `snapshot_from_fields` 的那一份。
+- 服务端 wazero 与浏览器使用各自的模块；浏览器不实例化带 `snapshot_from_fields` 的服务端产物。
 
 两个浏览器 wasm 不要打进同一个文件，也不要在启动时并行预取。
 
@@ -67,7 +69,7 @@ op 5 的输出是 `images`、`manifest`、`manifestDigest`（`manifest:sha256:` 
 
 IndexedDB 不在 wasm 里。JS 把 `send_transition` 的结果写进 IndexedDB。PSD wasm 不读这个库。IndexedDB 里不放 `Api-Key`，不放 PSD 字节。PSD 原文件若要留在本机，那是另一份存储，不进状态机记录。
 
-JS 发送顺序：
+当时设想的 JS 直发顺序（当前正式 capability 未采用）：
 
 1. listing wasm 冻结，得到单条 import 字节、`offer_id`、`request_hash`。多条拼包不在这个 wasm 里重做。一条发送继续用冻结原字节。
 2. JS 向 chi 要发放。服务端先写 `submitting` 再返回密钥。
@@ -77,9 +79,9 @@ JS 发送顺序：
 
 明文不写日志，不进 IndexedDB，不进任何一个 wasm 的线性内存。JS 只在内存里留到这次 `fetch` 结束或期限到达，然后把该变量置空。
 
-## 真实店铺自测
+## 真实店铺验证步骤（未执行证据）
 
-自测由店铺自己做，一次只打必要的请求。不要在 CI 或本仓库里做。
+本节是历史验证方案，不是已通过的结果。执行时需要真实授权、实际调用、结果回读及失败处理；收到 `task_id` 或本地状态为 `accepted` 不能标成商品已在售。不要在 CI 中调用真实店铺。
 
 1. 发放上线后，用真实页面源站发一条只含一件商品的 `/v3/product/import`。记下 HTTP 状态、这一次 POST 响应上的 `Access-Control-Allow-Origin`（不是预检），以及有没有 `task_id`。到此停止。
 2. 另发一条 `offer_id` 为空的请求。记下响应正文。不要自动重试。
@@ -88,7 +90,7 @@ JS 发送顺序：
 5. 让一个标签页先拿到密钥并保持打开。然后把 `OZON_WRITE_KILL_SWITCH` 设为 `1` 并重启 API。确认下一次发放的响应里没有密钥。确认这个已打开的标签页在丢掉明文或期限到达之前仍然能 POST。这就是不可拦的窗口。
 6. 若这把密钥限制了 IP：在浏览器所在的网络上重做第 1 步，记下是 403 还是得到 `task_id`。
 
-第 1 步若失败，直连停在未证明，不要继续删发送代码。第 5 步若已打开的页面不能再 POST，也要把现象记下来；预期是它还能 POST，因为没有任何代码能把已经发出的明文收回。
+第 1 步若失败，直连仍未被证明；即使通过，也不代表当前 worker 链路或服务端冻结应被删除。第 5 步若已打开的页面不能再 POST，也要把现象记下来；预期是它还能 POST，因为没有任何代码能把已经发出的明文收回。
 
 ## 发放链路锁测试
 
@@ -98,7 +100,7 @@ JS 发送顺序：
 - `TestBrowserDirectConcurrentGrants`：同店同货号 8 路并发只有 1 路拿到密钥，其余 409；6 个不同货号都成功；已有 NULL offer 的 `unknown` 挡住该店随后的具体货号。`pg_stat_database.deadlocks` 增量为 0。
 - `TestBrowserDirectKillSwitchHidesKey`：开关布尔只取 `config.Load().OzonWritesDisabled()`。捕获为真时，响应、slog、`audit_logs` 里夹具密钥共 0 次，`OpenGrant` 为 0，不插入占围栏的行。捕获为假时恰好 1 次，且只在响应体里。之后再 `Load` 不改变已经交给发放的那份布尔。
 - `TestBrowserDirectGrantDeadlineAndRevocation`：期限内重放同一请求是 `grant_in_flight`；把 `credential_granted_at` 拨到 121 秒前是 `grant_expired`；`revoked_at` 之后是 `grant_revoked`。三次都没有密钥。
-- `TestBrowserDirectTenantAndCapability`：另一个组织发放和报回都失败；审阅者 403；缺 `app.current_org_id` 时 `podhub_app` 看不到行、插不进行；报回只改自己那一行。
+- `TestBrowserDirectTenantAndCapability`：另一个组织发放和报回都失败；旧 reviewer 角色 403；缺 `app.current_org_id` 时 `podhub_app` 看不到行、插不进行；报回只改自己那一行。
 - `TestBrowserDirectWorkerDoesNotDialSubmitting`：发放不入队 `listing.submit`。旧 worker 对已经是 `submitting` 的行走 `Recover`，`Transport.Write` 为 0。
 - `TestBrowserDirectModeRGrantCount`：`loadmode.Run("R")` 只做模式门。8 路并发发放的实测见该测试的日志行。
 
@@ -115,7 +117,7 @@ JS 发送顺序：
 ## 需要用户决定
 
 - 发放期限用 120000 毫秒是否接受。
-- 状态码：开关关 503 `OZON_WRITES_DISABLED`；货号忙 409 `submission_intents_offer_busy`；已撤销 409 `grant_revoked`；同一操作重放 409 `grant_in_flight`；过期 409 `grant_expired`；过频 429 `rate_limited`；坏 JSON 400；店铺不存在 404；解密失败或没有信封 503 `credential_unavailable`（行留在 `submitting`）；卖家密钥过期 503 `credential_expired`；成功 200；报回成功 200；报回时行不是 `submitting` 409；意图不存在 404；审阅者 403。
+- 状态码：开关关 503 `OZON_WRITES_DISABLED`；货号忙 409 `submission_intents_offer_busy`；已撤销 409 `grant_revoked`；同一操作重放 409 `grant_in_flight`；过期 409 `grant_expired`；过频 429 `rate_limited`；坏 JSON 400；店铺不存在 404；解密失败或没有信封 503 `credential_unavailable`（行留在 `submitting`）；卖家密钥过期 503 `credential_expired`；成功 200；报回成功 200；报回时行不是 `submitting` 409；意图不存在 404；旧 reviewer 角色 403。
 - 已经发出的明文不能由这个进程作废。
 - 4xx 之后允许用新的 `client_operation_id` 再发放一把密钥。wasm 的同一行在 `rejected` 后不会把 `allowPost` 重新设为真。
 - GCRA 名额在围栏和店铺查找之前扣除。

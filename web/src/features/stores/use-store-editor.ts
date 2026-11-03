@@ -32,11 +32,9 @@ const EMPTY_EDITOR_STORE: OzonStoreView = {
   needs_reentry: false,
   can_manage: false,
   can_edit_credential: false,
-  assignee_key_manage: false,
   permissions: {
     manage_store: false,
     edit_name: true,
-    manage_key_grants: false,
     test_key: false,
     manage_key: false,
     delete_store: false,
@@ -94,10 +92,10 @@ export function useStoreEditor({
   : [];
 
   const canEditName = editor?.permissions.edit_name ?? Boolean(draft);
-  const canManageKey =
-  draft && !draft.id ? true : (editor?.permissions.manage_key ?? false);
   const canManageRoster =
   workspaceRole === "owner" || workspaceRole === "manager";
+  const canManageKey =
+  draft && !draft.id ? canManageRoster : (editor?.permissions.manage_key ?? false);
   const canManageTags = draft?.id
   ? (editor?.permissions.manage_tags ?? false)
   : canManageRoster;

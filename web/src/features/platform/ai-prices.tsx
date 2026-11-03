@@ -1,20 +1,23 @@
 import { estimateCallYuan } from "@/lib/ai-call-estimate"
 /** OCR default model and independently published retail prices. */
-import { useState } from "react"
-import type { AiAccountView, AiPriceView } from "@/bindings/commands"
+import { useEffect, useState, type ReactNode } from "react"
+import type { AiAccountView } from "@/bindings/commands"
 import { adminHttp } from "@/bindings/http-admin"
 import { aiAccountsHttp } from "@/bindings/http-ai-accounts"
 import { PlatformAdminDialog } from "@/components/platform-admin-dialog"
 import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
+import { PlatformAdminEmpty } from "@/components/platform-admin-surface"
 import { Spinner } from "@/components/ui/spinner"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { StateChip } from "@/components/state-chip"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { Activity, Plus, ScanText, SquarePen, Trash2 } from "lucide-react"
-import { notifyCommandError, notifyInfo, notifySuccess } from "@/lib/notify"
+import { Activity, ChevronLeft, ChevronRight, Info, Plus, ScanText, SquarePen, Trash2 } from "lucide-react"
+import { notifyCommandError, notifyError, notifyInfo, notifySuccess } from "@/lib/notify"
 import { accountForModel } from "./ai-account-model"
-import { billingDraftFromPrice, publishRequestFromBilling, microfenToYuan, formatYuan } from "./ai-price-billing"
+import { billingDraftFromPrice, publishRequestFromBilling, microfenToYuan, formatYuan, type PublishedAiPrice } from "./ai-price-billing"
 import { PriceEditor, type PriceDraft } from "./ai-price-editor"
 
 export function AiAllowlist({
@@ -22,18 +25,28 @@ export function AiAllowlist({
   defaultModel,
   prices,
   busy,
+  accountsUnknown = false,
+  paginate = false,
   hideModelSummary = false,
+  modelSummary,
+  modelQuery = "",
+  listToolbar,
   onPrices,
   onDefaultModel,
   onDeletePrice,
 }: {
   accounts: AiAccountView[]
   defaultModel: string
-  prices: AiPriceView[]
+  prices: PublishedAiPrice[]
   busy: boolean
+  accountsUnknown?: boolean
+  paginate?: boolean
   /** 外层容器（如 PlatformAdminSurface）已展示当前识图摘要时，隐藏内联重复的当前识别模型摘要。 */
   hideModelSummary?: boolean
-  onPrices: (prices: AiPriceView[]) => void
+  modelSummary?: ReactNode
+  modelQuery?: string
+  listToolbar?: ReactNode
+  onPrices: (prices: PublishedAiPrice[]) => void
   onDefaultModel: (model: string) => void
   /** 下架一个已定价模型；返回是否成功（失败原因走通知）。 */
   onDeletePrice: (model: string) => Promise<boolean>
@@ -43,10 +56,26 @@ export function AiAllowlist({
   const [testingModel, setTestingModel] = useState<string>()
   const readyAccount = accountForModel(accounts, defaultModel)
   const [saving, setSaving] = useState(false)
+  const [pageSize, setPageSize] = useState("10")
+  const [page, setPage] = useState(1)
   const defaultUnpublished =
     Boolean(defaultModel) && !prices.some((price) => price.model === defaultModel)
+  const query = modelQuery.trim().toLocaleLowerCase()
+  const visiblePrices = prices.filter((price) => price.model.toLocaleLowerCase().includes(query))
+  const visibleUnpublished = defaultUnpublished && defaultModel.toLocaleLowerCase().includes(query)
+  const visibleCount = visiblePrices.length + Number(visibleUnpublished)
+  const pageCount = Math.max(1, Math.ceil(visibleCount / Number(pageSize)))
+  const currentPage = Math.min(page, pageCount)
+  const start = (currentPage - 1) * Number(pageSize)
+  const offset = Number(visibleUnpublished)
+  const displayedPrices = paginate
+    ? visiblePrices.slice(Math.max(0, start - offset), Math.max(0, start + Number(pageSize) - offset))
+    : visiblePrices
+  const showUnpublished = visibleUnpublished && (!paginate || start === 0)
+  useEffect(() => { setPage(1) }, [modelQuery, pageSize])
+  useEffect(() => { setPage((current) => Math.min(current, pageCount)) }, [pageCount])
 
-  function openEditor(model: string, price?: AiPriceView) {
+  function openEditor(model: string, price?: PublishedAiPrice) {
     setDraft({
       model,
       billing: billingDraftFromPrice(price),
@@ -85,71 +114,65 @@ export function AiAllowlist({
   }
 
   return (
-    <div className="flex flex-col">
-      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-border px-4 py-3">
-        {hideModelSummary ? (
-          <p className="text-xs text-muted-foreground">
-            {!readyAccount
-              ? "上游账号未就绪，仍可先发布模型和价格。"
-              : "定价后的模型可用于识图。"}
-          </p>
-        ) : (
-          <div className="flex min-w-0 items-center gap-2">
-            <ScanText aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="shrink-0 text-compact text-muted-foreground">当前识图</span>
-            <span className="truncate font-mono text-sm font-medium">
-              {defaultModel || "—"}
-            </span>
-            {readyAccount ? (
-              defaultUnpublished ? (
-                <StateChip status="unknown" label="未定价" />
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
+      {modelSummary || !hideModelSummary ? <section className="shrink-0 overflow-hidden rounded-xl border border-border bg-card">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 p-5">
+          {modelSummary}
+          {hideModelSummary ? null : (
+            <div className="flex min-w-0 flex-1 basis-56 items-center gap-3">
+              <span aria-hidden className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                <ScanText className="size-4" />
+              </span>
+              <div className="min-w-0">
+                <p className="text-meta text-muted-foreground">当前识图</p>
+                <p className="truncate font-mono text-compact font-medium">{defaultModel || "—"}</p>
+              </div>
+              {readyAccount ? (
+                defaultUnpublished ? (
+                  <StateChip status="unknown" label="未定价" />
+                ) : (
+                  <StateChip status="good" label="已就绪" />
+                )
               ) : (
-                <StateChip status="good" label="已就绪" />
-              )
-            ) : (
-              <StateChip status="idle" label="待配置" />
-            )}
-          </div>
-        )}
-        <div className="ml-auto flex items-center gap-2">
-          <Button
-            type="button"
-            size="sm"
-            className="cursor-pointer"
-            disabled={busy}
-            onClick={() => openEditor("")}
-          >
-            <Plus data-icon="inline-start" />
-            添加模型
-          </Button>
+                <StateChip status="idle" label="待配置" />
+              )}
+            </div>
+          )}
         </div>
-      </div>
-      {!readyAccount && !hideModelSummary ? (
-        <p className="border-b border-border px-4 py-2.5 text-xs text-muted-foreground">
-          上游账号未就绪，仍可先发布模型和价格。
-        </p>
-      ) : null}
-      {prices.length === 0 && !defaultUnpublished ? (
-        <div className="flex flex-col items-center gap-1.5 px-4 py-10 text-center">
-          <p className="text-sm text-muted-foreground">还没有识图模型。</p>
-          <p className="text-meta text-faint-foreground">
-            添加模型并定价后，即可选为默认识图模型。
+        {!readyAccount && !modelSummary ? (
+          <p className="flex items-center gap-2 border-t border-border bg-muted/40 px-4 py-2 text-meta text-muted-foreground">
+            <Info aria-hidden className="size-3.5 shrink-0" />
+            上游账号未就绪，仍可先发布模型和价格。
           </p>
+        ) : null}
+      </section> : null}
+      <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card">
+        <div className="flex shrink-0 flex-wrap items-center gap-2 p-2">
+          {listToolbar ? <div className="min-w-0 flex-1 basis-64">{listToolbar}</div> : null}
+          <IconButton icon={Plus} label="添加模型" size="icon-sm" variant="outline" disabled={busy} onClick={() => openEditor("")} />
         </div>
-      ) : (
-        <Table>
-          <TableHeader>
+        <Table variant="directory" containerClassName="min-h-0 flex-1 overflow-auto">
+          <TableHeader className="sticky top-0 z-10 bg-card">
             <TableRow>
               <TableHead>模型</TableHead>
               <TableHead>计价</TableHead>
-              <TableHead>零售（元 / 百万 Token）</TableHead>
+              <TableHead>{paginate ? "价格" : "零售（元 / 百万 Token）"}</TableHead>
               <TableHead className="w-24">单次约估</TableHead>
               <TableHead className="w-24">生效自</TableHead>
               <TableHead className="w-40">操作</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {defaultUnpublished ? (
+            {prices.length === 0 && !defaultUnpublished ? (
+              <TableRow><TableCell colSpan={6}>
+                <PlatformAdminEmpty icon={ScanText} title="还没有识图模型" description="添加模型并定价后，即可选为默认识图模型。" />
+              </TableCell></TableRow>
+            ) : visiblePrices.length === 0 && !visibleUnpublished ? (
+              <TableRow><TableCell colSpan={6}>
+                <PlatformAdminEmpty icon={ScanText} title="没有匹配的模型" description="试试其他模型名称。" />
+              </TableCell></TableRow>
+            ) : null}
+            {showUnpublished ? (
               <TableRow>
                 <TableCell>
                   <span className="flex items-center gap-2 font-mono text-sm">
@@ -184,7 +207,7 @@ export function AiAllowlist({
                 </TableCell>
               </TableRow>
             ) : null}
-            {prices.map((price) => {
+            {displayedPrices.map((price) => {
               const current = defaultModel === price.model
               const supported = Boolean(accountForModel(accounts, price.model))
               return (
@@ -195,7 +218,7 @@ export function AiAllowlist({
                         {price.model}
                       </span>
                       {current ? <StateChip status="present" label="默认识图" /> : null}
-                      {!supported ? <StateChip status="idle" label="无可用账号" /> : null}
+                      {!supported ? <StateChip status={accountsUnknown ? "unknown" : "idle"} label={accountsUnknown ? "账号状态未确认" : "无可用账号"} /> : null}
                     </span>
                   </TableCell>
                   <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
@@ -227,7 +250,7 @@ export function AiAllowlist({
                     ¥{formatYuan(estimateCallYuan(price))}
                   </TableCell>
                   <TableCell className="text-xs whitespace-nowrap tabular-nums text-muted-foreground">
-                    {price.effective_from.slice(0, 10) || "—"}
+                    {price.effective_from?.slice(0, 10) || "—"}
                   </TableCell>
                   <TableCell>
                     <div className="flex flex-nowrap items-center gap-1.5">
@@ -238,7 +261,7 @@ export function AiAllowlist({
                           variant="outline"
                           className="cursor-pointer"
                           disabled={busy || !supported}
-                          title={!supported ? "请先在 AI 账号池启用支持该模型的账号" : undefined}
+                          title={!supported ? "请先在AI识图账号中启用支持该模型的账号" : undefined}
                           onClick={() => onDefaultModel(price.model)}
                         >
                           设为识图
@@ -298,7 +321,20 @@ export function AiAllowlist({
             })}
           </TableBody>
         </Table>
-      )}
+      </section>
+      {paginate ? <div className="flex flex-wrap items-center justify-between gap-3 px-2 text-sm text-muted-foreground">
+        <div className="flex items-center gap-2"><span>共 {visibleCount} 条，每页</span>
+          <Select value={pageSize} onValueChange={(value) => { if (value) setPageSize(value) }}>
+            <SelectTrigger aria-label="每页模型数"><SelectValue>{(value) => `${value} 条`}</SelectValue></SelectTrigger>
+            <SelectContent><SelectItem value="10">10 条</SelectItem><SelectItem value="20">20 条</SelectItem><SelectItem value="50">50 条</SelectItem></SelectContent>
+          </Select>
+        </div>
+        <div className="flex items-center gap-2">
+          <IconButton icon={ChevronLeft} label="上一页模型" variant="outline" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)} />
+          <span aria-label={`第 ${currentPage} 页，共 ${pageCount} 页`} className="grid size-9 place-items-center rounded-lg bg-brand text-sm font-medium text-white">{currentPage}</span>
+          <IconButton icon={ChevronRight} label="下一页模型" variant="outline" disabled={currentPage >= pageCount} onClick={() => setPage(currentPage + 1)} />
+        </div>
+      </div> : <p className="px-2 text-sm text-muted-foreground">共 {prices.length} 个已定价模型</p>}
       <PlatformAdminDialog
         open={Boolean(draft)}
         onOpenChange={(open) => { if (!open && !saving) setDraft(undefined) }}
@@ -333,16 +369,20 @@ export function AiAllowlist({
               if (!request || saving) return
               setSaving(true)
               void (async () => {
+                let published = false
                 try {
-                  onPrices(await adminHttp.adminPublishAiPrice(request))
+                  await adminHttp.adminPublishAiPrice(request)
+                  published = true
+                  setDraft(undefined)
+                  onPrices(await adminHttp.adminListAiPrices())
                   notifySuccess(draft.existing ? "价格已更新" : "识图模型已定价", {
                     description: `「${request.model}」按此价格计费。`,
                   })
                   const setCurrent = draft.setCurrent
-                  setDraft(undefined)
                   if (setCurrent && accountForModel(accounts, request.model)) onDefaultModel(request.model)
                 } catch (reason) {
-                  notifyCommandError(reason, "价格保存失败，请重试。")
+                  if (published) notifyError("价格已保存，但列表刷新失败，请刷新页面。", { reason })
+                  else notifyCommandError(reason, "价格保存失败，请重试。")
                 } finally { setSaving(false) }
               })()
             }}

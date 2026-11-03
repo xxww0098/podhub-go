@@ -19,7 +19,7 @@ import (
 )
 
 func TestAutomationRoutes(t *testing.T) {
-	if len(Routes()) != 13 {
+	if len(Routes()) != 16 {
 		t.Fatalf("%d", len(Routes()))
 	}
 	r := chi.NewRouter()
@@ -77,9 +77,9 @@ func TestAuthAndValidationBytes(t *testing.T) {
 		{name: "settle id", method: "POST", path: "/api/automation/commands/not-a-uuid/settle", body: `{"claimEpoch":1,"status":"completed"}`, status: 404, want: `{"error":"操作不存在","code":"NOT_FOUND"}`},
 		{name: "progress id", method: "POST", path: "/api/automation/commands/not-a-uuid/progress", body: `{"claimEpoch":1,"progress":{}}`, status: 404, want: `{"error":"操作不存在","code":"NOT_FOUND"}`},
 		{name: "unknown action raw", method: "POST", path: "/api/automation/grants", body: `{"name":"bad","actions":["  x  "]}`, status: 400, want: `{"error":"未知的授权动作   x  ","code":"VALIDATION"}`},
-		{name: "viewer prepare", method: "POST", path: "/api/automation/grants", role: "viewer", body: `{"name":"bad","actions":["prepare"]}`, status: 400, want: `{"error":"当前角色无权委托 prepare","code":"VALIDATION"}`},
+		{name: "viewer prepare", method: "POST", path: "/api/automation/grants", role: "viewer", body: `{"name":"bad","actions":["prepare"]}`, status: 403, want: `{"error":"工作空间角色无效","code":"FORBIDDEN"}`},
 		{name: "empty actions", method: "POST", path: "/api/automation/grants", body: `{"name":"bad","actions":[]}`, status: 400, want: `{"error":"至少选择一个授权动作","code":"VALIDATION"}`},
-		{name: "expiry", method: "POST", path: "/api/automation/grants", body: `{"name":"bad","actions":["read"],"expiresInDays":0}`, status: 400, want: `{"error":"有效期须在 1 到 3650 天之间","code":"VALIDATION"}`},
+		{name: "expiry", method: "POST", path: "/api/automation/grants", body: `{"name":"bad","actions":["read"],"expires_in_days":0}`, status: 400, want: `{"error":"有效期须在 1 到 3650 天之间","code":"VALIDATION"}`},
 		{name: "renderer", method: "POST", path: "/api/automation/runtimes", body: `{"grantId":"11111111-1111-4111-8111-111111111111","label":"tab","rendererContract":""}`, status: 400, want: `{"error":"渲染契约版本无效","code":"VALIDATION"}`},
 		{name: "grant uuid", method: "POST", path: "/api/automation/runtimes", body: `{"grantId":"nope","label":"tab","rendererContract":"psd-x@1"}`, status: 404, want: `{"error":"授权不存在","code":"NOT_FOUND"}`},
 		{name: "revoke uuid", method: "POST", path: "/api/automation/grants/not-a-uuid/revoke", status: 404, want: `{"error":"授权不存在","code":"NOT_FOUND"}`},
@@ -115,6 +115,21 @@ func TestAuthAndValidationBytes(t *testing.T) {
 	}
 }
 
+func TestCatalogGrantDoesNotRequireWorkspace(t *testing.T) {
+	r := chi.NewRouter()
+	Mount(r, Deps{
+		Resolve: fixed(&access.Principal{UserID: 2}),
+		Actions: service.New(scriptStore{}, fixedNow, bytes.NewReader(make([]byte, 32))),
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/me/catalog-automation/grants", strings.NewReader(`{"name":"catalog reader","actions":["catalog:read"],"expires_in_days":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"scope_kind":"catalog"`) {
+		t.Fatalf("catalog grant without workspace: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestSuccessBytes(t *testing.T) {
 	sha := strings.Repeat("a", 64)
 	store := scriptStore{
@@ -145,8 +160,8 @@ func TestSuccessBytes(t *testing.T) {
 		{"POST", "/api/automation/commands/renew", `{"runtimeId":"11111111-1111-4111-8111-111111111111","claims":[{"operationId":"22222222-2222-4222-8222-222222222222","claimEpoch":1},{"operationId":"33333333-3333-4333-8333-333333333333","claimEpoch":0}]}`, `{"data":{"leases":[{"operationId":"22222222-2222-4222-8222-222222222222","control":"continue","leaseSeconds":90},{"operationId":"33333333-3333-4333-8333-333333333333","control":"lost","leaseSeconds":0}]}}`},
 		{"POST", "/api/automation/commands/22222222-2222-4222-8222-222222222222/progress", `{"claimEpoch":1,"progress":{"done":1}}`, `{"data":{"accepted":true,"cancelRequested":false}}`},
 		{"POST", "/api/automation/commands/22222222-2222-4222-8222-222222222222/settle", `{"claimEpoch":1,"status":"completed"}`, `{"data":{"accepted":true,"cancelRequested":false}}`},
-		{"GET", "/api/automation/grants", "", `{"data":{"grants":[{"id":"g-1","name":"ci agent","actions":["read"],"tokenPrefix":"opa_AAAAAAAA","createdAtMs":0}]}}`},
-		{"POST", "/api/automation/grants", `{"name":"ci agent","actions":["read"]}`, `{"data":{"grant":{"id":"g-1","name":"ci agent","actions":["read"],"tokenPrefix":"opa_AAAAAAAA","createdAtMs":0},"token":"opa_` + strings.Repeat("A", 43) + `"}}`},
+		{"GET", "/api/automation/grants", "", `{"data":{"grants":[{"id":"g-1","name":"ci agent","actions":["read"],"token_prefix":"opa_AAAAAAAA","created_at_ms":0}]}}`},
+		{"POST", "/api/automation/grants", `{"name":"ci agent","actions":["read"]}`, `{"data":{"grant":{"id":"g-1","name":"ci agent","actions":["read"],"token_prefix":"opa_AAAAAAAA","created_at_ms":0},"token":"opa_` + strings.Repeat("A", 43) + `"}}`},
 		{"POST", "/api/automation/grants/44444444-4444-4444-8444-444444444444/revoke", ``, `{"data":{"id":"44444444-4444-4444-8444-444444444444","revoked":true}}`},
 		{"GET", "/api/automation/runtimes", "", `{"data":{"runtimes":[{"id":"rt-1","grantId":"g-1","label":"ci tab","rendererContract":"psd-x@1","heartbeatAtMs":` + ms + `,"live":true,"createdAtMs":0}]}}`},
 		{"POST", "/api/automation/runtimes", `{"grantId":"44444444-4444-4444-8444-444444444444","label":"ci tab","rendererContract":"psd-x@1"}`, `{"data":{"runtime":{"id":"rt-1","grantId":"g-1","label":"ci tab","rendererContract":"psd-x@1","heartbeatAtMs":` + ms + `,"live":true,"createdAtMs":0},"claim_lease_seconds":90}}`},
@@ -286,16 +301,16 @@ func (s scriptStore) Progress(context.Context, int64, int64, string, int64, json
 func (s scriptStore) Settle(context.Context, int64, int64, string, int64, string, *json.RawMessage, *json.RawMessage) (domain.WriteResult, error) {
 	return s.write, nil
 }
-func (s scriptStore) ListGrants(context.Context, int64, int64) ([]domain.GrantView, error) {
+func (s scriptStore) ListGrants(context.Context, int64, int64, string) ([]domain.GrantView, error) {
 	return s.grants, nil
 }
-func (s scriptStore) CreateGrant(context.Context, int64, int64, string, string, string, []string, *int64) (domain.GrantView, error) {
+func (s scriptStore) CreateGrant(context.Context, int64, int64, string, string, string, string, []string, *int64) (domain.GrantView, error) {
 	if len(s.grants) == 0 {
 		return domain.GrantView{Actions: []string{"read"}}, nil
 	}
 	return s.grants[0], nil
 }
-func (s scriptStore) RevokeGrant(_ context.Context, _, _ int64, id string) (string, error) {
+func (s scriptStore) RevokeGrant(_ context.Context, _, _ int64, id, _ string) (string, error) {
 	return id, nil
 }
 func (s scriptStore) ListRuntimes(context.Context, int64, int64) ([]domain.RuntimeRow, error) {

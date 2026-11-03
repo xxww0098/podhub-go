@@ -11,7 +11,7 @@ type Rule struct {
 	MatchMode string `json:"matchMode"`
 }
 
-// Outcome is the wasm JSON object. Field order matches the Rust struct.
+// Outcome is the op 20 JSON object. Field order matches the Rust struct.
 type Outcome struct {
 	Banned   bool     `json:"banned"`
 	Kept     []string `json:"kept"`
@@ -21,11 +21,15 @@ type Outcome struct {
 	Stem     string   `json:"stem"`
 }
 
-// Engine is the listing-tags wasm surface. The concrete runtime lives in
-// listing/core/service/engine and does not import wazero itself.
+// Engine is the banned-tag surface, listing-core op 20. The concrete type lives
+// in listing/core/service/engine. The gate methods are part of the surface: a
+// nil module fails closed inside Call.
 type Engine interface {
 	Call(ctx context.Context, op, tag, text, term string, tags []string, rules []Rule) (Outcome, error)
-	Close(ctx context.Context) error
+	Validate(ctx context.Context, in Input) (Verdict, error)
+	ForbidSave(ctx context.Context, tags []string, rules []Rule) (SaveDecision, error)
+	StripForAI(ctx context.Context, tags []string, rules []Rule) (AIDecision, error)
+	StripBeforeSend(ctx context.Context, text string, rules []Rule) (SendDecision, error)
 }
 
 // ErrTermLength is canonical_term's refusal.

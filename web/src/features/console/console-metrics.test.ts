@@ -43,8 +43,8 @@ function cloudStore(id: string, partial: Partial<CloudStore> = {}): CloudStore {
     needs_reentry: false,
     can_manage: true,
     can_edit_credential: true,
-    permissions: { manage_store: true, edit_name: true, manage_key_grants: true, manage_tags: true, test_key: true, manage_key: true, delete_store: true },
-    assignee_key_manage: true,
+    permissions: { manage_store: true, edit_name: true, manage_tags: true, test_key: true, manage_key: true, delete_store: true },
+
     ...partial,
   }
 }
@@ -255,6 +255,16 @@ test("previous-day delta compares only the readable intersection", () => {
     kind: "incomparable",
     reason: "缺少上一口径日，暂不比较",
   })
+
+  const missing = summarizeStoreRoster(
+    [snapshot("missing", { orderedUnits: 8, previousOrderedUnits: null })],
+    now,
+  )
+  assert.equal(missing.rows[0]?.previousOrderedUnits, null)
+  assert.deepEqual(missing.cohortDelta, {
+    kind: "incomparable",
+    reason: "缺少上一口径日，暂不比较",
+  })
 })
 
 test("stalled, never ordered and rate-limited stores remain distinct", () => {
@@ -369,7 +379,6 @@ function mirrorRow(
 ): StoreProductMirrorRow {
   return {
     store_id: storeId,
-    price_stock_enabled: true,
     ...over,
   }
 }
@@ -379,13 +388,13 @@ const QUOTA_STORES = [
     id: "a",
     cloud_store_uuid: "a",
     label: "A 店",
-    product_quota: { fetchedAtMs: now, total: { usage: 800, limit: 1000 } },
+    product_quota: { fetched_at_ms: now, total: { usage: 800, limit: 1000 } },
   },
   {
     id: "b",
     cloud_store_uuid: "b",
     label: "B 店",
-    product_quota: { fetchedAtMs: now, total: { usage: 50, limit: 500 } },
+    product_quota: { fetched_at_ms: now, total: { usage: 50, limit: 500 } },
   },
   { id: "c", cloud_store_uuid: "c", label: "C 店", product_quota: null },
 ] as never[]
@@ -400,7 +409,7 @@ test("summarizeStoreProducts: fresh+stale feed totals; expired/never stay visibl
         count_moderation_failed: 2,
         count_zero_stock: 3,
         count_archived: 1,
-        probed_at_ms: now - hour,
+        last_full_sync_at_ms: now - hour,
       }),
       mirrorRow("b", {
         count_total: 20,
@@ -409,12 +418,12 @@ test("summarizeStoreProducts: fresh+stale feed totals; expired/never stay visibl
         count_moderation_failed: 0,
         count_zero_stock: 1,
         count_archived: 0,
-        probed_at_ms: now - 3 * day,
+        last_full_sync_at_ms: now - day,
       }),
       mirrorRow("c", {
         count_total: 9,
         count_on_sale: 9,
-        probed_at_ms: now - 10 * day,
+        last_full_sync_at_ms: now - 4 * day,
       }),
       mirrorRow("d", {}),
     ],
@@ -437,30 +446,45 @@ test("summarizeStoreProducts: fresh+stale feed totals; expired/never stay visibl
   const d = summary.perStore.find((store) => store.storeId === "d")
   assert.equal(d?.status, "never")
   assert.equal(d?.onSale, null)
+  assert.equal(summary.perStore.find((store) => store.storeId === "a")?.status, "fresh")
+  assert.equal(summary.perStore.find((store) => store.storeId === "b")?.status, "stale")
   const c = summary.perStore.find((store) => store.storeId === "c")
   assert.equal(c?.status, "expired")
 })
 
-test("summarizeStoreProducts: zeroStock stays null when no counted store syncs the C layer", () => {
+test("summarizeStoreProducts: real console wire counts known zero stock and never fills absent counts", () => {
+  const wireRow: StoreProductMirrorRow = {
+    store_id: "a",
+    count_total: 5,
+    count_on_sale: 5,
+    count_hidden: 0,
+    count_moderation_failed: 0,
+    count_zero_stock: 2,
+    count_archived: 0,
+    last_full_sync_at_ms: now - hour,
+  }
+  assert.equal(summarizeStoreProducts([wireRow], QUOTA_STORES, now).totals.zeroStock, 2)
+  assert.equal(summarizeStoreProducts([{ ...wireRow, count_zero_stock: 0 }], QUOTA_STORES, now).totals.zeroStock, 0)
+  const partiallyRead = summarizeStoreProducts([wireRow], QUOTA_STORES.slice(0, 2), now)
+  assert.deepEqual(partiallyRead.coverage, { read: 1, total: 2 })
+  assert.equal(partiallyRead.totals.zeroStock, 2)
+  assert.equal(partiallyRead.perStore.find((store) => store.storeId === "b")?.status, "never")
   const summary = summarizeStoreProducts(
     [
-      mirrorRow("a", {
-        count_total: 5,
-        count_on_sale: 5,
-        count_zero_stock: 2,
-        probed_at_ms: now - hour,
-        price_stock_enabled: false,
-      }),
+      wireRow,
+      { ...wireRow, store_id: "b", count_zero_stock: undefined },
     ],
     QUOTA_STORES,
     now,
   )
   assert.equal(summary.totals.zeroStock, null)
+  assert.equal(summarizeStoreProducts([{ ...wireRow, count_zero_stock: null }], QUOTA_STORES, now).totals.zeroStock, null)
+  assert.equal(summarizeStoreProducts([{ ...wireRow, count_zero_stock: -1 }], QUOTA_STORES, now).totals.zeroStock, null)
 })
 
 test("summarizeStoreProducts: quotaUsage is null when the roster carries no quota", () => {
   const summary = summarizeStoreProducts(
-    [mirrorRow("a", { count_total: 1, count_on_sale: 1, probed_at_ms: now - hour })],
+    [mirrorRow("a", { count_total: 1, count_on_sale: 1, last_full_sync_at_ms: now - hour })],
     [{ id: "a", cloud_store_uuid: "a", label: "A 店", product_quota: null }] as never[],
     now,
   )

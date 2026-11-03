@@ -36,7 +36,6 @@ func (r rosterTx) UpdateStore(ctx context.Context, orgID int64, actor domain.Act
 		Name:        in.Name,
 		ClientID:    in.ClientID,
 		ClientIDSet: in.ClientIDSet,
-		KeyManage:   in.KeyManage,
 		TagUUIDs:    in.TagUUIDs,
 		GroupUUID:   in.GroupUUID,
 		Revision:    in.Revision,
@@ -108,15 +107,27 @@ func (r rosterTx) ConsumeTombstone(ctx context.Context, orgID, userID int64, uui
 }
 
 func (r rosterTx) RegisterCredential(ctx context.Context, orgID int64, actor domain.Actor, uuid, clientID, apiKey string, expectedStoreRevision int64, expectedCredentialRevision *int64, expiresAtMS *int64) (domain.RegisterOutcome, error) {
-	return r.credential.RegisterCredential(ctx, r.tx, orgID, actor, uuid, clientID, apiKey, expectedStoreRevision, expectedCredentialRevision, expiresAtMS)
+	out, api := r.credential.RegisterCredential(ctx, r.tx, orgID, actor, uuid, clientID, apiKey, expectedStoreRevision, expectedCredentialRevision, expiresAtMS)
+	if api != nil {
+		return out, api
+	}
+	return out, nil
 }
 
 func (r rosterTx) DeleteCredential(ctx context.Context, orgID int64, actor domain.Actor, uuid string, expectedStoreRevision, expectedCredentialRevision int64) (int64, error) {
-	return r.credential.DeleteCredential(ctx, r.tx, orgID, actor, uuid, expectedStoreRevision, expectedCredentialRevision)
+	out, api := r.credential.DeleteCredential(ctx, r.tx, orgID, actor, uuid, expectedStoreRevision, expectedCredentialRevision)
+	if api != nil {
+		return out, api
+	}
+	return out, nil
 }
 
 func (r rosterTx) VerifyCredential(ctx context.Context, orgID int64, actor domain.Actor, uuid string, credentialRevision int64, verified bool, failureCode string, expiresAtMS *int64) (domain.VerificationSummary, error) {
-	return r.credential.VerifyCredential(ctx, r.tx, orgID, actor, uuid, credentialRevision, verified, failureCode, expiresAtMS)
+	out, api := r.credential.VerifyCredential(ctx, r.tx, orgID, actor, uuid, credentialRevision, verified, failureCode, expiresAtMS)
+	if api != nil {
+		return out, api
+	}
+	return out, nil
 }
 
 func (r rosterTx) Record(ctx context.Context, row domain.AuditRow) error {
@@ -168,7 +179,11 @@ func (r Repo) WriteTx(ctx context.Context, orgID, userID int64, disabled string,
 }
 
 func (r rosterTx) SyncNow(ctx context.Context, orgID int64, uuid string, nowMS int64, syncDisabled bool) (domain.SyncPress, error) {
-	return SyncNowTx(ctx, r.tx, orgID, uuid, nowMS, syncDisabled)
+	press, api := SyncNowTx(ctx, r.tx, orgID, uuid, nowMS, syncDisabled)
+	if api != nil {
+		return press, api
+	}
+	return press, nil
 }
 
 func (r rosterTx) ClaimVerify(ctx context.Context, orgID int64, uuid, digest string, nowMS int64, syncDisabled bool) (domain.VerifyClaim, error) {

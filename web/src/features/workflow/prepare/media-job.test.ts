@@ -6,6 +6,7 @@
  * the shape Cloud will refuse if it drifts.
  */
 import assert from "node:assert/strict"
+import { formatErrorId } from "@/lib/error-id"
 import test from "node:test"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
@@ -254,7 +255,7 @@ test("failed failure writeback reports both errors and preserves the render erro
       for (const event of call.body.events) {
         assert.equal(event.kind, "error_feedback.v1")
         assert.equal(event.schema_version, 1)
-        assert.match(event.id, /^[0-9]{20}$/)
+        assert.match(event.id, /^[0-9A-F][0-9A-HJKMNP-TV-Z]{12}$/)
         const payload = JSON.parse(event.payload_json)
         assert.equal(payload.errorId, event.id)
         assert.equal(payload.code, "workflow_template_missing")
@@ -288,7 +289,7 @@ test("failed failure writeback reports both errors and preserves the render erro
     assert.match(description, /处理：本机没有该 PSD 模板.*；保存：商品行持续变化/)
     await new Promise(resolve => setTimeout(resolve, 0))
     assert.equal(receipts.length, 1)
-    assert.ok(description.includes(receipts[0]!))
+    assert.ok(description.includes(formatErrorId(receipts[0]!)))
   } finally {
     setErrorFeedbackContext({ sessionKey: null })
     toast.add = originalAdd

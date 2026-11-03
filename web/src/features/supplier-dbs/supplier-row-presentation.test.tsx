@@ -2,20 +2,12 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { renderToStaticMarkup } from "react-dom/server"
-import type { SupplierDbDetail, SupplierDbPropDef } from "@/bindings/http-supplier-dbs"
+import type { SupplierDbDetail } from "@/bindings/http-supplier-dbs"
 import { SupplierRowBody } from "./supplier-row-body"
+import { SupplierRowCopyFields } from "./supplier-row-copy-fields"
 import { db, row, readyStore } from "./supplier-dbs-screen-fixtures"
 
-// 规范六行商品说明（马克杯形状）：让「分六行构建」模式在静态渲染里落地。
-const BRIEF_BT = String.fromCharCode(96)
-const BRIEF_FIXTURE = [
-  "Товар: Керамическая кружка 330 мл с принтом на внешней стороне; это НЕ термокружка и НЕ стакан.",
-  "Тема: Только принт, без стола, рук, посуды и фона съёмки. Неясно → «Абстрактный принт».",
-  "Заголовок: " + BRIEF_BT + 'Кружка керамическая 330 мл с принтом "<тема>", для чая и кофе' + BRIEF_BT,
-  "Не пиши: «чашка», «стакан», «термокружка».",
-  "Описание: Керамическая кружка объёмом 330 мл с принтом. Принт: <видимый принт>. Основные цвета: <цвет1> и <цвет2>. Подойдёт для дома и офиса.",
-  "Не выдумывай: посудомойку, микроволновку, стойкость принта, вес, упаковку.",
-].join("\n")
+const BRIEF_FIXTURE = JSON.stringify({ product_type_ru:"Кружка",facts_ru:"керамическая 330 мл" })
 
 
 test("＋新商品 creates a row and the sheet section anatomy holds", async () => {
@@ -43,15 +35,14 @@ test("＋新商品 creates a row and the sheet section anatomy holds", async () 
         updates.push(patch)
         return true
       }}
-      onTogglePublish={() => {}}
       onAdjustPrice={async () => true}
     />,
   )
-  // 页签骨架：按事实类分三页；规格切换与就绪导航在页头。
-  for (const label of ["主要信息", "平台字段", "提示词"]) {
+  // 商品资料、价格、规格与素材合并在平台商品信息中。
+  for (const label of ["平台商品信息", "Ozon 字段", "AI 识图"]) {
     assert.ok(html.includes(`>${label}<`), `missing tab ${label}`)
   }
-  for (const section of ["商品资料", "价格", "包装与清单", "素材", "描述与备注"]) {
+  for (const section of ["商品资料", "商品属性", "商品说明", "价格", "素材", "包装与清单"]) {
     assert.ok(html.includes(`>${section}<`), `missing section ${section}`)
   }
   assert.match(html, /aria-label="名称"/)
@@ -59,64 +50,72 @@ test("＋新商品 creates a row and the sheet section anatomy holds", async () 
   assert.match(html, /aria-label="规格"/)
   assert.match(html, /aria-label="材质"/)
   assert.match(html, /aria-label="工艺"/)
-  assert.match(html, /aria-label="毛重（g）"/)
-  assert.match(html, /aria-label="毛重单位"/)
-  assert.match(html, /aria-label="包装重量（g）"/)
-  assert.match(html, /aria-label="包装重量单位"/)
+  assert.doesNotMatch(html, /aria-label="包装重量/)
   // 单位只列英文符号：面板里不再出现中文「克」提示。
   assert.doesNotMatch(html, /克/)
-  assert.match(html, /aria-label="款号（同款分组）"/)
+  assert.doesNotMatch(html, /aria-label="款号（同款分组）"/)
   assert.doesNotMatch(html, /aria-label="Ozon 类目"/)
-  assert.match(html, /aria-label="运费（元）"/)
-  assert.match(html, /data-supplier-row-media="图集"/)
   assert.doesNotMatch(html, /role="alert"/)
 
-  // 识图提示词页签：说明构建器（六行骨架）与固定 tags 在这里。
+  assert.match(html, /data-row-tab="ocr"/)
+
+  // AI识图保留公式说明、免费公式预览和真实图片验证。
   const promptHtml = renderToStaticMarkup(
     <SupplierRowBody
-      row={row("p9", "src-1", { promptContent: BRIEF_FIXTURE })}
+      row={row("p9", "src-1", { promptContent: BRIEF_FIXTURE, descriptionCategoryId: 11, typeId: 101 })}
       propDefs={[]}
       onPatch={async () => true}
-      onTogglePublish={() => {}}
       onAdjustPrice={async () => true}
-      initialTab="prompt"
+      initialTab="ocr"
     />,
   )
-  for (const section of ["提示词信息", "六行识图说明", "固定标签"]) {
-    assert.ok(promptHtml.includes(`>${section}<`), `missing prompt section ${section}`)
+  for (const section of ["商品事实", "俄文商品类型", "确认属性（俄文）", "固定标签", "公式测试", "示例画面主题", "标题公式", "真实图片测试"]) {
+    assert.ok(promptHtml.includes(section), `missing builder section ${section}`)
   }
-  assert.match(promptHtml, /data-brief-builder=""/)
-  // 六行骨架逐行渲染，模板句词库跟着行（不是只有一整块文本域）。
-  assert.equal(promptHtml.match(/data-brief-line=/g)?.length, 6)
-  assert.match(promptHtml, /Только принт/)
-  assert.ok(promptHtml.includes("0 / 25"), "tags 计数在识图页签")
+  assert.match(promptHtml, /标题：Кружка керамическая 330 мл/)
+  assert.match(promptHtml, /不调用模型，不扣费/)
+  assert.doesNotMatch(promptHtml, /智能构建|试用图片|AI 复核|六行|读取本次结果|仅管理员可见|识图填入|data-supplier-ai-output/)
+  assert.doesNotMatch(promptHtml, /data-brief-line=/)
+})
+
+test("AI识图仅维护商品类型与确认属性，核心输入按真实约束标记", () => {
+  const html = renderToStaticMarkup(<SupplierRowCopyFields
+    row={row("p1", "src-1", { promptContent: BRIEF_FIXTURE, descriptionCategoryId: 11, typeId: 101 })}
+    onPatch={async () => true} />)
+  const field = (name: string, marker: string) => {
+    const label = html.indexOf(`>${name}</label>`)
+    assert.ok(label >= 0, name)
+    assert.match(html.slice(label, html.indexOf("</div>", label)), new RegExp(`>${marker}<`))
+  }
+  field("俄文商品类型", "必填")
+  field("确认属性（俄文）", "建议")
+  field("测试图片", "必填")
+  assert.doesNotMatch(html, /识图填入|data-supplier-ai-output/)
+  assert.match(html, /固定标签<\/span>[\s\S]*?>必填</)
+  assert.doesNotMatch(html, /固定描述|description_ru|<textarea/)
+  assert.match(html, /按实际用量扣工作空间钱包/)
 })
 
 
-test("平台字段分 Ozon / WB：类目归属 Ozon，WB 可切换且不复用其字段", () => {
+test("平台字段只维护类目与属性，AI识图独立，不显示未开放的 WB 页签", () => {
   const html = renderToStaticMarkup(
-    <SupplierRowBody
-      row={row("p1", "src-1", { descriptionCategoryId: 11, typeId: 101 })}
-      initialTab="defaults" propDefs={[]}
-      onPatch={async () => true} onTogglePublish={() => {}} onAdjustPrice={async () => true}
-    />,
+    <SupplierRowBody row={row("p1", "src-1", { descriptionCategoryId: 11, typeId: 101 })}
+      initialTab="defaults" propDefs={[]} onPatch={async () => true}
+      onAdjustPrice={async () => true} />,
   )
-  assert.match(html, /aria-label="销售平台"/)
   assert.match(html, /aria-label="Ozon 类目"/)
-  const wb = html.match(/<button[^>]*>WB<\/button>/)?.[0] ?? ""
-  assert.doesNotMatch(wb, /aria-disabled="true"|data-disabled| disabled(?:=|>|\s)/ )
-  assert.match(html, /data-supplier-row-wb-empty=""/)
+  assert.doesNotMatch(html, /data-supplier-row-copy-fields=""/)
+  assert.doesNotMatch(html, />WB<|aria-label="销售平台"|data-supplier-row-wb-empty|data-row-tab="prompt"/)
   assert.doesNotMatch(html, /role="alert"/)
 })
 
 
-test("行面板运费：没填即零运费（读出 ¥0.00），图标跟成本价同一套「#」", () => {
+test("行面板运费：没填即零运费（读出 ¥0.00），字段名不带装饰图标", () => {
   const html = renderToStaticMarkup(
     <SupplierRowBody
-      row={row("p1", "src-1", { shippingCostCents: null })}
+      row={row("p1", "src-1", { shippingCostCents: null })} mode="variant"
       propDefs={[]}
       onPatch={async () => true}
-      onTogglePublish={() => {}}
       onAdjustPrice={async () => true}
     />,
   )
@@ -124,95 +123,71 @@ test("行面板运费：没填即零运费（读出 ¥0.00），图标跟成本�
   const shippingInput =
     html.match(/<input[^>]*aria-label="运费（元）"[^>]*>/)?.[0] ?? ""
   assert.match(shippingInput, /value="0\.00"/)
-  // 价格区金额统一数字图标；卡车图标退场。
-  assert.doesNotMatch(html, /lucide-truck/)
-  assert.match(html, /lucide-hash[\s\S]*?<span class="[^"]*">运费<\/span>/)
+  assert.doesNotMatch(html, /lucide-truck|lucide-hash/)
 })
 
 
-test("行面板提示词文件：文件名与导入入口明确分开", () => {
-  const withFile = renderToStaticMarkup(
-    <SupplierRowBody
-      row={row("p1", "src-1", { promptFileName: "数字油画-40x50cm.md" })}
-      initialTab="prompt"
-      propDefs={[]}
-      onPatch={async () => true}
-      onTogglePublish={() => {}}
-      onAdjustPrice={async () => true}
-    />,
-  )
-  assert.match(withFile, /aria-label="导入 Markdown 说明文件"/)
-  assert.match(withFile, /数字油画-40x50cm\.md/)
-  assert.equal(withFile.match(/数字油画-40x50cm\.md/g)?.length, 1)
-
-  const withoutFile = renderToStaticMarkup(
-    <SupplierRowBody
-      row={row("p1", "src-1", { promptFileName: "" })}
-      initialTab="prompt"
-      propDefs={[]}
-      onPatch={async () => true}
-      onTogglePublish={() => {}}
-      onAdjustPrice={async () => true}
-    />,
-  )
-  assert.match(withoutFile, /aria-label="导入 Markdown 说明文件"/)
-  assert.match(withoutFile, /尚未导入/)
+test("旧提示词要求重新确认事实，页面不再导入指令文件", () => {
+  const html = renderToStaticMarkup(<SupplierRowCopyFields row={row("p1","src-1",{promptContent:"Товар: Кружка"})} onPatch={async () => true} />)
+  assert.match(html,/旧说明需要重新填写为商品事实/)
+  assert.doesNotMatch(html,/导入 Markdown|试用图片|AI 复核/)
 })
 
 
 test("行面板固定 tags：存量非法 tag 徽标挂 aria-invalid，合法的不挂", () => {
   const html = renderToStaticMarkup(
-    <SupplierRowBody
+    <SupplierRowCopyFields
       row={row("p1", "src-1", { fixedTags: ["#test", "#подарок"] })}
-      initialTab="prompt"
-      propDefs={[]}
       onPatch={async () => true}
-      onTogglePublish={() => {}}
-      onAdjustPrice={async () => true}
     />,
   )
   // 容器 + 非法徽标各一处 aria-invalid；#подарок 的徽标不带。
   assert.equal(html.match(/aria-invalid="true"/g)?.length, 2)
   assert.match(html, /title="不符合契约：须为 # 开头的俄语词"/)
-  assert.match(html, /每个为 # 开头的俄语词/)
+  assert.match(html, /aria-label="查看“固定标签”填写说明"/)
 })
 
 
-test("规格 tab 条：多规格时给出当前规格的删除入口", () => {
-  const variants = [
-    row("p1", "src-1", { title: "数字油画", variantGroup: "PAINT-01", size: "40x50" }),
-    row("p2", "src-1", { title: "数字油画", variantGroup: "PAINT-01", size: "30x40" }),
-  ]
-  const base = {
-    propDefs: [] as SupplierDbPropDef[],
-    onPatch: async () => true,
-    onTogglePublish: () => {},
-    onAdjustPrice: async () => true,
-  }
-  const html = renderToStaticMarkup(
-    <SupplierRowBody
-      {...base}
-      row={variants[0]}
-      rows={variants}
-      onDeleteVariant={() => {}}
-    />,
-  )
-  assert.match(html, /aria-label="删除规格「40x50」"/)
+test("编辑器页头先说清规格上下文：单规格读数、同款分段切换与逐项状态", () => {
+  const props = { propDefs: [], onPatch: async () => true, onAdjustPrice: async () => true }
+  const single = renderToStaticMarkup(<SupplierRowBody row={row("p1", "src-1", { size: "40×50 cm" })} {...props} />)
+  const singleHeader = single.slice(single.indexOf('class="supplier-editor-context"'), single.indexOf("data-supplier-row-content"))
+  assert.match(singleHeader, />规格</)
+  assert.match(singleHeader, /40×50 cm/)
+  assert.doesNotMatch(singleHeader, /aria-selected=|role="tablist"/)
 
-  // 只剩一个规格时不挂删除钮——删它就是删行，归 ⋯ 菜单管。
-  const single = renderToStaticMarkup(
-    <SupplierRowBody
-      {...base}
-      row={variants[0]}
-      rows={[variants[0]]}
-      onDeleteVariant={() => {}}
-    />,
-  )
-  assert.doesNotMatch(single, /删除规格/)
+  const current = row("p1", "src-1", { size: "40×50 cm", variantGroup: "paint", published: true })
+  const multi = renderToStaticMarkup(<SupplierRowBody row={current} rows={[current, row("p2", "src-1", { size: "50×70 cm", variantGroup: "paint" })]} {...props} />)
+  const header = multi.slice(multi.indexOf('class="supplier-editor-context"'), multi.indexOf("data-supplier-row-content"))
+  assert.match(header, />规格</)
+  assert.match(header, /role="tablist"/)
+  assert.match(header, /aria-label="同款规格"/)
+  assert.match(header, /aria-selected="true"/)
+  assert.match(header, /aria-label="40×50 cm，已发布"/)
+  assert.match(header, /aria-label="50×70 cm，草稿"/)
+  assert.match(header, /data-published="true"/)
+  assert.match(header, /data-published="false"/)
+})
 
-  // 没有删除回调（只读宿主）时同样不挂。
-  const readonly = renderToStaticMarkup(
-    <SupplierRowBody {...base} row={variants[0]} rows={variants} />,
-  )
-  assert.doesNotMatch(readonly, /删除规格/)
+test("规格流程提供可编辑的 Ozon 字段，并保留同款切换", () => {
+  const current = row("p1", "src-1", { size: "40×50 cm", variantGroup: "paint" })
+  const html = renderToStaticMarkup(<SupplierRowBody row={current} mode="variant" propDefs={[]} onPatch={async () => true} onAdjustPrice={async () => true} rows={[
+    current,
+    row("p2", "src-1", { size: "50×70 cm", variantGroup: "paint" }),
+    row("p3", "src-2", { size: "其他货源", variantGroup: "paint" }),
+    row("p4", "src-1", { size: "已归档规格", variantGroup: "paint", archived: true }),
+    row("p5", "src-1", { size: "其他同款", variantGroup: "other" }),
+  ]} />)
+  assert.match(html, /40×50 cm/)
+  assert.match(html, /50×70 cm/)
+  assert.doesNotMatch(html, /其他货源|已归档规格|其他同款/)
+  assert.match(html, /data-row-tab="defaults"/)
+  assert.doesNotMatch(html, /Ozon 字段沿用商品配置|查看商品配置/)
+  assert.equal(html.match(/data-row-tab=/g)?.length, 3)
+  assert.doesNotMatch(html, /data-row-tab="review"|data-row-tab="spec"/gi)
+  assert.match(html, /aria-label="同款规格"/)
+  const editor = renderToStaticMarkup(<SupplierRowBody row={current} sharedRow={row("parent", "src-1")} mode="variant" initialTab="defaults" propDefs={[]} onPatch={async () => true} onAdjustPrice={async () => true} />)
+  assert.match(editor, /data-supplier-row-platform/)
+  assert.match(editor, /aria-label="Ozon 类目"/)
+  assert.match(editor, /仅修改当前规格/)
 })

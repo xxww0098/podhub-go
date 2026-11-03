@@ -23,7 +23,7 @@ import {
 
 function overview(plan: string): AccountOverview {
   return {
-    session: { authenticated: true, email: "op@example.invalid", role: "user" },
+    session: { authenticated: true, uuid: "account-op", email: "op@example.invalid", role: "user" },
     entitlement: {
       plan,
       features: {
@@ -199,6 +199,44 @@ test("post-mutation refresh bypasses an earlier poll and fences its stale reply"
   assert.equal(peekAccountOverview()?.active_workspace?.plan, "ultra")
 })
 
+test("a late forced refresh cannot erase a newer forced refresh", async (t) => {
+  invalidateAccountOverview()
+  const original = accountHttp.accountGetOverview
+  const stale = deferred<AccountOverview>()
+  const fresh = deferred<AccountOverview>()
+  const responses = [stale.promise, fresh.promise]
+  accountHttp.accountGetOverview = () => responses.shift()!
+  t.after(() => { accountHttp.accountGetOverview = original; invalidateAccountOverview() })
+
+  const first = loadAccountOverview({ force: true })
+  const second = loadAccountOverview({ force: true })
+  fresh.resolve(overview("ultra"))
+  await second
+  stale.resolve(overview("free"))
+  assert.equal(await first, undefined, "a retired result must not reach a mutation callback")
+  assert.equal(peekAccountOverview()?.active_workspace?.plan, "ultra")
+})
+
+test("a forced refresh from the previous Workspace cannot be republished after a switch", async (t) => {
+  invalidateAccountOverview()
+  const original = accountHttp.accountGetOverview
+  const stale = deferred<AccountOverview>()
+  accountHttp.accountGetOverview = () => stale.promise
+  t.after(() => { accountHttp.accountGetOverview = original; invalidateAccountOverview() })
+
+  const request = loadAccountOverview({ force: true })
+  invalidateAccountOverview()
+  const next = overview("ultra")
+  next.active_workspace = { ...next.active_workspace!, id: 8, uuid: "workspace-8" }
+  next.workspaces = [next.active_workspace]
+  rememberAccountOverview(next)
+  stale.resolve(overview("free"))
+  const result = await request
+  if (result) rememberAccountOverview(result)
+  assert.equal(result, undefined)
+  assert.equal(peekAccountOverview()?.active_workspace?.uuid, "workspace-8")
+})
+
 test("Cookie and Workspace writes retire queued errors and stale polls until a fresh overview restores authority", async (t) => {
   const originalGet = accountHttp.accountGetOverview
   const originalFetch = globalThis.fetch
@@ -236,8 +274,6 @@ test("Cookie and Workspace writes retire queued errors and stale polls until a f
     () => accountHttp.accountRegister({ email: "op@example.invalid", name: "运营", password: "password-1" }),
     () => accountHttp.accountChangePassword({ current_password: "password-1", new_password: "password-2" }),
     () => accountHttp.accountLogout(),
-    () => accountHttp.accountSwitchAccount("account-2"),
-    () => accountHttp.accountLogoutAccount("account-1"),
     () => accountHttp.accountSwitchWorkspace(8),
     () => accountHttp.accountCreateWorkspace("新工作空间"),
     () => accountHttp.accountDissolveWorkspace("运营"),
@@ -245,9 +281,11 @@ test("Cookie and Workspace writes retire queued errors and stale polls until a f
   ]
   const paths = [
     route("authLogin"), route("authRegister"), route("authPassword"), route("authLogout"),
-    route("authSwitch"), route("authAccountsByUuid", { uuid: "account-1" }), route("workspacesSwitch"),
-    route("workspaces"), route("workspacesDissolve"), route("workspacesLeave"),
+    route("workspacesSwitch"), route("workspaces"), route("workspacesDissolve"), route("workspacesLeave"),
   ]
+  // Every remaining authority write is a POST; the two DELETE writes went with
+  // the account stack.
+  const methods = writes.map(() => "POST")
   for (const [index, write] of writes.entries()) {
     expectedPath = paths[index]!
     pendingWrite = deferred<void>()
@@ -281,7 +319,7 @@ test("Cookie and Workspace writes retire queued errors and stale polls until a f
     pendingWrite.resolve()
     await failedWrite
     // Assert outside request's catch: a mock assertion must not masquerade as the expected network failure.
-    assert.deepEqual(authorityCalls[index], { path: expectedPath, method: index === 5 ? "DELETE" : "POST", credentials: "include", retired: true })
+    assert.deepEqual(authorityCalls[index], { path: expectedPath, method: methods[index], credentials: "include", retired: true })
     assert.equal(authorityCalls.length, index + 1)
     stale.resolve(overview("free"))
     during.resolve(overview("free"))
@@ -422,12 +460,12 @@ test("active account and Workspace UUID changes clear local originals and held v
   }) as typeof fetch
   t.after(() => { globalThis.fetch = originalFetch; invalidateAccountOverview(); leaveRoute() })
   invalidateAccountOverview()
-  const first = { ...overview("free"), accounts: [{ active: true, uuid: "account-alpha", email: "op@example.invalid", name: "运营" }] }
+  const first = { ...overview("free"), session: { ...overview("free").session, uuid: "account-alpha" } }
   rememberAccountOverview(first)
   const old = await captureDiagnostic(normalizedProblem({ exactOperation: { provenance: "native_freeze", jsonText: '{"name":"alpha private"}' } }))
   assert.ok(old)
   assert.equal(getDiagnosticCopyData(old.diagnosticId).originalJson, '{"name":"alpha private"}')
-  const nextAccount = { ...first, accounts: [{ ...first.accounts[0]!, uuid: "account-beta" }] }
+  const nextAccount = { ...first, session: { ...first.session, uuid: "account-beta" } }
   rememberAccountOverview(nextAccount)
   assert.equal(getDiagnosticDetail(old.diagnosticId).event, null)
   assert.equal(getDiagnosticCopyData(old.diagnosticId).originalJson, null)

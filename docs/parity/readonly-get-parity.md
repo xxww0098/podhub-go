@@ -1,6 +1,8 @@
 # 只读 GET 对拍（PR-2）
 
-对照 `xxww0098/podhub` 提交 `a03d735`。这一批只做不写库、不调用外部写入的 GET。`app.Handler` 把 `identity.Service` 注入 `access.Resolver`：会话解析出 `user_id`、`org_id`、库存工作空间角色和平台角色。测试仍可用 `FixedResolver` 注入主体。未登录按 401 处理。已确认 TOTP 的逐步提升没有接上，见 [identity-parity.md](identity-parity.md)。
+对照 `xxww0098/podhub` 提交 `a03d735`。本文是 PR-2 的历史范围与测试记录，未实施项仅指当时阶段；当前路由与响应以 `api/openapi.yaml` 为准。
+
+这一批只做不写库、不调用外部写入的 GET。`app.Handler` 把 `identity.Service` 注入 `access.Resolver`：会话解析出 `user_id`、`org_id`、库存工作空间角色和平台角色。测试仍可用 `FixedResolver` 注入主体。未登录按 401 处理。管理端权限只来自 `super_admin` 平台角色，没有验证器或 step-up 环节，见 [identity-parity.md](identity-parity.md)。
 
 ## 这一批端点
 
@@ -12,7 +14,7 @@
 | 列表 | GET | `/api/listing/jobs` | `row_reads.rs` `list_runs` |
 | 详情 | GET | `/api/listing/jobs/{id}` | `get_run` |
 
-租户读在事务里 `SET LOCAL` 角色 `podhub_app` 并设置 `app.current_org_id`（`internal/tenant.EnterApp`），SQL 同时带 `org_id` 谓词。`banned_tags` 没有 RLS，按 Rust 不进租户事务。`ai_requests` 与 `billable_usage_rollups` 不在 RLS 表里，隔离靠 `org_id`；事务仍设置 GUC，这样以后如果挂上同一条策略，读路径不用再改。
+租户读在事务里 `SET LOCAL` 角色 `podhub_app` 并设置 `app.current_org_id`（`internal/platform/db/tenantx.EnterApp`），SQL 同时带 `org_id` 谓词。`banned_tags` 没有 RLS，按 Rust 不进租户事务。`ai_requests` 与 `billable_usage_rollups` 不在 RLS 表里，隔离靠 `org_id`；事务仍设置 GUC，这样以后如果挂上同一条策略，读路径不用再改。
 
 `OZON_WRITE_KILL_SWITCH` 与 `CLOUD_MEDIA_GC_DELETE` 没有改。这些 GET 不拨号、不删对象。压测仍只有 Mode R。
 
@@ -38,16 +40,15 @@
 ## 不能证明一致
 
 - 没有把同一请求打到 `a03d735` 的进程上比字节。
-- 会话由 `identity.Service.Resolve` 解析。工作区角色来自会话查询里的成员资格，不再由测试替身单独注入到生产进程。已确认 TOTP 的逐步提升仍不在这些 GET 上执行，因此不能证明超级管理员二次验证与 Rust 相同。
+- 会话由 `identity.Service.Resolve` 解析。工作区角色来自会话查询里的成员资格，不再由测试替身单独注入到生产进程。管理端 GET 的授权只看平台角色 `super_admin`；验证器与 step-up 已整体删除，因此这些 GET 不再有二次验证环节。
 - 非数字 `limit`（例如 `limit=abc`）在 Rust 里是 axum 的 Query 反序列化拒绝，正文不是本仓库返回的 `{"error":"limit 无效","code":"validation"}`。数字 `limit` 的夹取与 Rust 一致。
 - 用量明细的列映射有单元 golden，集成测试只跑到空区间（`ai_requests` 的外键和金额约束没有插入样例行）。空区间仍会执行汇总和分页 SQL，缺列会得到 500。
 - 用量两条语句在并发写入时，Go 的先后顺序和 Rust 的 `try_join` 可能各看见一次提交。静止表上相同。
 - `created_at::text` 依赖 PostgreSQL 的 DateStyle。本测试库是默认 ISO。换 DateStyle 会改变管理端禁用标签的 `createdAt`，Go 与 Rust 会一起变，因为两边都是这个 cast。
 - 下列 GET 不是纯读，或投影依赖 `listing-core`，本批没有实现，也不宣称字节一致：商品卡、商品行、Intent、目录树、目录 schema、目录抓取配置、`/api/listing/events`（SSE）、套餐列表。
 
-## 留给决定的事
+## 后续状态与边界
 
-- oapi-codegen 是否取代 utoipa。本批沿用骨架里的 oapi-codegen，只生成路由。查询串在 Go 里解析，避免生成器用英文 400 替换 Rust 的中文校验。
-- 禁用标签匹配已经用窄 wasm 和 wazero（见 [listing-core-host.md](listing-core-host.md)）。卡、行、Intent 的读投影仍依赖完整 `listing-core`，不能当作已移植。浏览器那份 wasm 要不要换上来，还没有决定。
-- 下一批只读端点先做哪一组。
-- 非数字 `limit` 的拒绝正文，是改成与某一版 axum 相同，还是保持现在这条中文校验。
+- OpenAPI 生成链已由 [决策 D2](../decisions.md) 确认；本阶段查询串手写解析的对拍记录不改变该决定。
+- 卡、行与 Intent 的投影曾依赖尚未接入的完整 `listing-core`；后续宿主和读写接线见 [listing-core-host.md](listing-core-host.md)、[listing-write-parity.md](listing-write-parity.md)。产品与外部链路是否可用另见 [精铺技术验证清单](../precision-listing-verification.md)。
+- 非数字 `limit` 的拒绝正文仍按上文记录为与 Rust 未证明一致；历史逐字节对拍不构成当前旧兼容要求。

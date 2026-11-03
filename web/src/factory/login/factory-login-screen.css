@@ -1,0 +1,46 @@
+.factory-login-screen {
+  color-scheme: light;
+  color: #0c1d3d;
+  background: #fff;
+}
+
+.factory-login-statement {
+  font-size: clamp(2rem, 4.3vw, 4.125rem);
+  line-height: 1.12;
+}
+
+.factory-login-subtitle {
+  color: #61718d;
+  font-size: 1.375rem;
+  line-height: 1.5;
+}
+
+.factory-login-screen [data-slot="card"] {
+  --card-spacing: 2rem;
+  gap: 1.5rem;
+  border-color: #dce4ef;
+  background: #fff;
+  color: #0c1d3d;
+  box-shadow: none;
+}
+
+.factory-login-screen [data-slot="card-title"] {
+  font-size: 1.875rem;
+  font-weight: 600;
+  line-height: 2.25rem;
+}
+
+.factory-login-screen [data-slot="card-description"] {
+  color: #61718d;
+  font-size: 1rem;
+}
+
+.factory-login-screen [data-slot="field-label"] {
+  font-size: 1rem;
+}
+
+.factory-login-screen [data-slot="input"],
+.factory-login-screen [data-slot="input-group"] {
+  border-color: #d6e0ee;
+  background: #fff;
+}

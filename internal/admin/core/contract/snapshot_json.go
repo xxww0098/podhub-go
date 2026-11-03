@@ -15,25 +15,25 @@ var (
 	ErrSnapshotVersion = errors.New("已存储的连接配置 schema 版本不受支持")
 )
 
-// currentSnapshot is the document this build writes. Unknown fields are
-// refused so a downgrade cannot silently drop a bucket role.
+// currentSnapshot is the document this build writes. Retired storage settings
+// are accepted only to discard them when the snapshot is rewritten.
 type currentSnapshot struct {
 	SchemaVersion  int             `json:"schemaVersion"`
 	AIDefaultModel string          `json:"aiDefaultModel"`
 	AIAccounts     []StoredAI      `json:"aiAccounts"`
-	Buckets        []StoredBucket  `json:"storageBuckets"`
+	AIRuntime      *AIRuntime      `json:"aiRuntime"`
+	RetiredStorage json.RawMessage `json:"storageBuckets,omitempty"`
 	Payment        json.RawMessage `json:"payment"`
 }
 
-// previousSnapshot is the single-account document written before bucket
-// roles. It is read once and rewritten, not kept as a second format.
+// previousSnapshot is read once and rewritten without its storage settings.
 type previousSnapshot struct {
 	SchemaVersion  int             `json:"schemaVersion"`
 	AIDefaultModel string          `json:"aiDefaultModel"`
 	AIAccounts     []StoredAI      `json:"aiAccounts"`
-	MediaAccounts  []previousMedia `json:"mediaAccounts"`
-	Supplier       *previousMedia  `json:"supplierDbStorage"`
-	Delegate       *previousMedia  `json:"delegateAssetsStorage"`
+	MediaAccounts  json.RawMessage `json:"mediaAccounts"`
+	Supplier       json.RawMessage `json:"supplierDbStorage"`
+	Delegate       json.RawMessage `json:"delegateAssetsStorage"`
 	Payment        json.RawMessage `json:"payment"`
 }
 
@@ -42,9 +42,9 @@ type legacySnapshot struct {
 	SchemaVersion  int             `json:"schema_version"`
 	AIDefaultModel string          `json:"ai_default_model"`
 	AIAccounts     []legacyAI      `json:"ai_accounts"`
-	MediaAccounts  []legacyMedia   `json:"media_accounts"`
-	Supplier       *legacyMedia    `json:"supplier_db_storage"`
-	Delegate       *legacyMedia    `json:"delegate_assets_storage"`
+	MediaAccounts  json.RawMessage `json:"media_accounts"`
+	Supplier       json.RawMessage `json:"supplier_db_storage"`
+	Delegate       json.RawMessage `json:"delegate_assets_storage"`
 	Payment        json.RawMessage `json:"payment"`
 }
 
@@ -61,41 +61,8 @@ type legacyAI struct {
 	Priority       int64  `json:"priority"`
 }
 
-type previousMedia struct {
-	ID           string `json:"id"`
-	Label        string `json:"label"`
-	Provider     string `json:"provider"`
-	Endpoint     string `json:"endpoint"`
-	Region       string `json:"region"`
-	Bucket       string `json:"bucket"`
-	KeyPrefix    string `json:"keyPrefix"`
-	PublicBase   string `json:"publicBaseUrl"`
-	ForcePath    bool   `json:"forcePathStyle"`
-	AccessKey    string `json:"accessKeyId"`
-	SecretKey    string `json:"secretAccessKey"`
-	SessionToken string `json:"sessionToken"`
-	Active       bool   `json:"active"`
-}
-
-type legacyMedia struct {
-	ID           string `json:"id"`
-	Label        string `json:"label"`
-	Provider     string `json:"provider"`
-	Endpoint     string `json:"endpoint"`
-	Region       string `json:"region"`
-	Bucket       string `json:"bucket"`
-	KeyPrefix    string `json:"key_prefix"`
-	PublicBase   string `json:"public_base_url"`
-	ForcePath    bool   `json:"force_path_style"`
-	AccessKey    string `json:"access_key_id"`
-	SecretKey    string `json:"secret_access_key"`
-	SessionToken string `json:"session_token"`
-	Active       bool   `json:"active"`
-}
-
-// ParseStored reads the current role document first, then the single-account
-// document, then its snake_case spelling. legacy reports any non-current
-// input so the caller re-seals it with the role list.
+// ParseStored reads stored snapshots and reports whether they need rewriting.
+// Retired storage credentials are never returned or written again.
 func ParseStored(plain []byte) (Snapshot, bool, error) {
 	var current currentSnapshot
 	if err := decodeStrict(plain, &current); err == nil {
@@ -104,22 +71,25 @@ func ParseStored(plain []byte) (Snapshot, bool, error) {
 		}
 		snap := Snapshot{
 			SchemaVersion: 1, AIDefaultModel: current.AIDefaultModel, AIAccounts: current.AIAccounts,
+			AIRuntime: DefaultAIRuntime(),
+		}
+		legacy := current.AIRuntime == nil || len(current.RetiredStorage) > 0
+		if current.AIRuntime != nil {
+			snap.AIRuntime = *current.AIRuntime
+			if snap.AIRuntime.LeaseTTLSeconds < 1 {
+				snap.AIRuntime.LeaseTTLSeconds = DefaultLeaseTTLSeconds
+				legacy = true
+			}
+		}
+		if snap.migratePurpose() {
+			legacy = true
 		}
 		payment, err := decodePayment(current.Payment)
 		if err != nil {
 			return Snapshot{}, false, ErrSnapshotParse
 		}
 		snap.Payment = payment
-		for _, row := range current.Buckets {
-			snap.Buckets = append(snap.Buckets, StoredBucket{
-				ID: row.ID, Label: row.Label, Role: row.Role, Provider: row.Provider,
-				Endpoint: row.Endpoint, Region: row.Region, Bucket: row.Bucket,
-				KeyPrefix: row.KeyPrefix, PublicBase: row.PublicBase, ForcePath: row.ForcePath,
-				AccessKey: row.AccessKey, SecretKey: row.SecretKey, SessionToken: row.SessionToken,
-				Active: row.Active,
-			})
-		}
-		return snap, false, nil
+		return snap, legacy, nil
 	}
 
 	var previous previousSnapshot
@@ -147,17 +117,6 @@ func ParseStored(plain []byte) (Snapshot, bool, error) {
 			ThinkingFormat: row.ThinkingFormat, Priority: row.Priority,
 		})
 	}
-	for _, row := range old.MediaAccounts {
-		converted.MediaAccounts = append(converted.MediaAccounts, row.camel())
-	}
-	if old.Supplier != nil {
-		row := old.Supplier.camel()
-		converted.Supplier = &row
-	}
-	if old.Delegate != nil {
-		row := old.Delegate.camel()
-		converted.Delegate = &row
-	}
 	return converted.upgrade()
 }
 
@@ -184,63 +143,49 @@ func decodePayment(raw json.RawMessage) (*seal.StoredPaymentConfig, error) {
 	return &payment, nil
 }
 
-// upgrade maps the single-account document onto bucket roles. The active
-// media account is transit; the supplier and delegate sections keep their own
-// roles. A document that names none produces an empty role list.
+// migratePurpose gives every account without a purpose the one the model name
+// implied before the field existed, and reports whether it changed a row.
+// The slice is copied so the decoded document is not aliased.
+func (s *Snapshot) migratePurpose() bool {
+	changed := false
+	rows := make([]StoredAI, len(s.AIAccounts))
+	copy(rows, s.AIAccounts)
+	for i := range rows {
+		if rows[i].Purpose != "" {
+			continue
+		}
+		rows[i].Purpose = PurposeOCR
+		if rows[i].Model == legacyImageModel {
+			rows[i].Purpose = PurposeImage
+		}
+		changed = true
+	}
+	if s.AIAccounts != nil {
+		s.AIAccounts = rows
+	}
+	return changed
+}
+
+// upgrade preserves AI and payment configuration and discards retired storage.
 func (old previousSnapshot) upgrade() (Snapshot, bool, error) {
 	snap := Snapshot{
 		SchemaVersion: 1, AIDefaultModel: old.AIDefaultModel, AIAccounts: old.AIAccounts,
+		AIRuntime: DefaultAIRuntime(),
 	}
+	snap.migratePurpose()
 	payment, err := decodePayment(old.Payment)
 	if err != nil {
 		return Snapshot{}, false, ErrSnapshotParse
 	}
 	snap.Payment = payment
-	appendRole := func(row previousMedia, role string) {
-		snap.Buckets = append(snap.Buckets, StoredBucket{
-			ID: row.ID, Label: row.Label, Role: role, Provider: row.Provider,
-			Endpoint: row.Endpoint, Region: row.Region, Bucket: row.Bucket,
-			KeyPrefix: row.KeyPrefix, PublicBase: row.PublicBase, ForcePath: row.ForcePath,
-			AccessKey: row.AccessKey, SecretKey: row.SecretKey, SessionToken: row.SessionToken,
-			Active: row.Active,
-		})
-	}
-	transit := previousMedia{}
-	found := false
-	for _, row := range old.MediaAccounts {
-		if row.Active && !found {
-			transit, found = row, true
-		}
-	}
-	if !found && len(old.MediaAccounts) > 0 {
-		transit = old.MediaAccounts[0]
-	}
-	if found || len(old.MediaAccounts) > 0 {
-		appendRole(transit, "transit")
-	}
-	if old.Supplier != nil {
-		appendRole(*old.Supplier, "assets")
-	}
-	if old.Delegate != nil {
-		appendRole(*old.Delegate, "private")
-	}
 	return snap, true, nil
 }
 
-func (row legacyMedia) camel() previousMedia {
-	return previousMedia{
-		ID: row.ID, Label: row.Label, Provider: row.Provider, Endpoint: row.Endpoint,
-		Region: row.Region, Bucket: row.Bucket, KeyPrefix: row.KeyPrefix, PublicBase: row.PublicBase,
-		ForcePath: row.ForcePath, AccessKey: row.AccessKey, SecretKey: row.SecretKey,
-		SessionToken: row.SessionToken, Active: row.Active,
-	}
-}
-
-// Marshal writes the current role document. It is the only writer shape.
+// Marshal writes the current integration document without storage settings.
 func (s Snapshot) Marshal() ([]byte, error) {
 	doc := currentSnapshot{
 		SchemaVersion: 1, AIDefaultModel: s.AIDefaultModel, AIAccounts: s.AIAccounts,
-		Buckets: s.Buckets,
+		AIRuntime: &s.AIRuntime,
 	}
 	if s.Payment != nil {
 		raw, err := json.Marshal(s.Payment)

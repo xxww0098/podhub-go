@@ -145,6 +145,7 @@ test("客服消息中心的三条路由，收件箱一次带上整份店铺名�
     })
     await opsHttp.messageCenterHistory({ store_id: "store-1", chat_id: "chat-9" })
     await opsHttp.messageCenterSend({
+      operation_id: "11111111-1111-4111-8111-111111111111",
       store_id: "store-1",
       chat_id: "chat-9",
       text: "Здравствуйте",
@@ -159,6 +160,7 @@ test("客服消息中心的三条路由，收件箱一次带上整份店铺名�
       stores: [{ store_id: "store-1", name: "旗舰店", store_number: "1" }],
     })
     assert.deepEqual(stub.calls[2]!.body, {
+      operation_id: "11111111-1111-4111-8111-111111111111",
       store_id: "store-1",
       chat_id: "chat-9",
       text: "Здравствуйте",
@@ -196,7 +198,7 @@ const SNAPSHOT = {
         can_manage: true,
     can_edit_credential: true,
     permissions: { manageStore: true, editName: true, manageKeyGrants: true, testKey: true, manageKey: true, deleteStore: true },
-    assignee_key_manage: true,
+
       },
     ],
     active_id: null,

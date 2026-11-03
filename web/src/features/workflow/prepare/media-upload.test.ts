@@ -147,7 +147,7 @@ test("refresh after four of six uploads keeps receipts and reads only the missin
     assert.equal(result?.error, undefined)
     assert.deepEqual(images.map((image) => read.filter((file) => file === image.file_name).length), [1, 1, 1, 1, 2, 2])
     assert.equal(stub.calls.filter((call) => call.method === "PUT").length, 6, "no successful object was uploaded twice")
-    assert.equal(stub.calls.filter((call) => call.url.endsWith("/media/images")).map(call => call.body.images.length).join(","), "4,2", "four kept receipts plus the two retried slices use two batches")
+    assert.equal(stub.calls.filter((call) => call.url.endsWith("/media/images")).map(call => call.body.images.length).join(","), "4,6", "the retry rebinds four kept receipts together with the two restored slices")
   } finally { stub.restore() }
 })
 
@@ -161,17 +161,16 @@ test("an upload with all images already public reconfirms and finishes without l
         s3_upload_bytes_used: 0, ai_tokens_monthly: 0, ai_tokens_used: 0, ai_calls_per_day: 0 } },
     active_workspace: workspace, workspaces: [workspace], account_mode: "owner", owned_count: 1, owned_limit: 3,
   })
-  const oldKey = `images/teams/${workspace.uuid}/old/sha256/${SLICE_DIGEST}.jpg`
-  const newKey = `uploads/2026-09-16/1700000000000-reconfirm/images/teams/${workspace.uuid}/sha256/${SLICE_DIGEST}.jpg`
+  const oldKey = `uploads/2026-10-15/1792094400000-11111111-1111-4111-8111-111111111111/${SLICE_DIGEST}.jpg`
+  const newKey = `uploads/2026-10-15/1792094401000-22222222-2222-4222-8222-222222222222/${SLICE_DIGEST}.jpg`
   const image = { index: 0, file_name: "gone.jpg", content_hash: `sha256:${SLICE_DIGEST}`, group_name: "main",
     width: 1, height: 1, byte_size: 1, phase: "public_ready", object_key: oldKey, account_id: "old", public_url: "https://cdn.invalid/old.jpg" }
   const row = { ...ROW, media_state: "uploading", media: { images: [image], videos: [] }, render_evidence: { manifest_digest: "existing" } }
   let confirmations = 0
   const stub = record((call) => {
     if (call.url.endsWith("/prepare")) return { outcome: "running", jobs: [{ id: "reconfirm",kind:"media.upload",payload:{manifest_digest:"existing",manifest:{images:[image]}} }] }
-    if (call.url.endsWith("/media/images")) return new Response(JSON.stringify({code:"media_confirmation_required",error:"proof expired"}),{status:400})
-    if (call.url.includes("/media/images/") && ++confirmations === 1) return new Response(JSON.stringify({code:"media_confirmation_required",error:"proof expired"}),{status:400})
-    if (call.url.endsWith("/probe")) return {exists:true,object_key:newKey,account_id:"current",public_url:"https://cdn.invalid/new.jpg"}
+    if (call.url.endsWith("/media/images") && ++confirmations === 1) return new Response(JSON.stringify({code:"media_confirmation_required",error:"proof expired"}),{status:400})
+    if (call.url.endsWith("/probe")) return {exists:true,object_key:newKey,account_id:"current",public_url:`https://cdn.invalid/${newKey}`}
     if (call.url.endsWith("/presign-batch")) return new Error("remote object requires no upload")
     if (call.method === "PUT") throw new Error("remote object requires no bytes")
     return row
@@ -184,11 +183,85 @@ test("an upload with all images already public reconfirms and finishes without l
     assert.equal(result[0]!.error,undefined)
     assert.equal(confirmations,2)
     assert.equal(stub.calls.filter((call)=>call.url.endsWith("/probe")).length,1)
-    assert.equal(stub.calls.at(-1)!.body.object_key,newKey)
+    assert.equal(stub.calls.at(-1)!.body.images[0].object_key,newKey)
     // Recovery landed under the freshly issued timestamp batch; without that
     // scope it must never leak into the legacy cross-run cache.
     assert.equal(lookupMediaObject(SLICE_DIGEST, "jpg"), undefined)
   } finally { stub.restore(); forgetMediaObjects(); invalidateAccountOverview() }
+})
+
+test("partial uploads renew an expired earlier receipt before rebinding the complete manifest", async () => {
+  const { sha256Hex } = await import("@/render/opfs")
+  const pendingBytes = new Uint8Array([23])
+  const pendingDigest = await sha256Hex(pendingBytes)
+  const oldKey = `uploads/2026-10-15/1792094400000-11111111-1111-4111-8111-111111111111/${SLICE_DIGEST}.jpg`
+  const renewedKey = `uploads/2026-10-15/1792094401000-22222222-2222-4222-8222-222222222222/${SLICE_DIGEST}.jpg`
+  const images = [
+    { index: 0, file_name: "evicted.jpg", content_hash: `sha256:${SLICE_DIGEST}`, group_name: "first",
+      width: 1, height: 1, byte_size: 1, phase: "public_ready", object_key: oldKey, account_id: "acct", public_url: `https://cdn.invalid/${oldKey}` },
+    { index: 1, file_name: "pending.jpg", content_hash: `sha256:${pendingDigest}`, group_name: "second",
+      width: 1, height: 1, byte_size: 1, phase: "rendered" },
+  ]
+  const row = { ...ROW, media_state: "uploading", media: { images, videos: [] },
+    render_evidence: { manifest_digest: "manifest:partial-expired" } }
+  const reads: string[] = []
+  let bindings = 0, oldRenewed = false, pendingKey = ""
+  let releaseOld!: () => void
+  const pendingRenewal = new Promise<void>((resolve) => { releaseOld = resolve })
+  const stub = record(async (call) => {
+    if (call.url.endsWith("/prepare")) return { outcome: "running", jobs: [{ id: "upload-partial-expired", kind: "media.upload",
+      payload: { manifest_digest: row.render_evidence.manifest_digest, manifest: { images } } }] }
+    if (call.method === "PUT") return new Response(null, { status: 200 })
+    if (call.url.endsWith("/media/images")) {
+      bindings++
+      pendingKey = call.body.images.find((image: { index: number }) => image.index === 1)?.object_key ?? pendingKey
+      // Even a newly uploaded final image cannot settle the row while an older
+      // public_ready image has an expired proof.
+      if (!oldRenewed) return Response.json({ code: "media_confirmation_required", error: "earlier proof expired" }, { status: 409 })
+      assert.deepEqual(call.body.images.map((image: { index: number }) => image.index), [0, 1])
+      assert.equal(call.body.images[0].object_key, renewedKey)
+      const readyRow = { ...row, view_revision: 2, media_state: "ready", projection: { ...row.projection, media: "ready" },
+        media: { ...row.media, images: images.map((image) => ({ ...image, phase: "public_ready" })) } }
+      return Response.json({ data: { items: call.body.images.map((image: { index: number; object_key: string; account_id: string }) => ({
+        ...image, applied: true, phase: "public_ready", media_state: "ready", completed: 2, total: 2,
+        public_url: `https://cdn.invalid/${image.object_key}`, storage_revision: 1, ...(image.index === 1 ? { row: readyRow } : {}),
+      })), total: 2 } })
+    }
+    // Per-image rebinding can race another image's expired proof; recovery must
+    // renew all proofs first and then retry the atomic batch.
+    if (call.url.includes("/media/images/")) return Response.json({ code: "validation", error: "whole manifest required" }, { status: 400 })
+    if (call.url.endsWith("/probe")) {
+      const old = call.url.includes(SLICE_DIGEST)
+      if (old) {
+        await pendingRenewal
+        oldRenewed = true
+      } else {
+        releaseOld()
+      }
+      const key = old ? renewedKey : pendingKey
+      return { exists: true, account_id: "acct", object_key: key, public_url: `https://cdn.invalid/${key}`, workspace_uuid: "test-workspace" }
+    }
+    if (call.url.endsWith("/media")) return { applied: true, row, jobs: [] }
+    return row
+  })
+  try {
+    const { runRows } = await import("./run-rows")
+    const [result] = await withStubbedDevice(() => runRows({ row_ids: [ROW.id], expected_revisions: [] }, "upload"), {
+      getRender: async (_row: string, fileName: string) => {
+        reads.push(fileName)
+        assert.equal(fileName, "pending.jpg", "the old public object has no local bytes")
+        return pendingBytes
+      },
+    })
+    assert.equal(result?.error, undefined)
+    assert.equal(result?.product?.lifecycle.media, "ready")
+    assert.equal(bindings, 2)
+    assert.deepEqual(stub.calls.filter((call) => call.url.endsWith("/media/images"))[0]?.body.images.map((image: { index: number }) => image.index), [0, 1])
+    assert.deepEqual(reads, ["pending.jpg"])
+    assert.equal(stub.calls.filter((call) => call.method === "PUT").length, 1)
+    assert.equal(stub.calls.filter((call) => call.url.endsWith("/probe")).length, 2)
+    assert.equal(stub.calls.some((call) => call.url.includes("/media/images/")), false)
+  } finally { releaseOld(); stub.restore() }
 })
 
 test("upload prefers a final row on equal revisions, but still reads back missing or newer receipts", async () => {
@@ -344,7 +417,8 @@ test("a static slice shared by every row travels once per session, and never pro
       return { outcome: "prepared", jobs: [] }
     }
     if (call.method === "PUT") {
-      return { byteLength: 1, deduplicated: false, publicUrl: `https://media.example.com/images/teams/${WORKSPACE}/sha256/${SLICE_DIGEST}.jpg`, objectKey: `images/teams/${WORKSPACE}/sha256/${SLICE_DIGEST}.jpg`, accountId: "env-media" }
+      const key = `uploads/2026-10-15/1792094400000-22222222-2222-4222-8222-222222222222/${SLICE_DIGEST}.jpg`
+      return { byteLength: 1, deduplicated: false, publicUrl: `https://media.example.com/${key}`, objectKey: key, accountId: "env-media" }
     }
     if (call.url.endsWith("/media")) {
       if (call.body?.media_state === "rendered" && rowId) {

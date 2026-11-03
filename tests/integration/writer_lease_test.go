@@ -9,8 +9,8 @@ import (
 )
 
 // TestWriterLeaseHeartbeatsAsPodhubApp is the production role path: the whole
-// check, insert, and heartbeat run as podhub_app, which m20260920_000329 already
-// grants on writer_leases.
+// check, insert, and heartbeat run as podhub_app, which the baseline schema
+// already grants on writer_leases.
 func TestWriterLeaseHeartbeatsAsPodhubApp(t *testing.T) {
 	ctx := context.Background()
 	pool := migratedPool(t, ctx)

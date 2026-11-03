@@ -267,6 +267,7 @@ export function useNotifications(
   viewRef.current = view
   const failing = useRef(false)
   const readVersion = useRef(0)
+  const mounted = useRef(true)
   const loadedPages = useRef(1)
   const writeInFlight = useRef(false)
   const refreshInFlight = useRef(false)
@@ -289,7 +290,7 @@ export function useNotifications(
               (nextCursor) => accountHttp.accountListNotifications(nextCursor),
               loadedPages.current,
             )
-        if (!isLatestNotificationRead(version, readVersion.current)) return
+        if (!mounted.current || !isLatestNotificationRead(version, readVersion.current)) return
         const current = viewRef.current
         const next =
           cursor && current
@@ -310,7 +311,7 @@ export function useNotifications(
         setLoadReason(undefined)
         failing.current = false
       } catch (reason) {
-        if (!isLatestNotificationRead(version, readVersion.current)) return
+        if (!mounted.current || !isLatestNotificationRead(version, readVersion.current)) return
         if (shouldAnnounceReadFailure(trigger, failing.current)) {
           notifyCommandError(reason, "无法读取通知，请稍后重试。")
         }
@@ -359,12 +360,11 @@ export function useNotifications(
     }
   }, [load, view?.next_cursor])
 
-  useEffect(
-    () => () => {
-      readVersion.current += 1
-    },
-    [],
-  )
+  useEffect(() => {
+    // StrictMode replays effects while the shared first read is still pending.
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
 
   useVisiblePolling({
     enabled,

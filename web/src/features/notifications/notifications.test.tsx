@@ -89,10 +89,12 @@ function captureToasts() {
 }
 
 function renderedButton(html: string, label: string): string {
-  const labelIndex = html.indexOf(`>${label}</button>`)
-  assert.notEqual(labelIndex, -1)
-  const start = html.lastIndexOf("<button", labelIndex)
-  return html.slice(start, html.indexOf("</button>", labelIndex) + 9)
+  const button = html.match(/<button\b[^>]*>[\s\S]*?<\/button>/g)?.find((markup) =>
+    markup.slice(0, markup.indexOf(">") + 1).includes(`aria-label="${label}"`) ||
+    markup.endsWith(`>${label}</button>`),
+  )
+  assert.ok(button, `button "${label}" was not rendered`)
+  return button
 }
 
 test("the bell names the unread count for both eyes and assistive tech", () => {
@@ -329,9 +331,9 @@ test("a cap refusal surfaces Cloud's own copy and still re-reads the list", asyn
     assert.equal(added.length, 1)
     assert.equal(added[0].title, CAP_REJECT.message)
     // The cap is the one refusal a retry can never clear: the toast is keyed
-    // and held rather than flashed, so the next step survives long enough to
-    // act on.
-    assert.equal(added[0].id, "cloud_workspace_limit_reached")
+    // by its cause and held rather than flashed, so the next step survives
+    // long enough to act on.
+    assert.equal(String(added[0].id).split("\u0000")[0], "cloud_workspace_limit_reached")
     assert.equal(added[0].timeout, 20_000)
   } finally {
     stop()
@@ -343,23 +345,26 @@ test("a plain validation refusal stays an ordinary flash", async () => {
   const { added, stop } = captureToasts()
 
   try {
-    await settleNotificationAction(
-      () =>
-        Promise.reject({
-          code: "cloud_validation_failed",
-          message: "邀请已被撤销",
-          remediation: null,
-        }),
-      async () => {},
-      "无法接受邀请，请稍后重试。",
-    )
+    for (const message of ["邀请已被撤销", "邀请已过期"]) {
+      await settleNotificationAction(
+        () =>
+          Promise.reject({
+            code: "cloud_validation_failed",
+            message,
+            remediation: null,
+          }),
+        async () => {},
+        "无法接受邀请，请稍后重试。",
+      )
+    }
 
-    assert.equal(added.length, 1)
-    assert.equal(added[0].title, "邀请已被撤销")
-    // Not keyed by its code, so two different 400s stack rather than replace,
-    // and it clears on the ordinary error beat.
-    assert.notEqual(added[0].id, "cloud_validation_failed")
-    assert.equal(added[0].timeout, 6_000)
+    assert.equal(added.length, 2)
+    assert.equal(added[0]?.title, "邀请已被撤销")
+    // Different causes stay separate cards, and neither is held: only a cap
+    // refusal earns the long beat.
+    assert.notEqual(added[0]?.id, added[1]?.id)
+    assert.equal(added[0]?.timeout, 6_000)
+    assert.equal(added[1]?.timeout, 6_000)
   } finally {
     stop()
     toast.close()
@@ -668,9 +673,10 @@ test("a joined-but-unsynced account cannot respond without proof; other writes r
   )
   assert.match(renderedButton(html, "接受"), / disabled=""/)
   assert.match(renderedButton(html, "拒绝"), / disabled=""/)
-  for (const label of ["标为已读", "全部已读"]) {
-    assert.doesNotMatch(renderedButton(html, label), / disabled=""/)
-  }
+  assert.doesNotMatch(renderedButton(html, "标为已读"), / disabled=""/)
+  const markAll = html.match(/<button[^>]*aria-label="全部已读"[^>]*>/)?.[0] ?? ""
+  assert.notEqual(markAll, "")
+  assert.doesNotMatch(markAll, / disabled=""/)
   // The sync failure copy now rides the toast host; the page keeps only the
   // disabled action that would repeat the accept.
   const source = readFileSync(

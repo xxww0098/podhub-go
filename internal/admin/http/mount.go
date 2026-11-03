@@ -16,6 +16,7 @@ import (
 	"github.com/xxww0098/podhub-go/internal/admin/contract"
 	"github.com/xxww0098/podhub-go/internal/admin/domain"
 	"github.com/xxww0098/podhub-go/internal/admin/service"
+	access "github.com/xxww0098/podhub-go/internal/identity/contract"
 )
 
 const (
@@ -25,19 +26,16 @@ const (
 	msgSuperAdmin      = "需要超级管理员权限"
 )
 
-// Session is the caller the assembly layer already resolved.
-// TotpEnrolled and StepUpElevated are the super-admin gate. PublicID is
-// account_users.public_id. Staff routes ignore the TOTP fields.
+// Session is the caller the assembly layer already resolved. PublicID is
+// account_users.public_id.
 type Session struct {
-	UserID         int64
-	OrgID          int64
-	WorkspaceRole  string
-	PlatformRole   string
-	Email          string
-	PublicID       string
-	TokenHash      string
-	TotpEnrolled   bool
-	StepUpElevated bool
+	UserID        int64
+	OrgID         int64
+	WorkspaceRole string
+	PlatformRole  string
+	Email         string
+	PublicID      string
+	TokenHash     string
 }
 
 // Refusal is an authentication answer. Status is the HTTP status.
@@ -67,7 +65,7 @@ type ShippingWrites interface {
 
 // Deps is the session resolver, billing, supplier admin, the users and
 // AI-auth API, already-ported handlers, and platform services.
-// Ported, when set, serves a method and path before the route guard.
+// Ported, when set, serves a method and path after the route guard.
 // A nil map leaves those routes at 501.
 // A nil AdminB leaves billing and observation routes on the shared guard, then 501.
 // A nil API keeps the users and AI-auth routes on the 501 body.
@@ -106,7 +104,17 @@ func Mount(r chi.Router, d Deps) {
 
 // Routes returns every admin route this package owns.
 func Routes() []Route {
-	return append(append(SupplierRoutes(), CatalogRoutes()...), PlatformRoutes()...)
+	routes := append(append(SupplierRoutes(), CatalogRoutes()...), PlatformRoutes()...)
+	return append(routes,
+		Route{Method: "POST", Path: "/api/supplier-catalog/sources/{source_id}/uploads", OperationID: "presignCatalogManagerUpload", Guard: GuardLogin, Source: "internal/admin/service/x1storage.go"},
+		Route{Method: "POST", Path: "/api/supplier-catalog/sources/{source_id}/uploads/confirm", OperationID: "confirmCatalogManagerUpload", Guard: GuardLogin, Source: "internal/admin/service/x1storage.go"},
+		Route{Method: "POST", Path: "/api/supplier-catalog/sources/{source_id}/uploads/abort", OperationID: "abortCatalogManagerUpload", Guard: GuardLogin, Source: "internal/admin/service/x1storage.go"},
+		Route{Method: "GET", Path: "/api/admin/subscription-coupons", OperationID: "adminSubscriptionCouponsList", Guard: GuardSuper, Source: "internal/admin/billing/repo/coupons.go"},
+		Route{Method: "POST", Path: "/api/admin/subscription-coupons", OperationID: "adminSubscriptionCouponsCreate", Guard: GuardSuper, Source: "internal/admin/billing/repo/coupons.go"},
+		Route{Method: "PUT", Path: "/api/admin/subscription-coupons/{code}", OperationID: "adminSubscriptionCouponsUpdate", Guard: GuardSuper, Source: "internal/admin/billing/repo/coupons.go"},
+		Route{Method: "GET", Path: "/api/admin/integrations/config", OperationID: "adminIntegrationsConfigGet", Guard: GuardSuper, Source: "internal/admin/service/config.go"},
+		Route{Method: "GET", Path: "/api/admin/ai/prices", OperationID: "adminAiPricesGet", Guard: GuardPrice, Source: "internal/admin/service/rest.go"},
+	)
 }
 
 type handler struct{ Deps }
@@ -164,6 +172,11 @@ func writeFault(w http.ResponseWriter, fault *contract.Fault) {
 func (h handler) serve(w http.ResponseWriter, r *http.Request, rt Route) {
 	if h.Ported != nil {
 		if fn := h.Ported[rt.Method+" "+rt.Path]; fn != nil {
+			fam := familyOf(rt.Path)
+			p, ok := principal(w, r, h.Resolve, fam)
+			if !ok || !allow(w, fam, p, rt) {
+				return
+			}
 			fn(w, r)
 			return
 		}
@@ -197,12 +210,12 @@ func (h handler) serveUsers(w http.ResponseWriter, r *http.Request, rt Route) {
 		}
 	case GuardLogin:
 	case GuardStaff:
-		if !domain.PlatformStaff(p.PlatformRole) {
+		if !access.IsPlatformStaff(p.PlatformRole) {
 			writeErr(w, http.StatusForbidden, contract.ErrStaffDenied.Error(), "FORBIDDEN")
 			return
 		}
 	case GuardSuper, GuardInferred, GuardPrice:
-		if !domain.SuperAdmin(p.PlatformRole) {
+		if !access.IsSuperAdmin(p.PlatformRole) {
 			writeErr(w, http.StatusForbidden, msgSuperAdmin, "FORBIDDEN")
 			return
 		}
@@ -217,12 +230,6 @@ func (h handler) serveUsers(w http.ResponseWriter, r *http.Request, rt Route) {
 	actor := domain.Actor{
 		ID: p.UserID, OrgID: p.OrgID, Email: p.Email, PublicID: p.PublicID,
 		Role: p.PlatformRole, TokenHash: p.TokenHash,
-	}
-	if wantsStepUp(rt.Method, rt.Path) {
-		if fault := h.API.RequireStepUp(r.Context(), actor); fault != nil {
-			writeAuthFault(w, fam, fault)
-			return
-		}
 	}
 	h.dispatchPlatform(w, r, rt, actor)
 }
@@ -299,7 +306,7 @@ func allow(w http.ResponseWriter, fam string, p Session, rt Route) bool {
 		}
 	case GuardLogin:
 	case GuardStaff:
-		if !domain.PlatformStaff(p.PlatformRole) {
+		if !access.IsPlatformStaff(p.PlatformRole) {
 			if fam == "legacy" {
 				writeErr(w, http.StatusForbidden, contract.ErrStaffDenied.Error(), "FORBIDDEN")
 			} else {
@@ -308,7 +315,7 @@ func allow(w http.ResponseWriter, fam string, p Session, rt Route) bool {
 			return false
 		}
 	case GuardSuper, GuardInferred, GuardPrice:
-		if !domain.SuperAdmin(p.PlatformRole) {
+		if !access.IsSuperAdmin(p.PlatformRole) {
 			if fam == "legacy" {
 				writeErr(w, http.StatusForbidden, msgSuperAdmin, "FORBIDDEN")
 			} else {

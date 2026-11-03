@@ -53,6 +53,9 @@ type RegisterOutcome struct {
 	FingerprintChanged bool
 	// Rotated is true when this replaced an existing generation.
 	Rotated bool
+
+	// NameFilled reports whether Seller info supplied the automatic store name.
+	NameFilled bool
 }
 
 // PlanRegister is credential_store::register's decision table. It answers the
@@ -162,7 +165,7 @@ func EnsureCanManageKey(actor Actor, row Row) *contract.APIError {
 	if !actor.Visible(row.AssigneeMembershipID) {
 		return contract.NotFound(contract.MsgStoreMissing)
 	}
-	if actor.MayManageKey(row.AssigneeKeyManage, row.AssigneeMembershipID) {
+	if actor.CanManageAll() {
 		return nil
 	}
 	return contract.Forbidden(contract.MsgNoKeyPermission)

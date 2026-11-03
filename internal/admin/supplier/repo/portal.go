@@ -14,7 +14,6 @@ import (
 type Portal struct {
 	Pool  *pgxpool.Pool
 	Begin corerepo.Begin
-	Key   string
 }
 
 func (r Portal) beginCore() corerepo.Begin {

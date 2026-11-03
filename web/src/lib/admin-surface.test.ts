@@ -43,30 +43,33 @@ test("?screen= under /admin accepts a staff screen and falls back otherwise", ()
 })
 
 test("?settings= accepts a known section id and ignores anything else", () => {
-  assert.equal(settingsFromSearch("?settings=media"), "media")
+  assert.equal(settingsFromSearch("?settings=payment"), "payment")
+  assert.equal(settingsFromSearch("?settings=ai-accounts"), "ai-accounts")
   assert.equal(settingsFromSearch("?screen=supplier-dbs&settings=plan-orders"), "plan-orders")
-  for (const search of ["", "?settings=", "?settings=agent", "?settings=unknown", "?screen=users"]) {
+  for (const search of ["", "?settings=", "?settings=agent", "?settings=unknown", "?settings=media", "?settings=ocr", "?screen=users"]) {
     assert.equal(settingsFromSearch(search), undefined, search)
   }
 })
 
 test("the surface knows which screens are its own", () => {
   assert.equal(isAdminScreen("supplier-dbs"), true)
-  for (const screen of ["console", "listing", "stores", "usage", "notifications"] as const) {
+  assert.equal(isAdminScreen("admin-delegate-orders"), true)
+  assert.equal(isAdminScreen("delegate-orders"), false)
+  for (const screen of ["home", "listing", "stores", "usage", "notifications"] as const) {
     assert.equal(isAdminScreen(screen), false, screen)
   }
 })
 
 test("search rewriting preserves unrelated parameters", () => {
-  assert.equal(withScreen("?open=src_1&screen=console", "supplier-dbs"), "?open=src_1&screen=supplier-dbs")
+  assert.equal(withScreen("?open=src_1&screen=console", "supplier-dbs"), "?screen=supplier-dbs")
   assert.equal(withScreen("", "supplier-dbs"), "?screen=supplier-dbs")
-  assert.equal(withSettings("?screen=supplier-dbs&open=src_1", "media"), "?screen=supplier-dbs&open=src_1&settings=media")
-  assert.equal(withoutSettings("?screen=supplier-dbs&settings=media&invite=AB12"), "?screen=supplier-dbs&invite=AB12")
-  assert.equal(withoutSettings("?settings=media"), "")
+  assert.equal(withSettings("?screen=supplier-dbs&open=src_1", "payment"), "?screen=supplier-dbs&open=src_1&settings=payment")
+  assert.equal(withoutSettings("?screen=supplier-dbs&settings=payment&invite=AB12"), "?screen=supplier-dbs&invite=AB12")
+  assert.equal(withoutSettings("?settings=payment"), "")
   // Catalog product is an in-module drill: a sidebar jump must not restore it.
   assert.equal(
-    withScreen("?screen=catalog&product=scp_1&q=hat", "products"),
-    "?screen=products",
+    withScreen("?screen=catalog&product=scp_1&q=hat", "home"),
+    "?screen=home",
   )
   assert.equal(withScreen("?screen=catalog&product=scp_1", "catalog"), "?screen=catalog")
   assert.equal(
@@ -80,13 +83,13 @@ test("search rewriting preserves unrelated parameters", () => {
     "?screen=listing",
   )
   assert.equal(
-    withScreen("?screen=listing&cardId=card-1", "products"),
-    "?screen=products",
+    withScreen("?screen=listing&cardId=card-1", "home"),
+    "?screen=home",
   )
   // A cardId injected on another screen (the progress chip) rides
   // into listing on purpose and survives.
   assert.equal(
-    withScreen("?screen=products&cardId=card-1", "listing"),
+    withScreen("?screen=home&cardId=card-1", "listing"),
     "?screen=listing&cardId=card-1",
   )
 })

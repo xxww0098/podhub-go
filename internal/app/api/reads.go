@@ -13,11 +13,14 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	billing "github.com/xxww0098/podhub-go/internal/billing/contract"
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
+	readdomain "github.com/xxww0098/podhub-go/internal/listing/read/domain"
 	platform "github.com/xxww0098/podhub-go/internal/listing/rules"
 	"github.com/xxww0098/podhub-go/internal/platform/db"
 	"github.com/xxww0098/podhub-go/internal/platform/db/sqlc"
 	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
+	"github.com/xxww0098/podhub-go/internal/platform/httpx/jsonwire"
 )
 
 func (s *Server) now() time.Time {
@@ -72,7 +75,7 @@ func (s *Server) BannedTagsEnabled(w http.ResponseWriter, r *http.Request) {
 	for _, rule := range rules {
 		body.Data.Rules = append(body.Data.Rules, bannedRuleWire{Term: rule.Term, MatchMode: rule.MatchMode})
 	}
-	writeJSON(w, http.StatusOK, body)
+	jsonwire.Write(w, http.StatusOK, body)
 }
 
 func (s *Server) loadEnabledRules(ctx context.Context) ([]platform.Rule, error) {
@@ -111,12 +114,12 @@ func (s *Server) AdminBannedTagsList(w http.ResponseWriter, r *http.Request) {
 		writeAdmin(w, status, message, "FORBIDDEN")
 		return
 	}
-	q, err := s.queries()
-	if err != nil {
-		writeAdmin(w, http.StatusInternalServerError, access.MsgUnavailable, "INTERNAL")
-		return
-	}
-	rows, err := q.ListBannedTags(r.Context())
+	var rows []sqlc.ListBannedTagsRow
+	err = s.platformRead(r.Context(), func(q *sqlc.Queries) error {
+		var err error
+		rows, err = q.ListBannedTags(r.Context())
+		return err
+	})
 	if err != nil {
 		slog.Error("admin banned tags", "err", err)
 		writeAdmin(w, http.StatusInternalServerError, access.MsgUnavailable, "INTERNAL")
@@ -129,7 +132,7 @@ func (s *Server) AdminBannedTagsList(w http.ResponseWriter, r *http.Request) {
 			CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, Enabled: row.Enabled,
 		})
 	}
-	writeJSON(w, http.StatusOK, body)
+	jsonwire.Write(w, http.StatusOK, body)
 }
 
 func adminCode(refusal *access.Refusal) string {
@@ -140,7 +143,7 @@ func adminCode(refusal *access.Refusal) string {
 }
 
 func writeAdmin(w http.ResponseWriter, status int, message, code string) {
-	writeJSON(w, status, adminErrorBody{Error: message, Code: code})
+	jsonwire.Write(w, status, adminErrorBody{Error: message, Code: code})
 }
 
 func (s *Server) BillingUsageStats(w http.ResponseWriter, r *http.Request) {
@@ -184,7 +187,7 @@ func (s *Server) BillingUsageStats(w http.ResponseWriter, r *http.Request) {
 		writeTelemetry(w, http.StatusInternalServerError, access.MsgUnavailable, "INTERNAL")
 		return
 	}
-	writeJSON(w, http.StatusOK, body)
+	jsonwire.Write(w, http.StatusOK, body)
 }
 
 func parseRollup(raw *string) (bool, error) {
@@ -372,10 +375,10 @@ func (s *Server) listUsage(ctx context.Context, q *sqlc.Queries, orgID int64, fr
 			ChargedMicrofen:       row.ChargedMicrofen,
 			AbsorbedMicrofen:      row.AbsorbedMicrofen,
 			ErrorClass:            textPtr(row.ErrorClass),
-			CreatedAt:             rfc3339Millis(row.CreatedAt.Time),
+			CreatedAt:             billing.RFC3339Millis(row.CreatedAt.Time),
 		}
 		if row.SettledAt.Valid {
-			settled := rfc3339Millis(row.SettledAt.Time)
+			settled := billing.RFC3339Millis(row.SettledAt.Time)
 			item.SettledAt = &settled
 		}
 		out = append(out, item)
@@ -411,7 +414,7 @@ func telemetryCode(refusal *access.Refusal) string {
 }
 
 func writeTelemetry(w http.ResponseWriter, status int, message, code string) {
-	writeJSON(w, status, telemetryErrorBody{Error: message, Code: code})
+	jsonwire.Write(w, status, telemetryErrorBody{Error: message, Code: code})
 }
 
 func (s *Server) ListListingJobs(w http.ResponseWriter, r *http.Request) {
@@ -431,7 +434,11 @@ func (s *Server) ListListingJobs(w http.ResponseWriter, r *http.Request) {
 		writeListing(w, http.StatusBadRequest, "cardId 无效", "validation")
 		return
 	}
-	micros, afterID := parseCursor(queryPtr(values, "cursor"))
+	var cursorText string
+	if raw := queryPtr(values, "cursor"); raw != nil {
+		cursorText = *raw
+	}
+	micros, afterID := readdomain.ParseCursor(cursorText)
 	var jobs []jobSource
 	err = s.tenantRead(r.Context(), p.OrgID, func(q *sqlc.Queries) error {
 		var qerr error
@@ -449,7 +456,7 @@ func (s *Server) ListListingJobs(w http.ResponseWriter, r *http.Request) {
 		writeListing(w, http.StatusInternalServerError, access.MsgUnavailable, "internal")
 		return
 	}
-	writeJSON(w, http.StatusOK, body)
+	jsonwire.Write(w, http.StatusOK, body)
 }
 
 func (s *Server) GetListingRun(w http.ResponseWriter, r *http.Request, id string) {
@@ -457,7 +464,7 @@ func (s *Server) GetListingRun(w http.ResponseWriter, r *http.Request, id string
 	if !ok {
 		return
 	}
-	canonical, valid := canonicalUUID(id)
+	canonical, valid := readdomain.CanonicalUUID(id)
 	if !valid {
 		writeListing(w, http.StatusBadRequest, "作业编号无效", "validation")
 		return
@@ -488,7 +495,7 @@ func (s *Server) GetListingRun(w http.ResponseWriter, r *http.Request, id string
 		writeListing(w, http.StatusInternalServerError, access.MsgUnavailable, "internal")
 		return
 	}
-	writeJSON(w, http.StatusOK, listingRunResponse{Data: view})
+	jsonwire.Write(w, http.StatusOK, listingRunResponse{Data: view})
 }
 
 func (s *Server) listingActor(w http.ResponseWriter, r *http.Request) (access.Principal, bool) {
@@ -501,7 +508,7 @@ func (s *Server) listingActor(w http.ResponseWriter, r *http.Request) (access.Pr
 		writeListing(w, refusal.Status, refusal.Message, listingCode(refusal))
 		return access.Principal{}, false
 	}
-	if status, message, ok := access.ListingPrepare(p); !ok {
+	if status, message, ok := access.OrgMember(p); !ok {
 		writeListing(w, status, message, "forbidden")
 		return access.Principal{}, false
 	}
@@ -520,7 +527,7 @@ func listingCode(refusal *access.Refusal) string {
 }
 
 func writeListing(w http.ResponseWriter, status int, message, code string) {
-	writeJSON(w, status, listingErrorBody{Error: message, Code: code})
+	jsonwire.Write(w, status, listingErrorBody{Error: message, Code: code})
 }
 
 func cardFilter(raw *string) (string, error) {
@@ -531,7 +538,7 @@ func cardFilter(raw *string) (string, error) {
 	if trimmed == "" {
 		return "", nil
 	}
-	id, ok := canonicalUUID(trimmed)
+	id, ok := readdomain.CanonicalUUID(trimmed)
 	if !ok {
 		return "", positiveError("cardId 无效")
 	}
@@ -655,7 +662,7 @@ func runView(row jobSource) (listingRunWire, error) {
 	if !row.Updated.Valid {
 		return listingRunWire{}, errors.New("job updated_at missing")
 	}
-	payload, err := canonicalJSON(row.Payload)
+	payload, err := jsonwire.Canonical(row.Payload)
 	if err != nil {
 		return listingRunWire{}, err
 	}

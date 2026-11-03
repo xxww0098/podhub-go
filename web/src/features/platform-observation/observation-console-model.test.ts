@@ -1,10 +1,10 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { observationLedgerSummary, observationProductsSummary, observationRosterSnapshots, utcSnapshotStamp } from "./observation-console-model"
+import { alignObservationTrend, observationLedgerSummary, observationProductsSummary, observationRosterSnapshots, utcSnapshotStamp } from "./observation-console-model"
 import { lifecycleScope } from "@/features/console/console-products"
 import { rosterSnapshotsFromStores, summarizeStoreRoster } from "@/features/console/console-metrics"
 import type { OzonStoreView, OzonStoresOverview } from "@/bindings/commands"
-import { observedStore, STORE_A, STORE_B } from "./observation-fixtures"
+import { observedOverview, observedStore, STORE_A, STORE_B } from "./observation-fixtures"
 import { observedLedger, STAMP } from "./observation-fixtures"
 
 test("exact server rates/median are copied, never averaged across workspaces", () => {
@@ -43,6 +43,15 @@ test("UTC day keys and snapshot timestamps do not shift to the browser's next lo
   assert.equal(utcSnapshotStamp(undefined), "—")
 })
 
+test("only aligned ledger days can be plotted alongside sales", () => {
+  const ledger = observationLedgerSummary(observedLedger())
+  const matching = alignObservationTrend([{ day: "2026-10-12", orderedUnits: 3 }], ledger)
+  assert.equal(matching.listingsComplete, true)
+  assert.equal(matching.points[0]?.listedUnits, 4)
+  const older = alignObservationTrend([{ day: "2026-09-01", orderedUnits: 3 }], ledger)
+  assert.equal(older.listingsComplete, false)
+})
+
 test("redacted observer credentials do not hide an available Cloud business snapshot", () => {
   const raw = { id: STORE_A, label: "Cloud Store", cloud_store_uuid: STORE_A, cloud_status: "active",
     configured: false, secret_status: "unavailable", client_id: "", ref_id: "", can_manage: false,
@@ -59,4 +68,45 @@ test("redacted observer credentials do not hide an available Cloud business snap
   assert.equal(summarizeStoreRoster(rosterSnapshotsFromStores([raw], metrics), STAMP).coverage.read, 0, "workbench eligibility stays unchanged")
   assert.equal(observationRosterSnapshots([{ ...raw, manual_disabled: true }], metrics)[0]?.eligibility, "manual_disabled")
   assert.equal(observationRosterSnapshots([{ ...raw, quota_suspended: true }], metrics)[0]?.eligibility, "quota_suspended")
+})
+
+test("quota totals account for unlimited, missing and archived allowances", () => {
+  const quotaStore = (id: string, total: { limit: number; usage: number; archived?: number } | null) => ({
+    id, cloud_store_uuid: id, product_quota: total ? { total } : null,
+  } as OzonStoreView)
+  const bounded = observationProductsSummary(observedOverview(), { stores: [
+    quotaStore(STORE_A, { limit: 100, usage: 20, archived: 5 }), quotaStore(STORE_B, { limit: 200, usage: 40 }),
+  ] })
+  assert.deepEqual(bounded.quotaUsage, { used: 60, limit: 305 })
+  assert.deepEqual(bounded.quotaCoverage, { read: 2, total: 2, unlimited: 0 })
+
+  const mixed = observationProductsSummary(observedOverview(), { stores: [
+    quotaStore(STORE_A, { limit: -1, usage: 20 }), quotaStore(STORE_B, { limit: 200, usage: 40 }),
+  ] })
+  assert.deepEqual(mixed.quotaUsage, { used: 60, limit: -1 })
+  assert.deepEqual(mixed.quotaCoverage, { read: 2, total: 2, unlimited: 1 })
+
+  const missing = observationProductsSummary(observedOverview(), { stores: [
+    quotaStore(STORE_A, { limit: 100, usage: 0 }), quotaStore(STORE_B, null),
+  ] })
+  assert.deepEqual(missing.quotaUsage, { used: 0, limit: 100 })
+  assert.deepEqual(missing.quotaCoverage, { read: 1, total: 2, unlimited: 0 })
+  const invalid = observationProductsSummary(observedOverview(), { stores: [quotaStore(STORE_A, { limit: 100, usage: NaN })] })
+  assert.equal(invalid.quotaUsage, null)
+  assert.equal(invalid.quotaCoverage.read, 0)
+})
+
+test("partial product counts stay unknown even if the aggregate contains a number", () => {
+  const overview = observedOverview()
+  const partial = observationProductsSummary({ ...overview, stores: [
+    overview.stores[0]!, { ...overview.stores[1]!, count_on_sale: null, count_hidden: null },
+  ] }, { stores: [] })
+  assert.deepEqual(partial.countsKnown, { onSale: false, pending: false, zeroStock: true })
+  const zero = observationProductsSummary({ ...overview, totals: { ...overview.totals, on_sale: 0, hidden: 0, moderation_failed: 0 }, stores: overview.stores.map((store) => ({ ...store, count_on_sale: 0, count_hidden: 0, count_moderation_failed: 0 })) }, { stores: [] })
+  assert.deepEqual(zero.countsKnown, { onSale: true, pending: true, zeroStock: true })
+  const invalidTotals = { ...overview.totals, on_sale: null, hidden: null } as unknown as typeof overview.totals
+  const unknownAggregate = observationProductsSummary({ ...overview, totals: invalidTotals }, { stores: [] })
+  assert.deepEqual(unknownAggregate.countsKnown, { onSale: false, pending: false, zeroStock: true })
+  const missingStock = observationProductsSummary({ ...overview, stores: [overview.stores[0]!, { ...overview.stores[1]!, count_zero_stock: null }] }, { stores: [] })
+  assert.equal(missingStock.countsKnown.zeroStock, false)
 })

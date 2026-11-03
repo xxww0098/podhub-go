@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
+	"github.com/xxww0098/podhub-go/internal/platform/httpx/jsonwire"
 	"github.com/xxww0098/podhub-go/internal/store/contract"
 	"github.com/xxww0098/podhub-go/internal/store/domain"
 )
@@ -100,7 +101,7 @@ func (h handler) createTag(w http.ResponseWriter, r *http.Request) {
 		writeTagFail(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, tagData{Tag: tagJSON(tag)})
+	jsonwire.Write(w, http.StatusOK, tagData{Tag: tagJSON(tag)})
 }
 
 // renameTag is PUT PathTag.
@@ -131,7 +132,7 @@ func (h handler) renameTag(w http.ResponseWriter, r *http.Request) {
 		writeTagFail(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, tagData{Tag: tagJSON(tag)})
+	jsonwire.Write(w, http.StatusOK, tagData{Tag: tagJSON(tag)})
 }
 
 // deleteTag is DELETE PathTag.
@@ -157,7 +158,7 @@ func (h handler) deleteTag(w http.ResponseWriter, r *http.Request) {
 		writeTagFail(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, tagDeleteData{UUID: deleted.UUID, Deleted: deleted.Deleted})
+	jsonwire.Write(w, http.StatusOK, tagDeleteData{UUID: deleted.UUID, Deleted: deleted.Deleted})
 }
 
 // validTagUUID lower-cases and checks the path parameter. A non-UUID answers

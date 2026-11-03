@@ -6,7 +6,6 @@ import { sharedListingCore } from "@/listing-core/client"
 
 import type { WorkflowOperationRowResult } from "@/bindings/commands"
 import {
-  OCR_RETRY_KEY_SUFFIX,
 } from "./ai-job"
 import { requestStop, setCardContext } from "./execution-context"
 import {
@@ -171,14 +170,17 @@ test("stop while waiting on a busy OCR ceiling ends the row as cancelled, not fa
   }
 })
 
-test("OCR timeout recovers a settled usable purchase through GET include and does not fail the job", async () => {
+for (const reply of ["disconnected", "malformed"] as const) test(`a ${reply} OCR response recovers the persisted purchase without another POST or job failure`, async () => {
   const stub = record(call => {
     if (call.url.endsWith("/prepare")) return { outcome: "running", jobs: [{ id: "job-1", kind: "ai.recognize", idempotency_key: "recover-key", payload: { source_sha256: "source-sha", recognition_prompt: { fixed_tags: FIXED_TAGS, content: "prompt" } } }] }
-    if (call.url.endsWith("/ocr/completions") && call.method === "POST") throw new TypeError("The operation was aborted.")
+    if (call.url.endsWith("/ocr/completions") && call.method === "POST") {
+      if (reply === "malformed") return new Response('{"data":', { status: 200, headers: { "Content-Type": "application/json" } })
+      throw new TypeError("The operation was aborted.")
+    }
     if (call.url.includes("include=ocrRecovery")) {
       return { ...ROW, ocr_recovery: ocrRecoveryView([
         { attempt: "original", status: "settled", requestId: "air-purchase", resultUsable: true },
-        { attempt: "contract_retry", status: "absent" },
+
       ]) }
     }
     if (call.url.endsWith("/ai/fail")) throw new Error("timeout must not fail the job")
@@ -190,37 +192,28 @@ test("OCR timeout recovers a settled usable purchase through GET include and doe
     const [result] = await withStubbedDevice(() => runRows({ row_ids: [ROW.id], expected_revisions: [] }, "recognize"))
     assert.equal(result?.error, undefined)
     assert.equal(result?.product?.lifecycle.revision, 10)
+    assert.equal(stub.calls.filter(call => call.url.endsWith("/ocr/completions") && call.method === "POST").length, 1)
     assert.equal(stub.calls.filter(call => call.url.endsWith("/ai/settle")).length, 1)
     assert.equal(stub.calls.some(call => call.url.endsWith("/ai/fail")), false)
     assert.ok(stub.calls.some(call => call.url.includes("include=ocrRecovery")))
   } finally { stub.restore() }
 })
 
-test("OCR recovery posts the contract retry when original is settled and unusable", async () => {
+test("OCR recovery sends an unusable paid theme to manual handling without repurchase", async () => {
   const stub = record(call => {
-    if (call.url.endsWith("/prepare")) return { outcome: "running", jobs: [{ id: "job-1", kind: "ai.recognize", idempotency_key: "recover-key", payload: { source_sha256: "source-sha", recognition_prompt: { fixed_tags: FIXED_TAGS, content: "prompt" } } }] }
-    if (call.url.endsWith("/ocr/completions") && call.method === "POST") {
-      if (call.headers["Idempotency-Key"] === `recover-key${OCR_RETRY_KEY_SUFFIX}`) return COMPLETION
-      throw new TypeError("The operation was aborted.")
-    }
-    if (call.url.includes("include=ocrRecovery")) {
-      return { ...ROW, ocr_recovery: ocrRecoveryView([
-        { attempt: "original", status: "settled", requestId: "air-bad", resultUsable: false },
-        { attempt: "contract_retry", status: "absent" },
-      ]) }
-    }
-    if (call.url.endsWith("/ai/settle")) return { ...RECOGNISED, revision: 10 }
+    if (call.url.endsWith("/prepare")) return {outcome:"running",jobs:[{id:"job-1",kind:"ai.recognize",idempotency_key:"recover-key",payload:{source_sha256:"source-sha",recognition_prompt:{fixed_tags:FIXED_TAGS,content:"facts"}}}]}
+    if (call.url.endsWith("/ocr/completions") && call.method==="POST") throw new TypeError("The operation was aborted.")
+    if (call.url.includes("include=ocrRecovery")) return {...ROW,ocr_recovery:ocrRecoveryView([{attempt:"original",status:"settled",requestId:"air-bad",resultUsable:false},])}
     return ROW
   })
   try {
     const { runRows } = await import("./run-rows")
-    const [result] = await withStubbedDevice(() => runRows({ row_ids: [ROW.id], expected_revisions: [] }, "recognize"))
-    assert.equal(result?.error, undefined)
-    const posts = stub.calls.filter(call => call.url.endsWith("/ocr/completions") && call.method === "POST")
-    assert.deepEqual(posts.map(call => call.headers["Idempotency-Key"]), ["recover-key", `recover-key${OCR_RETRY_KEY_SUFFIX}`])
-    assert.equal(stub.calls.filter(call => call.url.endsWith("/ai/settle")).length, 1)
-    assert.equal(stub.calls.some(call => call.url.endsWith("/ai/fail")), false)
-  } finally { stub.restore() }
+    const [result] = await withStubbedDevice(() => runRows({row_ids:[ROW.id],expected_revisions:[]},"recognize"))
+    assert.equal(result?.error?.code,"workflow_ai_result_unusable")
+    assert.equal(stub.calls.filter(c=>c.url.endsWith("/ocr/completions")&&c.method==="POST").length,1)
+    assert.equal(stub.calls.some(c=>c.url.endsWith("/ai/settle")),false)
+    assert.equal(stub.calls.filter(c=>c.url.endsWith("/ai/fail")).length,1)
+  } finally {stub.restore()}
 })
 
 test("OCR recovery pauses on unbilled_unknown without failing the job", async () => {
@@ -232,7 +225,7 @@ test("OCR recovery pauses on unbilled_unknown without failing the job", async ()
     if (call.url.includes("include=ocrRecovery")) {
       return { ...ROW, ocr_recovery: ocrRecoveryView([
         { attempt: "original", status: "unbilled_unknown", requestId: "air-unknown" },
-        { attempt: "contract_retry", status: "absent" },
+
       ]) }
     }
     if (call.url.endsWith("/ai/fail")) throw new Error("unbilled_unknown must not fail the job")
@@ -262,7 +255,7 @@ test("an upstream 429 arrives as a terminal 502 that pauses into recovery, never
     if (call.url.includes("include=ocrRecovery")) {
       return { ...ROW, ocr_recovery: ocrRecoveryView([
         { attempt: "original", status: "unbilled_unknown", requestId: "air-unknown" },
-        { attempt: "contract_retry", status: "absent" },
+
       ]) }
     }
     if (call.url.endsWith("/ai/fail")) throw new Error("an uncertain upstream must not fail the job")
@@ -300,7 +293,7 @@ test("a same-key replay over a terminal-unbilled purchase pauses into recovery i
     if (call.url.includes("include=ocrRecovery")) {
       return { ...ROW, ocr_recovery: ocrRecoveryView([
         { attempt: "original", status: "unbilled_unknown", requestId: "air-unknown" },
-        { attempt: "contract_retry", status: "absent" },
+
       ]) }
     }
     if (call.url.endsWith("/ai/fail")) throw new Error("a terminal-unbilled replay must not fail the job")
@@ -328,7 +321,7 @@ test("Stop during a lost OCR response does not fail the job", async () => {
     if (call.url.includes("include=ocrRecovery")) {
       return { ...ROW, ocr_recovery: ocrRecoveryView([
         { attempt: "original", status: "settled", requestId: "air-purchase", resultUsable: true },
-        { attempt: "contract_retry", status: "absent" },
+
       ]) }
     }
     if (call.url.endsWith("/ai/fail")) throw new Error("stop after a paid OCR must not fail the job")

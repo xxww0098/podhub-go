@@ -34,14 +34,17 @@ const (
 	RoleWorker = "podhub_worker"
 	// RoleCatalog is the global Ozon error-catalog writer role.
 	RoleCatalog = "podhub_ozon_catalog"
+	// RoleMaintenance is the cross-tenant sweep role. 00368 gives it the
+	// ai_requests read, the response_body blanking, the billing_operations
+	// lock read, and the aged client_listing_logs delete. It cannot settle,
+	// bill, or delete an ai_requests row.
+	RoleMaintenance = "podhub_maintenance"
 	// GUCCurrentOrgID is the transaction-local tenant setting.
 	GUCCurrentOrgID = "app.current_org_id"
 	// GUCStaffAccess is set to staffAccessOn for a staff session.
 	GUCStaffAccess = "app.staff_access"
 	// GUCPlatformObserverID is the super-admin observer user id.
 	GUCPlatformObserverID = "app.platform_observer_id"
-	// GUCCurrentWalletUserID is the wallet owner user id.
-	GUCCurrentWalletUserID = "app.current_wallet_user_id"
 	// GUCCurrentSupplierUserID is the supplier user id.
 	GUCCurrentSupplierUserID = "app.current_supplier_user_id"
 	// GUCCurrentOrgUserID is the catalog manager's platform user id.
@@ -143,16 +146,6 @@ func EnterObserver(ctx context.Context, tx pgx.Tx, userID int64) error {
 	return err
 }
 
-// EnterWalletUser sets the app role, the org id, and the wallet user id.
-// The org and role statement is EnterApp. The wallet id is the decimal user id.
-func EnterWalletUser(ctx context.Context, tx pgx.Tx, orgID, userID int64) error {
-	if err := EnterApp(ctx, tx, orgID); err != nil {
-		return err
-	}
-	_, err := tx.Exec(ctx, "SELECT set_config($1, $2, true)", GUCCurrentWalletUserID, strconv.FormatInt(userID, 10))
-	return err
-}
-
 // EnterSupplierUser sets the app role, the org id, and the supplier user id.
 // Order matches supplier withTx: EnterApp, then the supplier GUC.
 func EnterSupplierUser(ctx context.Context, tx pgx.Tx, orgID, userID int64) error {
@@ -192,12 +185,20 @@ func EnterCatalog(ctx context.Context, tx pgx.Tx) error {
 
 // EnterCatalogManager sets the app role and app.current_org_user_id. It never
 // sets app.staff_access: a catalog manager is not staff, and the staff arm on
-// sc_source_members and the wallet tables would otherwise open every source.
+// sc_factory_members and the wallet tables would otherwise open every source.
 // The org GUC is left unset, like EnterSupplier.
 func EnterCatalogManager(ctx context.Context, tx pgx.Tx, userID int64) error {
 	_, err := tx.Exec(ctx,
 		"SELECT set_config('role', $1, true), set_config($2, $3, true)",
 		RoleApp, GUCCurrentOrgUserID, strconv.FormatInt(userID, 10),
 	)
+	return err
+}
+
+// EnterMaintenance sets the cross-tenant sweep role and no app GUC. The
+// policies in 00368 are written for this role alone; a sweep must not run as
+// podhub_app, whose tenant_isolation needs an org id it does not have.
+func EnterMaintenance(ctx context.Context, tx pgx.Tx) error {
+	_, err := tx.Exec(ctx, "SELECT set_config('role', $1, true)", RoleMaintenance)
 	return err
 }

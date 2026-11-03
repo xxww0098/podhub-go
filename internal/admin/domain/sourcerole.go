@@ -1,32 +1,25 @@
 package domain
 
 import (
-	"bytes"
-	"strconv"
+	"encoding/json"
+	"strings"
 
 	"github.com/xxww0098/podhub-go/internal/admin/contract"
 )
 
-// SourceRoleGrant is a grant body: the target account id.
-type SourceRoleGrant struct {
-	UserID int64
-}
-
-// DecodeSourceRoleGrant requires userId as an unquoted positive integer and
-// rejects every other field. A quoted number is invalid: the admin UI always
-// sends account ids as JSON numbers.
-func DecodeSourceRoleGrant(body []byte) (SourceRoleGrant, error) {
+// Source grants use the public account identifier exposed by account pickers.
+func DecodeSourceAccountGrant(body []byte) (string, error) {
 	raw, err := strictObject(body)
-	if err != nil || !hasOnly(raw, []string{"userId"}) || !requireKeys(raw, []string{"userId"}) {
-		return SourceRoleGrant{}, invalid()
+	if err != nil || !hasOnly(raw, []string{"account_uuid"}) || !requireKeys(raw, []string{"account_uuid"}) {
+		return "", invalid()
 	}
-	value := bytes.TrimSpace(raw["userId"])
-	if len(value) == 0 || value[0] == '"' || bytes.Equal(value, []byte("null")) {
-		return SourceRoleGrant{}, fail(contract.KindValidation, "请选择要授权的账号")
+	var id string
+	if err := json.Unmarshal(raw["account_uuid"], &id); err != nil {
+		return "", invalid()
 	}
-	id, err := strconv.ParseInt(string(value), 10, 64)
-	if err != nil || id <= 0 {
-		return SourceRoleGrant{}, fail(contract.KindValidation, "请选择要授权的账号")
+	id = strings.TrimSpace(id)
+	if id == "" || len(id) > 128 {
+		return "", fail(contract.KindValidation, "请选择要授权的账号")
 	}
-	return SourceRoleGrant{UserID: id}, nil
+	return id, nil
 }

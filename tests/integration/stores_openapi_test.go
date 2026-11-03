@@ -19,7 +19,7 @@ import (
 	ratinghttp "github.com/xxww0098/podhub-go/internal/ratings/http"
 	ratingrepo "github.com/xxww0098/podhub-go/internal/ratings/repo"
 	ratingsvc "github.com/xxww0098/podhub-go/internal/ratings/service"
-	"github.com/xxww0098/podhub-go/internal/seller"
+	seller "github.com/xxww0098/podhub-go/internal/seller/ozon"
 	storehttp "github.com/xxww0098/podhub-go/internal/store/http"
 	storerepo "github.com/xxww0098/podhub-go/internal/store/repo"
 	storesvc "github.com/xxww0098/podhub-go/internal/store/service"

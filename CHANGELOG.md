@@ -1,12 +1,97 @@
 # 版本记录
 
-产品版本以 [VERSION](VERSION) 为唯一事实源（semver `X.Y.Z`，当前 **0.0.107**）。0.0.86–0.0.91 曾把 VERSION 升到该号并记为发布，仓库里没有对应 tag。
+源码版本以 [VERSION](VERSION) 为唯一事实源（semver `X.Y.Z`）。0.0.86–0.0.91 曾把 VERSION 升到该号并记为发布，仓库里没有对应 tag。
 
 从 0.0.86 起，每个版本在下面按「新增 / 优化 / 修复」写给操作者看的条目。更早的 tag 仍用表格登记提交摘要。工作台「更新日志」只展示 semver 最新的 3 个版本。
 
-本仓库只包含源码与构建：发布、部署与激活由运维侧单独完成，不在仓库内。
+本文件保留产品历史版本记录，条目不证明当前 Go 实现、外部功能准入或生产部署状态。当前能力边界见[技术验证清单](docs/precision-listing-verification.md)。发布、部署与激活由运维侧单独完成。
 
 ## 未发布
+
+#### 新增
+
+- 工作空间管理与成员生命周期接通真实接口：`GET /api/workspaces`、重命名、解散、退出、移除成员和调整成员角色不再返回 501。解散按钱包、支付订单、Seller 凭证、店铺、邀请和成员顺序清理；退出会先解除店铺分配；所有写操作校验角色并写审计。
+
+- 类目提示词与视频素材读取接通真实接口：`GET /api/prompts/categories`、`GET /api/prompts/category/{description_category_id}/{type_id}` 与 `GET /api/videos/category/{description_category_id}/{type_id}` 不再返回 501，按名称稳定排序；提示词正文和固定标签只返回给平台管理员，普通账号只拿到选择所需的元数据。
+
+- 头像读取与工作空间头像上传接通：`GET /api/avatars/me`、`DELETE /api/avatars/me`、`GET /api/avatars/workspaces/{workspace_id}`，以及 `POST /api/avatars/workspaces/{workspace_id}/upload` 加票据 PUT 和 `PUT /api/avatars/workspaces/{workspace_id}` 确认。JPEG 上限 256KB，只有工作空间所有者可改，上传票据 15 分钟有效且重复 PUT 返回 412。
+
+- 卖家商品库的入仓配送接通真实读取和首次注入：`GET /api/workspaces/stores/{uuid}/shipping/readiness` 按 SKU 返回绑定预设、版本与阻塞原因；`POST /api/workspaces/stores/{uuid}/shipping/ensure` 先核对远端仓库，再只在安全证明有效时创建仓库并返回最新状态。写入开关关闭或 Ozon 写入熔断返回 503；本轮只支持首次创建，不包含仓库更新与删除。
+
+- 运营补齐：团队邀请与私密链接、按筛选全量 CSV 导出、个人商品筛选视图、店铺每日上架额度与发送间隔、跨店任务记录。策略等待展示原因与下次时间，超额批次拆分；明确未发送的拆批首段可安全恢复，未知结果保持核对。迁移 `00018`、`00019`；本轮不包含 XLSX、导入或新增 Seller 能力。
+
+- 订阅：店铺上限、自动续费订单与到期冻结。每个工作区单次最多购买 100 家店铺（超出返回 `STORE_CAP_EXCEEDED`，数据库 CHECK 同步收紧）；到期前 72 小时为开启自动续费的工作区生成一张 1 个月续费订单，需用户选择支付方式并确认后才生效，不自动扣款，订阅页新增开关和待确认订单面板，通知中心新增续费提醒与冻结通知；付过费的工作区到期后所有店铺冻结（不能发布、同步、发放密钥，媒体中转额度为 0），续费后恢复，从未付费的免费工作区不变，管理员的店铺上限覆盖优先于冻结。新增 `POST /api/billing/orders/{public_id}/pay`、`PUT /api/billing/auto-renew`，订阅视图新增 `auto_renew`、`frozen`、`store_cap`、`pending_provider` 等字段，购买确认版本升为 `subscription-2026-10-30`。迁移 `00014`；已有超过 100 店的订阅行会使迁移失败而不是被截断。设计与取舍见 [D25](docs/decisions.md) 和[订阅与续费](docs/architecture/subscription-billing.md)。
+
+#### 优化
+
+- AI 文本调用改为三种原生协议：保留 `POST /api/ai/chat/completions`，新增 `POST /api/ai/v1/messages` 与 `POST /api/ai/responses`；每个入口只调用同格式的上游账号，不做协议转换，流式请求在冻结前返回 400。计费改用 `internal/billing/contract` 的四路整数计价与按单次上限冻结（实际用量在上限内实扣，超出部分平台承担）；AI 账号新增 `chat` 用途，后台「AI 账号」增加「对话」分类。移除 RelayKit、`third_party/new-api` 和 `internal/platform/newapibilling`，仓库改为专有许可；迁移 `00029` 删除已无读写的比率镜像表。
+
+- 平台侧栏「供应商商品库」改名为「平台商品库管理」。页内建库、空态和读写失败仍称「平台商品库」。路由与接口路径不变。卖家「商品经营」里的「平台商品库」仍是选品画廊。
+
+- 单机生产部署的 `worker-media-gc` 默认开启：`compose.yaml` 在未设置 `CLOUD_MEDIA_GC_DELETE` 时传 `1`，新 VPS 不再保留用户切片前缀的过期对象；显式设 `0` 时 worker 仍正常退出，`on-failure` 不会重启循环。README 与 `.env.example` 同步说明。
+
+- 删除 SPA 中从未接通的商品变体操作、OCR 配额和 SKU 导入入口及其 `routes.ts` / OpenAPI 契约；`mounted.test.ts` 的未挂载清单清零，前端不再能点到服务端不存在的路径。SKU 导入的 Rust 纯规则保留，待外部商品读取链路验证后再接 API。
+
+- 平台素材库与私有数据的 R2 仅由 `R2_ASSETS_*`、`R2_PRIVATE_*` 服务端环境变量配置，后台不提供存储配置入口；删除旧存储配置模型，旧连接快照重写时移除 R2 字段，保留 AI 与支付配置。切片继续使用个人设置，不读取 `R2_TRANSIT_*`；部署配置可移除这些旧项及失效的 `CLOUD_AI_EGRESS_ALLOW_PUBLIC`。
+
+- 供应商商品详情分为「主要信息」「平台字段」「AI识图」。标题公式、描述、输出开关、固定标签及免费公式测试/真实图片付费测试集中在识图；保存直接替换唯一当前配置，删除草稿/发布版本和历史接口。删除全局提示词管理、同步及文件导入、未实现 WB 类目凭证入口、重复通知设置跳转和禁用邀请表单。迁移 00016 合并最后保存事实并删除修订表；钱包账单保留。侧栏默认收起。
+
+- AI识图只识别画面主题，由程序按已确认商品事实拼装标题、描述及 tags，删除逐商品提示词二次优化、AI 复核和付费修正重试。真实同图验证马克杯、鼠标垫等六类条件；新建数字油画供应商方案已跑通私有图片、真实模型、钱包扣费、文案持久化、WASM 生成 9 张 JPEG 及公开上传回读。修复类目树零类型目录丢失、Ozon 配置 API 格式、供应商默认字段/输出策略及媒体核验接线；补上前端删除商品行按钮对应的接口。Seller 写入与远端部署未验证。迁移 00015 删除旧构建数据，00016 删除配置历史；运行前须处理在途旧任务并备份。见[实现与验证](docs/architecture/artwork-ocr.md)。
+
+- 店铺图标统一为 `StoreIcon`（`web/src/components/store-icon.tsx`）：描边从 2 调到 1.5，小尺寸下遮阳棚不再糊成一团，顶栏「店铺管理」按钮放大到 18px。原先 17 个文件各自引用 lucide 的 `Store`，现在换图只改一处。
+
+- 钱包改为工作空间钱包:每个工作空间有自己的余额、冻结、账本和消费,同一用户的多个工作空间不再共用。AI 调用、识图、生图、充值、兑换码、管理员充值与撤回、代理佣金转入和委托结算都落在对应工作空间。迁移 `00013` 把 `user_wallets` 换成 `workspace_wallets`(主键 `org_id`),删除 `wallet_ledger.user_id` 与钱包用户 GUC `app.current_wallet_user_id`,`db.WalletUser` 会话一并删除。旧钱包按账本拆分:每个工作空间保留自己的未结算冻结,所有者其余余额归入最早创建的未解散工作空间,并写 `wallet-split:<org_id>` 调整行;多工作空间的所有者上线后需核对余额。余额不足的 402 文案改为「工作空间钱包余额不足:可用 ¥x,需要 ¥y」。
+- 顶栏钱包入口恢复:原先只在账户概览带 `entitlement` 时才显示,而概览接口从不返回它,入口一直不出现。现在有当前工作空间就显示余额,读取失败显示「—」,点击进入用量页。用量页新增钱包账本(最近 50 条)和 AI 消费日志表,日志页脚按 NOTICE 署名 New API contributors;平台管理员可在用户目录里按工作空间充值和撤回。
+
+- 识图与 AI 账号池合并成设置里的一页「AI 账号」，页内分「AI识图」「生图」「运行限制」三个标签。每个 AI 账号新增必填的用途 `purpose`（`ocr` 或 `image`），识图只用 `ocr` 账号，生图只用 `image` 账号，不再靠模型名 `qwen-image-2.1-pro` 区分；默认识图模型只能取自启用的 `ocr` Chat Completions 账号。设置里的「AI识图」入口删除。旧配置读取时按模型名补 `purpose` 并自动重新加密写回。
+- AI 并发与速率限制、租约时长和公网探测开关从环境变量迁到后台「运行限制」，保存在加密的平台连接配置里（`GET/PUT /api/admin/integrations/config` 新增 `ai_runtime`，PUT 省略则保留原值）。环境变量 `CLOUD_AI_MAX_CONCURRENCY_GLOBAL`、`CLOUD_AI_MAX_CONCURRENCY_USER`、`CLOUD_AI_MAX_CONCURRENCY_ACCOUNT`、`CLOUD_AI_USER_RATE_PER_MINUTE`、`CLOUD_AI_LEASE_TTL_SECONDS`、`CLOUD_AI_EGRESS_ALLOW_PUBLIC` 删除，部署需在后台重新填写；没有配置时各上限关闭、租约 90 秒、不允许公网探测。配置存在但无法解密时 AI 请求返回 503。`CLOUD_AI_EGRESS_ALLOW_LOOPBACK` 仍是本机测试用的环境变量。
+- 类目抓取固定下载中文版本：类目抓取页删除「抓取语言」下拉，`GET/PUT /api/catalog/fetch-config` 不再带 `language` 字段（PUT 带上会被拒绝），`platform_catalog_fetch_config.language` 列由 `00008` 删除。抓取任务内置 `zh_hans`，类目树和字段缓存只写中文行；`GET /api/catalog/tree`、`/api/catalog/schema` 的 `language` 查询参数不变。
+- 修复类目抓取页点「立即抓取」后误报「云端结果待确认」：`POST /api/catalog/fetch-config/run` 返回的是不带 `data` 外层的 JSON，前端却按带外层解析。抓取本身已成功，现在按实际格式读取。
+- WASM 模块从六个减到三个：禁用标签匹配并入 listing-core（新 op 20，仅服务端构建），删除 `listing-tags.wasm`、`test/host-probe.wasm` 和单线程 `render_wasm.wasm`。Go 的 `engine.Engine` 改为经 listing-core 的实例池调用，不再自带 wazero 池；`LISTING_TAGS_WASM`、`WASM_HOST_PROBE`、`LISTING_CORE_WASM`、`LISTING_STATE_WASM` 环境变量删除。`scripts/build-wasm.sh` 一个脚本构建全部（`core`、`render`、`all`），`make listing-wasm`、`make web-wasm` 和 `web/scripts/build-render.sh` 删除；`check-wasm-dist.sh` 的清单只保留一个工具链字段、一个源码指纹、一个 glue 指纹和两个模块哈希。
+- 同源多规格导入的货号与型号改由 listing-core 的新 op 19（`seedAssociatedRow`）生成：同款每个规格的草稿现在带固定货号 `PH-<行 id>`（含 9024 卖家编码）和共同型号 `PHM-…`（9048），`association_id` 与 `model_value` 同步存入行。此前这两项只写了数据库列，草稿里没有。Go 侧删除了自己的一份身份派生公式（`AssociationIdentity`）。类目没有普通 9048 字段时返回 400，货源绑定不一致或方案没有绑定货源商品时返回 409。
+
+- 页面名称按数据来源直译：管理员的「货源管理」改为「供应商商品库」，卖家的「平台货源」改为「平台商品库」，「店铺商品」改为「Ozon 商品」，超级管理员的「平台店铺商品」改为「全部 Ozon 商品」。侧栏、首页入口、提示文案、接口错误文案同步改名，路由和接口路径不变。「全部 Ozon 商品」和「平台数据大屏」的范围选择、搜索、「包含已下架」与重读合并到一行工具条，与「Ozon 商品」页同一版式；工作空间和店铺选择器不再带上方文字标签，右侧只留「只读」标记和重读按钮
+- 删除旧成员席位批次体系：`member_seat_lots`、`member_seat_lot_credits`、`ocr_credit_lots` 三张表；`payment_orders` 的 `member_seats`、`credit_cents`、`credit_lots`、`renews_lot_id`、`unit_month_cents`、`list_unit_month_cents`、`duration_days` 列（订单 `product` 只剩 `subscription`、`wallet_topup`、`platform_goods`）；`organizations.seat_limit` 列（成员上限改读 `subscription_capacity()`）。兑换码只发放钱包额度，创建请求为 `{quantity, wallet_cents, expires_at?, note?}`，用户兑换响应为 `{ok, wallet_cents}`，MCP 删除 `generateActivationCodes`。管理端删除 `POST /api/admin/users/{uuid}/member-seats/preview` 与 `apply`，`POST /api/admin/users/{uuid}/seats` 的请求体改为 `{seats: 1–10 | null}`，只覆盖成员上限、不再动店铺上限。接口删除 `/api/plans`、`/api/payment-intent`、`/api/payment-intent/renewal`、`/api/workspace/billing/overview` 及其 `SeatCatalog*`、`MemberSeatLotView` 等 schema；订单视图去掉席位与抵扣字段，代理佣金视图去掉 `member_seats`
+- 成员不再售卖，取代下一条里的成员单价：每个工作区的成员上限全局为 10 人（含所有者），free 和所有付费套餐相同；超出上限的加入者按加入顺序暂停，所有者不会被暂停。月价 = 店铺数 × 店铺单价。接口删除 `members` 目标、`keep_member_ids`、`member_choices` 和 `member_monthly_cents`，订阅里的 `members{used, limit}` 只读展示；基线 schema 删除 `plans.member_monthly_cents` 以及 `subscriptions`、`subscription_periods`、`subscription_quotes` 上的成员列。管理端覆盖成员上限的范围从 1–200 收紧为 1–10，超出返回「成员名额需在 1-10 之间」
+- 订阅改为按套餐线性计价、按绝对数量购买：月价 = 店铺数 × 店铺单价 + （成员数 − 1）× 成员单价，所有者是唯一免费成员，不再有套餐月费、包含的店铺数、「加购」增量和全局计费设置。种子单价为 lite ¥20/¥30、pro ¥25/¥30、max ¥30/¥30（每店铺/每名额外成员每月），单价在每个付费期间内冻结；升级或增加容量补月价差额并折算到期间结束，减少容量免费、下期生效。free 为 1 店 1 成员。接口字段 `extra_stores`、`extra_members` 改为绝对数量 `stores`、`members`，目录改为 `plans[]` 的各套餐单价；管理端套餐只保留 `store_monthly_cents`、`member_monthly_cents`。基线 schema 删除 `billing_settings` 表和 `plans` 的 `price_monthly_cents`、`price_yearly_cents`、`seat_limit`、`max_stores` 列。套餐目前只区分店铺单价和数量，按档位的功能开关尚未实现
+- 超级管理员的验证器与二次验证整体删除：不再有绑定、恢复码、验证码登录或 15 分钟 step-up 窗口，`/api/admin/totp/enroll`、`/api/admin/totp/confirm`、`/api/admin/step-up` 三条路由和相关密钥配置一起移除；管理员只用邮箱和密码登录，管理权限由平台角色 `super_admin` 决定
+- 一个浏览器只保持一个账号：登录、切换账号和「添加账号」都不再堆叠会话，`sids` cookie、`/api/auth/switch`、`DELETE /api/auth/accounts/{uuid}` 与账号切换菜单一起删除。换账号请退出后重新登录；账户菜单只剩「创建工作空间」和「退出登录」，会话里带上本账号的 `uuid`，工作台的本地快照、套图归属和诊断身份仍按账号区分
+- 迁移历史压缩为三个基线文件（角色、head schema、种子配置）：空库从 329 个迁移文件变成三步，schema 与种子行逐项对照一致。按旧链迁到 368 的库不再兼容：本版在基线之上带了 `00004`，这种库会以错误退出并报出版本 368，而不是静默跳过新迁移，开发库用 `RESET_DB=1` 重建
+- 未验证邮箱的提示改成弹窗，不再占工作台顶上的一条横条：内容不变，仍说明验证后才能接受工作空间邀请，并带「重新发送」；点「稍后」只关掉这一次提示，账户设置里常驻同一重发入口
+- 设置里的详情页（账号、通知、外观、本机存储、MCP）改成居中的阅读栏，不再横向铺满整块画布；成员、方案和平台管理这类表格页仍占满宽度
+- 登录页去掉「忘记密码」按钮，登录卡只剩邮箱、密码和「创建账户」；`POST /api/auth/forgot` 与邮件里的重置链接仍可用，重置密码不再从登录页自助发起
+- 左侧菜单默认宽度从 256px 收到 224px，把 32px 还给内容区：菜单文字、分组标题和底部账户区都不截断，拖动分栏仍可放宽到 320px 或折叠成 48px 图标栏
+- 店铺名册去掉「标签」列，标签仍可在筛选条和店铺资料里使用；批量导入导出的 `#` 后面改为分组，一行只能写一个分组（`店铺名,Client ID,API Key #分组`），写多个时该行报「分组只能填一个」。没有 `#` 保留原分组，单独一个 `#` 清空分组，分组不存在时导入会先创建。
+- 工作台的四个上架统计卡改成单一白卡加分隔线：去掉页脚那块近乎看不见的浅灰底，数值区与说明区不再被一条硬边分成白、灰两段，深色主题同样按分隔线区分。
+
+#### 修复
+
+- 管理页面和平台设置统一进入 `/admin`，类目抓取配置、商品库识图测试统一使用 `/api/admin/...`，旧接口路径撤下。管理路由在调用替换处理器前强制鉴权，修正提示词、视频、兑换码与日志的旧权限声明；工作空间角色不能获得平台管理权限。
+
+- 生产前租户隔离补齐：迁移 `00024_org_scope_rls.sql` 给 `organization_stores`、`organization_members`、`org_invitations`、店铺分组/标签、Seller 凭证、`sc_listing_bindings`、`sc_order_quotes`、`sc_procurements`、`shipping_inject_operations`、`shipping_shop_injections`、`support_grants` 共 15 张表启用并强制 RLS，带 `tenant_isolation` 与 `staff_all`；`organization_stores` / `organization_members` 另给账单函数所有者补只读策略，避免订阅容量函数在非超级用户下失效。注册、登录、邀请和通知改用 staff 事务读取这些表；迁移 `00025_sc_orders_staff_access.sql` 给 `sc_orders` / `sc_order_lines` 补 staff 策略，恢复管理端采购跨组织读取；迁移 `00026_shipping_inject_org_positive.sql` 给两张 shipping 注入表补 `org_id > 0` 约束；新增双组织隔离与策略存在性测试。
+
+- 单机生产部署补齐：新增 `cmd/migrate` 一次性迁移作业（按 `PODHUB_API_DB_PASSWORD` / `PODHUB_WORKER_DB_PASSWORD` 设置 API 与 worker 登录角色）、`cmd/lease-keeper` 每 20 秒续期八个写域、`CLOUD_DATABASE_ALLOW_REMOTE_HOST` 显式开关，以及 Docker 镜像 CA 证书和 Caddy 同源 SPA/API 反向代理；`/api/health` 现在列出真实租约（空库返回 `[]` 而非伪造行），Caddy 静态资源缓存与 SPA fallback 已通过容器验证。
+
+- 修复后台 R2 存储统计因普通数据库登录角色无法写入审计而返回 500：审计改用 staff 事务，补正常 API 数据库角色的持久化与角色复位回归。两个环境配置的 R2 测试桶已通过真实上传、SHA-256 回读、防覆盖与精确清理验证。
+
+- 数据库权限、用户和供应商账号表加固（迁移 `00009`），以下问题都已在迁移前的库上复现：
+  - 供应商会话可以给自己写任意来源的成员行，或把自己被停用的成员行改回启用；可以直接把自己履约包的状态改成已发货、改包的内容。现在供应商只能读，状态只经接单、驳回、发货三个函数变化。
+  - 这三个函数以定义者身份运行，却不核对调用者：任何应用会话传入别人的用户 ID 与履约人 ID 就能接单或发货。现在调用者必须是该用户本人，或是平台人员会话。
+  - 角色按原样存储，`Super_Admin`、` admin` 这类值能过后台闸门却绕开唯一超级管理员索引，现在只允许 `user` / `admin` / `super_admin`，已有值转小写。邮箱带空白或形态不对、`public_id` 或 `uuid` 重复、空白密码哈希，一律拒绝。
+  - 代理归因绑定后，费率、来源、时间同样不可改，此前只有邀请人一列只读。`account_kind` 创建后不可改。
+  - 厂家成员与履约人必须是供应商账号，商品负责人必须是平台账号，此前只有 Go 代码检查。授权行不能改账号或来源，只能撤销与恢复。
+  - 会话、工作空间成员、邀请和工作空间所有者补了外键，不存在的用户 ID 不能再预先写入；会话令牌和重置令牌只能存 SHA-256 摘要，原始令牌写不进去。迁移会删除不合格的会话与重置令牌，持有者需重新登录。
+  - 支持授权只能签给未停用的平台人员，签发人必须是未停用的超级管理员，有效期上限 25 小时，签发后只能缩短或撤销，不能延期、改原因或取消撤销。
+  - 应用与 worker 角色不能再删除账号、工作空间和支持授权，也不能直接写 `account_credentials`；它只由账号表上的同步触发器写入。
+  - 已有数据违反新规则时迁移会失败并说明行数，不会静默改写（角色大小写和不合格的会话、重置令牌除外）。
+- 店铺名册的「探测」（单店与批量）验证通过后，会顺带刷新被探测那家店的上架额度和期末余额，其他店铺不受影响：此前探测只记录验证时间，两项快照要等下次打开店铺页才更新。探测失败时不读取，读取失败时保留上一次快照
+- 店铺名册的「期末余额」不再一直显示「暂无」：读到的余额此前按 camelCase 键（`currencyCode`、`fetchedAtMs`、`periodTo`）存库并原样返回，而接口约定与前端读的是 `currency_code`、`fetched_at_ms`、`period_to`，前端拿不到币种就判成无余额。现在存库与返回都用约定的 snake_case 键；已存的旧格式快照读出后视为过期，下一次刷新会自动覆盖
+- 店铺名册的上传名额条（新建/更新/基础额度及类目额外名额）不再空白：名额快照此前同样按 camelCase 键（`fetchedAtMs`、`dailyCreate`、`categoryId`）存库并原样返回，前端读的是 `fetched_at_ms`、`daily_create`、`category_id`。现改为约定的 snake_case 键，已存的旧快照下一次刷新自动覆盖
+- 进入「批量上架」只弹一个错误，不再一次叠三个：同一个原因（例如「尚未加入任何工作空间」）无论几张列表同时读取失败都只留一张提示卡，换原因才另开一张；类目树读取也改按接口真实的裸响应解析，缓存为空时不再误报「云端响应无法读取或格式错误」
+- 后台定时清理恢复工作：滞留请求关闭、过期响应体清理、预留释放和客户端日志清理此前在非超级用户登录下全部「无权限」，每个周期只打一行错误，实际一行都没处理；现在改由专用只读维护角色执行，仍只能做各自那一件写，跨组织读不扩大到结算或扣费。错误摘要也能重新读到错误收件箱
+- 「创建工作空间」不再弹出「该接口尚未实现」：`POST /api/workspaces` 接通。创建者成为所有者，使用 Free 套餐，新空间自动成为当前工作空间；自建空间最多 3 个，超限返回 `WORKSPACE_LIMIT_REACHED`
+- 「团队协作区」不再报「无法读取成员目录」：`GET /api/workspaces/members` 此前返回旧的 camelCase 精简体（缺 `invitations`、`seats_used`、`pending_*`、成员 `permissions`），前端按 `WorkspaceMembersData` 读取时崩溃。现按规范返回成员、待接受邀请、已占名额、待邀请上限，以及按角色计算的成员移除/改角色与空间级权限；`org_invitations` 的 sqlc 模型补齐 `role`、`invited_by_email`、`created_at`、`uuid`
+- 本地开发库的写操作不再因租约过期而失败：批量导入密钥、新增店铺等写入此前在开发库闲置超过 60 秒后全部返回「店铺名册写入未启用」；`scripts/dev-api.sh` 现在固定 `CLOUD_INSTANCE_ID` 并由 `scripts/devlease` 持续续期全部写域
 
 ## 已发布版本
 
@@ -32,7 +117,6 @@
 - 类目字段缓存缺变体维度元数据时不再被当成「过期不可用」：普通读取、草稿与校验照常，只有分组判定会要求刷新材料，不会再出现「类目需要同步」却同步不掉的循环
 - 改价、改库存、促销、归档、恢复、删除商品，以及确认分组执行，不再因为写入账本回执编号读错类型或漂移比对读错字段而报「服务暂不可用」「商品属性已变化」
 - 识图写俄语时，会把词里能确定的拉丁形近字改成对应的西里尔字母，包括以前对不上的 г、ш 和 Ь。英文词里误写的西里尔形近字会改回拉丁字母。对不上的字母再识别一次时，会指出是哪几个词、哪几个字母；指不出来就不再扣第二次
-- 店铺名册显示期末余额，销售额按当日汇率从卢布换算成店铺币种（默认取俄罗斯央行公布的每日牌价）
 
 
 ### 0.0.103
@@ -326,9 +410,6 @@
 
 | 版本 tag | 日期 | tag 提交摘要 |
 | --- | --- | --- |
-| `v0.0.94` | 2026-10-08 | chore(release): 发布 v0.0.94（PSD 分片与断点续传、批量预签、核对提示、更新日志、首屏、亚太切片桶、健康报告、导入超时与连接池） |
-| `v0.0.93` | 2026-10-08 | chore(release): 发布 v0.0.93（切片 JPEG 降码率与上传耗时、上传路径分析、镜像带上架内核 WASM、导入货号预检） |
-| `v0.0.92` | 2026-10-08 | chore(release): 登记 v0.0.92 |
 | `v0.0.85` | 2026-10-05 | fix(ai): 限制模型输出参数并发布 0.0.85 |
 | `v0.0.80` | 2026-10-03 | fix(deploy): 本地迁移后恢复并检查镜像同步 worker |
 | `v0.0.66` | 2026-09-23 | test(xtask): 补齐架构门禁的 Dockerfile 夹具 |
@@ -355,8 +436,8 @@
 
 ## 说明
 
-- **tag 是发布事实**：有 `vX.Y.Z` tag 的版本才算 GitHub Release。0.0.86–0.0.91 写了「tag：无」，因为当时只升了 VERSION，没有打 tag。`release/ozon-pod-web/<version>/` 下的本地构建归档仍然不是发布。
-- **未发版工作**：最后一次 tag 之后的改动属于未发布状态，其计划与理由在 git 历史里，不在本文件。
+- **tag 与发布分开核对**：`vX.Y.Z` tag 只标记 Git 版本，不能独自证明已创建 GitHub Release 或已部署。0.0.86–0.0.91 写了「tag：无」，因为当时只升了 VERSION，没有打 tag。`release/ozon-pod-web/<version>/` 下的本地构建归档仍然不是发布。
+- **未发版工作**：未完成发布确认的改动放在「未发布」；已有 tag 也不等于部署完成。
 - **跳号**：表格只列实际存在的 tag，版本号不保证连续。
-- **工作台更新日志**：SPA 右上角「更新日志」在构建时读「已发布版本」，只展示 semver 最新的 3 个版本。`### x.y.z` 下的「新增 / 优化 / 修复」优先于同版本的表格行。更早的表格行仍按 Conventional Commit 类型分节（`feat` 新增、`fix` 修复、`perf` / `refactor` 优化）。解析失败时弹窗仍打开，正文说明暂无记录。不要另写一份给前端。
+- **工作台更新日志**：SPA 右上角「更新日志」在构建时读「已发布版本」，只展示 semver 最新的 3 个版本。该节名称是解析器契约，历史无 tag 条目也会被展示，不把展示状态当作发布证明。`### x.y.z` 下的「新增 / 优化 / 修复」优先于同版本的表格行。更早的表格行仍按 Conventional Commit 类型分节（`feat` 新增、`fix` 修复、`perf` / `refactor` 优化）。解析失败时弹窗仍打开，正文说明暂无记录。不要另写一份给前端。
 - **以后每次发版**：在「已发布版本」最上方按同一分组补一节，每版 3–8 条，只写这次真实发生、操作者能感知的改动。有 tag 写 `tag：\`vX.Y.Z\``，没有 tag 写 `tag：无`。

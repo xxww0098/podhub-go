@@ -14,23 +14,20 @@ import (
 
 	httpapi "github.com/xxww0098/podhub-go/internal/app/api"
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
-	listing "github.com/xxww0098/podhub-go/internal/listing/core/contract"
+	coremod "github.com/xxww0098/podhub-go/internal/listing/core"
+	listing "github.com/xxww0098/podhub-go/internal/listing/core/service/engine"
 	"github.com/xxww0098/podhub-go/internal/listing/submit"
 	"github.com/xxww0098/podhub-go/internal/platform/config"
 	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
 	"github.com/xxww0098/podhub-go/internal/platform/seal"
-	"github.com/xxww0098/podhub-go/internal/seller"
+	seller "github.com/xxww0098/podhub-go/internal/seller/ozon"
 )
 
 func TestListingHotPath(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	pool := migratedPool(t, ctx)
-	engine, err := listing.OpenEmbedded(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = engine.Close(context.Background()) })
+	engine := tagsEngine(t)
 
 	owner, orgA := insertWorkspace(t, ctx, pool, "hot-a@example.com", "Hot A")
 	other, orgB := insertWorkspace(t, ctx, pool, "hot-b@example.com", "Hot B")
@@ -142,7 +139,7 @@ func TestListingHotPath(t *testing.T) {
 	otherH := hotHandler(pool, engine, access.Principal{UserID: other, OrgID: orgB, WorkspaceRole: "owner", PlatformRole: "user"}, now, sellerFn, ring)
 
 	claim := callJSON(ownerH, http.MethodPost, "/api/listing/jobs/"+jobOK+"/claim", "")
-	if claim.Code != http.StatusOK || !strings.Contains(claim.Body.String(), `"leaseSeconds":30`) || !strings.Contains(claim.Body.String(), jobOK) {
+	if claim.Code != http.StatusOK || !strings.Contains(claim.Body.String(), `"lease_seconds":30`) || !strings.Contains(claim.Body.String(), jobOK) {
 		t.Fatalf("claim %d %s", claim.Code, claim.Body.String())
 	}
 	var claimed struct {
@@ -315,7 +312,7 @@ func probeHot(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ownerH, oth
 	}
 }
 
-func catalogHot(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ownerH http.Handler, kek []byte, principal access.Principal, engine listing.Engine) {
+func catalogHot(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ownerH http.Handler, kek []byte, principal access.Principal, engine *listing.Engine) {
 	t.Helper()
 	if _, err := pool.Exec(ctx, `DELETE FROM ozon_catalog_tree_cache WHERE language = 'default'`); err != nil {
 		t.Fatal(err)
@@ -323,7 +320,7 @@ func catalogHot(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ownerH ht
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM platform_catalog_fetch_keys WHERE client_id = 'hot-client'`)
 		_, _ = pool.Exec(context.Background(), `DELETE FROM ozon_catalog_tree_cache WHERE language = 'default'`)
-		_, _ = pool.Exec(context.Background(), `DELETE FROM ozon_catalog_schema_cache WHERE description_category_id IN (88001, 88002)`)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM ozon_category_current WHERE description_category_id IN (88001, 88002)`)
 	})
 	miss := callJSON(ownerH, http.MethodGet, "/api/catalog/tree?language=default&store_id=a3333333-3333-4333-8333-333333333333", "")
 	if miss.Code != http.StatusBadRequest || !strings.Contains(miss.Body.String(), "该店铺尚未登记 Seller 密钥") {
@@ -497,7 +494,7 @@ func cardHot(t *testing.T, ctx context.Context, pool *pgxpool.Pool, h http.Handl
 		t.Fatalf("queue %d %s", queued.Code, queued.Body.String())
 	}
 	title := callJSON(h, http.MethodPatch, "/api/listing/cards/"+id, `{"baseRevision":2,"title":"改标题"}`)
-	if title.Code != http.StatusBadRequest || !strings.Contains(title.Body.String(), "供应商商品方案配置由在线平台货源管理") {
+	if title.Code != http.StatusBadRequest || !strings.Contains(title.Body.String(), "供应商商品方案配置由在线平台商品库管理") {
 		t.Fatalf("title %d %s", title.Code, title.Body.String())
 	}
 	long := strings.Repeat("p", 513)
@@ -506,7 +503,7 @@ func cardHot(t *testing.T, ctx context.Context, pool *pgxpool.Pool, h http.Handl
 		t.Fatalf("psd %d %s", psd.Code, psd.Body.String())
 	}
 	plain := callJSON(h, http.MethodPatch, "/api/listing/cards/c1111111-1111-4111-8111-111111111111", `{"baseRevision":1,"payload":{"supplierProductId":"hot-sku-1","categoryKey":"workflow:9:8","descriptionCategoryId":9,"typeId":8,"language":"default","defaults":{"values":{},"complex_values":[]}}}`)
-	if plain.Code != http.StatusBadRequest || !strings.Contains(plain.Body.String(), "请从平台货源选择规格创建方案") {
+	if plain.Code != http.StatusBadRequest || !strings.Contains(plain.Body.String(), "请从平台商品库选择规格创建方案") {
 		t.Fatalf("plain %d %s", plain.Code, plain.Body.String())
 	}
 	_ = org
@@ -606,11 +603,17 @@ func requeueHot(t *testing.T, ctx context.Context, pool *pgxpool.Pool, org int64
 	}
 }
 
-func hotHandler(pool *pgxpool.Pool, engine listing.Engine, p access.Principal, now func() time.Time, seller func(context.Context, string, []byte, string, string) (int, []byte, error), ring seal.Ring) http.Handler {
+func hotHandler(pool *pgxpool.Pool, engine *listing.Engine, p access.Principal, now func() time.Time, seller func(context.Context, string, []byte, string, string) (int, []byte, error), ring seal.Ring) http.Handler {
 	router := chi.NewRouter()
-	srv := &httpapi.Server{
-		Pool: pool, Engine: engine, Access: access.FixedResolver{Principal: &p}, Now: now,
+	srv := &httpapi.Server{Pool: pool, Engine: engine, Access: access.FixedResolver{Principal: &p}, Now: now,
 		Seller: seller, Seals: ring,
+		CatalogSnapshot: func(ctx context.Context, raw []byte) ([]byte, error) {
+			mod, err := coremod.Shared(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return mod.Snapshot(ctx, raw)
+		},
 	}
 	httpapi.HandlerFromMux(srv, router)
 	httpapi.MountDomains(router, srv)

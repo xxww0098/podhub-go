@@ -9,6 +9,8 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/xxww0098/podhub-go/internal/admin/domain"
+	"github.com/xxww0098/podhub-go/internal/platform/db"
+	"github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
 	platformseal "github.com/xxww0098/podhub-go/internal/platform/seal"
 )
 
@@ -47,8 +49,10 @@ func (r *Repo) loadPayment(ctx context.Context) (int64, []domain.PaymentSlot, do
 	}
 	var revision int64
 	var nonce, ciphertext []byte
-	err := r.Pool.QueryRow(ctx, `
-		SELECT revision, nonce, ciphertext FROM public.platform_integration_config WHERE singleton = true`).Scan(&revision, &nonce, &ciphertext)
+	err := db.InTx(ctx, r.Pool, db.AppRole(), func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT revision, nonce, ciphertext FROM public.platform_integration_config WHERE singleton = true`).Scan(&revision, &nonce, &ciphertext)
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, domain.EmptyPayment(), domain.Snapshot{}, false, nil
 	}
@@ -119,13 +123,10 @@ func (r *Repo) PutPayment(ctx context.Context, actor domain.Actor, body domain.P
 		}
 	}
 	if !present {
-		doc = domain.Snapshot{SchemaVersion: 1, AIAccounts: []domain.StoredAI{}, Buckets: []domain.StoredBucket{}}
+		doc = domain.Snapshot{SchemaVersion: 1, AIAccounts: []domain.StoredAI{}, AIRuntime: domain.DefaultAIRuntime()}
 	}
 	if doc.AIAccounts == nil {
 		doc.AIAccounts = []domain.StoredAI{}
-	}
-	if doc.Buckets == nil {
-		doc.Buckets = []domain.StoredBucket{}
 	}
 	doc.SchemaVersion = 1
 	doc.Payment = paymentOf(next)
@@ -143,6 +144,9 @@ func (r *Repo) PutPayment(ctx context.Context, actor domain.Actor, body domain.P
 	}
 	defer tx.Rollback(ctx)
 	defer endLease(tx)
+	if err := tenantx.EnterObserver(ctx, tx, actor.UserID); err != nil {
+		return nil, mapBill(err, "INTERNAL", true)
+	}
 	held, err := admit(ctx, tx, "admin", r.now().UnixMilli(), domain.WritesDisabled("WRITES_DISABLED", "平台连接配置写入未启用"))
 	if err != nil {
 		return nil, mapBill(err, "INTERNAL", true)
@@ -151,7 +155,7 @@ func (r *Repo) PutPayment(ctx context.Context, actor domain.Actor, body domain.P
 		return nil, mapBill(err, "INTERNAL", true)
 	}
 	if changed {
-		rows, err := tx.Query(ctx, `SELECT DISTINCT provider FROM payment_orders WHERE provider <> 'manual' AND status = 'pending'`)
+		rows, err := tx.Query(ctx, `SELECT DISTINCT provider FROM payment_orders WHERE provider NOT IN ('manual', 'unselected') AND status = 'pending'`)
 		if err != nil {
 			return nil, mapBill(err, "INTERNAL", true)
 		}

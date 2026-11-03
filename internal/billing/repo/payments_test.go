@@ -14,7 +14,6 @@ func TestDecidePaymentReplay(t *testing.T) {
 	}{
 		{"paid topup", "pending", "wallet_topup", 10, true, "paid", ReplayTopup},
 		{"succeeded topup", "pending", "wallet_topup", 10, true, "succeeded", ReplayTopup},
-		{"member seats stay", "pending", "member_seats", 0, true, "paid", ReplayLeave},
 		{"zero topup stays", "pending", "wallet_topup", 0, true, "paid", ReplayLeave},
 		{"already paid", "paid", "wallet_topup", 10, true, "paid", ReplaySkip},
 		{"canceled", "canceled", "wallet_topup", 10, true, "succeeded", ReplaySkip},

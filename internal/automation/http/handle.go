@@ -151,8 +151,8 @@ func writeBack(w http.ResponseWriter, res domain.WriteResult, err error) {
 	writeOK(w, writeBody{Accepted: res.Applied, CancelRequested: res.CancelRequested})
 }
 
-func (h handler) listGrants(w http.ResponseWriter, r *http.Request, p Session) {
-	grants, err := h.Actions.ListGrants(r.Context(), p.UserID, p.OrgID)
+func (h handler) listGrants(w http.ResponseWriter, r *http.Request, p Session, scope string) {
+	grants, err := h.Actions.ListGrants(r.Context(), p.UserID, p.OrgID, scope)
 	if err != nil {
 		writeFault(w, err)
 		return
@@ -161,29 +161,41 @@ func (h handler) listGrants(w http.ResponseWriter, r *http.Request, p Session) {
 	for i, grant := range grants {
 		wires[i] = grantWireOf(grant)
 	}
+	if scope == domain.ScopeCatalog {
+		scoped := make([]scopedGrantWire, len(wires))
+		for i, wire := range wires {
+			scoped[i] = scopedGrantWire{grantWire: wire, ScopeKind: scope}
+		}
+		writeOK(w, map[string]any{"grants": scoped})
+		return
+	}
 	writeOK(w, map[string]any{"grants": wires})
 }
 
-func (h handler) createGrant(w http.ResponseWriter, r *http.Request, p Session) {
+func (h handler) createGrant(w http.ResponseWriter, r *http.Request, p Session, scope string) {
 	var body struct {
 		Name    *string   `json:"name"`
 		Actions *[]string `json:"actions"`
-		Expires *int64    `json:"expiresInDays"`
+		Expires *int64    `json:"expires_in_days"`
 	}
 	if fault := readJSON(r, &body); fault != nil || body.Name == nil || body.Actions == nil {
 		writeFault(w, contract.Validation(contract.MsgBadJSON))
 		return
 	}
-	view, token, err := h.Actions.CreateGrant(r.Context(), p.UserID, p.OrgID, p.WorkspaceRole, *body.Name, *body.Actions, body.Expires)
+	view, token, err := h.Actions.CreateGrant(r.Context(), p.UserID, p.OrgID, p.WorkspaceRole, scope, *body.Name, *body.Actions, body.Expires)
 	if err != nil {
 		writeFault(w, err)
+		return
+	}
+	if scope == domain.ScopeCatalog {
+		writeOK(w, map[string]any{"grant": scopedGrantWire{grantWire: grantWireOf(view), ScopeKind: scope}, "token": token})
 		return
 	}
 	writeOK(w, createGrantData{Grant: grantWireOf(view), Token: token})
 }
 
-func (h handler) revokeGrant(w http.ResponseWriter, r *http.Request, p Session) {
-	id, err := h.Actions.RevokeGrant(r.Context(), p.UserID, p.OrgID, chi.URLParam(r, "id"))
+func (h handler) revokeGrant(w http.ResponseWriter, r *http.Request, p Session, scope string) {
+	id, err := h.Actions.RevokeGrant(r.Context(), p.UserID, p.OrgID, chi.URLParam(r, "id"), scope)
 	if err != nil {
 		writeFault(w, err)
 		return

@@ -1,20 +1,8 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import {
-  Activity,
-  BarChart2,
-  Check,
-  FileInput,
-  FileOutput,
-  Hash,
-  KeyRound,
-  Pencil,
-  Plus,
-  Search,
-  SearchX,
-  Store,
-  Trash2,
-  Unlink,
-} from "lucide-react";
+import { Collapsible } from "@base-ui/react/collapsible";
+import { Activity, BarChart2, ChevronDown, Download, Hash, LoaderCircle, Pencil, Plus, Search, SearchX, SlidersHorizontal, Trash2, Upload } from "lucide-react"
+import { StoreIcon } from "@/components/store-icon"
+;
 
 import type {
   AccountOverview,
@@ -33,14 +21,13 @@ import { productQuotaItems } from "./product-quota";
 import { isStoreKeyExpired, useStoreRoster } from "./store-roster-cache";
 import { useScreenActive } from "@/components/screen-pane";
 import { IdCode } from "@/components/id-code";
-import { IdentityTile } from "@/components/identity-tile";
 import { formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { StateChip } from "@/components/state-chip";
 import { Button } from "@/components/ui/button";
+import { IconButton } from "@/components/ui/icon-button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   Empty,
   EmptyDescription,
@@ -91,6 +78,7 @@ import { useStoreRosterTransfer } from "./use-store-roster-transfer"
 import { StoreDeleteDialog } from "./store-delete-dialog"
 import { StoreExportDialog } from "./store-export-dialog"
 import { StoreImportDialog } from "./store-import-dialog"
+import { StoreListingPolicyDialog } from "@/features/workflow/store-listing-policy-dialog"
 
 type StoresScreenProps = {
   overview?: AccountOverview;
@@ -151,13 +139,19 @@ function ProductQuotaCell({
 
   if (mode === "number") {
     return (
-      <dl className="grid w-max grid-cols-[auto_auto] gap-x-2 gap-y-0.5 font-mono text-xs tabular-nums">
+      <dl className="grid w-full grid-cols-[max-content_1fr] gap-x-3 gap-y-1 text-xs tabular-nums">
         {items.map((item) => (
           <Fragment key={item.label}>
-            <dt className="text-faint-foreground" title={item.tooltip}>
+            <dt
+              className="whitespace-nowrap text-faint-foreground"
+              title={item.tooltip}
+            >
               {item.label}
             </dt>
-            <dd className="text-right" title={item.tooltip}>
+            <dd
+              className="whitespace-nowrap text-right font-mono"
+              title={item.tooltip}
+            >
               {item.formatted}
             </dd>
           </Fragment>
@@ -167,17 +161,17 @@ function ProductQuotaCell({
   }
 
   return (
-    <div className="flex flex-col gap-1 w-full min-w-28 font-mono text-xs select-none">
+    <div className="flex w-full min-w-40 flex-col gap-2 text-xs select-none">
       {items.map((item) => (
         <div
           key={item.label}
-          className="flex items-center gap-1.5"
+          className="grid grid-cols-[max-content_minmax(3rem,1fr)_max-content] items-center gap-2"
           title={item.tooltip}
         >
-          <span className="w-6 shrink-0 text-meta text-faint-foreground">
+          <span className="whitespace-nowrap text-meta text-faint-foreground">
             {item.label}
           </span>
-          <div className="relative h-1.5 flex-1 min-w-8 rounded-full bg-border/60 overflow-hidden">
+          <div className="relative h-1.5 overflow-hidden rounded-full bg-muted">
             <div
               className="h-full rounded-full transition-[width,background-color] duration-300"
               style={{
@@ -189,7 +183,7 @@ function ProductQuotaCell({
           <span
             aria-hidden="true"
             className={cn(
-              "w-11 shrink-0 text-right text-meta tabular-nums font-mono",
+              "min-w-10 whitespace-nowrap text-right text-meta tabular-nums font-mono",
               item.tier === "danger"
                 ? "text-st-bad-ink font-medium"
                 : "text-muted-foreground",
@@ -253,6 +247,7 @@ const UNASSIGNED = "unassigned";
 export type CreateStoreGateInput = {
   rosterLoaded: boolean;
   hasWorkspace: boolean;
+  canManageRoster: boolean;
   storesUsed: number;
   storeLimit: number;
   busy: StoreBusyKind | undefined;
@@ -280,6 +275,9 @@ export function createStoreGate(input: CreateStoreGateInput): CreateStoreGate {
   }
   if (!input.hasWorkspace) {
     return { canCreate: false, disabledReason: "请先加入或创建 Workspace" };
+  }
+  if (!input.canManageRoster) {
+    return { canCreate: false, disabledReason: "只有工作空间所有者或管理员可以新增店铺" };
   }
   if (input.storesUsed >= input.storeLimit) {
     return {
@@ -320,8 +318,6 @@ export function StoresScreen({ overview, onOpenAccount }: StoresScreenProps) {
     setSelectedStoreIds,
     deleteCandidateIds,
     setDeleteCandidateIds,
-    clearCandidateId,
-    setClearCandidateId,
     draft,
     setDraft,
     selectedTagUuids,
@@ -350,22 +346,8 @@ export function StoresScreen({ overview, onOpenAccount }: StoresScreenProps) {
     newGroupName,
     setNewGroupName,
   } = useStoreEditor({ workspaceId, workspaceRole, roster, active })
-  // The editor's Store can lose its key to expiry too; mirror the row gate so
-  // the button explains itself before Cloud refuses the activation.
-  const activeDisabledReason = !editor
-    ? undefined
-    : !editor.configured
-      ? "尚未登记密钥，无法设为当前"
-      : editor.manual_disabled === true
-        ? "店铺已停用，无法设为当前"
-        : editor.quota_suspended === true
-          ? "店铺超出名额，无法设为当前"
-          : isStoreKeyExpired(editor)
-            ? "Seller 密钥已过期，请在卖家后台重新生成后登记"
-            : busy !== undefined
-              ? "请稍候，正在处理其他店铺操作"
-              : undefined;
   const [query, setQuery] = useState("");
+  const [policyStore, setPolicyStore] = useState<OzonStoreView | null>(null);
   const [quotaDisplayMode, setQuotaDisplayMode] = useState<
     "progress" | "number"
   >(() => {
@@ -464,8 +446,8 @@ export function StoresScreen({ overview, onOpenAccount }: StoresScreenProps) {
         store.permissions.test_key,
     );
   const {
-    reload, refreshFinanceBalances, openEditor, createStore, createTag, createGroup, saveKey, clearStore,
-    deleteStores, testStores, assignStore, setKeyGrant, setActive, testStore,
+    reload, refreshFinanceBalances, openEditor, createStore, createTag, createGroup, readStoreName, saveKey,
+    deleteStores, testStores, assignStore, testStore,
   } = useStoreCommands({
     workspaceId, roster,
     canEditName, canManageTags, tagsChanged, groupChanged, editor, draft, editingId, newTagName, newGroupName,
@@ -475,7 +457,7 @@ export function StoresScreen({ overview, onOpenAccount }: StoresScreenProps) {
 
   const transfer = useStoreRosterTransfer({
     workspaceId,
-    rosterTags: roster?.tags ?? [],
+    rosterGroups: roster?.groups ?? [],
     stores,
     actionLock,
     onBusy: (kind) => setBusy(kind),
@@ -501,6 +483,7 @@ export function StoresScreen({ overview, onOpenAccount }: StoresScreenProps) {
   const { canCreate, disabledReason: createDisabledReason } = createStoreGate({
     rosterLoaded: Boolean(roster),
     hasWorkspace: Boolean(overview?.active_workspace),
+    canManageRoster,
     storesUsed,
     storeLimit,
     busy,
@@ -508,13 +491,13 @@ export function StoresScreen({ overview, onOpenAccount }: StoresScreenProps) {
   });
 
   return (
-    <div className="flex min-h-0 w-full flex-1 flex-col gap-4">
+    <div className="flex min-h-0 w-full flex-1 flex-col gap-2">
       <h1 className="sr-only">店铺</h1>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card">
-        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
-          <div className="flex min-w-0 flex-wrap items-center gap-3">
-            <div className="relative w-64">
+        <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-border px-4 py-3">
+          <div className="flex min-w-52 flex-1 flex-wrap items-center gap-3">
+            <div className="relative w-full max-w-96">
               <Search
                 aria-hidden
                 className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground"
@@ -534,32 +517,34 @@ export function StoresScreen({ overview, onOpenAccount }: StoresScreenProps) {
               </span>
             ) : null}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
             {selectedStores.length > 0 ? (
               <>
                 <span className="font-mono text-xs tabular-nums text-muted-foreground">
                   已选 {selectedStores.length}
                 </span>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={!allSelectedTestable || busy !== undefined}
-                  title={
+                <ReasonTooltip
+                  reason={
                     allSelectedTestable
                       ? undefined
                       : "部分已选店铺未登记密钥、已停用、密钥已过期或超出名额"
                   }
-                  onClick={() =>
-                    void testStores(selectedStores.map((store) => store.id))
-                  }
                 >
-                  <Activity />
-                  测试连接
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
+                  <IconButton
+                    icon={Activity}
+                    label="测试连接"
+                    size="icon-sm"
+                    variant="outline"
+                    disabled={!allSelectedTestable || busy !== undefined}
+                    onClick={() =>
+                      void testStores(selectedStores.map((store) => store.id))
+                    }
+                  />
+                </ReasonTooltip>
+                <IconButton
+                  icon={Trash2}
+                  label="移除所选店铺"
+                  size="icon-sm"
                   variant="destructive"
                   disabled={busy !== undefined}
                   onClick={() =>
@@ -567,49 +552,41 @@ export function StoresScreen({ overview, onOpenAccount }: StoresScreenProps) {
                       selectedStores.map((store) => store.id),
                     )
                   }
-                >
-                  <Trash2 />
-                  移除
-                </Button>
+                />
               </>
             ) : null}
-            <Button
-              type="button"
+            <IconButton
+              icon={Upload}
+              label="批量导入"
+              tip="批量导入：每行一条，店铺名,Client ID,API Key，行尾可加 #分组"
               variant="outline"
               disabled={
                 !roster ||
                 !overview?.active_workspace ||
+                !canManageRoster ||
                 busy !== undefined ||
                 Boolean(draft)
               }
-              title="每行一条：店铺名,Client ID,API Key，行尾可加 #标签"
               onClick={() => {
                 transfer.setImportResults(undefined);
                 transfer.setImportOpen(true);
               }}
-            >
-              <FileInput data-icon="inline-start" />
-              批量导入
-            </Button>
-            <Button
-              type="button"
+            />
+            <IconButton
+              icon={busy === "export" ? LoaderCircle : Download}
+              iconClassName={busy === "export" ? "animate-spin" : undefined}
+              label="批量导出"
+              tip="批量导出：你有权管理的店铺密钥与分组，格式同批量导入"
               variant="outline"
               disabled={
                 busy !== undefined ||
+                !canManageRoster ||
                 !stores.some(
                   (store) => store.configured && store.permissions.manage_key,
                 )
               }
-              title="导出你有权管理的店铺密钥与标签，格式同批量导入"
               onClick={() => void exportKeys()}
-            >
-              {busy === "export" ? (
-                <Spinner data-icon="inline-start" />
-              ) : (
-                <FileOutput data-icon="inline-start" />
-              )}
-              批量导出
-            </Button>
+            />
             <CreateStoreButton
               canCreate={canCreate}
               creating={false}
@@ -621,9 +598,8 @@ export function StoresScreen({ overview, onOpenAccount }: StoresScreenProps) {
               storeLimit={storeLimit}
             />
           </div>
-        </div>
         {(roster?.tags ?? []).length > 0 ? (
-          <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2">
+          <div className="flex w-full min-w-0 flex-wrap items-center gap-1.5">
             {(roster?.tags ?? []).map((tag) => {
               const selected = selectedTagUuids.has(tag.uuid);
               return (
@@ -660,16 +636,29 @@ export function StoresScreen({ overview, onOpenAccount }: StoresScreenProps) {
             </Button>
           </div>
         ) : null}
+        </div>
         {busy === "load" && !roster ? (
           <div className="flex min-h-0 flex-1 items-center gap-2 px-4 text-sm text-muted-foreground">
             <Spinner className="size-4" />
             正在读取店铺…
           </div>
+        ) : !overview?.active_workspace ? (
+          <Empty className="min-h-0 flex-1 rounded-none border-0">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <StoreIcon className="size-5 text-primary" />
+              </EmptyMedia>
+              <EmptyTitle>尚未选择工作空间</EmptyTitle>
+              <EmptyDescription>
+                店铺连接与授权配置归属于工作空间。请先在左侧栏选择或创建工作空间以接入店铺。
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         ) : stores.length === 0 ? (
           <Empty className="min-h-0 flex-1 rounded-none border-0">
             <EmptyHeader>
               <EmptyMedia variant="icon">
-                <Store />
+                <StoreIcon />
               </EmptyMedia>
               <EmptyTitle>还没有店铺</EmptyTitle>
               <EmptyDescription>
@@ -692,8 +681,12 @@ export function StoresScreen({ overview, onOpenAccount }: StoresScreenProps) {
           </Empty>
         ) : (
           <div className="min-h-0 flex-1 overflow-auto">
-            <Table>
-              <TableHeader>
+            <Table
+              variant="directory"
+              className="min-w-[84rem]"
+              containerClassName="overflow-visible"
+            >
+              <TableHeader className="sticky top-0 z-10">
                 <TableRow>
                   <TableHead className="w-10">
                     <Checkbox
@@ -714,23 +707,25 @@ export function StoresScreen({ overview, onOpenAccount }: StoresScreenProps) {
                       }
                     />
                   </TableHead>
-                  <TableHead className="w-[20%]">店铺</TableHead>
-                  <TableHead>标签</TableHead>
-                  <TableHead>分组</TableHead>
-                  <TableHead>凭据</TableHead>
+                  <TableHead className="w-14 text-right">序号</TableHead>
+                  <TableHead className="min-w-52">店铺</TableHead>
+                  <TableHead className="w-32">分组</TableHead>
+                  <TableHead className="min-w-64">凭据</TableHead>
                   <TableHead
-                    className="min-w-36"
+                    className="w-52 min-w-52"
                     title="Ozon 今日还能新建、更新的数量，以及商品上限：基础限额适用于所有类目（上限含归档回补，与卖家后台一致），附加限额只覆盖热门类目（先扣附加、再扣基础）。-1 为不限。"
                   >
                     <div className="flex items-center justify-between gap-1.5">
                       <span>上架额度</span>
-                      <button
+                      <Button
                         type="button"
+                        variant="ghost"
+                        size="xs"
                         onClick={(event) => {
                           event.stopPropagation();
                           toggleQuotaDisplayMode();
                         }}
-                        className="inline-flex items-center gap-1 rounded border border-border/80 bg-background px-1.5 py-0.5 text-meta font-normal text-muted-foreground hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
+                        className="gap-1 px-1.5 text-meta font-normal text-muted-foreground"
                         title={
                           quotaDisplayMode === "progress"
                             ? "当前为进度条，点击切换为数字显示"
@@ -759,21 +754,22 @@ export function StoresScreen({ overview, onOpenAccount }: StoresScreenProps) {
                             <span>数字</span>
                           </>
                         )}
-                      </button>
+                      </Button>
                     </div>
                   </TableHead>
                   <TableHead
+                    className="w-32 text-right"
                     title="Ozon 财务 → 余额的期末金额（POST /v1/finance/balance 的 total.closing_balance）。Seller API 没有可提现字段。币种以接口返回为准；只有原币是卢布且已盖上俄罗斯央行汇率时，才按店铺合同币种换算。"
                   >
                     期末余额
                   </TableHead>
-                  <TableHead>归属</TableHead>
-                  <TableHead>最近使用</TableHead>
+                  <TableHead className="w-40">归属</TableHead>
+                  <TableHead className="w-32">最近使用</TableHead>
                   <TableHead className="w-32 text-right">操作</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {visibleStores.map((store) => {
+                {visibleStores.map((store, index) => {
                   // Expiry precedes the permission gate: Cloud reports
                   // `permissions.testKey=false` for a lapsed key too, and the
                   // operator must read why, not "no permission".
@@ -832,99 +828,47 @@ export function StoresScreen({ overview, onOpenAccount }: StoresScreenProps) {
                           }
                         />
                       </TableCell>
+                      <TableCell className="text-right tabular-nums text-muted-foreground">
+                        {index + 1}
+                      </TableCell>
                       <TableCell>
-                        <div className="flex items-center gap-3">
-                          <IdentityTile
-                            icon={Store}
-                            status={store.configured ? "present" : "absent"}
-                          />
-                          <div className="min-w-0">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="truncate text-md font-medium">
-                                {store.label || "未命名店铺"}
+                        <div className="min-w-0 max-w-64">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="truncate text-md font-medium">
+                              {store.label || "未命名店铺"}
+                            </span>
+                            {store.active ? (
+                              <StateChip
+                                status="skipped_policy"
+                                label="当前"
+                              />
+                            ) : null}
+                            {store.cloud_status === "manual_disabled" ? (
+                              <StateChip status="failed" label="店铺已停用" />
+                            ) : store.cloud_status === "quota_suspended" ? (
+                              <StateChip
+                                status="failed"
+                                label="超出 Workspace 名额"
+                              />
+                            ) : null}
+                          </div>
+                          <div className="mt-0.5">
+                            {store.client_id ? (
+                              <IdCode value={store.client_id} />
+                            ) : (
+                              <span className="text-xs text-faint-foreground">
+                                未填写
                               </span>
-                              {store.active ? (
-                                <StateChip
-                                  status="skipped_policy"
-                                  label="当前"
-                                />
-                              ) : null}
-                              {store.cloud_status === "manual_disabled" ? (
-                                <StateChip status="failed" label="店铺已停用" />
-                              ) : store.cloud_status === "quota_suspended" ? (
-                                <StateChip
-                                  status="failed"
-                                  label="超出 Workspace 名额"
-                                />
-                              ) : null}
-                            </div>
-                            <div className="mt-0.5">
-                              {store.client_id ? (
-                                <IdCode value={store.client_id} />
-                              ) : (
-                                <span className="text-xs text-faint-foreground">
-                                  未填写
-                                </span>
-                              )}
-                            </div>
+                            )}
                           </div>
                         </div>
                       </TableCell>
-                      <TableCell>
-                        {store.tags?.length ? (
-                          <div className="flex flex-wrap gap-1">
-                            {store.tags.map((tag) => (
-                              <Badge
-                                key={tag.uuid}
-                                variant="outline"
-                                className="px-1.5 py-0 text-meta font-normal"
-                              >
-                                {tag.name}
-                              </Badge>
-                            ))}
-                          </div>
-                        ) : (
-                          <span className="text-xs text-faint-foreground">
-                            —
-                          </span>
-                        )}
+                      <TableCell className="text-muted-foreground">
+                        {store.group?.name ? <span aria-label={`分组：${store.group.name}`}>{store.group.name}</span> : "—"}
                       </TableCell>
                       <TableCell>
-                        {store.group?.name ? (
-                          <Badge
-                            variant="outline"
-                            className="px-1.5 py-0 text-meta font-normal"
-                          >
-                            {store.group.name}
-                          </Badge>
-                        ) : (
-                          <span className="text-xs text-faint-foreground">
-                            —
-                          </span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-col items-start gap-1.5">
-                          <div className="flex flex-wrap gap-1.5">
-                            <StateChip
-                              status={store.configured ? "present" : "absent"}
-                              label={
-                                store.configured
-                                  ? "Cloud 已托管"
-                                  : "Cloud 未登记"
-                              }
-                            />
-                            <StateChip
-                              status={
-                                store.verified_at_ms ? "verified" : "absent"
-                              }
-                              label={
-                                store.verified_at_ms
-                                  ? "API 已验证"
-                                  : "API 待测试"
-                              }
-                            />
-                            {keyExpiryState(store.key_expires_at_ms) ===
+                        <div className="flex flex-col items-start gap-2">
+                          {keyExpiryState(store.key_expires_at_ms) ===
                             "expired" ? (
                               <StateChip
                                 status="unavailable"
@@ -939,25 +883,26 @@ export function StoresScreen({ overview, onOpenAccount }: StoresScreenProps) {
                                 label="密钥将到期"
                               />
                             ) : null}
+                          <div className="flex flex-wrap gap-x-3 gap-y-1 text-meta text-faint-foreground">
+                            {store.verified_at_ms ? (
+                              <span className="whitespace-nowrap">
+                                最近验证 {formatUpdatedAt(store.verified_at_ms)}
+                              </span>
+                            ) : <span>{store.configured ? "尚未验证" : "未登记密钥"}</span>}
+                            {store.key_expires_at_ms ? (
+                              <span
+                                className="whitespace-nowrap"
+                                title="Ozon 密钥到期后需在卖家后台重新生成并登记"
+                              >
+                                密钥到期{" "}
+                                {formatDate(store.key_expires_at_ms)}
+                              </span>
+                            ) : null}
                           </div>
-                          {store.verified_at_ms ? (
-                            <span className="text-meta text-faint-foreground">
-                              最近验证 {formatUpdatedAt(store.verified_at_ms)}
-                            </span>
-                          ) : null}
-                          {store.key_expires_at_ms ? (
-                            <span
-                              className="text-meta text-faint-foreground"
-                              title="Ozon 密钥到期后需在卖家后台重新生成并登记"
-                            >
-                              密钥到期{" "}
-                              {formatDate(store.key_expires_at_ms)}
-                            </span>
-                          ) : null}
                         </div>
                       </TableCell>
                       <TableCell
-                        className="align-top text-xs text-muted-foreground cursor-pointer select-none"
+                        className="text-xs text-muted-foreground cursor-pointer select-none"
                         onClick={(event) => {
                           event.stopPropagation();
                           toggleQuotaDisplayMode();
@@ -973,7 +918,7 @@ export function StoresScreen({ overview, onOpenAccount }: StoresScreenProps) {
                         </div>
                       </TableCell>
                       <TableCell
-                        className="align-top text-xs"
+                        className="whitespace-nowrap text-right text-xs [&>div]:justify-end"
                         onClick={(event) => event.stopPropagation()}
                       >
                         <FinanceBalanceCell
@@ -1008,8 +953,7 @@ export function StoresScreen({ overview, onOpenAccount }: StoresScreenProps) {
                           >
                             <SelectTrigger
                               size="sm"
-                              className="min-w-36 cursor-pointer"
-                              title="换指派人会关闭「允许指派人管理密钥」"
+                              className="w-full min-w-32 cursor-pointer"
                               aria-label={`改派 ${store.label || "未命名店铺"}`}
                             >
                               <SelectValue>
@@ -1058,6 +1002,16 @@ export function StoresScreen({ overview, onOpenAccount }: StoresScreenProps) {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="inline-flex items-center gap-1.5">
+                          {store.cloud_store_uuid ? (
+                            <Tooltip>
+                              <TooltipTrigger render={
+                                <Button type="button" size="icon-sm" variant="outline"
+                                  aria-label={`上架策略 ${store.label || "未命名店铺"}`}
+                                  onClick={(event) => { event.stopPropagation(); setPolicyStore(store); }} />
+                              }><SlidersHorizontal aria-hidden /></TooltipTrigger>
+                              <TooltipContent>上架策略</TooltipContent>
+                            </Tooltip>
+                          ) : null}
                           <Tooltip>
                             <TooltipTrigger
                               render={
@@ -1156,104 +1110,24 @@ export function StoresScreen({ overview, onOpenAccount }: StoresScreenProps) {
       >
         <DialogContent
           showCloseButton={busy === undefined}
-          className="grid max-h-[min(46rem,calc(100dvh-3rem))] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-xl"
+          className="grid max-h-[min(46rem,calc(100dvh-3rem))] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-lg"
         >
           {editor && draft ? (
             <>
               <DialogHeader className="gap-1 border-b border-border px-5 py-3.5">
                 <DialogTitle className="pr-6 text-base font-semibold">
-                  {draft.label.trim() || editor.label || "新店铺"}
+                  {draft.id ? "店铺资料" : "新增店铺"}
                 </DialogTitle>
-                <DialogDescription>
+                <DialogDescription className={draft.id ? "sr-only" : undefined}>
                   {draft.id
-                    ? "Cloud 验证并托管 Seller 凭据。登录后任意设备可直接使用，保存后不回显密钥。"
-                    : "创建工作空间店铺将占用一个店铺名额；标签会在店铺创建后应用。"}
+                    ? "修改店铺名称、Seller 凭据或分类。"
+                    : "新增店铺将占用 1 个名额。"}
                 </DialogDescription>
               </DialogHeader>
 
               <div className="grid min-h-0 overflow-y-auto">
-                <div className="min-h-0 space-y-5 p-5 sm:overflow-y-auto sm:p-6">
-                  {draft.id ? (
-                    <>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <StateChip
-                          status={editor.configured ? "present" : "absent"}
-                          label={
-                            editor.configured ? "Cloud 已托管" : "Cloud 未登记"
-                          }
-                        />
-                        {editor.configured ? (
-                          <StateChip
-                            status={
-                              editor.verified_at_ms ? "verified" : "absent"
-                            }
-                            label={
-                              editor.verified_at_ms
-                                ? "API 已验证"
-                                : "API 待测试"
-                            }
-                          />
-                        ) : null}
-                        {editor.active ? (
-                          <StateChip
-                            status="skipped_policy"
-                            label="当前上架目标"
-                          />
-                        ) : (
-                          <Tooltip>
-                            <TooltipTrigger
-                              render={
-                                <Button
-                                  type="button"
-                                  size="icon-sm"
-                                  variant="ghost"
-                                  aria-label="设为当前"
-                                  disabled={activeDisabledReason !== undefined}
-                                  onClick={() => void setActive(editor.id)}
-                                />
-                              }
-                            >
-                              <Check aria-hidden />
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              {activeDisabledReason ?? "设为当前"}
-                            </TooltipContent>
-                          </Tooltip>
-                        )}
-                      </div>
-
-                      <p className="text-sm text-muted-foreground">
-                        指派决定谁运营这家店。密钥是工作空间资产：所有者可管理全部店铺；自己新建并指派给自己的店可以立刻录入密钥。界面不回显已托管的密钥。
-                        {!canManageKey && draft.id
-                          ? " 密钥由所有者登记。若要由你粘贴，请所有者把你设为指派人，并打开「允许指派人管理密钥」。"
-                          : ""}
-                      </p>
-                    </>
-                  ) : null}
-
-                  <FieldGroup>
-                    <Field>
-                      <FieldLabel htmlFor="store-label">
-                        店铺名称{" "}
-                        <span className="text-destructive" aria-hidden="true">
-                          *
-                        </span>
-                      </FieldLabel>
-                      <Input
-                        id="store-label"
-                        required
-                        value={draft.label}
-                        disabled={!canEditName || busy !== undefined}
-                        placeholder="主店"
-                        onChange={(event) =>
-                          setDraft((prev) =>
-                            prev
-                              ? { ...prev, label: event.target.value }
-                              : prev,
-                          )
-                        }
-                      />
-                    </Field>
+                <div className="min-h-0 space-y-4 p-5">
+                  <FieldGroup className="gap-4">
                     <Field>
                       <FieldLabel htmlFor="store-client-id">
                         Client ID{" "}
@@ -1279,187 +1153,11 @@ export function StoresScreen({ overview, onOpenAccount }: StoresScreenProps) {
                       />
                     </Field>
                     <Field>
-                      <div className="flex items-center justify-between gap-2">
-                        <FieldLabel>标签</FieldLabel>
-                        {canManageTags ? (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="ghost"
-                            className="h-6 px-2 text-xs text-muted-foreground"
-                            disabled={busy !== undefined}
-                            onClick={() => setTagsOpen(true)}
-                          >
-                            管理
-                          </Button>
-                        ) : null}
-                      </div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {(roster?.tags ?? []).map((tag) => {
-                          const selected = draft.tagUuids.includes(tag.uuid);
-                          return canManageTags ? (
-                            <Button
-                              key={tag.uuid}
-                              type="button"
-                              size="sm"
-                              variant={selected ? "default" : "outline"}
-                              aria-pressed={selected}
-                              disabled={busy !== undefined}
-                              onClick={() =>
-                                setDraft((prev) =>
-                                  prev
-                                    ? {
-                                        ...prev,
-                                        tagUuids: selected
-                                          ? prev.tagUuids.filter(
-                                              (uuid) => uuid !== tag.uuid,
-                                            )
-                                          : [...prev.tagUuids, tag.uuid],
-                                      }
-                                    : prev,
-                                )
-                              }
-                            >
-                              {tag.name}
-                            </Button>
-                          ) : selected ? (
-                            <Badge key={tag.uuid} variant="outline">
-                              {tag.name}
-                            </Badge>
-                          ) : null;
-                        })}
-                        {(roster?.tags ?? []).length === 0 ? (
-                          <span className="text-sm text-muted-foreground">
-                            暂无标签
-                          </span>
-                        ) : null}
-                      </div>
-                      {canManageTags ? (
-                        <div className="flex gap-2">
-                          <Input
-                            id="store-new-tag"
-                            value={newTagName}
-                            disabled={busy !== undefined}
-                            placeholder="输入名称新建标签"
-                            onChange={(event) =>
-                              setNewTagName(event.target.value)
-                            }
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter") {
-                                event.preventDefault();
-                                void createTag();
-                              }
-                            }}
-                          />
-                          <Button
-                            type="button"
-                            variant="outline"
-                            disabled={!newTagName.trim() || busy !== undefined}
-                            onClick={() => void createTag()}
-                          >
-                            {busy === "tag" ? (
-                              <Spinner data-icon="inline-start" />
-                            ) : (
-                              <Plus data-icon="inline-start" />
-                            )}
-                            新建
-                          </Button>
-                        </div>
-                      ) : null}
-                    </Field>
-                    <Field>
-                      <div className="flex items-center justify-between gap-2">
-                        <FieldLabel>分组</FieldLabel>
-                        {canManageTags ? (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="ghost"
-                            className="h-6 px-2 text-xs text-muted-foreground"
-                            disabled={busy !== undefined}
-                            onClick={() => setGroupsOpen(true)}
-                          >
-                            管理
-                          </Button>
-                        ) : null}
-                      </div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {(roster?.groups ?? []).map((group) => {
-                          const selected = draft.groupUuid === group.uuid;
-                          return canManageTags ? (
-                            <Button
-                              key={group.uuid}
-                              type="button"
-                              size="sm"
-                              variant={selected ? "default" : "outline"}
-                              aria-pressed={selected}
-                              disabled={busy !== undefined}
-                              onClick={() =>
-                                setDraft((prev) =>
-                                  prev
-                                    ? {
-                                        ...prev,
-                                        groupUuid: selected ? null : group.uuid,
-                                      }
-                                    : prev,
-                                )
-                              }
-                            >
-                              {group.name}
-                            </Button>
-                          ) : selected ? (
-                            <Badge key={group.uuid} variant="outline">
-                              {group.name}
-                            </Badge>
-                          ) : null;
-                        })}
-                        {(roster?.groups ?? []).length === 0 ? (
-                          <span className="text-sm text-muted-foreground">
-                            暂无分组
-                          </span>
-                        ) : null}
-                      </div>
-                      {canManageTags ? (
-                        <div className="flex gap-2">
-                          <Input
-                            id="store-new-group"
-                            value={newGroupName}
-                            disabled={busy !== undefined}
-                            placeholder="输入名称新建分组"
-                            onChange={(event) =>
-                              setNewGroupName(event.target.value)
-                            }
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter") {
-                                event.preventDefault();
-                                void createGroup();
-                              }
-                            }}
-                          />
-                          <Button
-                            type="button"
-                            variant="outline"
-                            disabled={!newGroupName.trim() || busy !== undefined}
-                            onClick={() => void createGroup()}
-                          >
-                            {busy === "group" ? (
-                              <Spinner data-icon="inline-start" />
-                            ) : (
-                              <Plus data-icon="inline-start" />
-                            )}
-                            新建
-                          </Button>
-                        </div>
-                      ) : null}
-                    </Field>
-                    <Field>
                       <FieldLabel htmlFor="store-api-key">
                         API Key{" "}
-                        {!editor.configured ? (
-                          <span className="text-destructive" aria-hidden="true">
-                            *
-                          </span>
-                        ) : null}
+                        <span className="text-destructive" aria-hidden="true">
+                          *
+                        </span>
                       </FieldLabel>
                       <Input
                         id="store-api-key"
@@ -1470,7 +1168,7 @@ export function StoresScreen({ overview, onOpenAccount }: StoresScreenProps) {
                         value={draft.apiKey}
                         placeholder={
                           editor.configured
-                            ? "已托管 · 输入新值以更换"
+                            ? "留空保留原密钥"
                             : "粘贴 Seller API Key"
                         }
                         onChange={(event) =>
@@ -1481,64 +1179,261 @@ export function StoresScreen({ overview, onOpenAccount }: StoresScreenProps) {
                           )
                         }
                       />
-                      <FieldDescription>
-                        保存须同时填写 Client ID 和 API
-                        Key。已托管的密钥永不回显。
-                      </FieldDescription>
-                    </Field>
-                    {editor.id &&
-                    editor.permissions.manage_key_grants &&
-                    editor.assignee_membership_id != null ? (
-                      <Field>
-                        <label className="flex cursor-pointer items-center gap-2 text-xs">
-                          <Checkbox
-                            checked={editor.assignee_key_manage}
-                            disabled={busy !== undefined}
-                            aria-label="允许指派人管理密钥"
-                            onCheckedChange={(value) => {
-                              void setKeyGrant(editor.id, value === true);
-                            }}
-                          />
-                          允许指派人管理密钥
-                        </label>
+                      {!canManageKey ? (
                         <FieldDescription>
-                          允许被指派的成员登记和修改该店铺的 Seller 密钥。
+                          密钥由工作空间所有者或管理员管理。
                         </FieldDescription>
-                      </Field>
-                    ) : null}
+                      ) : !editor.configured ? (
+                        <FieldDescription>
+                          密钥由 Cloud 托管，保存后不再回显。
+                        </FieldDescription>
+                      ) : null}
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor="store-label">
+                        店铺名称
+                      </FieldLabel>
+                      <div className="flex min-w-0 gap-2">
+                        <Input
+                          id="store-label"
+                          className="min-w-0 flex-1"
+                          value={draft.label}
+                          disabled={!canEditName || busy !== undefined}
+                          placeholder="选填，留空自动读取"
+                          onChange={(event) =>
+                            setDraft((prev) =>
+                              prev
+                                ? { ...prev, label: event.target.value }
+                                : prev,
+                            )
+                          }
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          aria-label="获取店铺名称"
+                          disabled={
+                            !canEditName || !canManageKey || busy !== undefined ||
+                            !draft.clientId.trim() ||
+                            (!draft.apiKey.trim() &&
+                              (!editor.configured || draft.clientId.trim() !== editor.client_id))
+                          }
+                          onClick={() => void readStoreName()}
+                        >
+                          {busy === "lookup" ? <Spinner data-icon="inline-start" /> : null}
+                          获取
+                        </Button>
+                      </div>
+                    </Field>
+                    <Collapsible.Root
+                      disabled={busy !== undefined}
+                      className="group/organization border-t border-border pt-2"
+                    >
+                      <Collapsible.Trigger
+                        render={
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            className="w-full justify-between px-0 text-sm text-muted-foreground hover:text-foreground"
+                          />
+                        }
+                      >
+                        标签与分组
+                        <ChevronDown
+                          aria-hidden
+                          className="size-4 transition-transform duration-150 group-data-[open]/organization:rotate-180 motion-reduce:transition-none"
+                        />
+                      </Collapsible.Trigger>
+                      <Collapsible.Panel className="pt-3">
+                        <FieldGroup className="gap-4">
+                          <Field>
+                            <div className="flex items-center justify-between gap-2">
+                              <FieldLabel>标签</FieldLabel>
+                              {canManageTags ? (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-6 px-2 text-xs text-muted-foreground"
+                                  disabled={busy !== undefined}
+                                  onClick={() => setTagsOpen(true)}
+                                >
+                                  管理
+                                </Button>
+                              ) : null}
+                            </div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {(roster?.tags ?? []).map((tag) => {
+                                const selected = draft.tagUuids.includes(tag.uuid);
+                                return canManageTags ? (
+                                  <Button
+                                    key={tag.uuid}
+                                    type="button"
+                                    size="sm"
+                                    variant={selected ? "default" : "outline"}
+                                    aria-pressed={selected}
+                                    disabled={busy !== undefined}
+                                    onClick={() =>
+                                      setDraft((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              tagUuids: selected
+                                                ? prev.tagUuids.filter(
+                                                    (uuid) => uuid !== tag.uuid,
+                                                  )
+                                                : [...prev.tagUuids, tag.uuid],
+                                            }
+                                          : prev,
+                                      )
+                                    }
+                                  >
+                                    {tag.name}
+                                  </Button>
+                                ) : selected ? (
+                                  <Badge key={tag.uuid} variant="outline">
+                                    {tag.name}
+                                  </Badge>
+                                ) : null;
+                              })}
+                              {(roster?.tags ?? []).length === 0 ? (
+                                <span className="text-sm text-muted-foreground">
+                                  暂无标签
+                                </span>
+                              ) : null}
+                            </div>
+                            {canManageTags ? (
+                              <div className="flex gap-2">
+                                <Input
+                                  id="store-new-tag"
+                                  value={newTagName}
+                                  disabled={busy !== undefined}
+                                  placeholder="输入名称新建标签"
+                                  onChange={(event) =>
+                                    setNewTagName(event.target.value)
+                                  }
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter") {
+                                      event.preventDefault();
+                                      void createTag();
+                                    }
+                                  }}
+                                />
+                                <IconButton
+                                  icon={busy === "tag" ? LoaderCircle : Plus}
+                                  iconClassName={busy === "tag" ? "animate-spin" : undefined}
+                                  label="新建标签"
+                                  variant="outline"
+                                  disabled={!newTagName.trim() || busy !== undefined}
+                                  onClick={() => void createTag()}
+                                />
+                              </div>
+                            ) : null}
+                          </Field>
+                          <Field>
+                            <div className="flex items-center justify-between gap-2">
+                              <FieldLabel>分组</FieldLabel>
+                              {canManageTags ? (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-6 px-2 text-xs text-muted-foreground"
+                                  disabled={busy !== undefined}
+                                  onClick={() => setGroupsOpen(true)}
+                                >
+                                  管理
+                                </Button>
+                              ) : null}
+                            </div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {(roster?.groups ?? []).map((group) => {
+                                const selected = draft.groupUuid === group.uuid;
+                                return canManageTags ? (
+                                  <Button
+                                    key={group.uuid}
+                                    type="button"
+                                    size="sm"
+                                    variant={selected ? "default" : "outline"}
+                                    aria-pressed={selected}
+                                    disabled={busy !== undefined}
+                                    onClick={() =>
+                                      setDraft((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              groupUuid: selected ? null : group.uuid,
+                                            }
+                                          : prev,
+                                      )
+                                    }
+                                  >
+                                    {group.name}
+                                  </Button>
+                                ) : selected ? (
+                                  <Badge key={group.uuid} variant="outline">
+                                    {group.name}
+                                  </Badge>
+                                ) : null;
+                              })}
+                              {(roster?.groups ?? []).length === 0 ? (
+                                <span className="text-sm text-muted-foreground">
+                                  暂无分组
+                                </span>
+                              ) : null}
+                            </div>
+                            {canManageTags ? (
+                              <div className="flex gap-2">
+                                <Input
+                                  id="store-new-group"
+                                  value={newGroupName}
+                                  disabled={busy !== undefined}
+                                  placeholder="输入名称新建分组"
+                                  onChange={(event) =>
+                                    setNewGroupName(event.target.value)
+                                  }
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter") {
+                                      event.preventDefault();
+                                      void createGroup();
+                                    }
+                                  }}
+                                />
+                                <IconButton
+                                  icon={busy === "group" ? LoaderCircle : Plus}
+                                  iconClassName={busy === "group" ? "animate-spin" : undefined}
+                                  label="新建分组"
+                                  variant="outline"
+                                  disabled={!newGroupName.trim() || busy !== undefined}
+                                  onClick={() => void createGroup()}
+                                />
+                              </div>
+                            ) : null}
+                          </Field>
+                        </FieldGroup>
+                      </Collapsible.Panel>
+                    </Collapsible.Root>
                   </FieldGroup>
                 </div>
               </div>
 
-              <DialogFooter className="m-0 gap-2 rounded-none border-t border-border bg-popover px-5 py-3 sm:justify-between">
-                <div className="flex flex-wrap gap-2">
-                  {canManageKey && draft.id ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      title="只删除托管密钥，店铺仍占用名额"
-                      disabled={
-                        (!editor.configured &&
-                          editingSecretStatus !== "present") ||
-                        busy !== undefined
-                      }
-                      onClick={() => setClearCandidateId(editor.id)}
-                    >
-                      {busy === "clear" ? (
-                        <Spinner data-icon="inline-start" />
-                      ) : (
-                        <Unlink data-icon="inline-start" />
-                      )}
-                      仅清除密钥
-                    </Button>
-                  ) : null}
-                </div>
+              <DialogFooter className="m-0 gap-2 rounded-none border-t border-border bg-popover px-5 py-3 sm:justify-end">
                 <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={busy !== undefined}
+                    onClick={() => {
+                      setEditingId(undefined);
+                      setDraft(undefined);
+                    }}
+                  >
+                    取消
+                  </Button>
                   <Button
                     type="button"
                     disabled={
                       busy !== undefined ||
-                      !draft.label.trim() ||
                       (!draft.id
                         ? !canManageKey ||
                           !draft.clientId.trim() ||
@@ -1555,6 +1450,7 @@ export function StoresScreen({ overview, onOpenAccount }: StoresScreenProps) {
                                 draft.apiKey.trim() &&
                                 draft.clientId.trim()) ||
                               (canEditName &&
+                                Boolean(draft.label.trim()) &&
                                 draft.label.trim() !== editor.label &&
                                 (!draft.clientId.trim() ||
                                   draft.clientId.trim() ===
@@ -1565,12 +1461,8 @@ export function StoresScreen({ overview, onOpenAccount }: StoresScreenProps) {
                     }
                     onClick={() => void saveKey()}
                   >
-                    {busy === "save" ? (
-                      <Spinner data-icon="inline-start" />
-                    ) : (
-                      <KeyRound data-icon="inline-start" />
-                    )}
-                    验证并保存
+                    {busy === "save" ? <Spinner data-icon="inline-start" /> : null}
+                    {draft.id ? "保存" : "验证并保存"}
                   </Button>
                 </div>
               </DialogFooter>
@@ -1602,23 +1494,10 @@ export function StoresScreen({ overview, onOpenAccount }: StoresScreenProps) {
         canManageRoster={canManageRoster}
       />
       <StoreExportDialog exportText={exportText} setExportText={setExportText} />
-      <ConfirmDialog
-        open={Boolean(clearCandidateId)}
-        title="清除这家店的密钥？"
-        description="将删除 Cloud 托管的 Seller API Key。店铺记录和名额保留。上架在重新登记之前会失败。"
-        confirmText="清除密钥"
-        footerLayout="end"
-        busy={busy === "clear"}
-        onOpenChange={(open) => {
-          if (!open && busy !== "clear") setClearCandidateId(undefined);
-        }}
-        onConfirm={() => {
-          if (clearCandidateId)
-            void clearStore(clearCandidateId).then((ok) => {
-              if (ok) setClearCandidateId(undefined);
-            });
-        }}
-      />
+      {policyStore?.cloud_store_uuid ? (
+        <StoreListingPolicyDialog open onOpenChange={(open) => { if (!open) setPolicyStore(null); }}
+          storeId={policyStore.cloud_store_uuid} storeName={policyStore.label || "未命名店铺"} workspaceId={workspaceId} />
+      ) : null}
 
       <StoreDeleteDialog
         busy={busy}

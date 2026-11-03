@@ -1,29 +1,30 @@
 /**
  * 上架清单悬浮面板——触发钮 + 向上/向下展开的清单浮窗：点行回详情页（已下架
  * 行只读），尾部「批量进入上架」把整组最小身份递给上架导航。清单本体在
- * listing-queue.ts 的模块 store，卡片/详情页/本面板读写同一份。
+ * listing-queue.ts 的模块 store，列表/详情页/本面板读写同一份。
  *
  * 两种落点：`toolbar` 形态嵌进画廊工具行尾（对位选品页的清单入口），
  * `fab` 形态是详情页/空态上盖在右下角的悬浮钮。
  */
-import { useEffect, useMemo } from "react"
-import { Image as ImageIcon, ListChecks, X } from "lucide-react"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { ChevronDown, Eraser, Image as ImageIcon, ListChecks, X } from "lucide-react"
 
-import type { OzonStoreView } from "@/bindings/commands"
 import type { SellerSupplierDbRowData } from "@/bindings/http-supplier-dbs-catalog"
 import { useScreenActive } from "@/components/screen-pane"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
-import { notifyInfo } from "@/lib/notify"
+import { notifyCommandError, notifyInfo } from "@/lib/notify"
 import { cn } from "@/lib/utils"
 
 import {
   LISTABILITY_BADGE,
+  listabilityExplanation,
   listabilitySkippedNotice,
 } from "../listability-copy"
 import {
@@ -38,27 +39,24 @@ import {
   useGalleryCollection,
 } from "./listing-queue"
 import { marketImageSrc } from "./market-image"
-import { QueueBindings } from "./queue-bindings"
 
 export function ListingQueueTray({
   open,
   onOpenChange,
   rows,
   refreshing,
+  refreshRows,
   onOpenDetail,
   onOpenListing,
-  stores,
-  onOpenStores,
   variant = "fab",
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   rows: SellerSupplierDbRowData[]
   refreshing?: boolean
+  refreshRows?: () => Promise<SellerSupplierDbRowData[] | undefined>
   onOpenDetail: (row: SellerSupplierDbRowData) => void
-  onOpenListing: (products: CatalogListingIdentity[]) => void
-  stores: readonly OzonStoreView[]
-  onOpenStores?: () => void
+  onOpenListing: (products: CatalogListingIdentity[]) => void | Promise<void>
   /**
    * `toolbar`：工具行尾的常态按钮，面板向下展开；
    * `fab`：右下角圆形悬浮钮，面板向上展开（详情页/空态用）。
@@ -68,6 +66,15 @@ export function ListingQueueTray({
   const { queue, removeQueued, clearQueue } = useGalleryCollection()
   // 浮窗 portal 在 body——宿主屏切走时强制合上，与 Sheet 的 screenActive 约定一致。
   const screenActive = useScreenActive()
+  const activeRef = useRef(screenActive)
+  activeRef.current = screenActive
+  const queueRef = useRef(queue)
+  queueRef.current = queue
+  const [preparing, setPreparing] = useState(false)
+  useEffect(() => {
+    activeRef.current = screenActive
+    return () => { activeRef.current = false }
+  }, [screenActive])
   useEffect(() => {
     if (!screenActive && open) onOpenChange(false)
   }, [onOpenChange, open, screenActive])
@@ -87,14 +94,56 @@ export function ListingQueueTray({
 
   const toolbar = variant === "toolbar"
 
-  return (
+  async function openListing() {
+    if (refreshing || preparing || !queueRef.current.length) return
+    setPreparing(true)
+    try {
+      const freshRows = refreshRows ? await refreshRows() : rows
+      if (!freshRows || !activeRef.current) return
+      const freshById = new Map(freshRows.map((row) => [row.productId, row] as const))
+      const currentQueue = [...queueRef.current].sort((a, b) => b.addedAtMs - a.addedAtMs)
+      if (!currentQueue.length) return
+      const present = availableQueueRows(currentQueue, freshById)
+      if (!present.length) {
+        notifyInfo("清单中的商品已下架，请移除后重新选品")
+        onOpenChange(true)
+        return
+      }
+      const submitted = await submitQueueImport(present, onOpenListing)
+      if (activeRef.current) onOpenChange(!submitted)
+    } catch (reason) {
+      notifyCommandError(reason, "读不到货源，无法进入上架")
+    } finally {
+      setPreparing(false)
+    }
+  }
+
+  const submitButton = (
+    <Button
+      type="button"
+      size={toolbar ? "default" : "sm"}
+      className={toolbar ? "cursor-pointer" : "flex-1 cursor-pointer"}
+      disabled={refreshing || preparing || !queue.length}
+      aria-busy={preparing || undefined}
+      data-gallery-queue-direct-submit={toolbar ? "" : undefined}
+      data-gallery-queue-submit={!toolbar ? "" : undefined}
+      onClick={openListing}
+    >
+      {preparing ? "正在准备…" : refreshing ? "正在核对…" : "前往上架"}
+    </Button>
+  )
+
+  const popover = (
     <Popover open={screenActive ? open : false} onOpenChange={onOpenChange}>
       <PopoverTrigger
         render={
           <Button
             type="button"
-            variant={toolbar ? "brand" : "default"}
+            variant={toolbar ? "outline" : "default"}
+            size="default"
             aria-expanded={open}
+            aria-label={queue.length ? `上架清单，${queue.length} 件` : "上架清单"}
+            title="上架清单"
             data-gallery-queue-open=""
             className={
               toolbar
@@ -108,44 +157,42 @@ export function ListingQueueTray({
         上架清单
         {queue.length ? (
           <span
+            aria-hidden
             className={cn(
-              "inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 font-mono text-meta leading-none tabular-nums",
+              "inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-meta leading-none tabular-nums",
               toolbar
-                ? "bg-brand-foreground text-brand"
+                ? "bg-brand-soft text-brand-ink"
                 : "bg-brand text-brand-foreground",
             )}
           >
             {queue.length}
           </span>
         ) : null}
+        {toolbar ? <ChevronDown aria-hidden /> : null}
       </PopoverTrigger>
       <PopoverContent
         side={toolbar ? "bottom" : "top"}
         align="end"
         sideOffset={10}
-        className="flex max-h-[min(32rem,calc(100dvh-8rem))] w-96 flex-col overflow-hidden p-0"
+        aria-label="上架清单"
+        className="flex max-h-[min(32rem,calc(100dvh-8rem))] w-[min(26rem,calc(100vw-2rem))] flex-col overflow-hidden p-0"
         data-gallery-queue-tray=""
       >
-        <div className="flex items-start gap-2 border-b border-border px-4 py-3">
+        {!toolbar || !ordered.length ? <div className="flex items-start gap-2 border-b border-border px-4 py-3">
           <div className="flex min-w-0 flex-1 flex-col gap-0.5">
             <p className="text-sm font-medium text-foreground">
               上架清单（{queue.length}）
             </p>
-            <p className="text-meta text-muted-foreground">
-              挑好的商品在这里集合，批量导入为上架方案。
-            </p>
           </div>
-          <Button
-            type="button"
+          <IconButton
+            icon={X}
+            label="关闭上架清单"
             size="icon-xs"
             variant="ghost"
-            aria-label="关闭上架清单"
-            className="cursor-pointer"
+            tooltipSide="left"
             onClick={() => onOpenChange(false)}
-          >
-            <X aria-hidden />
-          </Button>
-        </div>
+          />
+        </div> : null}
         {ordered.length ? (
           <ul className="flex min-h-0 flex-1 flex-col overflow-y-auto">
             {ordered.map((entry) => {
@@ -201,24 +248,21 @@ export function ListingQueueTray({
                         {formatCny(entry.platformPriceCents)}
                       </span>
                     </p>
-                    {/* 已下架的行不能导入，绑定控件也就不给（避免攒下一笔落不了卡的草稿）。 */}
-                    <QueueBindings
-                      entry={entry}
-                      available={Boolean(row)}
-                      stores={stores}
-                      onOpenStores={onOpenStores}
-                    />
+                    {rowListability && !rowListability.listable ? (
+                      <p className="text-meta text-muted-foreground" data-queue-blocked-reason="">
+                        {listabilityExplanation(row?.denial)}
+                      </p>
+                    ) : null}
                   </div>
-                  <Button
-                    type="button"
+                  <IconButton
+                    icon={X}
+                    label={`移出清单 ${entry.title}`}
+                    tip="移出清单"
                     size="icon-xs"
                     variant="ghost"
-                    aria-label={`移出清单 ${entry.title}`}
-                    className="cursor-pointer"
+                    tooltipSide="left"
                     onClick={() => removeQueued(entry.productId)}
-                  >
-                    <X aria-hidden />
-                  </Button>
+                  />
                 </li>
               )
             })}
@@ -230,39 +274,32 @@ export function ListingQueueTray({
             </div>
             <p className="text-sm font-medium text-foreground">清单还是空的</p>
             <p className="text-meta text-muted-foreground">
-              在卡片或详情页点「加入上架清单」。
+              在商品行或详情页点「加入上架清单」。
             </p>
           </div>
         )}
         {ordered.length ? (
-          <div className="flex items-center gap-2 border-t border-border px-3 py-2.5">
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              className="cursor-pointer"
-              onClick={clearQueue}
-            >
-              清空
+          <div className="flex flex-wrap items-center gap-2 border-t border-border px-3 py-2.5">
+            <p className="mr-auto text-meta text-muted-foreground" role="status">
+              {importable.rows.length} 件可上架
+              {queue.length > importable.rows.length ? ` · ${queue.length - importable.rows.length} 件不可上架` : ""}
+            </p>
+            <Button type="button" variant="ghost" size="sm" aria-label="清空上架清单" onClick={clearQueue}>
+              <Eraser aria-hidden />清空
             </Button>
-            <Button
-              type="button"
-              size="sm"
-              className="flex-1 cursor-pointer"
-              disabled={refreshing || !importable.rows.length}
-              data-gallery-queue-submit=""
-              onClick={() => {
-                if (refreshing) return
-                submitQueueImport(present, onOpenListing)
-                onOpenChange(false)
-              }}
-            >
-              {refreshing ? "正在核对规格…" : `批量进入上架（${importable.rows.length} 件）`}
-            </Button>
+            {!toolbar ? submitButton : null}
           </div>
         ) : null}
       </PopoverContent>
     </Popover>
+  )
+
+  if (!toolbar) return popover
+  return (
+    <>
+      {popover}
+      {submitButton}
+    </>
   )
 }
 
@@ -271,12 +308,13 @@ export function ListingQueueTray({
  * （`已跳过 N 件…`，条目留在清单），可达集照走最小身份交接。没有可达行
  * 时什么都不递——空数组不进上架导航。
  */
-export function submitQueueImport(
+export async function submitQueueImport(
   present: SellerSupplierDbRowData[],
-  onOpenListing: (products: CatalogListingIdentity[]) => void,
-): void {
+  onOpenListing: (products: CatalogListingIdentity[]) => void | Promise<void>,
+): Promise<boolean> {
   const { rows, skipped } = importableQueueRows(present)
   if (skipped > 0) notifyInfo(listabilitySkippedNotice(skipped))
-  if (!rows.length) return
-  onOpenListing(rows.map(catalogListingIdentity))
+  if (!rows.length) return false
+  await onOpenListing(rows.map(catalogListingIdentity))
+  return true
 }

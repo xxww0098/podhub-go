@@ -1,13 +1,18 @@
 import { api } from "@/api/client"
 import { route } from "@/api/routes"
 import type { components } from "@/api/schema"
-import type { AiApiFormat, ListAiModelsRequest } from "./commands"
+import type { AiApiFormat, AiRuntime, ListAiModelsRequest } from "./commands"
 import { writeIntegrationConfig } from "./integration-config"
-import { applyAiUpsert, applyAiActive, applyAiDelete, applyAiDefaultModel, type AiAccountDraft } from "./integration-ai-writes"
+import { applyAiUpsert, applyAiActive, applyAiDelete, applyAiDefaultModel, applyAiRuntime, type AiAccountDraft } from "./integration-ai-writes"
 import { refuse } from "./refusal"
+import { requireAiConfigComplete } from "./integration-writes"
 
-type Config = components["schemas"]["IntegrationConfigData"]
-const snapshot = () => api.get<Config>(route("integrationsConfig"))
+type Config = components["schemas"]["AdminIntegrationConfigView"]
+const snapshot = async () => {
+  const config = await api.get<Config>(route("adminIntegrationsConfig"))
+  requireAiConfigComplete(config)
+  return config
+}
 
 export const aiAccountsHttp = {
   upsert: async (draft: AiAccountDraft) => {
@@ -17,6 +22,7 @@ export const aiAccountsHttp = {
   setActive: async (id: string, active: boolean) => writeIntegrationConfig(applyAiActive(await snapshot(), id, active)),
   delete: async (id: string) => writeIntegrationConfig(applyAiDelete(await snapshot(), id)),
   setDefaultModel: async (model: string) => writeIntegrationConfig(applyAiDefaultModel(await snapshot(), model)),
+  setRuntime: async (runtime: AiRuntime) => writeIntegrationConfig(applyAiRuntime(await snapshot(), runtime)),
   listModels: async (probe: ListAiModelsRequest) =>
     (
       await api.post<components["schemas"]["AiModelsData"]>(
@@ -26,7 +32,7 @@ export const aiAccountsHttp = {
           base_url: probe.base_url?.trim() || null,
           api_key: probe.api_key?.trim() || null,
           api_format: probe.api_format,
-        },
+        } satisfies components["schemas"]["AiProbeRequest"],
       )
     ).models.map((model) => ({ id: model.id, owned_by: model.owned_by })),
   /**
@@ -62,6 +68,6 @@ export const aiAccountsHttp = {
       route("adminIntegrationsAiVerify"),
       body,
     )
-    return { ...result, latency_ms: Math.round(performance.now() - startedAt) }
+    return { verified: result.verified, model_present: result.model_present, latency_ms: Math.round(performance.now() - startedAt) }
   },
 }

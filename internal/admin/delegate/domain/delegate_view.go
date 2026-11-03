@@ -4,14 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 
-	corecontract "github.com/xxww0098/podhub-go/internal/admin/core/contract"
 	delegatecontract "github.com/xxww0098/podhub-go/internal/admin/delegate/contract"
+	delegatec "github.com/xxww0098/podhub-go/internal/delegate/contract"
 )
-
-// EncodeCursor is `{ms}:{orderId}` for the last kept row.
-func EncodeCursor(ms int64, orderID string) string {
-	return corecontract.Itoa64(ms) + ":" + orderID
-}
 
 // ProjectPostingSnapshot keeps status, substatus, in_process_at, shipment_date in that order.
 func ProjectPostingSnapshot(raw []byte) json.RawMessage {
@@ -133,7 +128,7 @@ func Page(rows []delegatecontract.OrderRow, limit int64) delegatecontract.OrderL
 		out.Data.HasNext = true
 		out.Data.Orders = rows[:limit]
 		last := out.Data.Orders[len(out.Data.Orders)-1]
-		out.Data.Cursor = EncodeCursor(last.CreatedAtMs, last.OrderID)
+		out.Data.Cursor = delegatec.EncodeCursor(last.CreatedAtMs, last.OrderID)
 	}
 	if out.Data.Orders == nil {
 		out.Data.Orders = []delegatecontract.OrderRow{}

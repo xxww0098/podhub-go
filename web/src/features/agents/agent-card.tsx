@@ -2,7 +2,7 @@ import { useState } from "react"
 import { Check, Copy, Link2 } from "lucide-react"
 import type { AgentWorkbench } from "@/bindings/commands"
 import { StateChip } from "@/components/state-chip"
-import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import {
   Table,
   TableBody,
@@ -49,47 +49,28 @@ export function AgentCard({
       aria-label="代理"
       className="overflow-hidden rounded-xl border border-border bg-card"
     >
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-4 py-3">
-        <div className="flex min-w-0 flex-col gap-0.5">
-          <p className="text-sm font-medium">代理</p>
-          <p className="text-xs text-muted-foreground">
-            用邀请码或邀请链接注册的用户，首笔实付订单按{" "}
-            <span className="font-mono tabular-nums">{rebateLabel(workbench.rebate_bps)}</span>{" "}
-            返点，进入你的佣金余额，可提现或转入钱包。
-          </p>
-        </div>
+      <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
+        <p className="text-xs text-muted-foreground">返点率 <span className="font-mono tabular-nums">{rebateLabel(workbench.rebate_bps)}</span></p>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <span className="rounded-md border border-border bg-muted/40 px-2 py-1 font-mono text-sm tracking-wider select-all">
             {workbench.invite_code}
           </span>
-          <Button
-            type="button"
+          <IconButton
+            icon={copied === "code" ? Check : Copy}
+            label="复制邀请码"
+            size="icon-sm"
             variant="outline"
-            size="sm"
-            aria-label="复制邀请码"
+            className={copied === "code" ? "text-st-good-ink" : undefined}
             onClick={() => void copy("code")}
-          >
-            {copied === "code" ? (
-              <Check data-icon="inline-start" className="text-st-good-ink" />
-            ) : (
-              <Copy data-icon="inline-start" />
-            )}
-            复制邀请码
-          </Button>
-          <Button
-            type="button"
+          />
+          <IconButton
+            icon={copied === "link" ? Check : Link2}
+            label="复制邀请链接"
+            size="icon-sm"
             variant="outline"
-            size="sm"
-            aria-label="复制邀请链接"
+            className={copied === "link" ? "text-st-good-ink" : undefined}
             onClick={() => void copy("link")}
-          >
-            {copied === "link" ? (
-              <Check data-icon="inline-start" className="text-st-good-ink" />
-            ) : (
-              <Link2 data-icon="inline-start" />
-            )}
-            复制邀请链接
-          </Button>
+          />
         </div>
       </div>
       <dl className="grid grid-cols-1 sm:grid-cols-3 gap-px border-b border-border bg-border text-sm">
@@ -98,7 +79,7 @@ export function AgentCard({
         <Stat label="累计佣金" value={formatCents(workbench.credited_total_cents)} />
       </dl>
       {workbench.commissions.length === 0 ? (
-        <p className="px-4 py-6 text-center text-xs text-muted-foreground">
+        <p className="px-3 py-3 text-center text-xs text-muted-foreground">
           还没有佣金记录。被邀请用户的 Workspace 完成首笔实付后会出现在这里。
         </p>
       ) : (
@@ -154,7 +135,7 @@ export function AgentCard({
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex flex-col gap-0.5 bg-card px-4 py-3">
+    <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5 bg-card px-3 py-2">
       <dt className="text-xs text-muted-foreground">{label}</dt>
       <dd className="font-mono text-sm tabular-nums">{value}</dd>
     </div>

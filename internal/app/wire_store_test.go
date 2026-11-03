@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/xxww0098/podhub-go/internal/platform/config"
-	"github.com/xxww0098/podhub-go/internal/seller"
+	seller "github.com/xxww0098/podhub-go/internal/seller/ozon"
 )
 
 func TestSellerInfoReadIgnoresWriteSwitch(t *testing.T) {
@@ -42,11 +42,11 @@ func TestSellerInfoReadIgnoresWriteSwitch(t *testing.T) {
 	}
 }
 
-func TestSellerInfoRefusesPublicHost(t *testing.T) {
+func TestSellerInfoRefusesInvalidCredential(t *testing.T) {
 	t.Setenv("CLOUD_SELLER_BASE_URL", "https://api-seller.ozon.ru")
 	t.Setenv("OZON_WRITE_KILL_SWITCH", "0")
 	eg := seller.New(config.Load())
-	if _, _, err := (sellerInfo{eg}).PostSellerInfo(context.Background(), "client", "fixture-api-key-store-autofill"); err != seller.ErrRefusedOrigin {
+	if _, _, err := (sellerInfo{eg}).PostSellerInfo(context.Background(), "client", "bad\r\nkey"); err != seller.ErrRefusedOrigin {
 		t.Fatal(err)
 	}
 	if eg.ReadPosts() != 0 || eg.WritePosts() != 0 {

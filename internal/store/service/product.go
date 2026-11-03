@@ -172,7 +172,7 @@ func (s Service) Verify(ctx context.Context, orgID, userID int64, uuid string, o
 		}
 		return claim.Rows, nil
 	}
-	opened, api := s.credential.OpenCurrentCredential(ctx, orgID, normalized)
+	opened, api := s.credential.OpenCurrentCredential(ctx, orgID, actor, normalized)
 	if api != nil {
 		s.releaseVerify(ctx, orgID, userID, normalized, digest, nowMS)
 		return nil, api

@@ -13,7 +13,6 @@ func TestParseWarehousesAndObsolete(t *testing.T) {
 		"cursor":"c2","has_next":true,
 		"warehouses":[
 			{"warehouse_id":7,"name":"A","status":"created","is_rfbs":true},
-			{"warehouse_id":0,"name":"skip"},
 			{"warehouse_id":7,"name":"A2","status":"created","is_rfbs":false}
 		]
 	}`)
@@ -41,15 +40,15 @@ func TestParseWarehousesAndObsolete(t *testing.T) {
 
 func TestParseMethodsKeepsVerifiedFieldsAsText(t *testing.T) {
 	raw := []byte(`{
-		"has_next":false,
-		"result":[{
+		"cursor":"next-page","has_next":true,
+		"delivery_methods":[{
 			"id":11,"name":"快递","warehouse_id":7,"provider_id":4,"template_id":"tpl",
 			"cutoff":"18:00","sla_cut_in":90,"status":"ACTIVE",
 			"created_at":"2026-01-02T03:04:05Z","updated_at":"2026-01-03T03:04:05Z"
 		}]
 	}`)
 	page, err := ParseMethods(raw)
-	if err != nil || len(page.Rows) != 1 {
+	if err != nil || len(page.Rows) != 1 || !page.HasNext || page.Cursor != "next-page" {
 		t.Fatal(page, err)
 	}
 	got := page.Rows[0]
@@ -61,9 +60,9 @@ func TestParseMethodsKeepsVerifiedFieldsAsText(t *testing.T) {
 	if got != want {
 		t.Fatalf("%+v", got)
 	}
-	alt := []byte(`{"delivery_methods":[{"id":2,"name":"自提","warehouse_id":7,"status":"DISABLED"}]}`)
+	alt := []byte(`{"result":[{"id":2,"name":"自提","warehouse_id":7,"status":"DISABLED"}]}`)
 	page, err = ParseMethods(alt)
-	if err != nil || len(page.Rows) != 1 || page.Rows[0].Status != "DISABLED" {
+	if err == nil {
 		t.Fatal(page, err)
 	}
 }

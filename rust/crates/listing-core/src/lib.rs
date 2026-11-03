@@ -41,7 +41,6 @@ pub mod field_pack;
 pub mod issue_keys;
 pub mod ocr_contract;
 pub mod ocr_script;
-mod ocr_tag_format;
 pub mod ops;
 pub mod plan;
 pub mod product_import;
@@ -53,6 +52,7 @@ pub mod service;
 pub mod sku_import;
 /// Browser-side confirm and OCR stage plans. Pure. Not a storage or Seller authority.
 pub mod stage_gate;
+pub mod supplier_config;
 #[cfg(test)]
 pub mod upgrade;
 pub mod validate;

@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from "react"
 import { Check, ChevronDown, ChevronLeft, ChevronRight } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { formatShortDay } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -360,9 +360,13 @@ export function DateRangePicker({
               onDayClick={handleDayClick}
               onDayMouseEnter={handleDayMouseEnter}
               headerLeading={
-                <Button variant="ghost" size="icon-xs" onClick={prevMonth} aria-label="上一月">
-                  <ChevronLeft className="size-3.5" />
-                </Button>
+                <IconButton
+                  icon={ChevronLeft}
+                  iconClassName="size-3.5"
+                  label="上一月"
+                  size="icon-xs"
+                  onClick={prevMonth}
+                />
               }
             />
             <MonthCalendar
@@ -376,15 +380,14 @@ export function DateRangePicker({
               onDayClick={handleDayClick}
               onDayMouseEnter={handleDayMouseEnter}
               headerTrailing={
-                <Button
-                  variant="ghost"
+                <IconButton
+                  icon={ChevronRight}
+                  iconClassName="size-3.5"
+                  label="下一月"
                   size="icon-xs"
                   disabled={isCurrentMonthRight}
                   onClick={nextMonth}
-                  aria-label="下一月"
-                >
-                  <ChevronRight className="size-3.5" />
-                </Button>
+                />
               }
             />
           </div>

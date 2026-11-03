@@ -10,7 +10,7 @@ import { accountHttp } from "@/bindings/http-account"
 
 type Call = { url: string, method: string, body: unknown }
 
-function recordFetch(reply: (call: Call) => unknown): { calls: Call[], restore: () => void } {
+function recordFetch(reply: (call: Call) => unknown, responseBody: "data" | "json" = "data"): { calls: Call[], restore: () => void } {
   const previous = globalThis.fetch
   const calls: Call[] = []
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -20,7 +20,8 @@ function recordFetch(reply: (call: Call) => unknown): { calls: Call[], restore: 
       body: init?.body === undefined ? undefined : typeof init.body === "string" ? JSON.parse(init.body) : init.body,
     }
     calls.push(call)
-    return new Response(JSON.stringify({ data: reply(call) }), {
+    const body = reply(call)
+    return new Response(JSON.stringify(responseBody === "json" ? body : { data: body }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     })
@@ -156,12 +157,8 @@ test("the Workspace directory keeps the snake_case wire through to the screen", 
   }
 })
 
-test("a redeemed code flattens Cloud's nested plan and defaults its optional counts", async () => {
-  const stub = recordFetch(() => ({
-    ok: true,
-    plan: { key: "pro", name: "专业版" },
-    member_seats: 3,
-  }))
+test("a redeemed code answers the wallet credit it granted", async () => {
+  const stub = recordFetch(() => ({ ok: true, wallet_cents: 1200 }))
   try {
     const result = await accountHttp.accountRedeemCode({
       code: "ABC-123",
@@ -171,11 +168,7 @@ test("a redeemed code flattens Cloud's nested plan and defaults its optional cou
       code: "ABC-123",
       expected_workspace_uuid: "8f0a3f5e-6c1d-4a5f-9a3e-6d2c8b7f4a11",
     })
-    assert.equal(result.plan_key, "pro")
-    assert.equal(result.plan_name, "专业版")
-    assert.equal(result.ocr_credits, 0)
-    assert.equal(result.wallet_cents, 0)
-    assert.equal(result.plan_expires_at, undefined)
+    assert.deepEqual(result, { ok: true, wallet_cents: 1200 })
   } finally {
     stub.restore()
   }
@@ -186,10 +179,7 @@ test("opening a payment order sends the operator to the provider's own page", as
     order: {
       public_id: "po_1",
       plan: "pro",
-      member_seats: 1,
       months: 1,
-      unit_month_cents: 100,
-      duration_days: 30,
       amount_cents: 100,
       currency: "CNY",
       provider: "alipay",
@@ -200,7 +190,7 @@ test("opening a payment order sends the operator to the provider's own page", as
       paid_at: null,
       canceled_at: null,
     },
-  }))
+  }), "json")
   const scope = globalThis as unknown as { window?: { open: (...args: unknown[]) => unknown } }
   const previousWindow = scope.window
   const opened: unknown[][] = []
@@ -214,33 +204,6 @@ test("opening a payment order sends the operator to the provider's own page", as
     assert.deepEqual(opened, [["https://pay.example/checkout/po_1", "_blank", "noopener"]])
   } finally {
     scope.window = previousWindow
-    stub.restore()
-  }
-})
-
-test("switching accounts promotes the stacked session, then repaints", async () => {
-  const stub = recordFetch(() => overview)
-  try {
-    await accountHttp.accountSwitchAccount("acc-uuid-2")
-    assert.deepEqual(
-      stub.calls.map((call) => `${call.method} ${call.url}`),
-      ["POST /api/auth/switch", "GET /api/view/account-overview"],
-    )
-    assert.deepEqual(stub.calls[0].body, { uuid: "acc-uuid-2" })
-  } finally {
-    stub.restore()
-  }
-})
-
-test("signing a stacked account out deletes its session slot", async () => {
-  const stub = recordFetch(() => ({}))
-  try {
-    await accountHttp.accountLogoutAccount("acc-uuid-2")
-    assert.deepEqual(
-      stub.calls.map((call) => `${call.method} ${call.url}`),
-      ["DELETE /api/auth/accounts/acc-uuid-2"],
-    )
-  } finally {
     stub.restore()
   }
 })

@@ -15,6 +15,11 @@ func BeginAdmin(ctx context.Context, pool *pgxpool.Pool) (pgx.Tx, error) {
 	return corerepo.BeginAdmin(ctx, pool)
 }
 
+// BeginStaff adds app.staff_access for cross-tenant platform reads.
+func BeginStaff(ctx context.Context, pool *pgxpool.Pool) (pgx.Tx, error) {
+	return corerepo.BeginStaff(ctx, pool)
+}
+
 // AssertWriteLease is the admin-domain fence. disabledMessage is the call-site 503 text.
 func AssertWriteLease(ctx context.Context, tx pgx.Tx, disabledMessage string) error {
 	return corerepo.AssertWriteLease(ctx, tx, disabledMessage)

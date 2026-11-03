@@ -2,7 +2,6 @@
 package supplierhttp
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/xxww0098/podhub-go/internal/platform/httpx/jsonwire"
 	"github.com/xxww0098/podhub-go/internal/supplier/contract"
 	"github.com/xxww0098/podhub-go/internal/supplier/domain"
 )
@@ -41,11 +41,12 @@ type Session interface {
 // Actions is the supplier service the handlers call after auth and validation.
 type Actions interface {
 	Me(ctx context.Context, userID int64) (contract.MeData, error)
-	ListDispatches(ctx context.Context, userID int64, state string, cursor domain.Cursor) (contract.DispatchListData, error)
+	ListDispatches(ctx context.Context, userID int64, sourceID, view, search, status, reason string, cursor domain.Cursor, now time.Time) (contract.DispatchListData, error)
+	Dashboard(ctx context.Context, userID int64, sourceID string, now time.Time) (contract.DashboardData, error)
 	GetDispatch(ctx context.Context, userID int64, dispatchID string) (contract.DispatchDetail, error)
 	Accept(ctx context.Context, userID int64, dispatchID string) (contract.ActionData, error)
 	Reject(ctx context.Context, userID int64, dispatchID, reason string) (contract.ActionData, error)
-	DownloadAsset(ctx context.Context, userID int64, dispatchID, assetID string, wantJSON bool, nowMs int64) (contract.AssetBytes, error)
+	DownloadAsset(ctx context.Context, userID int64, dispatchID, assetID string, wantJSON bool, nowMs int64) (contract.DownloadGrant, error)
 	Catalog(ctx context.Context, userID, nowMs int64) (contract.CatalogData, error)
 	CatalogImage(ctx context.Context, sourceID, file string, edge uint32) (contract.ImageBody, error)
 }
@@ -67,18 +68,20 @@ type route struct {
 var routes = []route{
 	{http.MethodGet, "/api/supplier-dbs/catalog"},
 	{http.MethodGet, "/api/supplier-dbs/catalog/images/{source_id}/{file}"},
-	{http.MethodGet, "/api/supplier/dispatches"},
 	{http.MethodGet, "/api/supplier/dispatches/{dispatch_id}"},
 	{http.MethodPost, "/api/supplier/dispatches/{dispatch_id}/accept"},
 	{http.MethodGet, "/api/supplier/dispatches/{dispatch_id}/assets/{asset_id}"},
 	{http.MethodPost, "/api/supplier/dispatches/{dispatch_id}/reject"},
 	{http.MethodGet, "/api/supplier/me"},
+	{http.MethodGet, "/api/supplier/workspaces/{source_id}/dashboard"},
+	{http.MethodGet, "/api/supplier/workspaces/{source_id}/dispatches"},
 }
 
 // Mount registers the routes.
 func Mount(r chi.Router, d Deps) {
 	r.Get("/api/supplier/me", d.me)
-	r.Get("/api/supplier/dispatches", d.dispatches)
+	r.Get("/api/supplier/workspaces/{source_id}/dashboard", d.dashboard)
+	r.Get("/api/supplier/workspaces/{source_id}/dispatches", d.dispatches)
 	r.Get("/api/supplier/dispatches/{dispatch_id}", d.dispatch)
 	r.Post("/api/supplier/dispatches/{dispatch_id}/accept", d.accept)
 	r.Post("/api/supplier/dispatches/{dispatch_id}/reject", d.reject)
@@ -107,12 +110,53 @@ func (d Deps) me(w http.ResponseWriter, r *http.Request) {
 	writeData(w, http.StatusOK, data)
 }
 
+func workspaceID(r *http.Request) (string, error) {
+	id := chi.URLParam(r, "source_id")
+	if id == "" || len(id) > 256 {
+		return "", contract.Fail(404, "not_found", "工厂工作空间不存在")
+	}
+	return id, nil
+}
+
+func (d Deps) dashboard(w http.ResponseWriter, r *http.Request) {
+	p, ok := supplierUser(w, r, d.Session)
+	if !ok {
+		return
+	}
+	source, err := workspaceID(r)
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	data, err := d.Actions.Dashboard(r.Context(), p.UserID, source, d.now())
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeData(w, http.StatusOK, data)
+}
+
 func (d Deps) dispatches(w http.ResponseWriter, r *http.Request) {
 	p, ok := supplierUser(w, r, d.Session)
 	if !ok {
 		return
 	}
-	state, err := domain.FilterState(r.URL.Query().Get("state"))
+	source, err := workspaceID(r)
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	view, err := domain.FilterView(r.URL.Query().Get("view"))
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	search, err := domain.FilterSearch(r.URL.Query().Get("search"))
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	status, reason, err := domain.UrgentFilters(view, r.URL.Query().Get("status"), r.URL.Query().Get("reason"))
 	if err != nil {
 		writeFailure(w, err)
 		return
@@ -122,7 +166,7 @@ func (d Deps) dispatches(w http.ResponseWriter, r *http.Request) {
 		writeFailure(w, err)
 		return
 	}
-	data, err := d.Actions.ListDispatches(r.Context(), p.UserID, state, cursor)
+	data, err := d.Actions.ListDispatches(r.Context(), p.UserID, source, view, search, status, reason, cursor, d.now())
 	if err != nil {
 		writeFailure(w, err)
 		return
@@ -199,6 +243,9 @@ func (d Deps) reject(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d Deps) asset(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	p, ok := supplierUser(w, r, d.Session)
 	if !ok {
 		return
@@ -213,29 +260,18 @@ func (d Deps) asset(w http.ResponseWriter, r *http.Request) {
 		writeFailure(w, contract.Fail(404, "not_found", "素材不存在"))
 		return
 	}
-	got, err := d.Actions.DownloadAsset(r.Context(), p.UserID, dispatchID, assetID, domain.WantsJSON(r.Header.Get("Accept")), d.now().UnixMilli())
+	wantJSON := domain.WantsJSON(r.Header.Get("Accept"))
+	got, err := d.Actions.DownloadAsset(r.Context(), p.UserID, dispatchID, assetID, wantJSON, d.now().UnixMilli())
 	if err != nil {
 		writeFailure(w, err)
 		return
 	}
-	if got.Grant != nil {
-		w.Header().Set("Cache-Control", "private, no-store")
-		w.Header().Set("Referrer-Policy", "no-referrer")
-		writeData(w, http.StatusOK, got.Grant)
+	if wantJSON {
+		writeData(w, http.StatusOK, got)
 		return
 	}
-	w.Header().Set("Content-Type", got.ContentType)
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	if got.FileName != "" {
-		disp := "attachment"
-		if got.Inline {
-			disp = "inline"
-		}
-		w.Header().Set("Content-Disposition", disp+"; filename*=UTF-8''"+strings.ReplaceAll(got.FileName, " ", "%20"))
-	}
-	w.Header().Set("Content-Length", strconv.Itoa(len(got.Body)))
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(got.Body)
+	// Preserve Range and If-Range while the object store streams the bytes.
+	http.Redirect(w, r, got.URL, http.StatusTemporaryRedirect)
 }
 
 func (d Deps) catalog(w http.ResponseWriter, r *http.Request) {
@@ -365,7 +401,7 @@ type envelope struct {
 }
 
 func writeData(w http.ResponseWriter, status int, data any) {
-	writeJSON(w, status, envelope{Data: data})
+	jsonwire.Write(w, status, envelope{Data: data})
 }
 
 type apiError struct {
@@ -430,20 +466,5 @@ func screamCode(code string) string {
 }
 
 func writeErr(w http.ResponseWriter, status int, message, code string) {
-	writeJSON(w, status, apiError{Error: message, Code: code})
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(v); err != nil {
-		slog.Error("json encode", "err", err)
-		http.Error(w, msgUnavailable, http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(status)
-	_, _ = w.Write(bytes.TrimRight(buf.Bytes(), "\n"))
+	jsonwire.Write(w, status, apiError{Error: message, Code: code})
 }

@@ -4,26 +4,10 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish = false
-description = "Browser render runtime: Rust admission, shared templates and Rayon dispatch, with a C ABI retained for compute golden tests."
+description = "Browser render runtime: Rust admission, shared templates and Rayon dispatch over one shared WASM memory."
 
-# The workspace denies `unsafe_code`. This crate is the raw-pointer boundary and
-# cannot; it and `rust/crates/listing-core-wasm` (browser-owned-listing slice 03)
-# are the only two places in the tree that may say so. Cargo's
-# `[lints] workspace = true` is all-or-nothing, so the workspace set is restated
-# here with that one key flipped, plus the two clippy lints that make the
-# exception pay for itself.
-[lints.rust]
-unsafe_code = "allow"
-unused_must_use = "deny"
-unreachable_pub = "warn"
-raw_borrows_via_references = "deny"
-
-[lints.clippy]
-todo = "deny"
-unimplemented = "deny"
-dbg_macro = "deny"
-undocumented_unsafe_blocks = "deny"
-missing_safety_doc = "deny"
+[lints]
+workspace = true
 
 [lib]
 crate-type = ["cdylib"]

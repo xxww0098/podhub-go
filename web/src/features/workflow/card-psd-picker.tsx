@@ -1,7 +1,6 @@
 import { FileImage, RefreshCw, RotateCcw, X } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import { Spinner } from "@/components/ui/spinner"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { usePsdTransfer } from "./card/psd-transfer"
 
 /**
@@ -45,6 +44,7 @@ export function CardPsdPicker({
         type="button"
         disabled={disabled}
         aria-label={label}
+        title="PSD 仅保存在本机"
         data-testid="card-psd-binding"
         className="mt-0.5 -ml-1 flex h-6 cursor-pointer items-center gap-1 rounded-md border border-dashed border-border-strong px-2 text-meta whitespace-nowrap text-muted-foreground outline-none transition-colors hover:border-brand/50 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed"
         onClick={() => void onPick()}
@@ -60,7 +60,7 @@ export function CardPsdPicker({
         type="button"
         disabled={disabled || saving}
         aria-label={label}
-        title="重新选择 PSD 模板"
+        title="重新选择 PSD 模板，仅保存在本机"
         data-testid="card-psd-binding"
         className="flex min-w-0 cursor-pointer items-center gap-1 rounded-md px-1 py-0.5 text-left outline-none transition-colors hover:bg-accent/70 focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed"
         onClick={() => void onPick()}
@@ -83,47 +83,20 @@ export function CardPsdPicker({
         ) : null}
       </button>
       {active?.abort ? (
-        <Button
-          type="button"
-          size="icon-xs"
-          variant="ghost"
-          aria-label="取消 PSD 上传"
-          onClick={active.abort}
-        >
-          <X aria-hidden />
-        </Button>
+        <IconButton icon={X} label="取消 PSD 绑定" size="icon-xs" onClick={active.abort} />
       ) : null}
       {failed?.retry ? (
-        <Button
-          type="button"
-          size="icon-xs"
-          variant="ghost"
-          aria-label="重试 PSD 上传"
-          aria-invalid="true"
-          onClick={failed.retry}
-        >
-          <RefreshCw aria-hidden />
-        </Button>
+        <IconButton icon={RefreshCw} label="重试 PSD 绑定" size="icon-xs" aria-invalid="true" onClick={failed.retry} />
       ) : null}
       {onClear && fileName.trim() ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                type="button"
-                size="icon-xs"
-                variant="ghost"
-                disabled={disabled || saving}
-                aria-label={clearLabel}
-                className="cursor-pointer text-muted-foreground hover:text-foreground"
-                onClick={() => void onClear()}
-              />
-            }
-          >
-            <RotateCcw aria-hidden />
-          </TooltipTrigger>
-          <TooltipContent>{clearLabel}</TooltipContent>
-        </Tooltip>
+        <IconButton
+          icon={RotateCcw}
+          label={clearLabel}
+          size="icon-xs"
+          disabled={disabled || saving}
+          className="text-muted-foreground hover:text-foreground"
+          onClick={() => void onClear()}
+        />
       ) : null}
     </span>
   )

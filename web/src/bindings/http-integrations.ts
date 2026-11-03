@@ -1,4 +1,4 @@
-import { integrationOverview, writeIntegrationConfig } from "./integration-config"
+import { integrationOverview } from "./integration-config"
 /**
  * Integrations HTTP wire: Workspace Stores, AI accounts, object storage and
  * payment-provider config.
@@ -8,20 +8,15 @@ import { integrationOverview, writeIntegrationConfig } from "./integration-confi
  */
 import { api, request as apiRequest } from "@/api/client";
 import { route } from "@/api/routes";
-import { putDirectUpload } from "./direct-upload";
 import type { components } from "@/api/schema";
 import { accountOverview } from "./http-account";
+import { hashUploadBody } from "./direct-upload";
 import {
-  applyMediaDelete,
-  applyMediaUpsert,
-  healthcheckDigest,
-  HEALTHCHECK_PNG,
   ozonStoreUpsertKind,
   readActiveStore,
   requireCredentialForIdentity,
   requireRosterStore,
   renameOzonStoreRequest,
-  writeActiveStore,
 } from "./integration-writes";
 import { isCredentialExpiredAt } from "@/lib/credential-expiry";
 import { errorMessage } from "@/lib/error-message";
@@ -50,12 +45,10 @@ import type {
   ReplacePaymentConfigRequest,
   SellerRelayData,
   SellerRelayProbeData,
-  IntegrationMediaRole,
-  UpsertMediaAccountRequest,
   UpsertOzonStoreRequest,
 } from "./commands";
 
-type IntegrationConfigData = components["schemas"]["IntegrationConfigData"];
+type IntegrationConfigData = components["schemas"]["AdminIntegrationConfigView"];
 
 type WorkspaceStoreRosterData =
   components["schemas"]["WorkspaceStoreRosterData"];
@@ -64,9 +57,27 @@ type WorkspaceStoreData = components["schemas"]["WorkspaceStoreData"];
 
 type WorkspaceStoreView = components["schemas"]["WorkspaceStoreView"];
 
-const INTEGRATION_CONFIG = route("integrationsConfig");
+const INTEGRATION_CONFIG = route("adminIntegrationsConfig");
 
 const WORKSPACE_STORES = route("workspacesStores");
+
+function readWorkspaceStores(): Promise<WorkspaceStoreRosterData> {
+  return apiRequest("GET", WORKSPACE_STORES, undefined, {}, undefined, undefined, { responseBody: "json" });
+}
+
+/**
+ * The workspace store routes answer a bare DTO (`{"store": …}`), not the
+ * `{"data": …}` envelope `api` demands. Reading them through `api` threw after
+ * Cloud had already committed, which left a half-made Store and stale lists.
+ */
+const storeApi = {
+  post: <T = unknown>(path: string, body?: unknown) =>
+    apiRequest<T>("POST", path, body, {}, undefined, undefined, { responseBody: "json" }),
+  put: <T = unknown>(path: string, body?: unknown) =>
+    apiRequest<T>("PUT", path, body, {}, undefined, undefined, { responseBody: "json" }),
+  del: <T = unknown>(path: string, body?: unknown) =>
+    apiRequest<T>("DELETE", path, body, {}, undefined, undefined, { responseBody: "json" }),
+};
 
 function storePath(uuid: string, suffix = ""): string {
   return `${WORKSPACE_STORES}/${encodeURIComponent(uuid)}${suffix}`;
@@ -110,11 +121,11 @@ async function ozonStoresOverview(
   knownOverview?: AccountOverview | null,
 ): Promise<OzonStoresOverview> {
   const [roster, overview] = await Promise.all([
-    api.get<WorkspaceStoreRosterData>(WORKSPACE_STORES),
+    readWorkspaceStores(),
     knownOverview ? Promise.resolve(knownOverview) : accountOverview(),
   ]);
   for (const tombstone of roster.tombstones ?? []) {
-    await api
+    await storeApi
       .post(storePath(tombstone.uuid, "/tombstone-consumed"))
       .catch(() => undefined);
   }
@@ -130,6 +141,7 @@ async function ozonStoresOverview(
     advertising_client_id: "",
     advertising_configured: false,
     configured: cloud.credential_configured,
+    company_currency: cloud.company_currency ?? "",
     secret_status: cloud.credential_configured ? "present" : "absent",
     ref_id: cloud.uuid,
     updated_at_ms: 0,
@@ -150,7 +162,6 @@ async function ozonStoresOverview(
     assignee_email: cloud.assignee?.email,
     can_manage: cloud.permissions.manage_store,
     can_edit_credential: cloud.permissions.manage_key,
-    assignee_key_manage: cloud.assignee_key_manage,
     product_quota: cloud.product_quota ?? null,
     finance_balance: cloud.finance_balance ?? null,
     tags: cloud.tags ?? [],
@@ -173,7 +184,7 @@ async function ozonStoresOverview(
 /** Verifying or activating a Store needs it live and keyed on Cloud. */
 async function executableStore(id: string): Promise<WorkspaceStoreView> {
   const store = requireRosterStore(
-    await api.get<WorkspaceStoreRosterData>(WORKSPACE_STORES),
+    await readWorkspaceStores(),
     id,
   );
   if (store.status !== "active") {
@@ -233,14 +244,18 @@ export const integrationsHttp = {
   integrationsProbeSellerRelay: () =>
     api.post<SellerRelayProbeData>(route("adminSellerRelayProbe")),
   integrationsListOzonStores: ozonStoresOverview,
+  integrationsResolveOzonStoreName: (request: components["schemas"]["ResolveWorkspaceStoreNameRequest"]) =>
+    storeApi.post<components["schemas"]["ResolveWorkspaceStoreNameData"]>(
+      route("workspacesStoresCredentialsResolveName"), request,
+    ),
   integrationsCreateOzonStore: async (request: CreateOzonStoreRequest) => {
-    const created = await api.post<WorkspaceStoreData>(WORKSPACE_STORES, {
+    const created = await storeApi.post<WorkspaceStoreData>(WORKSPACE_STORES, {
       name: request.label.trim(),
     });
     return { id: created.store.uuid, roster: await ozonStoresOverview() };
   },
   integrationsUpsertOzonStore: async (request: UpsertOzonStoreRequest) => {
-    const roster = await api.get<WorkspaceStoreRosterData>(WORKSPACE_STORES);
+    const roster = await readWorkspaceStores();
     const clientId = request.client_id.trim();
     const name = request.label.trim();
     const decision = ozonStoreUpsertKind(request.id, clientId, roster);
@@ -250,14 +265,15 @@ export const integrationsHttp = {
     let store: WorkspaceStoreView;
     if (decision.kind === "promote") {
       store = (
-        await api.post<WorkspaceStoreData>(WORKSPACE_STORES, {
-          name: name || "新店铺",
+        await storeApi.post<WorkspaceStoreData>(WORKSPACE_STORES, {
+          name,
         })
       ).store;
       minted = store;
     } else {
       store = requireRosterStore(roster, decision.uuid);
     }
+    let nameFilled = false;
     try {
       const apiKey = request.api_key.trim();
       requireCredentialForIdentity({
@@ -266,7 +282,9 @@ export const integrationsHttp = {
         credentialConfigured: store.credential_configured,
       });
       if (apiKey.length > 0) {
-        await api.post(storePath(store.uuid, "/credential"), {
+        const registered = await storeApi.post<
+          components["schemas"]["RegisterWorkspaceStoreCredentialData"]
+        >(storePath(store.uuid, "/credential"), {
           client_id: clientId,
           api_key: apiKey,
           confirm_upload: true,
@@ -275,6 +293,7 @@ export const integrationsHttp = {
             ? store.credential_revision
             : null,
         });
+        nameFilled = registered.name_filled;
       } else if (!store.client_id) {
         throw refuse(
           "workspace_store_identity_incomplete",
@@ -283,7 +302,7 @@ export const integrationsHttp = {
       }
     } catch (reason) {
       if (minted) {
-        await apiRequest("DELETE", storePath(minted.uuid), {
+        await storeApi.del(storePath(minted.uuid), {
           revision: minted.revision,
         }).catch(() => undefined);
       }
@@ -292,7 +311,7 @@ export const integrationsHttp = {
     // `store.uuid` is the exact row the save touched — promoted or adopted — so
     // callers attaching tags afterwards never have to re-derive it from a
     // name/Client-ID match.
-    return { overview: await ozonStoresOverview(), store_id: store.uuid };
+    return { overview: await ozonStoresOverview(), store_id: store.uuid, name_filled: nameFilled };
   },
   /**
    * One paste row per Store: create the row, then register the Seller key on
@@ -302,12 +321,12 @@ export const integrationsHttp = {
    * whose key is refused is deleted again, and the line keeps its own failure
    * rather than aborting the batch.
    *
-   * `tag_names` are the `#标签` tokens parsed from the line: absent leaves the
-   * Store's tags alone, a present list replaces the set. Names resolve
-   * case-insensitively against the tag library and missing ones are minted up
-   * front — a line whose tag cannot be created fails before any credential
-   * write, and a line whose tags cannot be applied fails with the key already
-   * registered, so retrying the same text is always safe.
+   * `group_name` is the `#分组` token parsed from the line: absent leaves the
+   * Store's group alone, an empty string clears it. The name resolves
+   * case-insensitively against the group library and a missing one is minted
+   * up front — a line whose group cannot be created fails before any
+   * credential write, and a line whose group cannot be applied fails with the
+   * key already registered, so retrying the same text is always safe.
    */
   integrationsImportOzonStores: async (request: {
     items: Array<{
@@ -315,48 +334,49 @@ export const integrationsHttp = {
       name: string;
       client_id: string;
       api_key: string;
-      tag_names?: string[];
+      group_name?: string;
     }>;
   }): Promise<ImportOzonStoresResult> => {
-    const roster = await api.get<WorkspaceStoreRosterData>(WORKSPACE_STORES);
+    const roster = await readWorkspaceStores();
     const stores = [...roster.stores];
     const results: ImportOzonStoreResultView[] = [];
-    const tagUuidByName = new Map(
-      (roster.tags ?? []).map((tag) => [tag.name.toLowerCase(), tag.uuid]),
+    const groupUuidByName = new Map(
+      (roster.groups ?? []).map((group) => [group.name.toLowerCase(), group.uuid]),
     );
-    const wantedTags = new Map<string, string>();
+    const wantedGroups = new Map<string, string>();
     for (const item of request.items) {
-      for (const tag of item.tag_names ?? []) {
-        const key = tag.toLowerCase();
-        if (!tagUuidByName.has(key)) wantedTags.set(key, tag);
+      const group = item.group_name;
+      if (group && !groupUuidByName.has(group.toLowerCase())) {
+        wantedGroups.set(group.toLowerCase(), group);
       }
     }
-    const tagErrors = new Map<string, string>();
-    for (const [key, tag] of wantedTags) {
+    const groupErrors = new Map<string, string>();
+    for (const [key, group] of wantedGroups) {
       try {
-        const created = await api.post<
-          components["schemas"]["WorkspaceStoreTagData"]
-        >(route("workspacesStoresTags"), { name: tag });
-        tagUuidByName.set(key, created.tag.uuid);
+        const created = await storeApi.post<
+          components["schemas"]["WorkspaceStoreGroupData"]
+        >(route("workspacesStoresGroups"), { name: group });
+        groupUuidByName.set(key, created.group.uuid);
       } catch (reason) {
-        tagErrors.set(key, errorMessage(reason, "无法创建标签"));
+        groupErrors.set(key, errorMessage(reason, "无法创建分组"));
       }
     }
     for (const item of request.items) {
       const name = item.name.trim() || "新店铺";
       const clientId = item.client_id.trim();
       const apiKey = item.api_key.trim();
-      const failedTag = (item.tag_names ?? []).find((tag) =>
-        tagErrors.has(tag.toLowerCase()),
-      );
-      if (failedTag !== undefined) {
+      const failedGroup =
+        item.group_name && groupErrors.has(item.group_name.toLowerCase())
+          ? item.group_name
+          : undefined;
+      if (failedGroup !== undefined) {
         results.push({
           source_ref: item.source_ref,
           name,
           status: "failed",
           uuid: null,
           quota_suspended: false,
-          reason: `标签「${failedTag}」未能创建：${tagErrors.get(failedTag.toLowerCase())}`,
+          reason: `分组「${failedGroup}」未能创建：${groupErrors.get(failedGroup.toLowerCase())}`,
         });
         continue;
       }
@@ -365,7 +385,7 @@ export const integrationsHttp = {
       try {
         if (!store) {
           store = (
-            await api.post<WorkspaceStoreData>(WORKSPACE_STORES, {
+            await storeApi.post<WorkspaceStoreData>(WORKSPACE_STORES, {
               name,
               client_id: clientId,
             })
@@ -373,7 +393,7 @@ export const integrationsHttp = {
           minted = store;
           stores.push(store);
         }
-        const registered = await api.post<
+        const registered = await storeApi.post<
           components["schemas"]["RegisterWorkspaceStoreCredentialData"]
         >(storePath(store.uuid, "/credential"), {
           client_id: clientId,
@@ -392,7 +412,7 @@ export const integrationsHttp = {
         store.credential_revision = registered.credential_revision;
       } catch (reason) {
         if (minted) {
-          await apiRequest("DELETE", storePath(minted.uuid), {
+          await storeApi.del(storePath(minted.uuid), {
             revision: minted.revision,
           }).catch(() => undefined);
           const index = stores.indexOf(minted);
@@ -408,19 +428,17 @@ export const integrationsHttp = {
         });
         continue;
       }
-      // Tags apply only after the key is in — a refused key never takes tags
-      // with it. A fresh mint with an empty list has nothing to clear.
-      if (
-        item.tag_names !== undefined &&
-        !(minted && item.tag_names.length === 0)
-      ) {
+      // The group applies only after the key is in — a refused key never takes
+      // it with it. A fresh mint with no group has nothing to clear.
+      if (item.group_name !== undefined && !(minted && item.group_name === "")) {
         try {
-          const updated = await api.put<WorkspaceStoreData>(
+          const updated = await storeApi.put<WorkspaceStoreData>(
             storePath(store.uuid),
             {
-              tag_uuids: item.tag_names.map((tag) =>
-                tagUuidByName.get(tag.toLowerCase())!,
-              ),
+              group_uuid:
+                item.group_name === ""
+                  ? ""
+                  : groupUuidByName.get(item.group_name.toLowerCase())!,
               revision: store.revision,
             },
           );
@@ -432,7 +450,7 @@ export const integrationsHttp = {
             status: "failed",
             uuid: store.uuid,
             quota_suspended: store.quota_suspended,
-            reason: `密钥已登记，但标签未能应用：${errorMessage(reason, "标签写入失败")}`,
+            reason: `密钥已登记，但分组未能应用：${errorMessage(reason, "分组写入失败")}`,
           });
           continue;
         }
@@ -454,57 +472,55 @@ export const integrationsHttp = {
    * travels back to the browser.
    */
   integrationsExportOzonStores: () =>
-    api.post<components["schemas"]["ExportWorkspaceStoreCredentialsData"]>(
+    storeApi.post<components["schemas"]["ExportWorkspaceStoreCredentialsData"]>(
       route("workspacesStoresCredentialsExport"),
     ),
   integrationsRenameOzonStore: async (request: {
     id: string;
     name: string;
   }) => {
-    const roster = await api.get<WorkspaceStoreRosterData>(WORKSPACE_STORES);
+    const roster = await readWorkspaceStores();
     const store = requireRosterStore(roster, request.id);
-    await api.put<WorkspaceStoreData>(
+    await storeApi.put<WorkspaceStoreData>(
       storePath(store.uuid),
       renameOzonStoreRequest(request.name, store.revision),
     );
     return ozonStoresOverview();
   },
   integrationsCreateStoreTag: async (request: { name: string }) => {
-    await api.post(route("workspacesStoresTags"), { name: request.name });
+    await storeApi.post(route("workspacesStoresTags"), { name: request.name });
     return ozonStoresOverview();
   },
   integrationsRenameStoreTag: async (request: {
     uuid: string;
     name: string;
   }) => {
-    await api.put(route("workspacesStoresTagsByUuid", { uuid: request.uuid }), {
+    await storeApi.put(route("workspacesStoresTagsByUuid", { uuid: request.uuid }), {
       name: request.name,
     });
     return ozonStoresOverview();
   },
   integrationsDeleteStoreTag: async (request: { uuid: string }) => {
-    await apiRequest(
-      "DELETE",
+    await storeApi.del(
       route("workspacesStoresTagsByUuid", { uuid: request.uuid }),
     );
     return ozonStoresOverview();
   },
   integrationsCreateStoreGroup: async (request: { name: string }) => {
-    await api.post(route("workspacesStoresGroups"), { name: request.name });
+    await storeApi.post(route("workspacesStoresGroups"), { name: request.name });
     return ozonStoresOverview();
   },
   integrationsRenameStoreGroup: async (request: {
     uuid: string;
     name: string;
   }) => {
-    await api.put(route("workspacesStoresGroupsByUuid", { uuid: request.uuid }), {
+    await storeApi.put(route("workspacesStoresGroupsByUuid", { uuid: request.uuid }), {
       name: request.name,
     });
     return ozonStoresOverview();
   },
   integrationsDeleteStoreGroup: async (request: { uuid: string }) => {
-    await apiRequest(
-      "DELETE",
+    await storeApi.del(
       route("workspacesStoresGroupsByUuid", { uuid: request.uuid }),
     );
     return ozonStoresOverview();
@@ -513,9 +529,9 @@ export const integrationsHttp = {
     id: string;
     tag_uuids: string[];
   }) => {
-    const roster = await api.get<WorkspaceStoreRosterData>(WORKSPACE_STORES);
+    const roster = await readWorkspaceStores();
     const store = requireRosterStore(roster, request.id);
-    await api.put<WorkspaceStoreData>(storePath(store.uuid), {
+    await storeApi.put<WorkspaceStoreData>(storePath(store.uuid), {
       tag_uuids: request.tag_uuids,
       revision: store.revision,
     });
@@ -525,27 +541,18 @@ export const integrationsHttp = {
     id: string;
     group_uuid: string | null;
   }) => {
-    const roster = await api.get<WorkspaceStoreRosterData>(WORKSPACE_STORES);
+    const roster = await readWorkspaceStores();
     const store = requireRosterStore(roster, request.id);
-    await api.put<WorkspaceStoreData>(storePath(store.uuid), {
+    await storeApi.put<WorkspaceStoreData>(storePath(store.uuid), {
       group_uuid: request.group_uuid ?? "",
       revision: store.revision,
     });
     return ozonStoresOverview();
   },
-  integrationsClearOzonStore: async (request: AccountIdRequest) => {
-    const roster = await api.get<WorkspaceStoreRosterData>(WORKSPACE_STORES);
-    const store = requireRosterStore(roster, request.id);
-    await apiRequest("DELETE", storePath(store.uuid, "/credential"), {
-      expected_store_revision: store.revision,
-      expected_credential_revision: store.credential_revision,
-    });
-    return ozonStoresOverview();
-  },
   integrationsDeleteOzonStore: async (request: AccountIdRequest) => {
-    const roster = await api.get<WorkspaceStoreRosterData>(WORKSPACE_STORES);
+    const roster = await readWorkspaceStores();
     const store = requireRosterStore(roster, request.id);
-    await apiRequest("DELETE", storePath(store.uuid), {
+    await storeApi.del(storePath(store.uuid), {
       revision: store.revision,
     });
     return ozonStoresOverview();
@@ -553,95 +560,27 @@ export const integrationsHttp = {
   /** Reassign a Store; `membership_id: null` makes it unassigned. Owner / Manager only. */
   /** Reassign a Store; `membership_id: null` makes it unassigned. Owner / Manager only. */
   integrationsAssignOzonStore: async (request: AssignOzonStoreRequest) => {
-    const roster = await api.get<WorkspaceStoreRosterData>(WORKSPACE_STORES);
+    const roster = await readWorkspaceStores();
     const store = requireRosterStore(roster, request.id);
-    await api.post<WorkspaceStoreData>(storePath(store.uuid, "/assignee"), {
+    await storeApi.post<WorkspaceStoreData>(storePath(store.uuid, "/assignee"), {
       assigneeMembershipId: request.membership_id,
       revision: store.revision,
     });
     return ozonStoresOverview();
   },
-  integrationsSetStoreKeyGrant: async (request: {
-    id: string;
-    assignee_key_manage: boolean;
-  }) => {
-    const roster = await api.get<WorkspaceStoreRosterData>(WORKSPACE_STORES);
-    const store = requireRosterStore(roster, request.id);
-    await api.put<WorkspaceStoreData>(storePath(store.uuid), {
-      assigneeKeyManage: request.assignee_key_manage,
-      revision: store.revision,
-    });
-    return ozonStoresOverview();
-  },
-  integrationsSetActiveOzonStore: async (request: AccountIdRequest) => {
-    const store = await executableStore(request.id);
-    const workspace = (await accountOverview()).active_workspace;
-    if (!workspace)
-      throw refuse(
-        "workspace_store_not_found",
-        "目标 Store 不属于当前 Active Workspace",
-      );
-    writeActiveStore(workspace.uuid, store.uuid);
-    return ozonStoresOverview();
-  },
   integrationsTestOzonStore: async (request: AccountIdRequest) => {
     const store = await executableStore(request.id);
-    await api.post(storePath(store.uuid, "/credential/test"));
+    await storeApi.post(storePath(store.uuid, "/credential/test"));
     return ozonStoresOverview();
   },
   integrationsRefreshStoreProductQuotas: async () => {
-    await api.post(`${WORKSPACE_STORES}/product-quotas/refresh`);
+    await storeApi.post(`${WORKSPACE_STORES}/product-quotas/refresh`);
     return ozonStoresOverview();
   },
   integrationsRefreshStoreFinanceBalances: async () => {
-    await api.post(route("workspacesStoresFinanceBalancesRefresh"));
+    await storeApi.post(route("workspacesStoresFinanceBalancesRefresh"));
     return ozonStoresOverview();
   },
-  integrationsUpsertMediaAccount: async (upsert: UpsertMediaAccountRequest) => {
-    const snapshot = await api.get<IntegrationConfigData>(INTEGRATION_CONFIG);
-    const { config, credential } = applyMediaUpsert(snapshot, upsert);
-    return writeIntegrationConfig(config, undefined, credential);
-  },
-  integrationsTestMediaAccount: async (target: AccountIdRequest & { workspaceUuid: string }) => {
-    const accountId = target.id.trim();
-    if (accountId.length === 0)
-      throw refuse("integration_media_invalid", "对象存储账号不存在");
-    // Snapshot the caller's scope before any await so this upload cannot drift.
-    const workspaceUuid = target.workspaceUuid.trim();
-    if (!workspaceUuid)
-      throw refuse("media_connection_test_failed", "请先选择工作空间再测试对象存储");
-    // Cloud recognises this one digest as a connection test rather than as
-    // seller media, so the probe is neither billed nor collected.
-    const object = route("mediaObjectsByDigestByExtensionPresign", {
-      digest: await healthcheckDigest(),
-      extension: "png",
-    }).slice(0, -"/presign".length);
-    const query = `?accountId=${encodeURIComponent(accountId)}`;
-    const startedAt = performance.now();
-    const probe = await api.post<components["schemas"]["MediaObjectProbeData"]>(
-      `${object}/probe${query}`,
-    );
-    if (!probe.exists) {
-      const prepared = await api.post<components["schemas"]["MediaObjectPresignData"]>(`${object}/presign`,
-        { account_id: accountId, workspace_uuid: workspaceUuid, byte_length: HEALTHCHECK_PNG.byteLength } satisfies components["schemas"]["MediaObjectPresignRequest"]);
-      if (prepared.transport === "direct") {
-        if (!prepared.upload || !prepared.upload_ticket) throw refuse("media_connection_test_failed", "对象存储未返回上传授权");
-        try { await putDirectUpload(prepared.upload, HEALTHCHECK_PNG, { expectedByteLength: HEALTHCHECK_PNG.byteLength }); }
-        catch (reason) { if (!(reason as { outcomeUnknown?: boolean }).outcomeUnknown) throw reason; }
-        await api.post(`${object}/complete`, { account_id: prepared.account_id, object_key: prepared.object_key,
-          workspace_uuid: workspaceUuid, byte_length: HEALTHCHECK_PNG.byteLength,
-          storage_revision: prepared.storage_revision, upload_ticket: prepared.upload_ticket } satisfies components["schemas"]["MediaObjectCompleteRequest"]);
-      }
-    }
-    return { latency_ms: Math.round(performance.now() - startedAt) };
-  },
-  integrationsDeleteMediaAccount: async (target: { role: IntegrationMediaRole }) =>
-    writeIntegrationConfig(
-      applyMediaDelete(
-        await api.get<IntegrationConfigData>(INTEGRATION_CONFIG),
-        target.role,
-      ),
-    ),
   integrationsMediaStorage: (storage: MediaStorageRequest) =>
     api.get<MediaStorageData>(
       `${route("adminMediaStorage")}${filterQuery({ accountId: storage.id, prefix: storage.prefix })}`,
@@ -680,6 +619,7 @@ export const integrationsHttp = {
           path,
           contentType: file.type || "application/octet-stream",
           bytes: file.size,
+          sha256: await hashUploadBody(file),
         },
       )
     ).upload,
@@ -725,6 +665,7 @@ export const integrationsHttp = {
           path,
           contentType: file.type || "application/octet-stream",
           bytes: file.size,
+          sha256: await hashUploadBody(file),
         },
       )
     ).upload,

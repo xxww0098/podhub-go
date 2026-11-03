@@ -24,11 +24,11 @@ type storeView struct {
 	CredentialKeyExpiresAtMS    *int64                 `json:"credential_key_expires_at_ms,omitempty"`
 	CredentialLastUsedAtMS      *int64                 `json:"credential_last_used_at_ms,omitempty"`
 	Assignee                    *assigneeView          `json:"assignee,omitempty"`
-	AssigneeKeyManage           bool                   `json:"assignee_key_manage"`
 	Permissions                 permsView              `json:"permissions"`
 	Revision                    int64                  `json:"revision"`
 	ProductQuota                *domain.ProductQuota   `json:"product_quota,omitempty"`
 	FinanceBalance              *domain.FinanceBalance `json:"finance_balance,omitempty"`
+	CompanyCurrency             string                 `json:"company_currency,omitempty"`
 }
 
 type tagRefView struct {
@@ -43,13 +43,12 @@ type assigneeView struct {
 }
 
 type permsView struct {
-	ManageStore     bool `json:"manage_store"`
-	EditName        bool `json:"edit_name"`
-	ManageKeyGrants bool `json:"manage_key_grants"`
-	TestKey         bool `json:"test_key"`
-	ManageKey       bool `json:"manage_key"`
-	DeleteStore     bool `json:"delete_store"`
-	ManageTags      bool `json:"manage_tags"`
+	ManageStore bool `json:"manage_store"`
+	EditName    bool `json:"edit_name"`
+	TestKey     bool `json:"test_key"`
+	ManageKey   bool `json:"manage_key"`
+	DeleteStore bool `json:"delete_store"`
+	ManageTags  bool `json:"manage_tags"`
 }
 
 type tagViewWire struct {
@@ -108,18 +107,17 @@ func toStoreView(row domain.Row, actor domain.Actor, nowMS int64) storeView {
 		CredentialLastVerifiedAtMS:  row.CredentialLastVerifiedAtMS,
 		CredentialKeyExpiresAtMS:    row.CredentialKeyExpiresAtMS,
 		CredentialLastUsedAtMS:      row.CredentialLastUsedAtMS,
-		AssigneeKeyManage:           row.AssigneeKeyManageVisible(),
 		Revision:                    row.Revision,
 		ProductQuota:                row.ProductQuotaView(),
 		FinanceBalance:              row.FinanceBalanceView(),
+		CompanyCurrency:             row.CompanyCurrency,
 		Permissions: permsView{
-			ManageStore:     perms.ManageStore,
-			EditName:        perms.EditName,
-			ManageKeyGrants: perms.ManageKeyGrants,
-			TestKey:         perms.TestKey,
-			ManageKey:       perms.ManageKey,
-			DeleteStore:     perms.DeleteStore,
-			ManageTags:      perms.ManageTags,
+			ManageStore: perms.ManageStore,
+			EditName:    perms.EditName,
+			TestKey:     perms.TestKey,
+			ManageKey:   perms.ManageKey,
+			DeleteStore: perms.DeleteStore,
+			ManageTags:  perms.ManageTags,
 		},
 	}
 	if len(row.Tags) > 0 {

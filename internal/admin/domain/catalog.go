@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"net/url"
+	"path"
 	"strings"
 	"unicode/utf8"
 
@@ -20,7 +22,7 @@ const (
 
 	msgBadCatalogJSON = "请求格式无效"
 	msgRevision       = "expectedRevision 无效"
-	msgUnmanaged      = "该行由平台货源管理，请在平台货源中操作"
+	msgUnmanaged      = "该行由供应商商品库管理，请在供应商商品库中操作"
 	msgMissing        = "记录不存在或未上架"
 	msgConflict       = "记录已被更新，请刷新后重试"
 	msgCodeTaken      = "平台编码已存在"
@@ -294,7 +296,7 @@ func normalizeMediaSpecs(media *[]string, specs *map[string]string, bases []stri
 		}
 		ok := false
 		for _, b := range cleanBases {
-			if strings.HasPrefix(item, b) {
+			if mediaWithinBase(item, b) {
 				ok = true
 				break
 			}
@@ -321,6 +323,27 @@ func normalizeMediaSpecs(media *[]string, specs *map[string]string, bases []stri
 	}
 	*specs = next
 	return nil
+}
+
+// Compare the origin and decoded, normalized path so a lookalike host or an
+// encoded parent segment cannot turn a configured bucket into an open prefix.
+func mediaWithinBase(raw, base string) bool {
+	item, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	root, err := url.Parse(base)
+	if err != nil || (root.Scheme != "https" && root.Scheme != "http") || root.Host == "" || root.User != nil || root.RawQuery != "" || root.Fragment != "" {
+		return false
+	}
+	if item.Scheme != root.Scheme || !strings.EqualFold(item.Host, root.Host) || item.User != nil || strings.ContainsAny(item.Path+root.Path, "\\\x00") {
+		return false
+	}
+	itemPath, rootPath := path.Clean("/"+item.Path), path.Clean("/"+root.Path)
+	if rootPath == "/" {
+		return true
+	}
+	return strings.HasPrefix(itemPath, rootPath+"/") || (itemPath == rootPath && !strings.HasSuffix(root.Path, "/"))
 }
 
 // FillProduct guarantees JSON arrays and objects, not null.

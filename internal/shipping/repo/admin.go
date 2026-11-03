@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/xxww0098/podhub-go/internal/platform/db"
 	"github.com/xxww0098/podhub-go/internal/platform/seal"
 	"github.com/xxww0098/podhub-go/internal/shipping/contract"
 	"github.com/xxww0098/podhub-go/internal/shipping/domain"
@@ -22,6 +23,7 @@ type Repo struct {
 	Pool     *pgxpool.Pool
 	Ring     seal.Ring
 	KeyReady bool
+	KeyID    string
 }
 
 // Reconcile lists warehouses and records absence or the matched id.
@@ -166,7 +168,8 @@ func (r Repo) load(ctx context.Context, storeUUID, presetID string) (row, []byte
 	}
 	var out row
 	var payload []byte
-	err := r.Pool.QueryRow(ctx, `
+	err := db.InTx(ctx, r.Pool, db.Staff(), func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
 		SELECT i.org_id, lower(i.store_uuid::text), i.preset_id, p.current_version, i.status,
 		       i.warehouse_id, i.delivery_method_id, i.warehouse_mutate_count,
 		       i.last_ozon_operation_id, i.remote_absent_at_ms, v.payload
@@ -174,8 +177,9 @@ func (r Repo) load(ctx context.Context, storeUUID, presetID string) (row, []byte
 		JOIN shipping_presets p ON p.preset_id = i.preset_id
 		JOIN shipping_preset_versions v ON v.preset_id = p.preset_id AND v.version = p.current_version
 		WHERE i.store_uuid = $1::uuid AND i.preset_id = $2`, storeUUID, presetID).Scan(
-		&out.OrgID, &out.Store, &out.Preset, &out.Version, &out.Status,
-		&out.WarehouseID, &out.DeliveryID, &out.Mutate, &out.OzonOp, &out.RemoteAbsent, &payload)
+			&out.OrgID, &out.Store, &out.Preset, &out.Version, &out.Status,
+			&out.WarehouseID, &out.DeliveryID, &out.Mutate, &out.OzonOp, &out.RemoteAbsent, &payload)
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return row{}, nil, contract.NotFound("记录不存在")
 	}
@@ -186,87 +190,90 @@ func (r Repo) load(ctx context.Context, storeUUID, presetID string) (row, []byte
 }
 
 func (r Repo) claim(ctx context.Context, row row, actor, key, opID string, now int64) error {
-	tx, err := r.Pool.Begin(ctx)
-	if err != nil {
-		return mapDB(err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(842003, hashtext($1 || ':' || $2))`, row.Store, row.Preset); err != nil {
-		return mapDB(err)
-	}
-	var status string
-	var absent, warehouse *int64
-	var lockedMutate int32
-	err = tx.QueryRow(ctx, `
+	return mapDB(db.InTx(ctx, r.Pool, db.App(row.OrgID), func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(842003, hashtext($1 || ':' || $2))`, row.Store, row.Preset); err != nil {
+			return mapDB(err)
+		}
+		var status string
+		var absent, warehouse *int64
+		var lockedMutate int32
+		err := tx.QueryRow(ctx, `
 		SELECT status, remote_absent_at_ms, warehouse_id, warehouse_mutate_count
 		FROM shipping_shop_injections
 		WHERE store_uuid = $1::uuid AND preset_id = $2
 		FOR UPDATE`, row.Store, row.Preset).Scan(&status, &absent, &warehouse, &lockedMutate)
-	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Commit(ctx)
-		return contract.Validation("没有注入事实")
-	}
-	if err != nil {
-		return mapDB(err)
-	}
-	if err := domain.SafeContinueGuard(status, absent, warehouse, now); err != nil {
-		if commitErr := tx.Commit(ctx); commitErr != nil {
-			return mapDB(commitErr)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return contract.Validation("没有注入事实")
 		}
-		return contract.Validation(domain.GuardMessage(err))
-	}
-	mutate := lockedMutate
-	if mutate < 1 {
-		mutate = 1
-	}
-	if _, err := tx.Exec(ctx, `
+		if err != nil {
+			return mapDB(err)
+		}
+		if err := domain.SafeContinueGuard(status, absent, warehouse, now); err != nil {
+			return contract.Validation(domain.GuardMessage(err))
+		}
+		mutate := lockedMutate
+		if mutate < 1 {
+			mutate = 1
+		}
+		if _, err := tx.Exec(ctx, `
 		UPDATE shipping_shop_injections
 		SET status = 'submitting', warehouse_mutate_count = GREATEST(warehouse_mutate_count, $3),
 		    warehouse_id = NULL, delivery_method_id = NULL, remote_absent_at_ms = NULL,
 		    pinned_version = $4, updated_at_ms = $5
 		WHERE store_uuid = $1::uuid AND preset_id = $2`, row.Store, row.Preset, mutate, row.Version, now); err != nil {
-		return mapDB(err)
-	}
-	if _, err := tx.Exec(ctx, `
+			return mapDB(err)
+		}
+		if _, err := tx.Exec(ctx, `
 		INSERT INTO shipping_inject_operations
 		    (operation_id, org_id, store_uuid, preset_id, pinned_version, phase, status,
 		     idempotency_key, warehouse_mutate_count, created_at_ms, updated_at_ms, created_by_account_uuid)
 		VALUES ($1, $2, $3::uuid, $4, $5, 'create_warehouse', 'submitting', $6, $7, $8, $8, $9)`,
-		opID, row.OrgID, row.Store, row.Preset, row.Version, key, mutate, now, actor); err != nil {
-		return mapDB(err)
-	}
-	return mapDB(tx.Commit(ctx))
+			opID, row.OrgID, row.Store, row.Preset, row.Version, key, mutate, now, actor); err != nil {
+			return mapDB(err)
+		}
+		return nil
+	}))
 }
 
 func (r Repo) finish(ctx context.Context, row row, status string, mutate int32, ozonOp, opID, phase string, now int64) error {
+	return mapDB(db.InTx(ctx, r.Pool, db.App(row.OrgID), func(tx pgx.Tx) error {
+		return finishTx(ctx, tx, row, status, mutate, ozonOp, opID, phase, now)
+	}))
+}
+
+func finishTx(ctx context.Context, tx pgx.Tx, row row, status string, mutate int32, ozonOp, opID, phase string, now int64) error {
 	var op *string
 	if ozonOp != "" {
 		op = &ozonOp
 	}
-	if _, err := r.Pool.Exec(ctx, `
+	if _, err := tx.Exec(ctx, `
 		UPDATE shipping_shop_injections
 		SET status = $3, warehouse_mutate_count = $4, last_ozon_operation_id = $5,
 		    remote_absent_at_ms = NULL, updated_at_ms = $6
 		WHERE store_uuid = $1::uuid AND preset_id = $2`, row.Store, row.Preset, status, mutate, op, now); err != nil {
-		return mapDB(err)
+		return err
 	}
-	_, err := r.Pool.Exec(ctx, `
+	_, err := tx.Exec(ctx, `
 		UPDATE shipping_inject_operations
 		SET phase = $2, status = $3, ozon_operation_id = COALESCE($4, ozon_operation_id),
 		    warehouse_mutate_count = GREATEST(warehouse_mutate_count, $5), updated_at_ms = $6
 		WHERE operation_id = $1`, opID, phase, status, op, mutate, now)
-	return mapDB(err)
+	return err
 }
 
 func (r Repo) persist(ctx context.Context, row row, status string, mutate int32, warehouse, delivery *int64, absent bool, now int64, phase string) error {
 	var proof *int64
 	proof = domain.RemoteAbsentAt(status, warehouse, absent, now)
-	if _, err := r.Pool.Exec(ctx, `
+	err := db.InTx(ctx, r.Pool, db.App(row.OrgID), func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
 		UPDATE shipping_shop_injections
 		SET status = $3, warehouse_mutate_count = GREATEST(warehouse_mutate_count, $4),
 		    warehouse_id = $5, delivery_method_id = $6, remote_absent_at_ms = $7, updated_at_ms = $8
 		WHERE store_uuid = $1::uuid AND preset_id = $2`,
-		row.Store, row.Preset, status, mutate, warehouse, delivery, proof, now); err != nil {
+			row.Store, row.Preset, status, mutate, warehouse, delivery, proof, now)
+		return err
+	})
+	if err != nil {
 		return mapDB(err)
 	}
 	_ = phase
@@ -282,7 +289,8 @@ func (r Repo) diagnostic(ctx context.Context, storeUUID, presetID string, now in
 		Remote                      *int64
 		Polled, Waiting             *int64
 	}
-	err := r.Pool.QueryRow(ctx, `
+	err := db.InTx(ctx, r.Pool, db.Staff(), func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
 		SELECT lower(i.store_uuid::text), i.preset_id, p.name, p.current_version, i.pinned_version, i.status,
 		       i.warehouse_id, i.delivery_method_id, i.last_ozon_operation_id, i.remote_absent_at_ms,
 		       o.phase, o.idempotency_key, poll.updated_at_ms,
@@ -302,8 +310,9 @@ func (r Repo) diagnostic(ctx context.Context, storeUUID, presetID string, now in
 		    WHERE store_uuid = i.store_uuid AND preset_id = i.preset_id AND phase = 'create_warehouse' AND status = 'waiting'
 		    ORDER BY created_at_ms DESC LIMIT 1) w ON true
 		WHERE i.store_uuid = $1::uuid AND i.preset_id = $2`, storeUUID, presetID).Scan(
-		&d.Store, &d.Preset, &d.Name, &d.Desired, &d.Applied, &d.Status,
-		&d.Warehouse, &d.Delivery, &d.OzonOp, &d.Remote, &d.Phase, &d.Finger, &d.Polled, &d.Waiting)
+			&d.Store, &d.Preset, &d.Name, &d.Desired, &d.Applied, &d.Status,
+			&d.Warehouse, &d.Delivery, &d.OzonOp, &d.Remote, &d.Phase, &d.Finger, &d.Polled, &d.Waiting)
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, contract.NotFound("记录不存在")
 	}
@@ -364,61 +373,36 @@ func listWarehouses(ctx context.Context, ozon domain.Ozon, secret shopSecret) ([
 		body, _ := json.Marshal(req)
 		status, resp, err := post(ctx, ozon, secret, "/v2/warehouse/list", body, false)
 		if err != nil || status < 200 || status >= 300 {
-			if page == 0 && len(all) == 0 {
-				status, resp, err = post(ctx, ozon, secret, "/v1/warehouse/list", []byte(`{}`), false)
-				if err != nil || status < 200 || status >= 300 {
-					return nil, contract.Gateway("")
-				}
-				return parseWarehouses(resp), nil
+			return nil, contract.Gateway("")
+		}
+		var parsed struct {
+			Cursor     string `json:"cursor"`
+			HasNext    bool   `json:"has_next"`
+			Warehouses []struct {
+				Name        string `json:"name"`
+				WarehouseID int64  `json:"warehouse_id"`
+			} `json:"warehouses"`
+		}
+		if json.Unmarshal(resp, &parsed) != nil || parsed.Warehouses == nil {
+			return nil, contract.Gateway("")
+		}
+		for _, warehouse := range parsed.Warehouses {
+			name := strings.TrimSpace(warehouse.Name)
+			if warehouse.WarehouseID <= 0 || name == "" {
+				return nil, contract.Gateway("")
 			}
+			all = append(all, domain.WarehouseName{Name: name, WarehouseName: name, WarehouseID: warehouse.WarehouseID})
+		}
+		if !parsed.HasNext {
 			return all, nil
 		}
-		names, next, has := parsePage(resp)
-		all = append(all, names...)
-		if !has || strings.TrimSpace(next) == "" || next == cursor {
-			return all, nil
+		next := strings.TrimSpace(parsed.Cursor)
+		if next == "" || next == cursor || len(parsed.Warehouses) == 0 {
+			return nil, contract.Gateway("")
 		}
 		cursor = next
 	}
-	return all, nil
-}
-
-func parsePage(raw []byte) ([]domain.WarehouseName, string, bool) {
-	var body struct {
-		Cursor     string `json:"cursor"`
-		HasNext    bool   `json:"has_next"`
-		Warehouses []struct {
-			Name        string `json:"name"`
-			WarehouseID int64  `json:"warehouse_id"`
-		} `json:"warehouses"`
-	}
-	if json.Unmarshal(raw, &body) != nil {
-		return nil, "", false
-	}
-	var out []domain.WarehouseName
-	for _, w := range body.Warehouses {
-		out = append(out, domain.WarehouseName{Name: w.Name, WarehouseID: w.WarehouseID, WarehouseName: w.Name})
-	}
-	return out, body.Cursor, body.HasNext
-}
-
-func parseWarehouses(raw []byte) []domain.WarehouseName {
-	names, _, _ := parsePage(raw)
-	if len(names) > 0 {
-		return names
-	}
-	var rows []struct {
-		Name        string `json:"name"`
-		WarehouseID int64  `json:"warehouse_id"`
-	}
-	if json.Unmarshal(raw, &rows) == nil {
-		var out []domain.WarehouseName
-		for _, w := range rows {
-			out = append(out, domain.WarehouseName{Name: w.Name, WarehouseID: w.WarehouseID, WarehouseName: w.Name})
-		}
-		return out
-	}
-	return nil
+	return nil, contract.Gateway("")
 }
 
 func mapDB(err error) error {

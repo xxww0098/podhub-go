@@ -126,7 +126,7 @@ function isCachedSnapshot(value: unknown, storeUid: string): value is CachedSnap
 }
 
 function storageKey(storeUid: string): string | null {
-  const account = peekAccountOverview()?.accounts?.find((item) => item.active)?.uuid
+  const account = peekAccountOverview()?.session.uuid
   if (!account || !storeUid) return null
   return `${STORAGE_KEY_PREFIX}:${account}:${storeUid}`
 }

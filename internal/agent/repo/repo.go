@@ -1,7 +1,7 @@
 // Package agentrepo is the pgx store for the seven agent routes.
 // Agent tables have no RLS. Reads are autocommit on the pool user, matching
 // the Rust handlers that do not open a tenant transaction. Writes SET ROLE
-// podhub_app for the whole transaction: m20260920_000329 already grants
+// podhub_app for the whole transaction: the baseline schema already grants
 // account_users, audit_logs, and writer_leases. The auth advisory lock and
 // the writer-lease gate run as that role, then one audit row is inserted.
 package agentrepo

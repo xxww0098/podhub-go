@@ -110,7 +110,6 @@ export function usePreparation({
   } = batch
   const { runAiRows, runRenderRows, runDeliverRows } = preparationRuns(batch, {
     ready,
-    cardId,
     supplierProductId,
     psdTemplateAssetId,
     psdAsset,

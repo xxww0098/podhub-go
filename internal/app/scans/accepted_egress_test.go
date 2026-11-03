@@ -2,134 +2,180 @@ package scans
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
-	"io"
-	"net/http"
-	"net/http/httptest"
-	"net/url"
+	"fmt"
 	"strings"
-	"sync/atomic"
 	"testing"
-	"time"
 
-	"github.com/xxww0098/podhub-go/internal/platform/httpx"
-	sellerdomain "github.com/xxww0098/podhub-go/internal/seller/domain"
+	"github.com/xxww0098/podhub-go/internal/listing/submit"
+	"github.com/xxww0098/podhub-go/internal/platform/seal"
 )
 
-func TestPostInfoListBytesMatchPlain(t *testing.T) {
-	const payload = `{"items":[{"id":7,"offer_id":"OFFER1","sources":[{"sku":8}]}]}`
-	var seen string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		raw, _ := io.ReadAll(r.Body)
-		seen = r.Method + " " + r.URL.Path + " " + r.Header.Get("Content-Type") + " " + r.Header.Get("Client-Id") + " " + r.Header.Get("Api-Key") + " " + string(raw)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(payload))
-	}))
-	t.Cleanup(srv.Close)
-	for _, key := range []string{"HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"} {
-		t.Setenv(key, "")
-	}
-	if httpx.Base(infoListClient.Transport) != httpx.Ozon() || httpx.Ozon() == httpx.Restricted() {
-		t.Fatal("accepted scan is not on the ozon client")
-	}
-	body := []byte(`{"offer_id":["OFFER1"]}`)
-	req, err := http.NewRequest(http.MethodPost, srv.URL+"/v3/product/info/list", strings.NewReader(string(body)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Client-Id", "cid")
-	req.Header.Set("Api-Key", "key")
-	res, err := (&http.Client{Timeout: 5 * time.Second, Transport: httpx.Plain()}).Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	oldRaw, _ := io.ReadAll(res.Body)
-	res.Body.Close()
-	oldSeen := seen
-	status, raw, err := postInfoList(context.Background(), srv.URL, "cid", "key", body)
-	if err != nil || status != res.StatusCode || string(raw) != string(oldRaw) || seen != oldSeen {
-		t.Fatalf("status %d/%d body %q/%q seen %q/%q err %v", status, res.StatusCode, raw, oldRaw, seen, oldSeen, err)
-	}
-	found, ok := parseAccepted(status, raw, err)
-	if !ok || found["OFFER1"].ProductID != 7 || found["OFFER1"].SKU != 8 {
-		t.Fatalf("parse %+v %v", found, ok)
-	}
+type acceptedReader struct {
+	task, info, pictures string
+	calls                []string
+	err                  error
 }
 
-func TestPostInfoListSkipsRedirectAndProxy(t *testing.T) {
-	var second atomic.Int32
-	var sawCred atomic.Bool
-	next := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		second.Add(1)
-		if r.Header.Get("Client-Id") != "" || r.Header.Get("Api-Key") != "" || r.Header.Get("Authorization") != "" {
-			sawCred.Store(true)
+func (r *acceptedReader) WritesDisabled() bool        { return true }
+func (r *acceptedReader) Ready(context.Context) error { return submit.ErrNotSent }
+func (r *acceptedReader) Write(context.Context, string, []byte) (int, string, error) {
+	return 0, "", submit.ErrNotSent
+}
+func (r *acceptedReader) Read(_ context.Context, path string, _ []byte) (int, string, error) {
+	r.calls = append(r.calls, path)
+	if r.err != nil {
+		return 0, "", r.err
+	}
+	if path == "/v1/product/import/info" {
+		return 200, r.task, nil
+	}
+	if path == "/v3/product/info/list" {
+		return 200, r.info, nil
+	}
+	if path == "/v2/product/pictures/info" {
+		return 200, r.pictures, nil
+	}
+	return 0, "", submit.ErrNotSent
+}
+
+func TestAcceptedTaskReadbackNeverTreatsTaskIDAsProductConfirmation(t *testing.T) {
+	for _, tc := range []struct {
+		status           string
+		errors           string
+		calls            int
+		terminal, failed bool
+	}{
+		{"pending", `[]`, 1, false, false}, {"failed", `[{"level":"error","code":"bad-field"}]`, 1, true, true},
+		{"imported", `[{"level":"error","code":"SPU_ALREADY_EXISTS_IN_ANOTHER_ACCOUNT"}]`, 1, true, true},
+		{"imported", `[{"level":"warning","message":"informational"}]`, 2, true, false}, {"skipped", `[]`, 2, true, false},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			r := &acceptedReader{task: `{"result":{"items":[{"offer_id":"a","product_id":7,"status":"` + tc.status + `","errors":` + tc.errors + `}]}}`, info: `{"items":[{"id":7,"offer_id":"a","sources":[{"sku":8}]}]}`}
+			hit := observeAccepted(context.Background(), r, []acceptedRow{{ID: "intent", OfferID: "a", TaskID: "71"}})["intent"]
+			if len(r.calls) != tc.calls || hit.terminal != tc.terminal || hit.failed != tc.failed || hit.task == nil || hit.task.Status != tc.status {
+				t.Fatalf("calls=%v hit=%+v", r.calls, hit)
+			}
+			if tc.calls == 2 && (hit.sight != submit.SightFound || hit.found.ProductID != 7) {
+				t.Fatal("product readback was not confirmed")
+			}
+		})
+	}
+	for _, body := range []string{`{}`, `{"result":{"items":null}}`, `{"result":{"items":[{"offer_id":"a","status":"unknown"}]}}`, `{"result":{"items":[{"offer_id":"a","status":"imported","errors":[{"level":"unknown"}]}]}}`} {
+		r := &acceptedReader{task: body}
+		hit := observeAccepted(context.Background(), r, []acceptedRow{{ID: "intent", OfferID: "a", TaskID: "71"}})["intent"]
+		if hit.sight != submit.SightUnreadable || hit.terminal || len(r.calls) != 1 {
+			t.Fatal("invalid task readback confirmed a product")
 		}
-		_, _ = w.Write([]byte("followed"))
-	}))
-	t.Cleanup(next.Close)
-	redirector := func(code int) *httptest.Server {
-		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Location", next.URL+"/landed")
-			w.WriteHeader(code)
-			_, _ = w.Write([]byte("stay"))
-		}))
-	}
-	hop307 := redirector(http.StatusTemporaryRedirect)
-	hop308 := redirector(http.StatusPermanentRedirect)
-	t.Cleanup(hop307.Close)
-	t.Cleanup(hop308.Close)
-	hits := serveProxy(t)
-	status, raw, err := postInfoList(context.Background(), hop307.URL, "cid", "key", []byte(`{"offer_id":["a"]}`))
-	if err != nil || status != http.StatusTemporaryRedirect || string(raw) != "stay" {
-		t.Fatalf("307 status %d body %q err %v", status, raw, err)
-	}
-	status, raw, err = postInfoList(context.Background(), hop308.URL, "cid", "key", []byte(`{"offer_id":["a"]}`))
-	if err != nil || status != http.StatusPermanentRedirect || string(raw) != "stay" {
-		t.Fatalf("308 status %d body %q err %v", status, raw, err)
-	}
-	if _, _, err := postInfoList(context.Background(), sellerdomain.ProductionBaseURL, "cid", "key", []byte(`{}`)); err == nil || !errors.Is(err, httpx.ErrNotLoopback) {
-		t.Fatalf("official host %v", err)
-	}
-	if second.Load() != 0 || sawCred.Load() || hits.Load() != 1 {
-		t.Fatalf("second %d creds %v proxy %d", second.Load(), sawCred.Load(), hits.Load())
-	}
-	if _, ok := parseAccepted(http.StatusTemporaryRedirect, []byte("stay"), nil); ok {
-		t.Fatal("redirect parsed as a catalogue hit")
 	}
 }
 
-func serveProxy(t *testing.T) *atomic.Int32 {
-	t.Helper()
-	var hits atomic.Int32
-	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hits.Add(1)
-		w.WriteHeader(599)
-	}))
-	t.Cleanup(proxy.Close)
-	t.Setenv("HTTP_PROXY", proxy.URL)
-	t.Setenv("http_proxy", proxy.URL)
-	t.Setenv("HTTPS_PROXY", proxy.URL)
-	t.Setenv("https_proxy", proxy.URL)
-	t.Setenv("ALL_PROXY", "")
-	t.Setenv("all_proxy", "")
-	t.Setenv("NO_PROXY", "")
-	t.Setenv("no_proxy", "")
-	req, err := http.NewRequest(http.MethodGet, "http://example.com/models", nil)
-	if err != nil {
-		t.Fatal(err)
+func TestAcceptedReadRequiresAnExplicitReadableItemsArray(t *testing.T) {
+	for _, body := range []string{`{}`, `null`, `{"items":null}`, `{"items":[{"id":0,"offer_id":"a"}]}`, `{"items":[{"id":1,"offer_id":""}]}`, `{"items":[{"id":1,"offer_id":"a"},{"id":2,"offer_id":"a"}]}`} {
+		if _, ok := parseAccepted(200, []byte(body), nil); ok {
+			t.Fatalf("malformed response counted as readable: %s", body)
+		}
 	}
-	parsed, err := url.Parse(proxy.URL)
-	if err != nil {
-		t.Fatal(err)
+	if _, ok := parseAccepted(503, []byte(`{"items":[]}`), nil); ok {
+		t.Fatal("upstream failure became absence")
 	}
-	res, err := (&http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{
-		Proxy: func(*http.Request) (*url.URL, error) { return parsed, nil },
-	}}).Do(req)
-	if err != nil || res.StatusCode != 599 {
-		t.Fatalf("proxy control %v", err)
+	if _, ok := parseAccepted(200, []byte(`{"items":[]}`), errors.New("response unavailable")); ok {
+		t.Fatal("transport failure became absence")
 	}
-	res.Body.Close()
-	return &hits
+	if found, ok := parseAccepted(200, []byte(`{"items":[]}`), nil); !ok || len(found) != 0 {
+		t.Fatal("explicit empty result rejected")
+	}
+	found, ok := parseAccepted(200, []byte(`{"items":[{"id":7,"offer_id":"a","sources":[{"sku":8}]}]}`), nil)
+	if !ok || found["a"].ProductID != 7 || found["a"].SKU != 8 {
+		t.Fatal("valid readback lost identity")
+	}
+}
+
+type acceptedBatchReader struct {
+	tasks      map[int64]string
+	info       string
+	calls      []string
+	infoBodies []string
+}
+
+func (r *acceptedBatchReader) WritesDisabled() bool        { return true }
+func (r *acceptedBatchReader) Ready(context.Context) error { return submit.ErrNotSent }
+func (r *acceptedBatchReader) Write(context.Context, string, []byte) (int, string, error) {
+	return 0, "", submit.ErrNotSent
+}
+func (r *acceptedBatchReader) Read(_ context.Context, path string, body []byte) (int, string, error) {
+	r.calls = append(r.calls, path)
+	switch path {
+	case "/v1/product/import/info":
+		var request struct {
+			TaskID int64 `json:"task_id"`
+		}
+		_ = json.Unmarshal(body, &request)
+		return 200, r.tasks[request.TaskID], nil
+	case "/v3/product/info/list":
+		r.infoBodies = append(r.infoBodies, string(body))
+		return 200, r.info, nil
+	default:
+		return 0, "", submit.ErrNotSent
+	}
+}
+
+func TestAcceptedProductReadsAreSharedAcrossTasksAndChunked(t *testing.T) {
+	reader := &acceptedBatchReader{
+		tasks: map[int64]string{
+			71: `{"result":{"items":[{"offer_id":"a","product_id":1,"status":"imported","errors":[]},{"offer_id":"b","product_id":2,"status":"imported","errors":[]}]}}`,
+			72: `{"result":{"items":[{"offer_id":"c","product_id":3,"status":"imported","errors":[]}]}}`,
+		},
+		info: `{"items":[]}`,
+	}
+	rows := []acceptedRow{
+		{ID: "a", OfferID: "a", TaskID: "71"},
+		{ID: "b", OfferID: "b", TaskID: "71"},
+		{ID: "c", OfferID: "c", TaskID: "72"},
+	}
+	sights := observeAccepted(context.Background(), reader, rows)
+	if reader.calls[len(reader.calls)-1] != "/v3/product/info/list" || len(reader.infoBodies) != 1 {
+		t.Fatalf("calls=%v info=%v", reader.calls, reader.infoBodies)
+	}
+	for _, row := range rows {
+		if sights[row.ID].sight != submit.SightAbsent {
+			t.Fatalf("%s not absent: %+v", row.ID, sights[row.ID])
+		}
+	}
+	for _, offer := range []string{"a", "b", "c"} {
+		if !strings.Contains(reader.infoBodies[0], `"`+offer+`"`) {
+			t.Fatalf("offer %s missing from %s", offer, reader.infoBodies[0])
+		}
+	}
+}
+
+func TestAcceptedProductReadsSplitAtTheRequestLimit(t *testing.T) {
+	rows := make([]acceptedRow, submit.InfoListBatch+1)
+	items := make([]string, len(rows))
+	for i := range rows {
+		offer := fmt.Sprintf("o%d", i)
+		rows[i] = acceptedRow{ID: offer, OfferID: offer, TaskID: "71"}
+		items[i] = `{"offer_id":"` + offer + `","product_id":1,"status":"imported","errors":[]}`
+	}
+	reader := &acceptedBatchReader{
+		tasks: map[int64]string{71: `{"result":{"items":[` + strings.Join(items, ",") + `]}}`},
+		info:  `{"items":[]}`,
+	}
+	sights := observeAccepted(context.Background(), reader, rows)
+	if len(reader.infoBodies) != 2 {
+		t.Fatalf("product reads = %d", len(reader.infoBodies))
+	}
+	for _, row := range rows {
+		if sights[row.ID].sight != submit.SightAbsent {
+			t.Fatalf("%s not absent", row.ID)
+		}
+	}
+}
+
+func TestAcceptedCredentialFailureIsUnreadable(t *testing.T) {
+	sights := readAccepted(context.Background(), nil, nil, seal.Ring{}, seal.DefaultSellerKeyID, 7, "550e8400-e29b-41d4-a716-446655440000", []acceptedRow{{ID: "intent", OrgID: 7, OfferID: "a"}})
+	if sights["intent"].sight != submit.SightUnreadable {
+		t.Fatal("failed credential binding became absence")
+	}
 }

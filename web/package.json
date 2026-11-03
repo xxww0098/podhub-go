@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "vite --port 1420",
     "lint": "oxlint src/ --max-warnings 818",
-    "wasm:build": "bash scripts/build-render.sh",
+    "wasm:build": "bash ../scripts/build-wasm.sh render",
     "build": "bash ../scripts/check-wasm-dist.sh && tsc --noEmit -p tsconfig.json && vite build",
     "test": "bun test --preload ./tests/network-guard.preload.ts",
     "deadcode": "knip",
@@ -30,6 +30,7 @@
     "qrcode": "^1.5.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "react-resizable-panels": "^4.14.8",
     "tailwind-merge": "^3.6.0",
     "zustand": "^5.0.15"
   },

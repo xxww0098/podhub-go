@@ -14,14 +14,15 @@ import { route } from "@/api/routes"
 import {
   cardPayload,
   categoryKey,
+  draftPriceText,
   EMPTY_DRAFT,
   withDefaultFieldValue,
   type CardPayload,
   type CardQueue,
+  type ManualProfitAssumptions,
   type ListingCardView as CloudListingCardView,
 } from "@/bindings/listing-projection"
 import { sha256Hex } from "@/render/opfs"
-import { rowCacheScope } from "@/bindings/listing-row-cache"
 import {
   cardDraftView,
   cardQueueRunning,
@@ -39,7 +40,7 @@ import type {
 } from "@/bindings/commands"
 import { invalidateListingCardList } from "../listing-card-list-cache"
 import { openCardSession, primeCardSession, type CardPatchWrite } from "./card-session"
-import { backupUserTemplate } from "./template-assets"
+import { calculateManualProfitQuote, profitQuoteApplyIssue } from "../pricing/profit-quote"
 
 const LISTING_CARDS = route("listingCards")
 
@@ -102,12 +103,6 @@ async function createCardAndPrimeSession(
  * caller of this reads `display_name`, `draft_id` and the coordinate.
  */
 export async function listingCardSaveCategoryDraft(request: SaveWorkflowDraftRequest) {
-  const current = rowCacheScope().current
-  const previous = request.draft_id ? cardPayload((await openCardSession(request.draft_id)).card()) : undefined
-  const backupChanged = request.psd_template_asset_id && (!previous
-    || previous.psdTemplateSha256 !== request.psd_template_asset_id
-    || previous.descriptionCategoryId !== request.schema.description_category_id
-    || previous.typeId !== request.schema.type_id)
   const title = request.display_name?.trim() ?? ""
   const targetStoreId = request.target_store_id.trim()
   const promptSha256 = request.ai_prompt ? await sha256Hex(request.ai_prompt) : ""
@@ -143,8 +138,6 @@ export async function listingCardSaveCategoryDraft(request: SaveWorkflowDraftReq
     : await createCardAndPrimeSession(
         createListingCardBody(request, title, targetStoreId, write(undefined)),
       )
-  const payload = cardPayload(card)
-  if (backupChanged) backupUserTemplate(payload, current, card.id || request.draft_id)
   return cardDraftView(card, {
     description_category_id: request.schema.description_category_id,
     type_id: request.schema.type_id,
@@ -208,6 +201,42 @@ export function listingCardSaveDefaultPrice(
   )
 }
 
+/** Save explicit assumptions; applying the exact quote is a separate operator action. */
+export async function listingCardSaveProfitAssumptions(
+  cardId: string,
+  input: ManualProfitAssumptions,
+  applyPrice = false,
+): Promise<ListingCardSummary> {
+  const assumptions = structuredClone(input)
+  const quote = calculateManualProfitQuote(assumptions)
+  const session = await openCardSession(cardId)
+  const next = await session.patch((current) => {
+    const payload = cardPayload(current)
+    if (payload.supplierUnavailable) throw new Error("供应配置当前不可用")
+    if (applyPrice) {
+      if (payload.supplierProductId) throw new Error("供应方案当前仅可试算和保存参数")
+      const issue = profitQuoteApplyIssue(
+        payload.defaults.values.currency_code,
+        assumptions.currency,
+        quote.price,
+        draftPriceText(payload.defaults, "old_price") ?? (payload.defaults.values.old_price ? "invalid" : undefined),
+      )
+      if (issue) throw new Error(issue)
+    }
+    return {
+      payload: cardPatch(payload, {
+        pricingAssumptions: assumptions,
+        ...(applyPrice ? { defaults: withDefaultFieldValue(
+          payload.supplierProductId ? EMPTY_DRAFT : payload.defaults,
+          "price", { kind: "text", value: quote.price },
+        ) } : {}),
+      }),
+    }
+  })
+  invalidateListingCardList()
+  return cardSummaryView(next)
+}
+
 /**
  * Rebind the Card's target Stores and nothing else. A supplier softlink may
  * only write `targetStoreId` — Cloud merges that one key into the stored
@@ -243,7 +272,6 @@ export async function listingCardSavePsd(
   assetId: string,
   fileName: string,
 ): Promise<ListingCardSummary> {
-  const current = rowCacheScope().current
   const session = await openCardSession(cardId)
   const next = await session.patch((current) => {
     const payload = cardPayload(current)
@@ -254,8 +282,6 @@ export async function listingCardSavePsd(
     }
     return { payload: cardPatch(payload, psd) }
   })
-  const payload = cardPayload(next)
-  if (assetId.trim()) backupUserTemplate(payload, current, cardId)
   return cardSummaryView(next)
 }
 

@@ -1,5 +1,7 @@
 import { useState } from "react"
 import { createPortal } from "react-dom"
+import { ImageOff } from "lucide-react"
+import { cn } from "@/lib/utils"
 
 /** 预览卡片宽度；大图按商品图的方形比例 contain，不裁边。 */
 const PREVIEW_WIDTH = 236
@@ -13,8 +15,10 @@ const PREVIEW_HEIGHT = 268
  * 悬停与聚焦走同一条路径。交互约定与 workflow/media/thumb-preview.tsx 一致，
  * 但那边展示的是文件名与扩展名，这里展示商品名——两者独立演进，暂不抽公共组件。
  */
-export function ProductThumb({ src, name }: { src: string; name?: string | null }) {
+export function ProductThumb({ src, name, className }: { src: string; name?: string | null; className?: string }) {
   const [preview, setPreview] = useState<{ x: number; y: number }>()
+  const [failedSrc, setFailedSrc] = useState<string | null>(null)
+  const [failedPreviewSrc, setFailedPreviewSrc] = useState<string | null>(null)
 
   function show(event: { currentTarget: HTMLElement }) {
     const rect = event.currentTarget.getBoundingClientRect()
@@ -30,11 +34,19 @@ export function ProductThumb({ src, name }: { src: string; name?: string | null 
     setPreview(undefined)
   }
 
+  if (failedSrc === src) {
+    return (
+      <span role="img" aria-label="商品图片加载失败" className={cn("grid size-9 shrink-0 place-items-center rounded-md border border-border/60 bg-muted/60 text-muted-foreground", className)}>
+        <ImageOff className="size-4" aria-hidden />
+      </span>
+    )
+  }
+
   return (
     <>
       <button
         type="button"
-        className="group relative size-9 shrink-0 overflow-hidden rounded-md border border-border/60 bg-muted/30 transition-[border-color] duration-150 ease-settle hover:border-border-strong focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+        className={cn("group relative size-9 shrink-0 overflow-hidden rounded-md border border-border/60 bg-muted/30 transition-[border-color] duration-150 ease-settle hover:border-border-strong focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30", className)}
         onMouseEnter={show}
         onMouseLeave={hide}
         onFocus={show}
@@ -49,6 +61,10 @@ export function ProductThumb({ src, name }: { src: string; name?: string | null 
           loading="lazy"
           decoding="async"
           referrerPolicy="no-referrer"
+          onError={() => {
+            setFailedSrc(src)
+            hide()
+          }}
           className="size-full object-cover transition-transform duration-200 group-hover:scale-105"
         />
       </button>
@@ -60,7 +76,11 @@ export function ProductThumb({ src, name }: { src: string; name?: string | null 
               style={{ left: preview.x, top: preview.y, width: PREVIEW_WIDTH }}
             >
               <div className="relative aspect-square w-full overflow-hidden rounded-lg bg-muted/60">
-                <img src={src} alt="" decoding="async" className="size-full object-contain" />
+                {failedPreviewSrc === src ? (
+                  <span className="grid size-full place-items-center text-xs text-muted-foreground">图片暂不可用</span>
+                ) : (
+                  <img src={src} alt="" decoding="async" referrerPolicy="no-referrer" onError={() => setFailedPreviewSrc(src)} className="size-full object-contain" />
+                )}
               </div>
               {name ? (
                 <p className="truncate px-1.5 pt-1.5 pb-0.5 text-meta font-medium" title={name}>

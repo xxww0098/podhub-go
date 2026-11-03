@@ -1,8 +1,25 @@
 # PR-8a delegate：和 Rust 对过什么
 
+## 2026-10-29 当前委托同步
+
+本节记录当前 Go 实现。后文的 Rust 对拍与早期限制保留为历史证据，不代表当前 worker 仍为空转。
+
+- API 和 worker 的 Seller 读取统一通过 `SellerReadCall`，复用固定官方路径白名单、预算、并发槽位与受控代理。委托使用 `/v4/posting/fbs/unfulfilled/list` 和 `/v3/posting/fbs/get`；通用出口没有获得任意公网或写请求能力。重定向与写路径仍被拒绝。
+- `DelegateSyncScan` 按最近一次同步任务时间选择工作区，优先尚未处理的工作区，排除已有排队、执行或退避任务的工作区。桶编号仍是幂等键；单次 16 个的默认批量不会一直选中最前面的 16 个工作区。
+- `delegate.posting_sync` 读取本组织未完成订单，再按真实 `org/order/store/posting_number` 取得当前版本、未过期且能解密的凭据。网络读取在事务外执行。手动暂停、配额挂起或套餐到期不冻结已接收订单的只读核对；密钥失效时返回错误，不推断平台结果。
+- 每条回读在 `queue.MutateRunning` 的租约所有者、epoch 和有效期围栏内落库。随后切换租户事务，检查 entitlement 写租约，锁工作区和订单，比对读取前的 `updated_at_ms`、店铺和订单号。迟到回执不覆盖新版本，已完成或取消的订单不改写。
+- 只保存状态快照及物流白名单，不保存客户姓名、电话、详细地址或任意上游 JSON。没有有效物流材料时，不用空物流对象触发派单。
+- 平台取消会召回尚未接单的包；没有已接单或已发货包时取消本地订单并释放冻结。已有生产或发货事实时仅设置取消请求，保留对应款项。平台送达只将本地已发货订单收口为 `done`。
+- 自动派单开关继续生效。仅待包装或待交运的回读可尝试派发；在落库事务内重新检查当前店铺、成员、账号、密钥及实时套餐容量，并锁定相应行。暂停或失去容量的店铺可以收尾，但不会因此创建新包。
+- 正常处理完成后，任务记录实际应用和跳过数量。读取或写入失败返回队列错误，使用现有重排处理；部分订单已成功时保留这些事实，不把整个任务伪装成成功。
+
+本地回归入口：`TestDelegatePostingSyncProductionRole`、`TestDelegatePostingSyncFencesAndRefusals`、`TestDelegatePostingSyncPausedOrdersStillSettle`、`TestDelegatePostingCredentialStaysBoundToExistingOrder`、`TestDelegatePostingSyncScanReachesEveryWorkspace`，以及 `TestReconcileGaps/scans`。测试使用隔离 PostgreSQL、普通 `podhub_login_reconciler` 登录角色、真实凭据解密、受控本地 HTTP 回读和独立持久化检查；覆盖资金释放与保留、暂停收尾、迟到 epoch/CAS、租户隔离、失败不覆盖及超过批量上限的扫描公平性。现有角色授权已满足这些事务，不新增数据库豁免。
+
+准入范围是本地构件与隔离链路。未验证真实店铺履约、平台取消或送达样本、真实资金结算、生产部署及长期跨进程负载；本轮没有 Seller 外部写入。
+
 层级 L3。`tests/archtest/arch_test.go` 的 `level` 已有 `delegate: 3`。本域只 import 自己的 `contract` / `domain` / `gen`。`go test ./tests/archtest` 无新增违规。
 
-装配在 `internal/app/wire_supply_delegate_supplier.go`。`tenant.BeginApp` 由 app 传入，本域不 import `internal/tenant`。生产代码不读环境变量，不解析 `OZON_WRITE_KILL_SWITCH` 或 `CLOUD_MEDIA_GC_DELETE`。`DELEGATE_SYNC_INTERVAL_MS` 仍只在 `internal/platform/config` 解析一次；`delegate/jobs` 不读它。`DELEGATE_AUTO_DISPATCH` 也只在 `internal/platform/config` 解析一次，缺省开启；`0`/`false`/`no`/`off`（trim、ASCII lower）关闭。关闭后 ready 行不自动插入 `delegate_dispatches`。这 16 条路由都不入队。
+装配在 `internal/app/wire_supply_delegate_supplier.go`。`tenant.BeginApp` 由 app 传入，本域不 import `internal/platform/db/tenantx`。生产代码不读环境变量，不解析 `OZON_WRITE_KILL_SWITCH` 或 `CLOUD_MEDIA_GC_DELETE`。`DELEGATE_SYNC_INTERVAL_MS` 仍只在 `internal/platform/config` 解析一次。`DELEGATE_AUTO_DISPATCH` 也只在 `internal/platform/config` 解析一次，缺省开启；`0`/`false`/`no`/`off`（trim、ASCII lower）关闭。关闭后 ready 行不自动插入 `delegate_dispatches`。这 16 条路由都不入队。
 
 卖家 16 条路由的 SQL 是 `internal/delegate/repo/seller_bind.go` 与 `seller_order.go` 里的手写 pgx，跑在 `BeginApp` 里。`db/schema/pr8a/delegate.sql` 仍是 sqlc 桩，没有加 goose 迁移。供应商接单/拒单/发货仍走 sqlc 与 `delegate_supplier_*` 函数。`domain.TransitionOrder` 仍是 `ErrUnproven`。
 
@@ -14,8 +31,8 @@ sqlc 输出在 `internal/delegate/gen`（包名 `sqlcgen`）。archtest 把 `rep
 
 函数正文：
 
-- `public.delegate_supplier_recompute_order_state(uuid, bigint)`：`db/migrations/00205_supplier_portal_actions.sql`
-- `public.delegate_supplier_accept` / `reject` / `ship`：`db/migrations/00259_delegate_action_locks.sql`（替换 00205 的版本）
+- `public.delegate_supplier_recompute_order_state(uuid, bigint)`：基线 `db/migrations/00002_schema.sql`
+- `public.delegate_supplier_accept` / `reject` / `ship`：基线 `db/migrations/00002_schema.sql`（动作锁版本的正文）
 
 ```
 PODHUB_PARITY_DSN='postgres://postgres:postgres@127.0.0.1:5432/podhub?sslmode=disable' \
@@ -34,23 +51,23 @@ PODHUB_PARITY_DSN='postgres://postgres:postgres@127.0.0.1:5432/podhub?sslmode=di
 
 | 项 | 依据 | 测试 |
 | --- | --- | --- |
-| 重算：0 行 → `awaiting_setup`。包状态 `shipped` 记 live+accepted；`accepted` 再把 all_shipped 打假；`dispatched` 记 live 并把 all_shipped 打假；其余（含 rejected、cancelled、无包、未知）只把 all_shipped 打假。然后 shipped / in_production / dispatched / ready / awaiting_setup | 00205 的 `IF` 顺序 | `internal/delegate/domain/testdata/order_recompute.json` 与 `TestRecomputeMatchesSQLFunction`。返回值与 `delegate_orders.state` 都对上。`done`、`cancelled` 列不改，函数返回值仍是算出来的状态 |
-| 缺绑定不是 SQL NULL。SELECT 是 `(b.active IS TRUE AND EXISTS 已核验资产)`。没有绑定行时 `NULL IS TRUE` 为假，`all_ready` 被清掉，结果是 `awaiting_setup` | 00205 第 21–24 行、第 50–52 行 | 向量「missing binding waits for setup」「rejected packet without a binding waits for setup」；集成 `null_ready`、`rejected_null_ready` 断言函数返回 `awaiting_setup` |
-| 接单：找不到 → `DELEGATE_NOT_FOUND`；非活跃成员 → `DELEGATE_FORBIDDEN`；订单 `cancelled`/`done` 或包不是 `dispatched` 且也不是已 `accepted` → `DELEGATE_TERMINAL`；已 `accepted` 原样返回且不写 receipt；成功把包改为 `accepted` 并重算订单 | 00259 | `TestDispatchEdges` 与 `TestDispatchActionsMatchSQLFunction/accept_then_idempotent`。订单变为 `in_production`（未就绪绑定 + accepted 包）。receipt 仍为 NULL |
-| 拒单：不是幂等。包不是 `dispatched` 或订单已终态 → `DELEGATE_TERMINAL`。成功写 receipt `reason`，并把 payload 里的行 `last_rejected_source_id` 写成该货源 | 00259 | `reject_latches_the_line`。第二次拒单为 `ErrTerminal` |
-| 发货：包必须是 `accepted` 且订单非终态。receipt 写入调用方的 `tracking_no`、`note`、`now_ms` | 00259 | `ship_from_accepted`（`at_ms` 为 99，订单 `shipped`）。未接单就发货、取消单上接单、停用成员、缺 uuid、坏 uuid 分别是 terminal / forbidden / not_found |
+| 重算：0 行 → `awaiting_setup`。包状态 `shipped` 记 live+accepted；`accepted` 再把 all_shipped 打假；`dispatched` 记 live 并把 all_shipped 打假；其余（含 rejected、cancelled、无包、未知）只把 all_shipped 打假。然后 shipped / in_production / dispatched / ready / awaiting_setup | SQL 函数的 `IF` 顺序 | `internal/delegate/domain/testdata/order_recompute.json` 与 `TestRecomputeMatchesSQLFunction`。返回值与 `delegate_orders.state` 都对上。`done`、`cancelled` 列不改，函数返回值仍是算出来的状态 |
+| 缺绑定不是 SQL NULL。SELECT 是 `(b.active IS TRUE AND EXISTS 已核验资产)`。没有绑定行时 `NULL IS TRUE` 为假，`all_ready` 被清掉，结果是 `awaiting_setup` | SQL 函数的 `IF` 分支 | 向量「missing binding waits for setup」「rejected packet without a binding waits for setup」；集成 `null_ready`、`rejected_null_ready` 断言函数返回 `awaiting_setup` |
+| 接单：找不到 → `DELEGATE_NOT_FOUND`；非活跃成员 → `DELEGATE_FORBIDDEN`；订单 `cancelled`/`done` 或包不是 `dispatched` 且也不是已 `accepted` → `DELEGATE_TERMINAL`；已 `accepted` 原样返回且不写 receipt；成功把包改为 `accepted` 并重算订单 | SQL 动作函数 | `TestDispatchEdges` 与 `TestDispatchActionsMatchSQLFunction/accept_then_idempotent`。订单变为 `in_production`（未就绪绑定 + accepted 包）。receipt 仍为 NULL |
+| 拒单：不是幂等。包不是 `dispatched` 或订单已终态 → `DELEGATE_TERMINAL`。成功写 receipt `reason`，并把 payload 里的行 `last_rejected_source_id` 写成该货源 | SQL 动作函数 | `reject_latches_the_line`。第二次拒单为 `ErrTerminal` |
+| 发货：包必须是 `accepted` 且订单非终态。receipt 写入调用方的 `tracking_no`、`note`、`now_ms` | SQL 动作函数 | `ship_from_accepted`（`at_ms` 为 99，订单 `shipped`）。未接单就发货、取消单上接单、停用成员、缺 uuid、坏 uuid 分别是 terminal / forbidden / not_found |
 | RLS：组织策略与货源成员策略是 OR。只设 org 只看见该 org；只设 `app.current_supplier_user_id` 只看见该货源；两个都设看见并集。缺两者在开事务前 `ErrNoTenant`。裸 `podhub_app` 无 GUC 时 `delegate_dispatches` 为 0 行，插入订单失败。org A 的事务不能插入 org B 的订单 | migration `00203` | `TestDispatchRLS` |
 | 卖家取消、关闭、催单：没有对应 SQL 函数 | 迁移里不存在 | `TransitionOrder` 全部 `ErrUnproven` |
 | 结算 `held`/`settled`/`released` 只有 CHECK，没有转移函数 | migration `00258` | `TransitionSettlement` 全部 `ErrUnproven` |
-| `delegate.posting_sync` 的 tick 返回 `(false, nil)`，不入队、不退避、不读间隔 | `internal/queue` 未改。`DelegateSyncScan` 仍是队列包里的空转 | `TestPostingSyncTickIsIdle` |
+| `delegate.posting_sync` 当前入队、真实回读并在租约围栏内更新状态 | app 的扫描、装配与 delegate 的同步仓储；不宣称与未提供的旧 Rust 同步体逐字节对拍 | 本页「当前委托同步」列出的普通 worker 角色回归 |
 
-接单、拒单、发货的写在 repo，经 service。HTTP 不调用它们，所以线上请求不会写这些表。
+接单、拒单、发货的写在 repo，经 service 和 HTTP 动作入口调用，权限由当前会话与数据库动作函数共同检查。
 
 ## HTTP
 
-方法+路径与 `internal/app/testdata/routes.txt` 的卖家委托段相同。16 条卖家路由在会话与工作空间角色通过后进入 `service.Seller`。上游代理不在本包：`internal/seller` 注册 `GET` 和 `POST /api/seller/upstream/{uuid}/*`。资产存储与写租约以 main 的 `writer.Assert` 为准，本包不另写一套。
+方法+路径与 `internal/app/testdata/routes.txt` 的卖家委托段相同。16 条卖家路由在会话与工作空间角色通过后进入 `service.Seller`。上游代理不在本包；早期 `GET` 和 `POST /api/seller/upstream/{uuid}/*` 当前已从根路由清单撤下，不再是可调用入口。资产存储与写租约以 main 的 `writer.Assert` 为准，本包不另写一套。
 
-错误码是 snake_case（`auth_invalid`、`forbidden`、`validation`、`not_found`、`conflict`、`writes_disabled`、`storage_unavailable`、`upstream_unreachable`、`internal`）。JSON 带 `X-Content-Type-Options: nosniff`。成功是 200。`strict_json` 失败是 400 `请求格式无效`。`POST /assets` 正文上限 64 KiB，其余 JSON 2 MiB，超限同样是这句，不是 413。缺 query 字段是 `text/plain`：`Failed to deserialize query string: missing field \`storeId\``（`postingNumbers` 同理）。presign 成功和 presign/finalize 的错误带 `Cache-Control: private, no-store`；finalize 成功不带。
+请求、响应字段和查询参数按 OpenAPI 统一为 snake_case，成功响应保留 `data` 信封。错误码是 snake_case（`auth_invalid`、`forbidden`、`validation`、`not_found`、`conflict`、`writes_disabled`、`storage_unavailable`、`upstream_unreachable`、`internal`）。JSON 带 `X-Content-Type-Options: nosniff`。成功是 200。`strict_json` 失败是 400 `请求格式无效`。`POST /assets` 正文上限 64 KiB，其余 JSON 2 MiB，超限同样是这句，不是 413。缺 query 字段是 `text/plain`：`Failed to deserialize query string: missing field \`store_id\``（`posting_numbers` 同理）。presign 成功和 presign/finalize 的错误带 `Cache-Control: private, no-store`；finalize 成功不带。
 
 工作空间：`OrgID == 0` 或角色为空 → 403 `forbidden` 与「尚未加入任何工作空间」。角色无法解析 → 403「工作空间角色无效」。`owner`/`manager`/`admin` 可管理。其它已登录状态 → 500 `internal`。
 
@@ -76,7 +93,7 @@ PODHUB_PARITY_DSN='postgres://postgres:postgres@127.0.0.1:5432/podhub?sslmode=di
 | 资产路由错误体逐字节 | `TestAssetRouteErrorBytes` |
 | finalize 把存储 409 改成 422；登录再检查 | `TestFinalizeRewritesStorageConflict` `TestFinalizeRecheckSession` |
 | 鉴权 snake_case、无工作空间、非法角色、其它状态改 500 | `TestAuthSnakeCase` |
-| 厂家列表信封；viewer 可读 | `TestSourcesEnvelope` |
+| 厂家列表信封；member 可读 | `TestSourcesEnvelope` |
 | 上游不在本包 | `TestUpstreamLeftThisRouter` |
 | `DELEGATE_AUTO_DISPATCH` | `TestDelegateAutoDispatch` |
 | 绑定 RLS：跨店不可见；裸 `podhub_app` 无 GUC 为 0 行 | `TestSellerBindingsRLS`（无 DSN/Docker 时跳过） |
@@ -111,11 +128,11 @@ PODHUB_PARITY_DSN='postgres://postgres:postgres@127.0.0.1:5432/podhub?sslmode=di
 - query 类型错误的 serde Display 未逐字节确认。`limit=abc` 目前返回纯文本 `Failed to deserialize query string: invalid digit found in string`。缺字段的句子是确认过的。
 - Ozon 响应除测试 mock 的顶层 `postings` 和 `result` 包装外，字段类型未展开。两种都接受。
 - 催单没有 Rust 测试 JSON。冷却 30 分钟、只更新 `dispatched`/`accepted`，按规格实现。
-- 这 16 条路由的 Seller 读不经过 `seller.Egress` 槽位和频率预留，因为 `Egress.Read` 不设置 `Client-Id` / `Api-Key`。只打 loopback。
+- 这 16 条路由的 Seller 读取当前通过显式 `SellerReadCall` 携带授权凭据，接受固定官方目标或受控回环目标，并保留共享预算、槽位及出口校验。
 - 上游代理归 `internal/seller`，路径是 `{uuid}/*`。`%2F` 与 Caddy 413 仍未逐字节确认。
-- oapi-codegen 的位置：已由 [decisions.md](../decisions.md) D2 定案（`api/openapi.yaml` 是唯一 spec，oapi-codegen 生成 models 与 chi 路由），本节不再重复。`internal/delegate/http/gen` 仍只有包注释这一点仍是本域缺口。
-- 缺绑定使 `b.active IS TRUE` 为假，从而 `awaiting_setup`。这与 00205 的执行结果一致。
+- oapi-codegen 的位置：已由 [decisions.md](../decisions.md) D2/D24 定案（`api/openapi.yaml` 是唯一 spec；delegate 已放弃生成路线，HTTP 层手写），本节不再重复。原 `internal/delegate/http/gen` 只有包注释，该零引用生成目录连同 `api/codegen/delegate.yaml` 已删除，不再构成本域缺口。
+- 缺绑定使 `b.active IS TRUE` 为假，从而 `awaiting_setup`。这与 SQL 函数的执行结果一致。
 - `delegate_settlements` 没有转移函数。供应商结算状态机仍是 `ErrUnproven`。卖家撤单/收口按规格里的 UPDATE 退回冻结，不调用那个状态机。
-- `delegate.posting_sync` 的 tick 仍空转。本任务不改 `internal/queue`。
+- `delegate.posting_sync` 的执行体已由 app 显式装配；业务落库复用 queue 的 epoch 围栏，不通过修改队列基线隐藏未实现状态。
 
 派单收件人固定（履约人数量、历史包 `fulfiller_id IS NULL` 的处理、驳回闩改履约人级）不属本域的「和 Rust 对过什么」，统一登记在 [decisions.md](../decisions.md) 的 O11、O12，方案见 [account-permission-model.md](../architecture/account-permission-model.md) §7。

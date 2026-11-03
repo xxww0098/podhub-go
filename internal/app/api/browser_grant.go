@@ -9,9 +9,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	access "github.com/xxww0098/podhub-go/internal/identity/contract"
 	"github.com/xxww0098/podhub-go/internal/listing/submit"
-	sellerdomain "github.com/xxww0098/podhub-go/internal/seller/domain"
-	sellerrepo "github.com/xxww0098/podhub-go/internal/seller/repo"
+	sellerdomain "github.com/xxww0098/podhub-go/internal/seller/ozon/domain"
+	sellerrepo "github.com/xxww0098/podhub-go/internal/seller/ozon/repo"
 )
 
 // RegisterBrowserDirect mounts the browser key grant and the import report.
@@ -31,6 +32,10 @@ func (s *Server) postBrowserGrant(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	p, ok := s.submitActor(w, r)
 	if !ok {
+		return
+	}
+	if !access.CanManage(p.WorkspaceRole) {
+		writeListing(w, http.StatusForbidden, "只有工作空间所有者或管理员可以获取店铺密钥", "forbidden")
 		return
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))

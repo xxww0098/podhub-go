@@ -3,280 +3,12 @@ package identity
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/xxww0098/podhub-go/tests/parity"
 )
-
-func TestRoleAlgebraMatchesRust(t *testing.T) {
-	for _, role := range []Role{RoleUser, RoleAdmin, RoleSuperAdmin} {
-		parsed, err := ParseRole(role.String())
-		if err != nil || parsed != role || RoleFromStored(role.String()) != role {
-			t.Fatalf("%s", role)
-		}
-	}
-	if role, err := ParseRole(" Super_Admin "); err != nil || role != RoleSuperAdmin {
-		t.Fatal(role, err)
-	}
-	if role, err := ParseRole("ADMIN"); err != nil || role != RoleAdmin {
-		t.Fatal(role, err)
-	}
-	for _, raw := range []string{"", "   ", "superadmin", "root", "administrator"} {
-		if RoleFromStored(raw) != RoleUser || RoleFromStored(raw).IsStaff() {
-			t.Fatalf("%q", raw)
-		}
-	}
-	if RoleUser.IsStaff() || !RoleAdmin.IsStaff() || !RoleSuperAdmin.IsStaff() || RoleAdmin.IsSuperAdmin() {
-		t.Fatal("staff cut")
-	}
-	for _, role := range []Role{RoleAdmin, RoleSuperAdmin} {
-		if err := Authorize(RoleAdmin, Change{Kind: "create", Role: role}, RoleUser, false); err != DenyCannotAssign {
-			t.Fatal(err)
-		}
-	}
-	if err := Authorize(RoleAdmin, Change{Kind: "create", Role: RoleUser}, RoleUser, false); err != nil {
-		t.Fatal(err)
-	}
-	for _, target := range []Role{RoleAdmin, RoleSuperAdmin} {
-		if err := Authorize(RoleAdmin, Change{Kind: "edit"}, target, false); err != DenyCannotMutate {
-			t.Fatal(err)
-		}
-	}
-	if err := Authorize(RoleSuperAdmin, Change{Kind: "create", Role: RoleAdmin}, RoleUser, false); err != nil {
-		t.Fatal(err)
-	}
-	if err := AuthorizeUpdate(RoleSuperAdmin, RoleUser, RoleAdmin, false, false); err != nil {
-		t.Fatal(err)
-	}
-	for _, actor := range []Role{RoleUser, RoleAdmin, RoleSuperAdmin} {
-		if err := Authorize(actor, Change{Kind: "create", Role: RoleSuperAdmin}, RoleUser, false); err != DenyCannotAssign {
-			t.Fatal(actor, err)
-		}
-	}
-	if CanAssign(RoleSuperAdmin, RoleSuperAdmin) || !CanAssign(RoleSuperAdmin, RoleAdmin) {
-		t.Fatal("assign")
-	}
-	if err := AuthorizeUpdate(RoleSuperAdmin, RoleSuperAdmin, RoleAdmin, false, true); err != DenyLastSuperAdmin {
-		t.Fatal(err)
-	}
-	if err := Authorize(RoleSuperAdmin, Change{Kind: "disable"}, RoleSuperAdmin, true); err != DenyLastSuperAdmin {
-		t.Fatal(err)
-	}
-	if err := Authorize(RoleSuperAdmin, Change{Kind: "edit"}, RoleSuperAdmin, true); err != nil {
-		t.Fatal(err)
-	}
-	if err := Authorize(RoleUser, Change{Kind: "create", Role: RoleUser}, RoleUser, false); err != DenyCannotAssign {
-		t.Fatal(err)
-	}
-	if err := Authorize(RoleUser, Change{Kind: "edit"}, RoleUser, false); err != DenyCannotMutate {
-		t.Fatal(err)
-	}
-}
-
-func TestWorkspaceMatrixMatchesRust(t *testing.T) {
-	if WorkspaceRoleFromStored("member") != WorkspaceOperator || WorkspaceRoleFromStored("admin") != WorkspaceManager {
-		t.Fatal("stored")
-	}
-	if WorkspaceRoleFromStored("") != WorkspaceViewer || WorkspaceOperator.Stored() != "member" {
-		t.Fatal("fallback")
-	}
-	for _, raw := range []string{"", "root", "super_admin", "operator", "invalid"} {
-		if _, ok := ParseWorkspaceRole(raw); ok || StoreVisible(raw, ptr(int64(2)), 2) || CanManageStored(raw) {
-			t.Fatalf("%q", raw)
-		}
-	}
-	if role, ok := ParseWorkspaceRole("viewer"); !ok || role != WorkspaceViewer {
-		t.Fatal("viewer")
-	}
-	if role, ok := ParseWorkspaceRole(" ADMIN "); !ok || role != WorkspaceManager {
-		t.Fatal("admin alias")
-	}
-	for _, raw := range []string{"owner", "manager", "admin"} {
-		if !CanManageStored(raw) {
-			t.Fatal(raw)
-		}
-	}
-	for _, raw := range []string{"member", "reviewer", "viewer"} {
-		if CanManageStored(raw) {
-			t.Fatal(raw)
-		}
-	}
-	if !WorkspaceOwner.Allows(CapBillingManage) || WorkspaceManager.Allows(CapBillingManage) || WorkspaceOperator.Allows(CapBillingManage) {
-		t.Fatal("billing")
-	}
-	if !WorkspaceOwner.Allows(CapStoreCredentialRotate) || WorkspaceManager.Allows(CapStoreCredentialRotate) {
-		t.Fatal("rotate")
-	}
-	if !WorkspaceManager.Allows(CapWorkspaceManage) || !WorkspaceOperator.Allows(CapListingPublish) || !WorkspaceOperator.Allows(CapListingSubmit) {
-		t.Fatal("publish")
-	}
-	if WorkspaceViewer.Allows(CapListingPublish) || WorkspaceReviewer.Allows(CapListingPublish) || !WorkspaceReviewer.Allows(CapListingReview) {
-		t.Fatal("review")
-	}
-	if !WorkspaceViewer.Allows(CapGalleryRead) || WorkspaceViewer.Allows(CapGalleryWrite) || !WorkspaceOperator.Allows(CapGalleryWrite) {
-		t.Fatal("gallery")
-	}
-	if WorkspaceOperator.Allows(CapGalleryDelete) || !WorkspaceManager.Allows(CapGalleryDelete) || !WorkspaceManager.Allows(CapAuditRead) {
-		t.Fatal("delete")
-	}
-	if !WorkspaceOwner.MayInvite(WorkspaceManager) || !WorkspaceOwner.MayInvite(WorkspaceOperator) || !WorkspaceManager.MayInvite(WorkspaceOperator) || WorkspaceManager.MayInvite(WorkspaceManager) || WorkspaceOperator.MayInvite(WorkspaceOperator) {
-		t.Fatal("invite")
-	}
-	if !WorkspaceOwner.MayRemoveMember(WorkspaceManager, false) || !WorkspaceOwner.MayRemoveMember(WorkspaceOperator, false) || WorkspaceOwner.MayRemoveMember(WorkspaceOwner, false) || WorkspaceOwner.MayRemoveMember(WorkspaceOperator, true) {
-		t.Fatal("remove")
-	}
-	if !WorkspaceManager.MayRemoveMember(WorkspaceOperator, false) || WorkspaceManager.MayRemoveMember(WorkspaceManager, false) {
-		t.Fatal("manager remove")
-	}
-	if WorkspaceOwner.Allows(CapWorkspaceLeave) || !WorkspaceManager.Allows(CapWorkspaceLeave) || !WorkspaceOperator.Allows(CapWorkspaceLeave) {
-		t.Fatal("leave")
-	}
-	if !WorkspaceOwner.MayChangeRole(WorkspaceManager, false) || !WorkspaceOwner.MayChangeRole(WorkspaceOperator, false) || WorkspaceOwner.MayChangeRole(WorkspaceOwner, false) || WorkspaceOwner.MayChangeRole(WorkspaceOperator, true) {
-		t.Fatal("change")
-	}
-	if WorkspaceManager.MayChangeRole(WorkspaceOperator, false) || WorkspaceOperator.MayChangeRole(WorkspaceManager, false) {
-		t.Fatal("non-owner change")
-	}
-	if got := join(WorkspaceOwner.AssignableRoles(WorkspaceManager, false)); got != "member" {
-		t.Fatal(got)
-	}
-	if got := join(WorkspaceOwner.AssignableRoles(WorkspaceOperator, false)); got != "manager" {
-		t.Fatal(got)
-	}
-	if len(WorkspaceOwner.AssignableRoles(WorkspaceOwner, false)) != 0 || len(WorkspaceManager.AssignableRoles(WorkspaceOperator, false)) != 0 {
-		t.Fatal("empty assignable")
-	}
-	if StoreVisible("member", nil, 2) || !StoreVisible("member", ptr(int64(2)), 2) || StoreVisible("member", ptr(int64(3)), 2) {
-		t.Fatal("operator stores")
-	}
-	if !StoreVisible("manager", nil, 2) || !StoreVisible("owner", ptr(int64(3)), 2) {
-		t.Fatal("manager stores")
-	}
-	if !(AssigneeKeyGrant{}).MayManageKey(true, false) || (AssigneeKeyGrant{}).MayManageKey(false, true) {
-		t.Fatal("owner bypass")
-	}
-	if !(AssigneeKeyGrant{Manage: true}).MayManageKey(false, true) || (AssigneeKeyGrant{Manage: true}).MayManageKey(false, false) {
-		t.Fatal("switch")
-	}
-	if WorkspaceID(0).Active() || !WorkspaceID(4).Active() {
-		t.Fatal("workspace id")
-	}
-	if PendingInviteLimit(1) != 10 || PendingInviteLimit(5) != 10 || PendingInviteLimit(6) != 12 {
-		t.Fatal("invite limit")
-	}
-	if MembershipDirectoryStatus("active", true, true) != "manual_disabled" || MembershipDirectoryStatus("active", false, true) != "quota_suspended" || MembershipDirectoryStatus("active", false, false) != "active" {
-		t.Fatal("status")
-	}
-}
-
-func TestPlatformPermissionsAreClosed(t *testing.T) {
-	for _, permission := range PlatformPermissions {
-		if permission.Allows(RoleUser) || !permission.Allows(RoleSuperAdmin) {
-			t.Fatal(permission)
-		}
-	}
-	for _, permission := range []PlatformPermission{PermManageSupplierCatalog, PermManageDelegateOrders, PermManageSupplierAccounts, PermManageSupplierWithdrawals} {
-		if !permission.Allows(RoleAdmin) || permission.Refusal() != "需要平台管理员权限" {
-			t.Fatal(permission)
-		}
-	}
-	if PermManagePlatform.Allows(RoleAdmin) || PermObserveTenantBusiness.Allows(RoleAdmin) {
-		t.Fatal("admin is not super")
-	}
-	if PermManagePlatform.Refusal() != "需要超级管理员权限" {
-		t.Fatal("refusal")
-	}
-	for _, stored := range []string{"", "root", "superadmin", "owner", "manager", "member"} {
-		for _, permission := range PlatformPermissions {
-			if permission.Allows(RoleFromStored(stored)) {
-				t.Fatalf("%s %v", stored, permission)
-			}
-		}
-	}
-}
-
-func TestCapabilityMatrixTable(t *testing.T) {
-	// Columns are owner, manager, operator, reviewer, viewer.
-	rows := []struct {
-		capability Capability
-		allow      string
-	}{
-		{CapWorkspaceRead, "11111"},
-		{CapWorkspaceManage, "11000"},
-		{CapWorkspaceProfileManage, "10000"},
-		{CapWorkspaceDissolve, "10000"},
-		{CapWorkspaceLeave, "01111"},
-		{CapMemberInvite, "11000"},
-		{CapMemberManage, "11000"},
-		{CapBillingRead, "10000"},
-		{CapBillingManage, "10000"},
-		{CapUsageRead, "11111"},
-		{CapBudgetManage, "10000"},
-		{CapStoreRead, "11111"},
-		{CapStoreManage, "11000"},
-		{CapStoreCredentialRotate, "10000"},
-		{CapPresetRead, "11111"},
-		{CapPresetManage, "11000"},
-		{CapListingPrepare, "11110"},
-		{CapListingReview, "11110"},
-		{CapListingPublish, "11100"},
-		{CapListingSubmit, "11100"},
-		{CapListingReconcile, "11110"},
-		{CapGalleryRead, "11111"},
-		{CapGalleryWrite, "11110"},
-		{CapGalleryDelete, "11000"},
-		{CapAiUse, "11111"},
-		{CapOcrUse, "11111"},
-		{CapAuditRead, "11000"},
-		{CapAuditExport, "10000"},
-		{CapWarehouseWrite, "11000"},
-	}
-	roles := []WorkspaceRole{WorkspaceOwner, WorkspaceManager, WorkspaceOperator, WorkspaceReviewer, WorkspaceViewer}
-	if len(rows) != len(AllCapabilities) {
-		t.Fatalf("matrix rows %d", len(rows))
-	}
-	seen := map[Capability]bool{}
-	for _, row := range rows {
-		seen[row.capability] = true
-		if len(row.allow) != len(roles) {
-			t.Fatal(row.capability)
-		}
-		for i, role := range roles {
-			want := row.allow[i] == '1'
-			got := role.Allows(row.capability)
-			if got != want {
-				t.Fatalf("role %d capability %d got %v want %v", role, row.capability, got, want)
-			}
-		}
-	}
-	for _, capability := range AllCapabilities {
-		if !seen[capability] {
-			t.Fatalf("missing %d", capability)
-		}
-	}
-}
-
-func TestCapabilityMatrixIsTotal(t *testing.T) {
-	roles := []WorkspaceRole{WorkspaceOwner, WorkspaceManager, WorkspaceOperator, WorkspaceReviewer, WorkspaceViewer}
-	if len(AllCapabilities) != 29 {
-		t.Fatalf("capabilities %d", len(AllCapabilities))
-	}
-	for _, role := range roles {
-		for _, capability := range AllCapabilities {
-			_ = role.Allows(capability)
-		}
-	}
-	// Everyone reads. Only the owner bills. Viewer does not prepare.
-	for _, role := range roles {
-		if !role.Allows(CapWorkspaceRead) || !role.Allows(CapAiUse) || !role.Allows(CapOcrUse) {
-			t.Fatal(role)
-		}
-	}
-	if WorkspaceViewer.Allows(CapListingPrepare) || !WorkspaceReviewer.Allows(CapListingPrepare) {
-		t.Fatal("prepare")
-	}
-}
 
 func TestCSRFVectors(t *testing.T) {
 	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -299,7 +31,9 @@ func TestCSRFVectors(t *testing.T) {
 		{"cookie without fetch headers", http.MethodPost, map[string]string{"Cookie": "sid=" + token('a')}, 200},
 		{"get is untouched", http.MethodGet, map[string]string{"Cookie": "sid=" + token('a'), "Sec-Fetch-Site": "cross-site"}, 200},
 		{"payment callback", http.MethodPost, map[string]string{"Sec-Fetch-Site": "cross-site"}, 200},
-		{"sids alone", http.MethodPost, map[string]string{"Cookie": "sids=" + token('a'), "Sec-Fetch-Site": "cross-site"}, 403},
+		// The retired stack cookie authenticates nothing, so it cannot be the
+		// credential a cross-site write rides on either.
+		{"retired sids alone", http.MethodPost, map[string]string{"Cookie": "sids=" + token('a'), "Sec-Fetch-Site": "cross-site"}, 200},
 		{"empty cookie value", http.MethodPost, map[string]string{"Cookie": "sid=", "Origin": "https://evil.example"}, 200},
 	}
 	for _, tc := range cases {
@@ -342,14 +76,13 @@ func TestClassifyPaths(t *testing.T) {
 		{"/api/media/objects/abc/png/presign", http.MethodPost, ClassControl},
 		{"/api/media/objects/abc/png/presign-batch", http.MethodPost, ClassControl},
 		{"/api/media/objects/abc/png/complete", http.MethodPut, ClassMediaUpload},
-		{"/api/listing/templates", http.MethodPost, ClassPsdUpload},
-		{"/api/listing/templates/1/confirm", http.MethodPost, ClassPsdUpload},
-		{"/api/listing/templates/1/multipart/part", http.MethodPost, ClassPsdUpload},
 		{"/api/admin/supplier-dbs/9/uploads", http.MethodPost, ClassPsdUpload},
 		{"/api/seller/delegate/assets", http.MethodPost, ClassMediaUpload},
 		{"/api/avatars/me", http.MethodPut, ClassMediaUpload},
 		{"/api/ai/ocr/completions", http.MethodPost, ClassOCR},
 		{"/api/ai/chat/completions", http.MethodPost, ClassAI},
+		{"/api/ai/v1/messages", http.MethodPost, ClassAI},
+		{"/api/ai/responses", http.MethodPost, ClassAI},
 		{"/api/listing/rows/1/heartbeat", http.MethodPost, ClassControl},
 		{"/api/listing/rows/1/prepare/cancel", http.MethodPost, ClassControl},
 		{"/api/listing/rows/1/cancel", http.MethodPost, ClassControl},
@@ -407,16 +140,20 @@ func TestLoginThrottleMath(t *testing.T) {
 	if leftEmail == rightEmail || leftIP != sameIP || ipScope() == leftEmail {
 		t.Fatal("keys")
 	}
+	caseEmail, caseIP := pairKey("  LEFT@Pod.Invalid  ", "203.0.113.8")
+	if caseEmail != leftEmail || caseIP != leftIP {
+		t.Fatal("email case variants must share login limits")
+	}
 }
 
-func TestSessionStack(t *testing.T) {
-	cred := SessionCredentials(headerCookie("other=1; sid=" + token('a') + "; sids=" + token('a') + "." + token('b') + "." + token('c')))
-	if cred.SID != token('a') || len(cred.Stack) != 3 || cred.Stack[2] != token('c') {
+func TestSessionCookie(t *testing.T) {
+	cred := SessionCredentials(headerCookie("other=1; sid=" + token('a') + "; sids=" + token('a') + "." + token('b')))
+	if cred.SID != token('a') || cred.Presented() != token('a') {
 		t.Fatalf("%+v", cred)
 	}
-	junk := SessionCredentials(headerCookie("sids=" + token('a') + ".junk." + token('a') + ".x; sid=" + token('a')))
-	if len(junk.Stack) != 1 {
-		t.Fatal(junk.Stack)
+	junk := SessionCredentials(headerCookie("sid=" + token('a') + ".x; sids=" + token('b')))
+	if junk.Presented() != "" {
+		t.Fatalf("%+v", junk)
 	}
 	headers := headerCookie("sid=" + token('a'))
 	headers.Set("Authorization", "Bearer "+token('z'))
@@ -424,41 +161,19 @@ func TestSessionStack(t *testing.T) {
 	if bearer.Presented() != token('z') || bearer.SID != token('a') {
 		t.Fatal(bearer)
 	}
-	order := SessionCredentials(headerCookie("sid=" + token('b') + "; sids=" + token('a') + "." + token('b')))
-	cands := order.Candidates()
-	if len(cands) != 2 || cands[0] != token('b') || cands[1] != token('a') {
-		t.Fatal(cands)
+	if got := SessionCredentials(headerCookie("sids=" + token('a'))).Presented(); got != "" {
+		t.Fatalf("stack cookie must not authenticate: %q", got)
 	}
-	merged := MergedStack([]StackEntry{{token('a'), 1}, {token('b'), 2}, {token('c'), 1}}, 1, token('d'))
-	if len(merged) != 2 || merged[0] != token('b') || merged[1] != token('d') {
-		t.Fatal(merged)
+	set := SessionCookies(token('a'))
+	if len(set) != 2 || !strings.HasPrefix(set[0], SessionCookie+"="+token('a')+";") || !strings.HasPrefix(set[1], "sids=;") {
+		t.Fatal(set)
 	}
-	var full []StackEntry
-	for i := 0; i < maxStackedSessions; i++ {
-		full = append(full, StackEntry{token(byte('a' + i)), int64(i + 1)})
+	cleared := SessionCookies("")
+	if len(cleared) != 2 || !strings.HasPrefix(cleared[0], SessionCookie+"=;") || !strings.Contains(cleared[0], "Max-Age=0") {
+		t.Fatal(cleared)
 	}
-	overflow := MergedStack(full, 99, token('z'))
-	if len(overflow) != maxStackedSessions || overflow[0] != token('b') || overflow[len(overflow)-1] != token('z') {
-		t.Fatal(overflow)
-	}
-	revokeCred := SessionCredentials(headerCookie("sid=" + token('b') + "; sids=" + token('a') + "." + token('b') + "." + token('c')))
-	sid, stack := AfterRevoke(revokeCred, []string{token('b')})
-	if sid != token('c') || len(stack) != 2 || stack[0] != token('a') {
-		t.Fatal(sid, stack)
-	}
-	keep := SessionCredentials(headerCookie("sid=" + token('a') + "; sids=" + token('a') + "." + token('b')))
-	sid, stack = AfterRevoke(keep, []string{token('b')})
-	if sid != token('a') || len(stack) != 1 {
-		t.Fatal(sid, stack)
-	}
-	last := SessionCredentials(headerCookie("sid=" + token('a') + "; sids=" + token('a')))
-	sid, stack = AfterRevoke(last, []string{token('a')})
-	if sid != "" || len(stack) != 0 {
-		t.Fatal(sid, stack)
-	}
-	only := SessionCredentials(headerCookie("sid=" + token('a')))
-	if got := only.StackCandidates(); len(got) != 1 || got[0] != token('a') {
-		t.Fatal(got)
+	if !IsSessionToken(token('a')) || IsSessionToken(token('a')[:42]) || IsSessionToken("!"+token('a')[1:]) {
+		t.Fatal("token shape")
 	}
 }
 
@@ -572,15 +287,6 @@ func headerCookie(value string) http.Header {
 	h := http.Header{}
 	h.Set("Cookie", value)
 	return h
-}
-
-func ptr(n int64) *int64 { return &n }
-
-func join(parts []string) string {
-	if len(parts) == 0 {
-		return ""
-	}
-	return parts[0]
 }
 
 func repeat(s string, n int) string {

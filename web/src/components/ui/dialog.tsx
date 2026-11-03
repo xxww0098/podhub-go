@@ -53,7 +53,7 @@ function DialogOverlay({
       // need their own scrim over the parent popup.
       forceRender
       className={cn(
-        "fixed inset-0 z-50 bg-black/60 transition-opacity duration-150 data-closed:pointer-events-none data-closed:invisible data-ending-style:opacity-0 data-starting-style:opacity-0",
+        "fixed inset-0 z-50 bg-black/40 transition-opacity duration-150 data-closed:pointer-events-none data-closed:invisible data-ending-style:opacity-0 data-starting-style:opacity-0",
         className
       )}
       {...props}
@@ -81,7 +81,7 @@ function DialogContent({
           // auto track instead grows to its widest child's max-content, so one
           // long unbreakable string (a filename, a URL) stretches every row —
           // the footer buttons included — past the popup's right edge.
-          "fixed top-1/2 left-1/2 z-50 grid w-full grid-cols-1 max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground shadow-overlay outline-none transition-[opacity,transform,translate,scale] duration-150 ease-settle data-closed:pointer-events-none data-closed:invisible sm:max-w-md",
+          "fixed top-1/2 left-1/2 z-50 grid max-h-[calc(100dvh-2rem)] w-full grid-cols-1 max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto overscroll-contain rounded-xl border border-border/80 bg-popover p-4 text-sm text-popover-foreground shadow-overlay outline-none transition-[opacity,transform,translate,scale] duration-150 ease-settle data-closed:pointer-events-none data-closed:invisible sm:max-w-md",
           "data-ending-style:scale-[0.98] data-ending-style:opacity-0 data-ending-style:duration-100 data-starting-style:scale-[0.98] data-starting-style:opacity-0",
           layout === "panel" && "flex max-h-[calc(100dvh-2rem)] flex-col gap-0 overflow-hidden p-0",
           className
@@ -98,6 +98,7 @@ function DialogContent({
                 className="absolute top-2 right-2"
                 size="icon-sm"
                 aria-label="关闭"
+                title="关闭"
               />
             }
           >
@@ -114,7 +115,7 @@ function DialogHeader({ className, variant = "default", ...props }: React.Compon
   return (
     <div
       data-slot="dialog-header"
-      className={cn("flex flex-col gap-1.5 pr-8", variant === "panel" && "shrink-0 border-b border-border px-5 py-4 pr-14", className)}
+      className={cn("flex min-w-0 flex-col gap-1.5 pr-8", variant === "panel" && "shrink-0 border-b border-border px-4 py-3 pr-14", className)}
       {...props}
     />
   )
@@ -124,7 +125,7 @@ function DialogBody({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="dialog-body"
-      className={cn("flex flex-1 flex-col gap-3 overflow-y-auto p-4 text-sm", className)}
+      className={cn("flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain p-4 text-sm", className)}
       {...props}
     />
   )
@@ -144,8 +145,8 @@ function DialogFooter({
     <div
       data-slot="dialog-footer"
       className={cn(
-        "-mx-4 -mb-4 flex flex-col-reverse gap-2 rounded-b-xl border-t border-border bg-muted/50 p-4 sm:flex-row sm:justify-end",
-        variant === "panel" && "m-0 shrink-0 rounded-none bg-transparent px-5 py-4",
+        "-mx-4 -mb-4 flex min-w-0 flex-wrap justify-end gap-2 rounded-b-xl border-t border-border bg-muted/30 p-4",
+        variant === "panel" && "m-0 shrink-0 rounded-none bg-transparent px-4 py-3",
         className
       )}
       {...props}
@@ -153,7 +154,7 @@ function DialogFooter({
       {children}
       {showCloseButton && (
         <DialogPrimitive.Close render={<Button variant="outline" />}>
-          Close
+          关闭
         </DialogPrimitive.Close>
       )}
     </div>
@@ -164,7 +165,7 @@ function DialogTitle({ className, ...props }: DialogPrimitive.Title.Props) {
   return (
     <DialogPrimitive.Title
       data-slot="dialog-title"
-      className={cn("text-base font-medium text-foreground", className)}
+      className={cn("text-lg font-semibold leading-6 text-foreground", className)}
       {...props}
     />
   )

@@ -21,8 +21,8 @@ test("isValidFixedTag：# + 西里尔词身（可含数字、_ 连词）", () =>
   assert.equal(isValidFixedTag(`#${"а".repeat(30)}`), false)
 })
 
-test("fixedTagsReady：1–25 个、全合法、大小写不敏感去重", () => {
-  assert.equal(FIXED_TAGS_MAX, 25)
+test("fixedTagsReady：1–30 个、全合法、大小写不敏感去重", () => {
+  assert.equal(FIXED_TAGS_MAX, 30)
   const max = Array.from({ length: FIXED_TAGS_MAX }, (_, i) => `#тег${i}`)
   assert.equal(fixedTagsReady([]), false)
   assert.equal(fixedTagsReady(["#тег"]), true)

@@ -4,12 +4,12 @@ import (
 	"context"
 
 	"github.com/xxww0098/podhub-go/internal/admin/domain"
+	billing "github.com/xxww0098/podhub-go/internal/billing/contract"
 )
 
 // BillingAPI is the admin billing and observation port.
 // HTTP depends on it. The repo implements it. This package does not import repo.
 type BillingAPI interface {
-	Standing(ctx context.Context, userID int64, tokenHash string) (domain.Standing, error)
 	PublicID(ctx context.Context, userID int64) (string, error)
 	ListPlans(ctx context.Context, actor domain.Actor) ([]byte, error)
 	ListOrders(ctx context.Context, actor domain.Actor) ([]byte, error)
@@ -21,6 +21,9 @@ type BillingAPI interface {
 	GetRedeem(ctx context.Context, actor domain.Actor, id int64) ([]byte, error)
 	DeleteRedeem(ctx context.Context, actor domain.Actor, id int64) ([]byte, error)
 	RevokeRedeem(ctx context.Context, actor domain.Actor, id int64) ([]byte, error)
+	ListCoupons(ctx context.Context, actor domain.Actor) ([]byte, error)
+	CreateCoupon(ctx context.Context, actor domain.Actor, spec billing.CouponSpec) ([]byte, error)
+	SetCouponEnabled(ctx context.Context, actor domain.Actor, code string, enabled bool) ([]byte, error)
 	GetPayment(ctx context.Context, actor domain.Actor) ([]byte, error)
 	PutPayment(ctx context.Context, actor domain.Actor, body domain.PaymentReplace) ([]byte, error)
 	Wallet(ctx context.Context, actor domain.Actor, workspace string) ([]byte, error)

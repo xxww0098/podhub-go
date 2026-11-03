@@ -8,21 +8,15 @@ import (
 
 func TestValidateRedeemCreate(t *testing.T) {
 	now := time.Date(2026, 10, 17, 1, 2, 3, 0, time.UTC)
-	if _, err := ValidateRedeemCreate(RedeemDraft{Product: "member_seats", MemberSeats: 2, Tier: "pro", Quantity: 1, DurationDays: 30}, now); err == nil {
-		t.Fatal("retired member-seat codes must not be minted")
-	}
-	wallet, err := ValidateRedeemCreate(RedeemDraft{Product: " wallet_credits ", WalletCents: 100, Quantity: 2, DurationDays: 99}, now)
-	if err != nil || wallet.DurationDays != 1 || wallet.PlanKey != "wallet" || wallet.PlanName != "钱包额度" {
+	wallet, err := ValidateRedeemCreate(RedeemDraft{WalletCents: 100, Quantity: 2}, now)
+	if err != nil || wallet.WalletCents != 100 || wallet.Quantity != 2 || !wallet.ExpiresAt.Equal(now.Add(30*24*time.Hour)) {
 		t.Fatalf("%+v %v", wallet, err)
 	}
 	bad := []RedeemDraft{
-		{Product: "ocr_credits", OcrCredits: 1, Quantity: 1, DurationDays: 1},
-		{Product: "member_seats", OcrCredits: 1, MemberSeats: 1, Tier: "pro", Quantity: 1, DurationDays: 1},
-		{Product: "member_seats", MemberSeats: 21, Tier: "pro", Quantity: 1, DurationDays: 1},
-		{Product: "member_seats", MemberSeats: 1, Tier: "", Quantity: 1, DurationDays: 1},
-		{Product: "wallet_credits", WalletCents: 99, Quantity: 1},
-		{Product: "wallet_credits", WalletCents: 100, Quantity: 501},
-		{Product: "member_seats", MemberSeats: 1, Tier: "max", Quantity: 1, DurationDays: 3651},
+		{WalletCents: 99, Quantity: 1},
+		{WalletCents: 1_000_001, Quantity: 1},
+		{WalletCents: 100, Quantity: 0},
+		{WalletCents: 100, Quantity: 501},
 	}
 	for i, draft := range bad {
 		if _, err := ValidateRedeemCreate(draft, now); err == nil {
@@ -30,30 +24,51 @@ func TestValidateRedeemCreate(t *testing.T) {
 		}
 	}
 	long := strings.Repeat("注", 201)
-	if _, err := ValidateRedeemCreate(RedeemDraft{Product: "wallet_credits", WalletCents: 100, Quantity: 1, Note: &long}, now); err == nil || err.Message != "备注不能超过 200 个字符" {
+	if _, err := ValidateRedeemCreate(RedeemDraft{WalletCents: 100, Quantity: 1, Note: &long}, now); err == nil || err.Message != "备注不能超过 200 个字符" {
 		t.Fatal(err)
 	}
 }
 
 func TestParseRedeemBodyMatchesValidate(t *testing.T) {
 	now := time.Date(2026, 10, 17, 1, 2, 3, 0, time.UTC)
-	body := []byte(`{"product":"member_seats","member_seats":2,"tier":"max","quantity":2,"duration_days":45,"expires_at":"2030-06-01T00:00:00Z","note":"批次"}`)
-	if _, fault := ParseRedeemBody(body, now); fault == nil {
-		t.Fatal("retired member-seat code accepted")
-	}
-	wallet := []byte(`{"product":"wallet_credits","member_seats":0,"quantity":1,"duration_days":30,"wallet_cents":2500}`)
-	got, fault := ParseRedeemBody(wallet, now)
-	if fault != nil || got.Product != "wallet_credits" || got.DurationDays != 1 || got.WalletCents != 2500 || got.PlanName != "钱包额度" {
+	body := []byte(`{"wallet_cents":2500,"quantity":2,"expires_at":"2030-06-01T00:00:00Z","note":"批次"}`)
+	got, fault := ParseRedeemBody(body, now)
+	if fault != nil || got.WalletCents != 2500 || got.Quantity != 2 || got.Note == nil || *got.Note != "批次" ||
+		!got.ExpiresAt.Equal(time.Date(2030, 6, 1, 0, 0, 0, 0, time.UTC)) {
 		t.Fatalf("%+v %v", got, fault)
 	}
 	for _, bad := range [][]byte{
 		[]byte(`{}`),
 		[]byte(`{"extra":1}`),
-		[]byte(`{"product":"member_seats","member_seats":1,"tier":"pro","quantity":501,"duration_days":1}`),
-		[]byte(`{"product":"member_seats","member_seats":1,"tier":"nope","quantity":1,"duration_days":1}`),
+		[]byte(`{"wallet_cents":2500}`),
+		[]byte(`{"quantity":1}`),
+		[]byte(`{"wallet_cents":2500,"quantity":501}`),
+		[]byte(`{"product":"wallet_credits","wallet_cents":2500,"quantity":1}`),
+		[]byte(`{"member_seats":1,"wallet_cents":2500,"quantity":1}`),
 	} {
 		if _, fault := ParseRedeemBody(bad, now); fault == nil {
 			t.Fatalf("accepted %s", bad)
+		}
+	}
+}
+
+func TestParsePlanRedeemBody(t *testing.T) {
+	now := time.Now()
+	got, fault := ParseRedeemBody([]byte(`{"plan_key":"pro","plan_stores":3,"plan_months":6,"quantity":2}`), now)
+	if fault != nil || got.PlanKey != "pro" || got.PlanStores != 3 || got.PlanMonths != 6 || got.WalletCents != 0 {
+		t.Fatalf("plan: %+v %v", got, fault)
+	}
+	for _, body := range []string{
+		`{"plan_key":"free","plan_stores":1,"plan_months":1,"quantity":1}`,
+		`{"plan_key":"pro","plan_stores":0,"plan_months":1,"quantity":1}`,
+		`{"plan_key":"pro","plan_stores":101,"plan_months":1,"quantity":1}`,
+		`{"plan_key":"pro","plan_stores":1,"plan_months":2,"quantity":1}`,
+		`{"plan_key":"pro","plan_stores":1,"quantity":1}`,
+		`{"plan_key":"pro","plan_stores":1,"plan_months":1,"wallet_cents":100,"quantity":1}`,
+		`{"wallet_cents":100,"plan_stores":1,"quantity":1}`,
+	} {
+		if _, fault := ParseRedeemBody([]byte(body), now); fault == nil {
+			t.Fatalf("accepted %s", body)
 		}
 	}
 }

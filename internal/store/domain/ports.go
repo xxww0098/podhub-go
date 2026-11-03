@@ -62,7 +62,6 @@ type UpdateStoreInput struct {
 	Name        *string
 	ClientID    *string
 	ClientIDSet bool
-	KeyManage   *bool
 	TagUUIDs    *[]string
 	GroupUUID   *string
 	Revision    int64

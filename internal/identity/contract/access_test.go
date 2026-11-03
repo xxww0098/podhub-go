@@ -1,102 +1,113 @@
 package contract
 
-import "testing"
+import (
+	"net/http"
+	"reflect"
+	"testing"
+)
 
-func TestWorkspaceMatrix(t *testing.T) {
-	if _, ok := ParseWorkspace("root"); ok {
-		t.Fatal("unknown role parsed")
-	}
-	if CanManage("root") || CanManage("") || CanManage("member") || CanManage("viewer") {
-		t.Fatal("manage cut")
-	}
-	if !CanManage("owner") || !CanManage(" manager ") || !CanManage("ADMIN") {
-		t.Fatal("owner and manager")
-	}
-	for _, role := range []string{"owner", "manager", "member", "reviewer"} {
-		if !AllowsListingPrepare(role) {
-			t.Fatalf("%s should prepare", role)
+func TestWorkspaceRoles(t *testing.T) {
+	for _, raw := range []string{"owner", "manager", "member", " MANAGER "} {
+		role, ok := ParseWorkspace(raw)
+		if !ok || role == "" {
+			t.Fatalf("valid role %q rejected", raw)
 		}
 	}
-	if AllowsListingPrepare("viewer") || AllowsListingPrepare("nope") {
-		t.Fatal("viewer and unknown must not prepare")
-	}
-	for _, role := range []string{"owner", "manager", "admin", "member"} {
-		if !AllowsListingSubmit(role) {
-			t.Fatalf("%s should submit", role)
+	assigned, other := int64(7), int64(8)
+	for _, raw := range []string{"", "root", "admin", "operator", "reviewer", "viewer", "super_admin", "supplier"} {
+		role, ok := ParseWorkspace(raw)
+		if ok || role != "" || CanManage(raw) || StoreVisible(raw, &assigned, 7) {
+			t.Fatalf("invalid role %q granted access", raw)
 		}
 	}
-	if AllowsListingSubmit("reviewer") || AllowsListingSubmit("viewer") || AllowsListingSubmit("nope") {
-		t.Fatal("reviewer, viewer, and unknown must not submit")
+	if !CanManage("owner") || !CanManage(" manager ") || CanManage("member") {
+		t.Fatal("only owners and managers manage workspaces")
 	}
-	assigned := int64(7)
-	other := int64(8)
-	if !StoreVisible("owner", nil, 7) || !StoreVisible("ADMIN", nil, 7) {
-		t.Fatal("managers see an unassigned store")
+	if !StoreVisible("owner", nil, 7) || !StoreVisible("manager", &other, 7) {
+		t.Fatal("managers see every store")
 	}
 	if StoreVisible("member", nil, 7) || !StoreVisible("member", &assigned, 7) || StoreVisible("member", &other, 7) {
-		t.Fatal("operator visibility")
+		t.Fatal("members see only their assigned stores")
 	}
-	if StoreVisible("nope", &assigned, 7) || StoreVisible("reviewer", nil, 1) {
-		t.Fatal("unknown sees nothing; reviewer sees only an assignment")
-	}
-	if !StoreVisible("reviewer", &assigned, 7) {
-		t.Fatal("assigned reviewer")
-	}
-	if !IsSuperAdmin(" Super_Admin ") || IsSuperAdmin("admin") || IsSuperAdmin("superadmin") {
-		t.Fatal("platform rank")
+}
+
+func TestMembershipChanges(t *testing.T) {
+	roles := []WorkspaceRole{WorkspaceOwner, WorkspaceManager, WorkspaceMember, "", "reviewer"}
+	for _, actor := range roles {
+		for _, target := range roles {
+			invite := (actor == WorkspaceOwner && (target == WorkspaceManager || target == WorkspaceMember)) ||
+				(actor == WorkspaceManager && target == WorkspaceMember)
+			change := actor == WorkspaceOwner && (target == WorkspaceManager || target == WorkspaceMember)
+			if actor.MayInvite(target) != invite {
+				t.Fatalf("%s invite %s", actor, target)
+			}
+			for _, self := range []bool{false, true} {
+				if actor.MayRemoveMember(target, self) != (invite && !self) || actor.MayChangeRole(target, self) != (change && !self) {
+					t.Fatalf("%s change/remove %s self=%v", actor, target, self)
+				}
+				var assignable []string
+				if change && !self {
+					assignable = []string{"manager"}
+					if target == WorkspaceManager {
+						assignable = []string{"member"}
+					}
+				}
+				if got := actor.AssignableRoles(target, self); !reflect.DeepEqual(got, assignable) {
+					t.Fatalf("%s assign %s self=%v: %v, want %v", actor, target, self, got, assignable)
+				}
+			}
+		}
 	}
 }
 
 func TestGates(t *testing.T) {
-	_, msg, ok := ListingPrepare(Principal{OrgID: 0, WorkspaceRole: "owner"})
-	if ok || msg != MsgNoWorkspace {
-		t.Fatalf("no workspace: %v %s", ok, msg)
+	for _, tc := range []struct {
+		org           int64
+		role, message string
+	}{
+		{0, "owner", MsgNoWorkspace}, {-1, "owner", MsgNoWorkspace},
+		{4, " ", MsgNoWorkspace}, {4, "admin", MsgBadWorkspaceRole},
+		{4, "reviewer", MsgBadWorkspaceRole}, {4, "viewer", MsgBadWorkspaceRole},
+		{4, "root", MsgBadWorkspaceRole},
+	} {
+		p := Principal{OrgID: tc.org, WorkspaceRole: tc.role, PlatformRole: "super_admin"}
+		for _, gate := range []func(Principal) (int, string, bool){OrgMember, OrgManager} {
+			status, msg, ok := gate(p)
+			if ok || status != http.StatusForbidden || msg != tc.message {
+				t.Fatalf("%+v: %d %q %v", tc, status, msg, ok)
+			}
+		}
 	}
-	_, msg, ok = ListingPrepare(Principal{OrgID: 4, WorkspaceRole: " "})
-	if ok || msg != MsgNoWorkspace {
-		t.Fatalf("blank role: %v %s", ok, msg)
+	for _, role := range []string{"owner", "manager", "member"} {
+		p := Principal{OrgID: 4, WorkspaceRole: role}
+		if _, _, ok := OrgMember(p); !ok {
+			t.Fatalf("%s is a member", role)
+		}
+		status, msg, ok := OrgManager(p)
+		if ok != (role != "member") || (!ok && (status != http.StatusForbidden || msg != MsgManager)) {
+			t.Fatalf("manager %s: %d %q %v", role, status, msg, ok)
+		}
 	}
-	_, msg, ok = ListingPrepare(Principal{OrgID: 4, WorkspaceRole: "root"})
-	if ok || msg != MsgBadWorkspaceRole {
-		t.Fatalf("bad role: %v %s", ok, msg)
-	}
-	_, msg, ok = ListingPrepare(Principal{OrgID: 4, WorkspaceRole: "viewer"})
-	if ok || msg != MsgListingForbidden {
-		t.Fatalf("viewer: %v %s", ok, msg)
-	}
-	if _, _, ok := ListingPrepare(Principal{OrgID: 4, WorkspaceRole: "member"}); !ok {
-		t.Fatal("member prepares")
-	}
-	_, msg, ok = ListingSubmit(Principal{OrgID: 4, WorkspaceRole: "reviewer"})
-	if ok || msg != MsgListingForbidden {
-		t.Fatalf("reviewer submit: %v %s", ok, msg)
-	}
-	if _, _, ok := ListingSubmit(Principal{OrgID: 4, WorkspaceRole: "member"}); !ok {
-		t.Fatal("member submits")
-	}
-	_, msg, ok = ListingSubmit(Principal{OrgID: 0, WorkspaceRole: "owner"})
-	if ok || msg != MsgNoWorkspace {
-		t.Fatalf("submit workspace: %s", msg)
-	}
-	_, msg, ok = OrgMember(Principal{OrgID: 0})
-	if ok || msg != MsgNoWorkspace {
-		t.Fatal(msg)
-	}
-	if _, _, ok := OrgMember(Principal{OrgID: 4}); !ok {
-		t.Fatal("member")
-	}
-	_, msg, ok = OrgManager(Principal{OrgID: 4, WorkspaceRole: "member"})
-	if ok || msg != MsgManager {
-		t.Fatalf("operator manage: %s", msg)
-	}
-	if _, _, ok := OrgManager(Principal{OrgID: 4, WorkspaceRole: "admin"}); !ok {
-		t.Fatal("stored admin manages")
-	}
-	_, msg, ok = SuperAdmin(Principal{PlatformRole: "admin"})
-	if ok || msg != MsgSuperAdmin {
-		t.Fatal(msg)
+	if _, msg, ok := SuperAdmin(Principal{PlatformRole: "admin"}); ok || msg != MsgSuperAdmin {
+		t.Fatal("admin is not super")
 	}
 	if _, _, ok := SuperAdmin(Principal{PlatformRole: "super_admin"}); !ok {
 		t.Fatal("super")
+	}
+}
+
+func TestPlatformRoles(t *testing.T) {
+	for _, tc := range []struct {
+		role         string
+		staff, super bool
+	}{
+		{"super_admin", true, true}, {" Super_Admin ", true, true},
+		{"admin", true, false}, {" ADMIN ", true, false},
+		{"user", false, false}, {"owner", false, false}, {"manager", false, false},
+		{"member", false, false}, {"supplier", false, false}, {"superadmin", false, false}, {"", false, false},
+	} {
+		if IsPlatformStaff(tc.role) != tc.staff || IsSuperAdmin(tc.role) != tc.super {
+			t.Fatalf("%+v", tc)
+		}
 	}
 }

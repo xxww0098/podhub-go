@@ -20,6 +20,7 @@ export const COMMON_REPLIES_KEY = "podhub.message-center.replies"
 
 export type SessionKind = "buyer" | "ticket" | "platform"
 export type StoreFilter = "all" | "waiting"
+export type SessionStatus = "all" | "opened" | "closed"
 
 export type InboxStoreInput = {
   storeId: string
@@ -66,6 +67,9 @@ const RELATIVE = new Intl.DateTimeFormat("zh-CN", {
   hour: "2-digit",
   minute: "2-digit",
 })
+const MESSAGE_TIME = new Intl.DateTimeFormat("zh-CN", {
+  year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+})
 
 export function formatSessionTime(value: string): string {
   const trimmed = value.trim()
@@ -75,9 +79,39 @@ export function formatSessionTime(value: string): string {
   return `${RELATIVE.format(parsed)} 起`
 }
 
-/** Bubble body: item parts are paragraphs, not tokens — keep the line breaks. */
-export function messageBody(message: Pick<MessageCenterMessageView, "items">): string {
-  return message.items.map((part) => part.trim()).filter(Boolean).join("\n")
+/** Bubble parts are paragraphs, not tokens — keep the line breaks. */
+export function messageBody(message: Partial<MessageCenterMessageView> | null | undefined): string {
+  return Array.isArray(message?.data)
+    ? message.data.filter((part): part is string => typeof part === "string").map((part) => part.trim()).filter(Boolean).join("\n")
+    : ""
+}
+
+export function messageImageLinks(message: Partial<MessageCenterMessageView> | null | undefined): string[] {
+  if (!Array.isArray(message?.data)) return []
+  return message.data.flatMap((part) => {
+    if (typeof part !== "string") return []
+    try {
+      const url = new URL(part)
+      return url.protocol === "https:" || url.protocol === "http:" ? [url.href] : []
+    } catch {
+      return []
+    }
+  })
+}
+
+export function messageSender(value: unknown): string {
+  const type = typeof value === "string" ? value.trim() : ""
+  if (type === "NotificationUser") return "平台通知"
+  if (type === "Support") return "客服"
+  return type || "发送方未知"
+}
+
+export function formatMessageTime(value: unknown): string {
+  const text = typeof value === "string" ? value.trim() : ""
+  if (!text) return ""
+  const parsed = Date.parse(text)
+  if (!Number.isFinite(parsed)) return text
+  return MESSAGE_TIME.format(parsed)
 }
 
 export function storeNumberOf(store: OzonStoreView): string {
@@ -130,8 +164,15 @@ export function filterStores(
 export function filterSessions(
   chats: MessageCenterChatItem[],
   kind: SessionKind,
+  query: string,
+  status: SessionStatus,
 ): MessageCenterChatItem[] {
-  return chats.filter((chat) => sessionKindOf(chat) === kind)
+  const needle = query.trim().toLocaleLowerCase()
+  return chats.filter((chat) => {
+    if (sessionKindOf(chat) !== kind) return false
+    if (status !== "all" && chat.chat_status.trim().toLowerCase() !== status) return false
+    return !needle || chat.chat_id.toLocaleLowerCase().includes(needle) || chat.preview.toLocaleLowerCase().includes(needle)
+  })
 }
 
 export function sessionCounts(chats: MessageCenterChatItem[]): Record<SessionKind, number> {
@@ -173,8 +214,10 @@ export function sendRequestOf(
   storeId: string,
   chatId: string,
   russianText: string,
+  operationId: string = crypto.randomUUID(),
 ): MessageCenterSendRequest {
   return {
+    operation_id: operationId,
     store_id: storeId,
     chat_id: chatId,
     text: russianText.trim(),

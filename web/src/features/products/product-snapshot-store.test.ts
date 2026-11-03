@@ -91,8 +91,7 @@ function stubStorage(ceilingBytes = Infinity) {
 
 function signIn(uuid: string) {
   rememberAccountOverview({
-    session: { authenticated: true, email: `${uuid}@example.invalid` },
-    accounts: [{ uuid, active: true, email: `${uuid}@example.invalid`, name: uuid }],
+    session: { authenticated: true, uuid, email: `${uuid}@example.invalid` },
     workspaces: [],
   } as unknown as AccountOverview)
 }

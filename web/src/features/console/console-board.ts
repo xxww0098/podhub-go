@@ -8,6 +8,13 @@ import type { CohortDelta, StoreRosterRow, StoreRosterSummary } from "./console-
 import { ROSTER_STATUS } from "./console-metrics"
 import { formatInteger } from "./console-format"
 
+export const CONSOLE_LEDGER_ROW_CAP = 2000
+
+// shortcut: the API has no completeness flag; a full sample may be truncated, so recheck when the API exposes one.
+export function ledgerMayBeTruncated(entries: readonly unknown[]): boolean {
+  return entries.length >= CONSOLE_LEDGER_ROW_CAP
+}
+
 /**
  * 上架量日序列：submission_intents 的 created 按 UTC 日落到给定的日期轴上。
  * 轴来自店铺出单序列（Ozon analytics 以 UTC 日结算），所以这里同样用 UTC
@@ -29,9 +36,9 @@ export function listingDailySeries(
 export type StoreRankRow = {
   storeId: string
   name: string
-  /** 窗口内出单量 — 该店 day_series 的合计（当前为近 14 日）。 */
+  /** 近 30 日出单量。 */
   units: number
-  /** 环比：序列后半窗口对前半窗口的百分比；前半为 0 时无对照。 */
+  /** 较上次不同日期的更新；上次为 0 或未知时无对照。 */
   deltaPct: number | null
 }
 
@@ -40,16 +47,13 @@ export function storeRankings(rows: StoreRosterRow[]): StoreRankRow[] {
   return rows
     .filter((row) => ROSTER_STATUS[row.status].readable)
     .map((row) => {
-      const series = row.daySeries
-      const units = series.reduce((sum, value) => sum + value, 0)
-      const mid = Math.floor(series.length / 2)
-      const previous = series.slice(0, mid).reduce((sum, value) => sum + value, 0)
-      const recent = series.slice(mid).reduce((sum, value) => sum + value, 0)
+      const units = row.orderedUnits ?? 0
+      const previous = row.previousOrderedUnits
       return {
         storeId: row.storeId,
         name: row.name,
         units,
-        deltaPct: mid > 0 && previous > 0 ? ((recent - previous) / previous) * 100 : null,
+        deltaPct: previous != null && previous > 0 ? ((units - previous) / previous) * 100 : null,
       }
     })
     .sort((left, right) => {
@@ -60,7 +64,7 @@ export function storeRankings(rows: StoreRosterRow[]): StoreRankRow[] {
     })
 }
 
-/** 30 日窗口的环比百分比；上一口径为 0 时给不出有意义的百分比。 */
+/** 30 日窗口较上次更新的百分比；上一口径为 0 时无法计算。 */
 export function cohortPercentDelta(delta: CohortDelta): number | null {
   if (delta.kind !== "comparable" || delta.previous <= 0) return null
   return (delta.delta / delta.previous) * 100
@@ -76,7 +80,7 @@ export function ordersFootnote(roster: StoreRosterSummary): string {
   const coverage = `覆盖 ${roster.coverage.read}/${roster.coverage.total} 店`
   const delta = roster.cohortDelta
   return delta.kind === "comparable"
-    ? `${coverage} · 较上 30 日 ${delta.delta > 0 ? "+" : ""}${formatInteger(delta.delta)} 件`
+    ? `${coverage} · 较上次更新 ${delta.delta > 0 ? "+" : ""}${formatInteger(delta.delta)} 件`
     : `${coverage} · ${delta.reason ?? "暂无同口径对照"}`
 }
 

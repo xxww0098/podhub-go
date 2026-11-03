@@ -2,6 +2,7 @@ package domain
 
 import (
 	"encoding/json"
+	"errors"
 	"math"
 	"strconv"
 	"strings"
@@ -77,6 +78,8 @@ const (
 	// ListPageLimit is Ozon's documented page ceiling: a budget counts calls,
 	// so the widest page is the cheapest walk.
 	ListPageLimit = int64(1000)
+	// MaxListPages bounds an invalid cursor cycle across job handoffs.
+	MaxListPages = 1000
 	// ChainWatchdogMS is the lease a landing writes, and the rescan deadline
 	// the row carries while a chain is in flight.
 	ChainWatchdogMS = int64(10 * 60 * 1000)
@@ -565,9 +568,11 @@ func SlotCoveredByManual(pass string, dueAt int64, manualAt, lastFullSyncAtMS *i
 
 // SyncListRequest is one /v3/product/list page request.
 type SyncListRequest struct {
-	Visibility string `json:"visibility"`
-	LastID     string `json:"last_id,omitempty"`
-	Limit      int64  `json:"limit"`
+	Filter struct {
+		Visibility string `json:"visibility"`
+	} `json:"filter"`
+	LastID string `json:"last_id,omitempty"`
+	Limit  int64  `json:"limit"`
 }
 
 // ListRequest builds one listing page request. An empty cursor is omitted:
@@ -577,14 +582,16 @@ func ListRequest(archived bool, lastID string) SyncListRequest {
 	if archived {
 		visibility = "ARCHIVED"
 	}
-	return SyncListRequest{Visibility: visibility, LastID: lastID, Limit: ListPageLimit}
+	req := SyncListRequest{LastID: lastID, Limit: ListPageLimit}
+	req.Filter.Visibility = visibility
+	return req
 }
 
 // SyncListPage is one /v3/product/list answer, already unwrapped from
 // Ozon's `result` envelope.
 type SyncListPage struct {
-	LastID string
-	Items  []SyncListItem
+	LastID string         `json:"last_id"`
+	Items  []SyncListItem `json:"items"`
 }
 
 // SyncListItem is one listing row: the listing carries ids and nothing else.
@@ -593,13 +600,23 @@ type SyncListItem struct {
 	OfferID   string `json:"offer_id"`
 }
 
-// ListPageDone decides whether a listing pass ends. It ends on an empty page,
-// an empty cursor, an unchanged cursor (a retry that answered the same page),
-// or a short page — Ozon's `total` is advisory, the items are the truth.
-func ListPageDone(page SyncListPage, priorCursor string, count int64) bool {
+// ListPageDone accepts an explicitly empty cursor as the end of a pass. A
+// nonempty cursor must advance, even when the page is short or empty.
+func ListPageDone(page SyncListPage, priorCursor string, pagesSeen int) (bool, error) {
+	if pagesSeen >= MaxListPages || int64(len(page.Items)) > ListPageLimit {
+		return false, errors.New("product listing page limit exceeded")
+	}
 	lastID := strings.TrimSpace(page.LastID)
-	unchanged := priorCursor != "" && priorCursor == lastID
-	return len(page.Items) == 0 || lastID == "" || unchanged || count < ListPageLimit
+	if page.LastID != lastID {
+		return false, errors.New("product listing cursor is invalid")
+	}
+	if lastID != "" && lastID == strings.TrimSpace(priorCursor) {
+		return false, errors.New("product listing cursor did not advance")
+	}
+	if lastID != "" && pagesSeen == MaxListPages-1 {
+		return false, errors.New("product listing page limit exceeded")
+	}
+	return lastID == "", nil
 }
 
 // SyncDetailRequest is one /v3/product/info/list chunk request.
@@ -844,11 +861,6 @@ func FxStampFor(currency *string, throughDay string, quote *FxStamp) FxStamp {
 	set.AsOf = throughDay
 	set.Replace = true
 	return set
-}
-
-// SyncDayOf is the calendar day a window ends on, in UTC.
-func SyncDayOf(nowMS int64) string {
-	return time.UnixMilli(nowMS).UTC().Format("2006-01-02")
 }
 
 // IsJSONErrorBody reports whether a refusal carried Ozon's JSON error

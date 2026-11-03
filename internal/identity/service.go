@@ -8,9 +8,11 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/xxww0098/podhub-go/internal/platform/db"
 	"github.com/xxww0098/podhub-go/internal/platform/db/sqlc"
 )
 
@@ -29,13 +31,10 @@ const (
 	msgPasswordBounds  = "密码至少 8 位，且不超过 72 字节"
 	msgSamePassword    = "新密码不能与当前密码相同"
 	msgCredentialDrift = "凭证已变更，请重新登录"
-	msgBadAccount      = "账号标识无效"
-	msgNotInStack      = "该账号不在此设备的登录列表"
 	msgLoggedOut       = "未登录"
 	msgBadWorkspace    = "无效的 Workspace"
 	msgNoSwitch        = "无权切换到该 Workspace"
 	msgInvite          = "邀请码无效"
-	msgTotp            = "需要验证器代码"
 	msgNoWorkspace     = "当前账号尚未加入任何工作空间，请先创建工作空间，或等待他人邀请后在通知中接受"
 	msgBadRole         = "工作空间角色无效"
 	msgBusy            = "资源正在更新，请稍后重试"
@@ -55,10 +54,13 @@ type Result struct {
 
 // Service is the identity write and read path.
 type Service struct {
-	pool      *pgxpool.Pool
-	slots     chan struct{}
-	admission *Admission
-	handoff   *handoffStore
+	pool              *pgxpool.Pool
+	slots             chan struct{}
+	admission         *Admission
+	handoff           *handoffStore
+	resetMailer       PasswordResetMailer
+	emailChangeMailer EmailChangeMailer
+	resetKey          []byte
 }
 
 func New(pool *pgxpool.Pool) *Service {
@@ -89,8 +91,22 @@ func (s *Service) acquirePassword() bool {
 
 func (s *Service) releasePassword() { s.slots <- struct{}{} }
 
-func (s *Service) q(ctx context.Context) *sqlc.Queries {
-	return sqlc.New(s.pool)
+// Keep the app role local to database work. Callers must finish this callback
+// before password hashing, verification, or any external operation.
+func (s *Service) withQueries(ctx context.Context, fn func(*sqlc.Queries) error) error {
+	return db.InTx(ctx, s.pool, db.Staff(), func(tx pgx.Tx) error {
+		return fn(sqlc.New(tx))
+	})
+}
+
+func (s *Service) findUserByEmail(ctx context.Context, email string) (sqlc.FindUserByEmailRow, error) {
+	var user sqlc.FindUserByEmailRow
+	err := s.withQueries(ctx, func(q *sqlc.Queries) error {
+		var err error
+		user, err = q.FindUserByEmail(ctx, email)
+		return err
+	})
+	return user, err
 }
 
 func authResult(status int, message, code string) Result {
@@ -116,20 +132,17 @@ func dbResult(err error) Result {
 	return authResult(http.StatusInternalServerError, msgUnavailable, "INTERNAL")
 }
 
-func (s *Service) inTx(ctx context.Context, fn func(q *sqlc.Queries) (bool, error)) error {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-	audited, err := fn(sqlc.New(tx))
-	if err != nil {
-		return err
-	}
-	if !audited {
-		return errors.New("audit sink empty")
-	}
-	return tx.Commit(ctx)
+func (s *Service) inTx(ctx context.Context, fn func(pgx.Tx, *sqlc.Queries) (bool, error)) error {
+	return db.InTx(ctx, s.pool, db.Staff(), func(tx pgx.Tx) error {
+		audited, err := fn(tx, sqlc.New(tx))
+		if err != nil {
+			return err
+		}
+		if !audited {
+			return errors.New("audit sink empty")
+		}
+		return nil
+	})
 }
 
 type account struct {

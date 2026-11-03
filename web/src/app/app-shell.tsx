@@ -5,11 +5,14 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
+  useRef,
   useState,
   type ReactNode,
 } from "react"
+import { ArrowLeft } from "lucide-react"
+import { StoreIcon } from "@/components/store-icon"
 import type { AccountOverview, WorkspaceStandingView } from "@/bindings/commands"
-import { ChangelogButton } from "@/components/changelog-dialog"
 import { productVersionLabel } from "@/lib/product-version"
 import { NotificationBell } from "@/features/notifications/notification-bell"
 import {
@@ -25,6 +28,8 @@ import {
 } from "@/features/workflow/workbench/listing-workbench-store"
 import { withWorkflowCardId } from "@/features/workflow/workflow-navigation"
 import { replaceAddress } from "@/lib/address"
+import { ADMIN_SURFACE_PATH, withSettings } from "@/lib/admin-surface"
+import { runViewTransition } from "@/lib/view-transition"
 import { Breadcrumb } from "@/components/breadcrumb"
 import { useScreenActive } from "@/components/screen-pane"
 import { cn } from "@/lib/utils"
@@ -32,8 +37,8 @@ import {
   SettingsPage,
   SettingsOpenProvider,
 } from "@/app/settings-page"
-import { SettingsNavigation } from "@/app/settings-navigation"
-import { resolveSettingsPane, settingsRowsFor, type SettingsSection } from "@/lib/settings-sections"
+import { SettingsLayout } from "@/app/settings-navigation"
+import { ADMIN_SETTINGS_ROWS, isSettingsSection, resolveSettingsPane, settingsRowsFor, type SettingsSection } from "@/lib/settings-sections"
 import { HeaderWalletBalance } from "@/components/workspace-quota-facts"
 import { AccountMenu, WorkspaceMenu } from "@/components/workspace-switcher"
 import {
@@ -43,13 +48,11 @@ import {
   SidebarHeader,
   SidebarInset,
   SidebarProvider,
-  SidebarRail,
-  SidebarSeparator,
-  SidebarTrigger,
 } from "@/components/ui/sidebar"
 import {
   TooltipProvider,
 } from "@/components/ui/tooltip"
+import { Button } from "@/components/ui/button"
 import {
   sidebarGroupsFor,
   type NavAudience,
@@ -63,7 +66,9 @@ import {
 import {
   loadNotificationsDialog,
 } from "@/app/screen-loaders"
-import { NavGroup, ShellHeaderActivity, SidebarUtilityBar, StoreQuickButton } from "@/app/app-shell-chrome"
+import { NavGroup, ShellHeaderActivity, SidebarCollapseButton } from "@/app/app-shell-chrome"
+import { ShellPanels } from "@/app/app-shell-panels"
+import { ShellSearch } from "@/app/app-shell-search"
 
 export type { AppScreen } from "@/lib/app-screens"
 export { SCREEN_LABELS } from "@/lib/app-screens"
@@ -114,9 +119,6 @@ type AppShellProps = {
   onSettingsRequestChange?: (section: SettingsSection | null) => void
   overview?: AccountOverview
   onSwitchWorkspace?: (workspaceId: number) => void
-  onSwitchAccount?: (uuid: string) => void
-  onLogoutAccount?: (uuid: string) => void
-  onAddAccount?: () => void
   onOverviewChange?: (overview: AccountOverview) => void
   onSignedOut: () => void
   /** Tests inject a controller; production reads the window's one poll. */
@@ -134,9 +136,6 @@ export function AppShell({
   onSettingsRequestChange,
   overview: overviewProp,
   onSwitchWorkspace,
-  onSwitchAccount,
-  onLogoutAccount,
-  onAddAccount,
   onOverviewChange,
   onSignedOut,
   notifications,
@@ -153,13 +152,13 @@ export function AppShell({
       void loadAccountOverview().catch(() => {})
     },
   })
-  const entitlement = overview?.entitlement
   const isAgent = overview?.is_agent === true
   const isStaff = isPlatformStaffRole(overview?.session.role)
   const audience: NavAudience = {
-    isAgent, isStaff, isSuperAdmin: isPlatformSuperAdminRole(overview?.session.role),
+    isAgent, isStaff, isSuperAdmin: isPlatformSuperAdminRole(overview?.session.role), isCatalogManager: overview?.is_catalog_manager === true,
   }
-  const navigation = sidebarGroupsFor(adminSurface ? "admin" : "workbench", audience)
+  const navigation = sidebarGroupsFor(audience)
+  const navigationGroup = navigation.find((group) => group.items.some((item) => item.id === screen))?.label
   // Cloud owns Account Mode; the shell only projects what it was told. Never
   // re-derive it from the Workspace list — an empty list is not proof of standing.
   const standing: WorkspaceStandingView | undefined = overview?.account_mode
@@ -173,17 +172,29 @@ export function AppShell({
     : undefined
   const [trail, setTrail] = useState<TrailEntry>()
   const publishTrail = useCallback((entry?: TrailEntry) => setTrail(entry), [])
-  const [localSettingsSection, setLocalSettingsSection] = useState<SettingsSection | null>(null)
+  const [localSettingsSection, setLocalSettingsSection] = useState<SettingsSection | null>(() => {
+    const requested = new URLSearchParams(window.location.search).get("settings")
+    return requested && isSettingsSection(requested) ? requested : null
+  })
   const settingsSection = adminSurface ? settingsRequest : localSettingsSection
   const settingsOpen = settingsSection !== null
+  const currentSettings = useRef(settingsSection)
+  useLayoutEffect(() => { currentSettings.current = settingsSection }, [settingsSection])
   const settingsRows = settingsRowsFor(overview?.session.role)
   const settingsResolution = resolveSettingsPane({ requested: settingsSection ?? "account", available: settingsRows, adminSurface })
   const settingsPane = settingsResolution.kind === "pane" ? settingsResolution.section : ""
-  const settingsLabel = settingsRows.find((row) => row.id === settingsPane)?.label ?? "没有权限打开该设置"
+  const settingsBreadcrumb = settingsPane === "account"
+    ? "设置"
+    : settingsRows.find((row) => row.id === settingsPane)?.label ?? "没有权限打开该设置"
+  const settingsBreadcrumbGroup = settingsPane === "account" ? undefined : "设置"
   // Admin settings stay URL-owned; business panes stay mounted underneath so
   // returning restores the original page, form state and scroll position.
-  const openSettings = useCallback(
-    (section: SettingsSection = "account") => {
+  const setSettingsSection = useCallback(
+    (section: SettingsSection | null) => {
+      if (!adminSurface && section && ADMIN_SETTINGS_ROWS.some((row) => row.id === section)) {
+        replaceAddress({ pathname: ADMIN_SURFACE_PATH, search: withSettings("", section) })
+        return
+      }
       if (adminSurface) {
         onSettingsRequestChange?.(section)
         return
@@ -192,21 +203,24 @@ export function AppShell({
     },
     [adminSurface, onSettingsRequestChange],
   )
-  const closeSettings = useCallback(
-    () => {
-      if (adminSurface) {
-        onSettingsRequestChange?.(null)
-        return
-      }
-      setLocalSettingsSection(null)
-    },
-    [adminSurface, onSettingsRequestChange],
-  )
+  const openSettings = useCallback((section: SettingsSection = "account") => {
+    if (section !== currentSettings.current) runViewTransition(() => setSettingsSection(section))
+  }, [setSettingsSection])
+  const closeSettings = useCallback(() => {
+    if (settingsOpen) runViewTransition(() => setSettingsSection(null))
+  }, [setSettingsSection, settingsOpen])
 
   const navigateFromShell = useCallback((next: AppScreen) => {
-    closeSettings()
+    if (settingsOpen && next === screen) {
+      runViewTransition(() => {
+        setSettingsSection(null)
+        onScreenChange(next)
+      })
+      return
+    }
+    if (settingsOpen) setSettingsSection(null)
     onScreenChange(next)
-  }, [closeSettings, onScreenChange])
+  }, [onScreenChange, screen, setSettingsSection, settingsOpen])
   const openPlans = useCallback(() => openSettings("plans"), [openSettings])
   const openUsage = useCallback(() => navigateFromShell("usage"), [navigateFromShell])
   // The bell and the settings pane both land here: the centre floats, so
@@ -228,7 +242,6 @@ export function AppShell({
     }
     navigateFromShell("listing")
   }, [navigateFromShell])
-  const openStores = useCallback(() => navigateFromShell("stores"), [navigateFromShell])
 
   return (
     <TooltipProvider>
@@ -240,30 +253,10 @@ export function AppShell({
         跳到主内容
       </a>
       <SettingsOpenProvider value={openSettings}>
-      <SidebarProvider className="h-svh overflow-hidden bg-sidebar">
-        <Sidebar collapsible="icon">
+      <SidebarProvider defaultOpen={false} className="workspace-shell flex h-svh flex-col overflow-hidden">
+        <ShellPanels sidebar={
+        <Sidebar collapsible="icon" className="shell-sidebar">
           <SidebarHeader className="relative">
-            <div className="flex h-10 items-center justify-center gap-2 px-0 group-data-[collapsible=icon]:px-0">
-              <img
-                src="/app-icon.svg"
-                alt=""
-                aria-hidden
-                className="size-10 shrink-0 rounded-md group-data-[collapsible=icon]:size-9"
-              />
-              <span className="flex min-w-0 items-baseline gap-1 group-data-[collapsible=icon]:hidden">
-                <span className="block truncate text-2xl font-semibold tracking-[-0.01em]">
-                  PodHub
-                </span>
-                <span
-                  aria-hidden
-                  data-version-chip
-                  className="pointer-events-none shrink-0 select-none whitespace-nowrap text-meta font-medium leading-none text-muted-foreground"
-                >
-                  {productVersionLabel()}
-                </span>
-              </span>
-            </div>
-            <SidebarSeparator className="mx-0 my-1 group-data-[collapsible=icon]:hidden" />
             <WorkspaceMenu
               overview={overview}
               standing={standing}
@@ -274,59 +267,59 @@ export function AppShell({
               onOpenPlans={openPlans}
               onOverviewChange={onOverviewChange}
             />
+            <ShellSearch groups={navigation} currentScreen={settingsOpen ? null : screen} onNavigate={navigateFromShell} />
           </SidebarHeader>
 
           <SidebarContent>
-            {settingsOpen ? (
-              <SettingsNavigation rows={settingsRows} pane={settingsPane} onSelect={openSettings} onBack={closeSettings} overview={overview} />
-            ) : (
             <nav aria-label="主导航">
               {navigation.map((group) => (
                 <NavGroup
                   key={group.label}
                   label={group.label}
                   items={group.items}
-                  screen={screen}
+                  screen={settingsOpen ? null : screen}
                   onScreenChange={navigateFromShell}
                 />
               ))}
             </nav>
-            )}
           </SidebarContent>
 
           <SidebarFooter>
-            <SidebarSeparator className="mx-0 group-data-[collapsible=icon]:hidden" />
             <AccountMenu
               overview={overview}
-              standing={standing}
-              onSwitchAccount={onSwitchAccount}
-              onLogoutAccount={onLogoutAccount}
-              onAddAccount={onAddAccount}
-              onWorkspaceCreated={onWorkspaceCreated}
               onSignedOut={onSignedOut}
+              onOpenSettings={openSettings}
             />
-            <SidebarUtilityBar onOpenSettings={openSettings} />
+            <span data-version-chip className="sr-only">PodHub {productVersionLabel()}</span>
           </SidebarFooter>
-          <SidebarRail />
         </Sidebar>
-
+        }>
         <SidebarInset className="min-h-0 overflow-hidden">
-          <header className="mx-2.5 mt-2.5 flex h-11 shrink-0 items-center gap-2 rounded-xl border border-border/60 bg-muted/40 px-3">
-            <SidebarTrigger className="md:hidden" />
+          <header className="shell-header flex shrink-0 items-center gap-2 border-b border-border px-3">
+            <SidebarCollapseButton />
+            {settingsOpen ? (
+              <Button type="button" variant="ghost" size="icon-sm" aria-label="返回业务页面" onClick={closeSettings}>
+                <ArrowLeft aria-hidden />
+              </Button>
+            ) : null}
             <Breadcrumb
-              moduleLabel={settingsOpen ? "设置" : SCREEN_LABELS[screen] ?? screen}
-              trail={settingsOpen ? { label: settingsLabel, onExit: () => openSettings() } : trail}
+              alwaysVisible
+              groupLabel={settingsOpen ? settingsBreadcrumbGroup : navigationGroup}
+              moduleLabel={settingsOpen ? settingsBreadcrumb : SCREEN_LABELS[screen] ?? screen}
+              trail={settingsOpen ? undefined : trail}
             />
             <div className="flex-1" aria-hidden />
             <ShellHeaderActivity screen={screen} onOpenListing={openListing} />
-            {entitlement ? (
+            <ShellDate />
+            {overview?.active_workspace ? (
               <HeaderWalletBalance
-                workspaceId={overview?.active_workspace?.id}
+                workspaceId={overview.active_workspace.id}
                 onOpenUsage={openUsage}
               />
             ) : null}
-            <StoreQuickButton onOpen={openStores} />
-            <ChangelogButton />
+            <Button type="button" variant="ghost" size="icon-sm" aria-label="店铺管理" onClick={() => navigateFromShell("stores")}>
+              <StoreIcon aria-hidden className="size-[18px]" />
+            </Button>
             <NotificationBell
               notifications={notifications}
               onOpenNotifications={openNotifications}
@@ -342,24 +335,24 @@ export function AppShell({
               is the jitter operators feel as "the app reloading". Content
               measure stays fixed — swapping max-width on nav is CLS.
             */}
-            <div className={cn("page-canvas mx-auto flex flex-1 flex-col gap-4", settingsOpen && "hidden")} hidden={settingsOpen} inert={settingsOpen} aria-hidden={settingsOpen}>
+            <div className={cn("page-canvas flex flex-1 flex-col gap-2", screen === "home" && "home-canvas", settingsOpen && "hidden")} hidden={settingsOpen} inert={settingsOpen} aria-hidden={settingsOpen}>
               {children}
             </div>
             {settingsSection !== null ? (
+              <SettingsLayout rows={settingsRows} pane={settingsPane} onSelect={openSettings} overview={overview}>
               <SettingsPage
                 onBack={closeSettings}
                 overview={overview}
                 onOverviewChange={onOverviewChange}
                 onSignedOut={onSignedOut}
-                onNavigate={navigateFromShell}
-                onOpenNotifications={openNotifications}
                 section={settingsSection}
-                onSectionChange={openSettings}
                 adminSurface={adminSurface}
               />
+              </SettingsLayout>
             ) : null}
           </div>
         </SidebarInset>
+        </ShellPanels>
         {/* Once mounted it stays mounted: close animates out and the next
             open is a local reveal, not another lazy fetch. */}
         {inboxMounted ? (
@@ -377,6 +370,22 @@ export function AppShell({
       </SettingsOpenProvider>
       </TrailContext.Provider>
     </TooltipProvider>
+  )
+}
+
+function ShellDate() {
+  const [now, setNow] = useState(() => new Date())
+  useEffect(() => {
+    const timer = window.setTimeout(() => setNow(new Date()), 1000 - Date.now() % 1000)
+    return () => window.clearTimeout(timer)
+  }, [now])
+  const twoDigits = (value: number) => String(value).padStart(2, "0")
+  const date = `${now.getFullYear()}-${twoDigits(now.getMonth() + 1)}-${twoDigits(now.getDate())}`
+  const time = `${twoDigits(now.getHours())}:${twoDigits(now.getMinutes())}:${twoDigits(now.getSeconds())}`
+  return (
+    <time className="shell-date" dateTime={`${date}T${time}`}>
+      {date} {time}
+    </time>
   )
 }
 

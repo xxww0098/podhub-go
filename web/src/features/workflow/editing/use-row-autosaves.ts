@@ -31,12 +31,14 @@ import {
 import {
   DESCRIPTION_ATTRIBUTE_ID,
   MODEL_NAME_ATTRIBUTE_ID,
-  RICH_CONTENT_ATTRIBUTE_ID,
   SEARCH_TAGS_ATTRIBUTE_ID,
   fieldByAttributeId,
   fieldLocation,
 } from "../workflow-shared"
 import { mergeProductEdit } from "../model/product-edit"
+import { validateMediaSelection } from "../workbench/media-selection"
+import { rowPreparing } from "../prepare/preparation-tracks"
+import { imageSetMediaDraft, readImageSetIntent, type ImageSetMediaEdit } from "../image-sets/image-set-state"
 
 /**
  * The attribute every editor column writes, minus 名称 (which is a fixed key).
@@ -49,7 +51,6 @@ const PROSE_COLUMN_ATTRIBUTE_ID: Record<
 > = {
   description: DESCRIPTION_ATTRIBUTE_ID,
   tags: SEARCH_TAGS_ATTRIBUTE_ID,
-  rich_content: RICH_CONTENT_ATTRIBUTE_ID,
   model: MODEL_NAME_ATTRIBUTE_ID,
 }
 import {
@@ -265,9 +266,13 @@ export function useRowAutosaves({
         }
       },
       (result) => {
+        if (!listingScopeCurrent(scope)) return
         const { saved, status, edit } = result
-        settleListingProductEdit(edit, saved, scope, status.readiness, result.mediaEpoch)
-        autosave.rebaseLatest((latest) => peekListingWorkbench().dirtyProducts[draftId] ?? latest)
+        const settled = settleListingProductEdit(edit, saved, scope, status.readiness, result.mediaEpoch)
+        const pending = peekListingWorkbench().dirtyProducts[draftId]
+        autosave.rebaseLatest((latest) => pending ?? latest)
+        // A discarded receipt must keep the drain pending until a fresh save is acknowledged.
+        if (!settled && pending) autosave.markDirty(pending)
       },
       (phase) => {
         if (!listingScopeCurrent(scope) || !peekListingWorkbench().productBases[draftId]) return
@@ -331,8 +336,19 @@ export function useRowAutosaves({
     value: WorkflowDraftValue | undefined,
     location: WorkflowValueLocation,
   ) {
-    const product = peekListingWorkbench().productDrafts[draftId]
+    const current = peekListingWorkbench()
+    const product = current.productDrafts[draftId]
     if (!product || !schema) return
+    if (fieldKey === "images" || fieldKey === "primary_image") {
+      try {
+        const row = current.rows.find((row) => row.draftId === draftId)
+        if (row && rowPreparing(current.activity, row.id)) throw new Error("当前商品正在处理，不能修改图片")
+        value = validateMediaSelection(row, product, fieldKey, value)
+      } catch (reason) {
+        notifyError(errorMessage(reason, "图片选择未保存"))
+        return
+      }
+    }
     if (lifecycleSealed(product.lifecycle)) {
       notifyError("该商品已有 Ozon 终局回执，字段不可再修改。")
       return
@@ -347,6 +363,14 @@ export function useRowAutosaves({
         location,
       ),
     )
+  }
+
+  async function editRowMedia(draftId: string, edit: ImageSetMediaEdit): Promise<boolean> {
+    const current = peekListingWorkbench()
+    if (readImageSetIntent(edit.intent)?.key !== edit.intent.key || !current.productBases[draftId]) throw new Error("套图请求或商品记录已变化，请重新查询")
+    const next = imageSetMediaDraft(current, draftId, edit)
+    queueRowEdit(draftId, next)
+    return (await flushRowsFor([draftId])) && listingScopeCurrent(current.scope)
   }
 
   /** Mark one row dirty and arm its debounce — both editors end here. */
@@ -454,6 +478,7 @@ export function useRowAutosaves({
   return {
     editRowCell,
     editRowField,
+    editRowMedia,
     retryRowSave,
     flushRowAutosavesNow,
     flushRowAutosaves,

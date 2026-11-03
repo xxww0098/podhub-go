@@ -28,24 +28,13 @@ const (
 )
 
 var (
-	ErrNotPorted       = contract.ErrNotPorted
-	ErrRulesStale      = contract.ErrRulesStale
-	ErrTermLength      = contract.ErrTermLength
-	CanonicalTerm      = contract.CanonicalTerm
-	OpenEmbedded       = contract.OpenEmbedded
-	Open               = contract.Open
-	RulesVersion       = contract.RulesVersion
-	Validate           = contract.Validate
-	ForbidSave         = contract.ForbidSave
-	StripForAI         = contract.StripForAI
-	StripBeforeSend    = contract.StripBeforeSend
-	SearchTagTokens    = contract.SearchTagTokens
-	TagsWASMFromEnv    = contract.TagsWASMFromEnv
-	ProbeWASMFromEnv   = contract.ProbeWASMFromEnv
-	OpSeedRow          = contract.OpSeedRow
-	OpEditRow          = contract.OpEditRow
-	OpDecideCandidates = contract.OpDecideCandidates
-	AsCoreError        = contract.AsCoreError
+	ErrNotPorted        = contract.ErrNotPorted
+	ErrRulesStale       = contract.ErrRulesStale
+	OpSeedRow           = contract.OpSeedRow
+	OpSeedAssociatedRow = contract.OpSeedAssociatedRow
+	OpEditRow           = contract.OpEditRow
+	OpDecideCandidates  = contract.OpDecideCandidates
+	AsCoreError         = contract.AsCoreError
 )
 
 // Core is the listing-core wasm host. Nil fails a seed or edit closed.

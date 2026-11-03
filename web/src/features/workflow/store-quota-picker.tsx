@@ -1,5 +1,5 @@
-import { Check, Store } from "lucide-react"
-
+import { Check } from "lucide-react"
+import { StoreIcon } from "@/components/store-icon"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
@@ -67,7 +67,7 @@ export function StoreQuotaPicker({
             aria-label="分配店铺上架量"
             title="按表格顺序分配各店铺上架量"
           >
-            <Store aria-hidden />
+            <StoreIcon aria-hidden />
             <span>{storeSlices.map((slice) => slice.quota).join("/")}</span>
           </Button>
         }

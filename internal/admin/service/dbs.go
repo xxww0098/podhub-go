@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	msgDbWrites     = "平台货源写入未启用"
+	msgDbWrites     = "供应商商品库写入未启用"
 	msgPortalWrites = "厂家门户写入未启用"
 )
 
@@ -28,17 +28,20 @@ func (s Service) ListDbs(ctx context.Context, actor contract.Actor) ([]domain.Su
 	return rows, nil
 }
 
-func (s Service) CreateDb(ctx context.Context, actor contract.Actor, body []byte) (domain.SupplierDb, *string, error) {
+func (s Service) CreateDb(ctx context.Context, actor contract.Actor, body []byte) (domain.SupplierDb, error) {
 	in, err := domain.DecodeSupplierDb(body)
 	if err != nil {
-		return domain.SupplierDb{}, nil, err
+		return domain.SupplierDb{}, err
 	}
 	if s.Store == nil {
-		return domain.SupplierDb{}, nil, unavailable(nil)
+		return domain.SupplierDb{}, unavailable(nil)
+	}
+	if in.FactoryID == "" {
+		return domain.SupplierDb{}, &contract.Fail{Kind: contract.KindValidation, Message: "请选择工厂"}
 	}
 	sourceID, err := domain.MintID("src")
 	if err != nil {
-		return domain.SupplierDb{}, nil, unavailable(err)
+		return domain.SupplierDb{}, unavailable(err)
 	}
 	var props []domain.PropSeed
 	if in.Template == "factory" {
@@ -46,37 +49,29 @@ func (s Service) CreateDb(ctx context.Context, actor contract.Actor, body []byte
 		for i := range ids {
 			ids[i], err = domain.MintID("prop")
 			if err != nil {
-				return domain.SupplierDb{}, nil, unavailable(err)
+				return domain.SupplierDb{}, unavailable(err)
 			}
 		}
 		props, err = domain.FactoryProps(ids)
 		if err != nil {
-			return domain.SupplierDb{}, nil, err
+			return domain.SupplierDb{}, err
 		}
 	}
-	password, err := s.oneTimePassword(in.AccountEmail != nil)
-	if err != nil {
-		return domain.SupplierDb{}, nil, err
-	}
-	db, initial, err := s.Store.CreateDb(ctx, actor, in, sourceID, props, s.nowMs(), password)
-	return db, initial, fillDisabled(err, msgDbWrites)
+	db, err := s.Store.CreateDb(ctx, actor, in, sourceID, props, s.nowMs())
+	return db, fillDisabled(err, msgDbWrites)
 }
 
-func (s Service) UpdateDb(ctx context.Context, actor contract.Actor, sourceID string, body []byte) (domain.SupplierDb, *string, error) {
+func (s Service) UpdateDb(ctx context.Context, actor contract.Actor, sourceID string, body []byte) (domain.SupplierDb, error) {
 	in, err := domain.DecodeSupplierDb(body)
 	if err != nil {
-		return domain.SupplierDb{}, nil, err
+		return domain.SupplierDb{}, err
 	}
 	in.Template = ""
 	if s.Store == nil {
-		return domain.SupplierDb{}, nil, unavailable(nil)
+		return domain.SupplierDb{}, unavailable(nil)
 	}
-	password, err := s.oneTimePassword(in.AccountEmail != nil)
-	if err != nil {
-		return domain.SupplierDb{}, nil, err
-	}
-	db, initial, err := s.Store.UpdateDb(ctx, actor, sourceID, in, s.nowMs(), password)
-	return db, initial, fillDisabled(err, msgDbWrites)
+	db, err := s.Store.UpdateDb(ctx, actor, sourceID, in, s.nowMs())
+	return db, fillDisabled(err, msgDbWrites)
 }
 
 func (s Service) DeleteDb(ctx context.Context, actor contract.Actor, sourceID string) error {

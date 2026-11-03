@@ -16,6 +16,7 @@ import type {
   UpsertSupplierDbPropRequest,
 } from "@/bindings/http-supplier-dbs"
 import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import {
   Dialog,
   DialogContent,
@@ -115,17 +116,14 @@ export function PropOptionsEditor({
               )
             }
           />
-          <Button
-            type="button"
-            variant="ghost"
+          <IconButton
+            icon={Trash2}
+            label={`删除选项 ${option.label || index + 1}`}
             size="icon-sm"
-            aria-label={`删除选项 ${option.label || index + 1}`}
             disabled={disabled}
-            className="cursor-pointer text-faint-foreground hover:text-destructive"
+            className="text-faint-foreground hover:text-destructive"
             onClick={() => onChange(options.filter((_, i) => i !== index))}
-          >
-            <Trash2 aria-hidden />
-          </Button>
+          />
         </div>
       ))}
       <div className="flex items-center gap-1.5">
@@ -143,17 +141,13 @@ export function PropOptionsEditor({
             }
           }}
         />
-        <Button
-          type="button"
-          variant="ghost"
+        <IconButton
+          icon={Plus}
+          label="添加选项"
           size="icon-sm"
-          aria-label="添加选项"
           disabled={disabled || !entry.trim()}
-          className="cursor-pointer"
           onClick={addEntry}
-        >
-          <Plus aria-hidden />
-        </Button>
+        />
       </div>
       <p className="text-meta text-faint-foreground">
         选项保存在属性定义上，行内点选即写。

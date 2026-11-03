@@ -64,6 +64,17 @@ export function scheduleBlockedReason(
   return null
 }
 
+/** Repaint when a server-side hold or manual cooldown can first expire. */
+export function nextScheduleUnlockAt(stores: readonly StoreProductOverviewRow[], nowMs: number): number | null {
+  let next: number | null = null
+  for (const store of stores) {
+    for (const time of [store.hold_until_ms, store.manual_next_allowed_at_ms]) {
+      if (time != null && time > nowMs && (next === null || time < next)) next = time
+    }
+  }
+  return next
+}
+
 /** Toolbar cluster for the store currently scoping the table. */
 export function StoreSyncActions({
   store,

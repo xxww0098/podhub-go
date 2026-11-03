@@ -1,5 +1,13 @@
 # supplier：和 Rust 对过什么
 
+本文记录最初供应商域移植的范围与测试。后续权限改造已卸载供应商钱包/提现入口，并将派单权限固定到履约人，见 [账号与权限模型](../architecture/account-permission-model.md)；下文的旧路由与 source 级权限仅为历史对照。
+
+## 当前工厂工作空间
+
+工厂端使用 `GET /api/supplier/me` 获取可访问工作空间；`GET /api/supplier/workspaces/{source_id}/dashboard` 返回该工厂的跨页统计和加急订单；`GET /api/supplier/workspaces/{source_id}/dispatches` 按 `view`、`search` 和游标筛选，每页 20 条。加急视图还支持 `status` 和 `reason` 筛选。接口验证账号的工厂成员资格，并在数据库中限定工厂与履约人。详情、接单、拒单及素材仍使用 `/api/supplier/dispatches/{dispatch_id}` 下的操作接口。旧的无工厂范围列表接口已删除。
+
+列表中的可选 `thumbnailUrl` 指向已授权的生产素材，缺少素材时不返回。当前使用原图而非生成的缩略图；真实外部素材加载和大文件性能尚未验证。
+
 层级 L3。`tests/archtest` 无新增违规。装配在 `internal/app/wire_supply_delegate_supplier.go`：`tenant.BeginApp` 由 app 传入，循环地址的对象账号经 `WithBlobs` 注入。本域不解析 `OZON_WRITE_KILL_SWITCH` 或 `CLOUD_MEDIA_GC_DELETE`，也不调用 Seller。
 
 这 12 条路由的行为以规格 `spec-dsa-supplier`（Rust v0.0.112，HEAD `7df856a`）为准。旧的 CHECK-only `domain.Request` / `TransitionWithdrawal` 仍返回 `ErrUnproven`，HTTP 提现走 `CheckWithdrawal` 和 `CreateWithdrawal`。
@@ -65,4 +73,4 @@ PODHUB_PARITY_DSN='postgres://postgres:postgres@127.0.0.1:5432/podhub?sslmode=di
 - 对象存储只接受注入的循环地址账号。集成配置快照是加密的，本域不解密，也不访问真实 R2。
 - 物流字段里空字符串是省略还是保留空串，规格标了未确认。当前保留 JSON 里的空串指针策略与读出的字符串一致：空串会进响应。
 - 管理员把提现标成 paid 或 rejected 不在这 12 条里。`TransitionWithdrawal` 仍全部 `ErrUnproven`。
-- oapi-codegen 仍不是已选定的 utoipa 替代。`internal/supplier/http/gen` 仍只有包注释。
+- oapi-codegen 仍不是已选定的 utoipa 替代。原 `internal/supplier/http/gen` 只有包注释，该零引用生成目录连同 `api/codegen/supplier.yaml` 已按 [decisions.md](../decisions.md) D24 删除，本域 HTTP 层手写。

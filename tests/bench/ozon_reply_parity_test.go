@@ -17,8 +17,8 @@ import (
 	submitdomain "github.com/xxww0098/podhub-go/internal/listing/submit/domain"
 	"github.com/xxww0098/podhub-go/internal/platform/config"
 	"github.com/xxww0098/podhub-go/internal/platform/httpx"
-	"github.com/xxww0098/podhub-go/internal/seller"
 	sellercontract "github.com/xxww0098/podhub-go/internal/seller/contract"
+	seller "github.com/xxww0098/podhub-go/internal/seller/ozon"
 )
 
 // TestSellerRepliesMatchRestricted checks the bytes, status, error mapping,

@@ -252,6 +252,22 @@ func ProjectIntent(src IntentSource) IntentView {
 		issues = json.RawMessage("[]")
 	}
 	status, current, resume := currentIssue(src.State, src.LastErrorCode, issues)
+	failedAfterAcceptance := acceptedTaskFailed(src)
+	if failedAfterAcceptance {
+		status, current, _ = currentIssue("rejected", src.LastErrorCode, issues)
+		resume = false
+	}
+	currentWire := issueWire(current)
+	if failedAfterAcceptance && status == IssuePresent {
+		// Acceptance seals this write. Keep its failure evidence visible while
+		// refusing old issue actions that could imply editing/resending it.
+		var issue map[string]json.RawMessage
+		if json.Unmarshal(currentWire, &issue) == nil {
+			issue["allowed_actions"] = json.RawMessage(`["check_store"]`)
+			issue["remediation"], _ = json.Marshal("核对卖家后台的导入结果；本记录保持已受理，不可恢复或重复发送。")
+			currentWire, _ = json.Marshal(issue)
+		}
+	}
 	receiptStatus, receipt := receiptOf(src.SubmissionReceipt)
 	var known *string
 	if src.LastErrorCode != nil {
@@ -266,7 +282,7 @@ func ProjectIntent(src IntentSource) IntentView {
 		cancel = &ms
 	}
 	return IntentView{
-		SubmissionIssues: issueHistoryWire(issues), CurrentIssueStatus: status, CurrentIssue: issueWire(current), CanResume: resume,
+		SubmissionIssues: issueHistoryWire(issues), CurrentIssueStatus: status, CurrentIssue: currentWire, CanResume: resume,
 		ID: src.ID, StoreID: src.StoreID, ListingRowID: src.ListingRowID, RowRevision: src.RowRevision,
 		ClientOperationID: src.ClientOperationID, State: src.State,
 		ExternalTaskID: src.ExternalTaskID, LastErrorCode: src.LastErrorCode, KnownErrorCode: known,
@@ -275,6 +291,34 @@ func ProjectIntent(src IntentSource) IntentView {
 		UpdatedAtMs:           src.UpdatedAt.UnixMilli(),
 		HasLiveReconcileClaim: src.HasLiveReconcileClaim, HasUnfinishedDispatchJob: src.HasUnfinishedDispatch,
 	}
+}
+
+func acceptedTaskFailed(src IntentSource) bool {
+	if src.State != "accepted" || src.LastErrorCode == nil || *src.LastErrorCode != "OZON_ROW_REJECTED" {
+		return false
+	}
+	var outcome struct {
+		ImportTask struct {
+			Status string `json:"status"`
+			Errors []struct {
+				Level string `json:"level"`
+			} `json:"errors"`
+		} `json:"importTask"`
+	}
+	if json.Unmarshal(src.ReconciliationOutcome, &outcome) != nil {
+		return false
+	}
+	switch outcome.ImportTask.Status {
+	case "failed":
+		return true
+	case "pending", "imported", "skipped":
+		for _, issue := range outcome.ImportTask.Errors {
+			if strings.EqualFold(issue.Level, "error") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func bytesTrim(raw json.RawMessage) []byte {

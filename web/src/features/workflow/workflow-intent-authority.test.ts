@@ -74,7 +74,7 @@ test("permission and account fences use projected evidence and remain revocable"
     assert.equal(captureWorkflowAccess(1, "store"), undefined)
     await assert.rejects(inspectWorkflowIntents(1, ["row"], () => true))
     rememberStoreRoster({ stores: [fx.store] }, 1)
-    rememberAccountOverview({ ...fx.account, accounts: [{ ...fx.account.accounts[0]!, uuid: "other" }] })
+    rememberAccountOverview({ ...fx.account, session: { ...fx.account.session, uuid: "other" } })
     assert.equal(access?.current(), false)
     assert.equal(cloud.calls.length, 0)
   } finally { cloud.restore(); fx.restore() }

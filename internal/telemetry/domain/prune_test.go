@@ -50,18 +50,22 @@ func TestPruneRowSetMatchesRust(t *testing.T) {
 	}
 }
 
+// The baseline is a pg_dump of the head schema, so the prune function and its
+// ACLs are recorded once, not in a numbered migration of their own.
+const baselineSchema = "../../../db/migrations/00002_schema.sql"
+
 func TestPruneFunctionIsAgedDeleteForEveryKind(t *testing.T) {
-	raw, err := os.ReadFile("../../../db/migrations/00300_error_digest.sql")
+	raw, err := os.ReadFile(baselineSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(raw)
-	start := strings.Index(text, "FUNCTION public.prune_aged_inbox")
-	end := strings.Index(text, "REVOKE ALL ON FUNCTION public.prune_aged_inbox")
-	if start < 0 || end < start {
+	start := strings.Index(text, "CREATE FUNCTION public.prune_aged_inbox")
+	end := strings.Index(text[start:], "$$;")
+	if start < 0 || end < 0 {
 		t.Fatal("prune function missing")
 	}
-	body := text[start:end]
+	body := text[start : start+end]
 	if !strings.Contains(body, "received_at < clock_timestamp() - (older_seconds::text || ' seconds')::interval") {
 		t.Fatal("age predicate missing")
 	}
@@ -73,17 +77,31 @@ func TestPruneFunctionIsAgedDeleteForEveryKind(t *testing.T) {
 			t.Fatalf("function names kind %s", kind)
 		}
 	}
+	if !strings.Contains(body, "SECURITY DEFINER") {
+		t.Fatal("prune function must run as its owner")
+	}
 	if strings.Contains(text, "BYPASSRLS") && !strings.Contains(text, "NOBYPASSRLS") {
 		t.Fatal("prune role bypasses RLS")
 	}
-	if strings.Contains(text, "GRANT DELETE") || strings.Contains(text, "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.event_inbox_events") {
-		t.Fatal("migration grants inbox DELETE")
+	if strings.Contains(text, "GRANT DELETE ON TABLE public.event_inbox_events") ||
+		strings.Contains(text, "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.event_inbox_events") {
+		t.Fatal("schema grants inbox DELETE")
 	}
-	if !strings.Contains(text, "GRANT EXECUTE ON FUNCTION public.prune_aged_inbox(bigint) TO podhub_error_prune") {
+	aclStart := strings.Index(text, "-- Name: FUNCTION prune_aged_inbox(older_seconds bigint); Type: ACL")
+	if aclStart < 0 {
+		t.Fatal("prune function ACL missing")
+	}
+	acl := text[aclStart:]
+	if next := strings.Index(acl[len("-- Name:"):], "\n-- Name:"); next >= 0 {
+		acl = acl[:next+len("-- Name:")]
+	}
+	if !strings.Contains(acl, "GRANT ALL ON FUNCTION public.prune_aged_inbox(older_seconds bigint) TO podhub_error_prune") {
 		t.Fatal("execute grant missing")
 	}
-	if !strings.Contains(text, "REVOKE ALL ON FUNCTION public.prune_aged_inbox(bigint) FROM PUBLIC, podhub_app, podhub_worker") {
-		t.Fatal("execute revoke missing")
+	for _, role := range []string{"podhub_app", "podhub_worker", "PUBLIC"} {
+		if strings.Contains(acl, "TO "+role) {
+			t.Fatalf("prune function granted to %s", role)
+		}
 	}
 }
 

@@ -1,7 +1,6 @@
 // Package registry turns one presign or confirm request into a registry
-// write. It never reads or writes object bytes: presign signs, confirm trusts
-// the full-object checksum the store echoes, and the browser uploads directly
-// to the final key.
+// write. The transport supplies either a full-object store SHA256 or the
+// computed SHA256 of an independent complete GET before confirm can register it.
 package registry
 
 import (
@@ -125,7 +124,7 @@ func (s Service) Presign(ctx context.Context, req PresignRequest) (PresignResult
 	if decision == storageregistry.ReuseObject {
 		return PresignResult{
 			ObjectID: object.ID, ObjectKey: key, ContentType: contentType,
-			PublicURL: contract.PublicURL(purpose.Bucket, key), Reuse: true, Bucket: purpose.Bucket,
+			PublicURL: account.PublicURL(key), Reuse: true, Bucket: purpose.Bucket,
 		}, nil
 	}
 	now := s.clock()
@@ -144,7 +143,7 @@ func (s Service) Presign(ctx context.Context, req PresignRequest) (PresignResult
 		return PresignResult{}, err
 	}
 	return PresignResult{
-		UploadID: uploadID, ObjectKey: key, PublicURL: contract.PublicURL(purpose.Bucket, key),
+		UploadID: uploadID, ObjectKey: key, PublicURL: account.PublicURL(key),
 		Grant: &grant, ContentType: contentType, ExpiresAtMS: grant.ExpiresAt.UnixMilli(),
 		Bucket: purpose.Bucket,
 	}, nil
@@ -163,7 +162,7 @@ type ConfirmHead func(ctx context.Context, upload UploadRow) (Object, error)
 
 // Confirm revalidates the lease, applies the proof and registers the object.
 func (s Service) Confirm(ctx context.Context, req ConfirmRequest, head ConfirmHead) (PresignResult, error) {
-	if s.Store == nil || head == nil {
+	if s.Store == nil || s.Buckets == nil || head == nil {
 		return PresignResult{}, ErrUnavailable
 	}
 	if strings.TrimSpace(req.UploadID) == "" {
@@ -174,11 +173,26 @@ func (s Service) Confirm(ctx context.Context, req ConfirmRequest, head ConfirmHe
 		return PresignResult{}, err
 	}
 	now := s.clock()
-	if upload.State != storageregistry.UploadPending {
+	if upload.State != storageregistry.UploadPending && upload.State != storageregistry.UploadConfirmed {
 		return PresignResult{}, storageregistry.ErrState
 	}
 	if !upload.ExpiresAt.After(now) {
 		return PresignResult{}, storageregistry.ErrExpired
+	}
+	bucket := contract.Role(upload.Bucket)
+	if !contract.Registered(bucket) {
+		return PresignResult{}, ErrInput
+	}
+	account, err := s.Buckets.Bucket(ctx, bucket)
+	if err != nil {
+		return PresignResult{}, ErrUnavailable
+	}
+	identity, err := account.config(bucket).Identity()
+	if err != nil {
+		return PresignResult{}, ErrUnavailable
+	}
+	if identity != upload.BucketIdentity {
+		return PresignResult{}, storageregistry.ErrConflict
 	}
 	proven, err := head(ctx, upload)
 	if err != nil {
@@ -200,6 +214,7 @@ func (s Service) Confirm(ctx context.Context, req ConfirmRequest, head ConfirmHe
 	decision, err := storageregistry.DecideConfirm(storageregistry.ConfirmInput{
 		Claim: claim, Now: now, ExpiresAt: upload.ExpiresAt,
 		HeadLength: proven.ByteLength, HeadType: proven.ContentType, HeadSHA256Hex: proven.SHA256Hex,
+		ReadbackSHA256Hex: proven.ReadbackSHA256Hex,
 	}, existing)
 	if err != nil {
 		return PresignResult{}, err
@@ -208,10 +223,9 @@ func (s Service) Confirm(ctx context.Context, req ConfirmRequest, head ConfirmHe
 	if err != nil {
 		return PresignResult{}, err
 	}
-	bucket := contract.Role(upload.Bucket)
 	return PresignResult{
 		UploadID: upload.ID, ObjectID: objectID, ObjectKey: upload.ObjectKey,
-		ContentType: upload.ContentType, PublicURL: contract.PublicURL(bucket, upload.ObjectKey),
+		ContentType: upload.ContentType, PublicURL: account.PublicURL(upload.ObjectKey),
 		Bucket: bucket, Reuse: decision.Reuse,
 	}, nil
 }
@@ -222,12 +236,15 @@ func (s Service) DownloadGrant(ctx context.Context, bucket contract.Role, key, f
 	if s.Signer == nil || s.Buckets == nil {
 		return "", ErrUnavailable
 	}
-	if bucket != contract.RolePrivate {
-		return contract.PublicURL(bucket, key), nil
+	if _, err := contract.ParseRole(string(bucket)); err != nil {
+		return "", ErrInput
 	}
 	account, err := s.Buckets.Bucket(ctx, bucket)
 	if err != nil {
 		return "", ErrUnavailable
+	}
+	if bucket != contract.RolePrivate {
+		return account.PublicURL(key), nil
 	}
 	if ttl < 60*time.Second {
 		ttl = 60 * time.Second

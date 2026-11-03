@@ -40,15 +40,18 @@ This is an internal, unpublished workspace crate. The product compositor
   - `.ase` — Adobe Swatch Exchange palettes (read; write is experimental)
   - Engine Data parser/serializer (text engine)
 
-## Installation
+## Workspace dependency
+
+Sibling crates inherit the path configured in `rust/Cargo.toml`:
 
 ```toml
 [dependencies]
-psdx = { path = "../../../crates/psd-x", default-features = false }
+psdx = { workspace = true }
 ```
 
-Requires Rust **1.97+** (edition 2024, Cargo resolver 3). Runtime dependencies
-are [`flate2`](https://crates.io/crates/flate2) (ZIP channel data) and
+The minimum Rust version is declared in `rust/Cargo.toml`; local builds and CI
+use the pinned `rust/rust-toolchain.toml` (edition 2024, Cargo resolver 3). Runtime
+dependencies include [`flate2`](https://crates.io/crates/flate2) (ZIP channel data) and
 [`encoding_rs`](https://crates.io/crates/encoding_rs) (GBK for image resource
 1006). Optional features:
 
@@ -183,9 +186,10 @@ Known partial / stubbed areas inherited from the original `psd-x` project:
 ## Testing
 
 Integration tests are four feature-gated harness binaries, not one crate per
-suite file:
+suite file. From the repository root:
 
 ```sh
+cd rust
 cargo test -p psdx --test default
 cargo test -p psdx --features test-support --test test_support
 cargo test -p psdx --features composite,test-support --test composite

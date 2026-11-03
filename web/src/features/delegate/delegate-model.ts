@@ -162,8 +162,8 @@ export function delegateBadgeFor(
 
 export const ASSET_MAX_BYTES = 500 * 1024 * 1024
 
-/** `<input accept>` 口径：扩展名而非 MIME（各端 MIME 不一致，PSD 尤甚）。 */
-export const ASSET_ACCEPT = ".jpg,.jpeg,.png,.webp,.psd"
+/** 委托只上传图片，用户 PSD 保留本机。 */
+export const ASSET_ACCEPT = ".jpg,.jpeg,.png,.webp"
 
 /** 归一扩展名（`jpeg` 折叠为 `jpg`）；不在白名单内回 `null`。 */
 export function assetExtensionOf(fileName: string): string | null {
@@ -178,8 +178,6 @@ export function assetExtensionOf(fileName: string): string | null {
       return "png"
     case "webp":
       return "webp"
-    case "psd":
-      return "psd"
     default:
       return null
   }
@@ -197,7 +195,6 @@ export function assetContentType(file: { name: string; type: string }): string {
     case "webp":
       return "image/webp"
     default:
-      // PSD 无 MIME 约束（plan.rs：只要求头值非空），octet-stream 即可。
       return "application/octet-stream"
   }
 }
@@ -205,7 +202,7 @@ export function assetContentType(file: { name: string; type: string }): string {
 /** 本地预检：白名单 + 上限。中文提示直接可读；`null` 放行。 */
 export function assetFileError(file: { name: string; size: number }): string | null {
   if (!assetExtensionOf(file.name)) {
-    return "原图仅支持 jpg/png/webp/psd 格式"
+    return "委托图片仅支持 jpg/png/webp 格式"
   }
   if (file.size <= 0) {
     return `原图「${file.name}」是空文件`

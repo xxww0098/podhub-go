@@ -4,7 +4,9 @@ import {
   CatalogIcon,
   ConsoleIcon,
   ListingIcon,
+  TaskRecordsIcon,
   MessageCenterIcon,
+  HomeNavIcon,
   OpsNavIcon,
   OpsReturnsIcon,
   OpsShippingIcon,
@@ -27,6 +29,7 @@ export type NavItem = {
   id: AppScreen
   icon: NavIcon
   agentOnly?: boolean
+  catalogManagerOnly?: boolean
 }
 
 /** A nav mode's header facts. `staffOnly` gates the whole mode, not one item. */
@@ -42,10 +45,13 @@ export const NAVIGATION = {
   workbench: {
     label: "工作台", icon: WorkbenchNavIcon, staffOnly: false,
     items: [
+      { id: "home", icon: HomeNavIcon },
       { id: "console", icon: ConsoleIcon },
       { id: "listing", icon: ListingIcon },
       { id: "catalog", icon: CatalogIcon },
+      { id: "supplier-catalog", icon: SupplierDbsIcon, catalogManagerOnly: true },
       { id: "products", icon: ProductsIcon },
+      { id: "task-records", icon: TaskRecordsIcon },
       { id: "agent", icon: AgentNavIcon, agentOnly: true },
     ],
   },
@@ -66,6 +72,7 @@ export const NAVIGATION = {
       { id: "supplier-dbs", icon: SupplierDbsIcon },
       { id: "admin-console", icon: ConsoleIcon },
       { id: "admin-products", icon: ProductsIcon },
+      { id: "admin-delegate-orders", icon: DelegateNavIcon },
     ],
   },
 } as const satisfies Record<string, NavModeMeta & {
@@ -92,7 +99,6 @@ export function staffNavModes(): NavMode[] {
 /** Staff routes reached from shortcuts instead of a sidebar row. */
 export const ADMIN_URL_ONLY_SCREENS = [
   "supplier-accounts",
-  "admin-delegate-orders",
 ] as const satisfies readonly AppScreen[]
 
 export function modeOfScreen(screen: AppScreen): NavMode | undefined {
@@ -104,6 +110,7 @@ export type NavAudience = {
   isStaff: boolean
   /** Absent/unknown ranks cannot address cross-tenant observation. */
   isSuperAdmin?: boolean
+  isCatalogManager?: boolean
 }
 
 /** The destinations a mode paints for this account: staff-only modes paint nothing without staff; Agent-only entries are filtered out. */
@@ -112,6 +119,7 @@ export function navItemsFor(mode: NavMode, audience: NavAudience): NavItem[] {
   return NAVIGATION[mode].items.filter(
     (item: NavItem) =>
       (!item.agentOnly || audience.isAgent) &&
+      (!item.catalogManagerOnly || audience.isCatalogManager === true) &&
       (!isObservationScreen(item.id) || audience.isSuperAdmin === true),
   )
 }
@@ -123,18 +131,20 @@ export function navItemsFor(mode: NavMode, audience: NavAudience): NavItem[] {
 export type Surface = "workbench" | "admin"
 
 const SIDEBAR_GROUPS: { label: string; screens: readonly AppScreen[] }[] = [
-  { label: "总览", screens: ["console"] },
-  { label: "商品经营", screens: ["catalog", "listing", "products"] },
+  { label: "总览", screens: ["home", "console"] },
+  { label: "商品经营", screens: ["catalog", "supplier-catalog", "listing", "products", "task-records"] },
   { label: "订单履约", screens: ["ops-shipping", "delegate-orders", "ops-returns", "ops-supply"] },
   { label: "客户服务", screens: ["message-center", "ops-voice"] },
   { label: "代理", screens: ["agent"] },
   { label: NAVIGATION.admin.label, screens: NAVIGATION.admin.items.map((item) => item.id) },
 ]
 
-/** Group the existing permitted destinations without changing route permissions. */
-export function sidebarGroupsFor(surface: Surface, audience: NavAudience) {
-  const modes = surface === "admin" ? staffNavModes() : navModesFor(audience)
-  const items = modes.flatMap((mode) => navItemsFor(mode, audience))
+/**
+ * One menu for every surface: `/` and `/admin` paint the same groups, so
+ * crossing surfaces never changes the sidebar. Route permissions are unchanged.
+ */
+export function sidebarGroupsFor(audience: NavAudience) {
+  const items = navModesFor(audience).flatMap((mode) => navItemsFor(mode, audience))
   return SIDEBAR_GROUPS.map(({ label, screens }) => ({
     label,
     items: screens.flatMap((id) => items.filter((item) => item.id === id)),
@@ -157,8 +167,8 @@ export function spaceScreens(): AppScreen[] {
  * this list and the route resolver refuses everything outside it, so a URL can
  * never mount a destination the rank cannot address. The surface guard still
  * refuses non-staff at /admin; per-screen filtering refuses cross-tenant
- * observation to ordinary admin. Those screens live only on /admin, even
- * when the workbench sidebar offers a cross-surface shortcut.
+ * observation to ordinary admin. All platform destinations live on /admin,
+ * even when the workbench sidebar offers a shortcut.
  */
 export function addressableScreens(surface: Surface, audience: NavAudience): AppScreen[] {
   if (surface === "admin") {
@@ -168,9 +178,8 @@ export function addressableScreens(surface: Surface, audience: NavAudience): App
       ...ADMIN_URL_ONLY_SCREENS,
     ]
   }
-  return NAV_MODES.filter((m) => !NAVIGATION[m].staffOnly || audience.isStaff)
+  return NAV_MODES.filter((m) => !NAVIGATION[m].staffOnly)
     .flatMap((mode) => navItemsFor(mode, audience).map((item) => item.id))
-    .filter((id) => !isObservationScreen(id))
     .concat(spaceScreens())
 }
 
@@ -184,5 +193,5 @@ export function isAddressableScreen(
 
 /** Where a surface lands when its address names nothing — or nothing it may. */
 export function defaultScreenFor(surface: Surface, audience: NavAudience): AppScreen {
-  return addressableScreens(surface, audience)[0] ?? "console"
+  return addressableScreens(surface, audience)[0] ?? "home"
 }

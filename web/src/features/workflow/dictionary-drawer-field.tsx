@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { type RefObject, useEffect, useMemo, useRef, useState } from "react"
 import {
   Ban,
   Check,
@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
 import { notifyCommandError } from "@/lib/notify"
+import { errorMessage } from "@/lib/error-message"
 import {
   fieldOptionDisplayValue,
   isBrandField,
@@ -203,6 +204,7 @@ function selectedSummary(values: string[]): string {
 export function DictionaryPickerDialog({
   open,
   onClose,
+  finalFocus,
   field,
   schema,
   targetStoreId,
@@ -211,6 +213,7 @@ export function DictionaryPickerDialog({
 }: {
   open: boolean
   onClose: () => void
+  finalFocus?: RefObject<HTMLElement | null>
   field: CategoryFieldView
   schema: CategorySchemaView
   targetStoreId: string
@@ -220,6 +223,7 @@ export function DictionaryPickerDialog({
   const [query, setQuery] = useState("")
   const [remoteOptions, setRemoteOptions] = useState<CategoryFieldOption[]>([])
   const [searching, setSearching] = useState(false)
+  const [searchError, setSearchError] = useState<string | null>(null)
   const selected =
     value?.kind === "multi_select"
       ? value.value
@@ -255,6 +259,7 @@ export function DictionaryPickerDialog({
 
   useEffect(() => {
     if (!open) return
+    setSearchError(null)
 
     if (!field.options_truncated || normalizedQuery.length < 2) {
       setRemoteOptions([])
@@ -271,6 +276,7 @@ export function DictionaryPickerDialog({
     }
 
     setRemoteOptions([])
+    setSearching(true)
     let stale = false
     const timer = window.setTimeout(() => {
       setSearching(true)
@@ -289,6 +295,7 @@ export function DictionaryPickerDialog({
         })
         .catch((reason) => {
           if (stale) return
+          setSearchError(errorMessage(reason, "Ozon 字典查询失败，请重试。"))
           notifyCommandError(reason, "Ozon 字典暂时不可用，请稍后重试。")
         })
         .finally(() => {
@@ -341,7 +348,7 @@ export function DictionaryPickerDialog({
           if (!nextOpen) closeDrawer()
         }}
       >
-        <DialogContent className="flex h-[min(40rem,calc(100vh-2rem))] w-[min(560px,calc(100%-2rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-[560px]">
+        <DialogContent finalFocus={finalFocus} className="flex h-[min(40rem,calc(100vh-2rem))] w-[min(560px,calc(100%-2rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-[560px]">
           <DialogHeader className="border-b border-border px-5 py-4 pr-12">
             <div className="flex flex-wrap items-center gap-2">
               <DialogTitle>{field.name}</DialogTitle>
@@ -364,6 +371,8 @@ export function DictionaryPickerDialog({
               )}
               <Input
                 autoFocus
+                type="search"
+                aria-label={`搜索${field.name}字典`}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder={
@@ -383,12 +392,13 @@ export function DictionaryPickerDialog({
               {field.options_truncated && normalizedQuery.length === 1 ? (
                 <span>再输入 1 个字可搜索完整字典</span>
               ) : field.options_truncated && normalizedQuery.length >= 2 ? (
-                <span>{searching ? "正在查询 Ozon…" : "已合并 Ozon 搜索结果"}</span>
+                <span>{searching ? "正在查询 Ozon…" : searchError ? "查询失败" : "已合并 Ozon 搜索结果"}</span>
               ) : null}
             </div>
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto p-3">
+            {searchError ? <p role="alert" className="mb-2 text-compact text-destructive">{searchError}</p> : null}
             {visibleOptions.length ? (
               <div className="flex flex-col gap-1">
                 {visibleOptions.map((option) => {
@@ -512,6 +522,7 @@ export function DictionaryDrawerField({
   targetStoreId,
   value,
   invalid,
+  errorId,
   onChange,
 }: {
   /** Id the field label points at, so the trigger stays the labelled control. */
@@ -521,9 +532,11 @@ export function DictionaryDrawerField({
   targetStoreId: string
   value?: WorkflowDraftValue
   invalid: boolean
+  errorId?:string
   onChange: (value: WorkflowDraftValue | undefined) => void
 }) {
   const [open, setOpen] = useState(false)
+  const triggerRef = useRef<HTMLButtonElement>(null)
   const selected =
     value?.kind === "multi_select"
       ? value.value
@@ -553,6 +566,7 @@ export function DictionaryDrawerField({
     <>
       <div className="flex items-stretch gap-2">
         <button
+          ref={triggerRef}
           type="button"
           id={controlId}
           data-dictionary-trigger={field.key}
@@ -561,6 +575,8 @@ export function DictionaryDrawerField({
           aria-haspopup="dialog"
           aria-expanded={open}
           aria-invalid={invalid}
+          aria-required={field.constraints.required && !field.read_only}
+          aria-describedby={errorId}
           onClick={() => setOpen(true)}
           className="flex h-9 min-w-0 flex-1 items-center gap-3 rounded-lg border border-input bg-card px-3 text-left text-sm outline-none transition-[border-color,box-shadow,background-color] hover:bg-muted/25 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/25 aria-invalid:border-st-bad aria-invalid:ring-[3px] aria-invalid:ring-st-bad/20"
         >
@@ -605,6 +621,7 @@ export function DictionaryDrawerField({
       <DictionaryPickerDialog
         open={open}
         onClose={() => setOpen(false)}
+        finalFocus={triggerRef}
         field={field}
         schema={schema}
         targetStoreId={targetStoreId}

@@ -1,118 +1,134 @@
 # podhub-go
 
-PodHub Cloud 的服务端。行为约束在 [docs/architecture.md](docs/architecture.md)。
+PodHub Cloud 是多租户、多电商平台 SaaS，包含 React 前端、Go 服务端与 Rust/WASM 内核。公共业务按域组织，电商平台协议由具体适配器承接。按新工程演进，允许破坏性变更，不以旧接口兼容为目标；具体约束见 [AGENTS.md](AGENTS.md) 和 [架构约束](docs/architecture.md)。
 
-系统由三部分组成，三层都在本仓库：
+## 开发与检查
 
-| 部分 | 位置 | 职责 |
-| --- | --- | --- |
-| React 前端 | `web/` | 页面与交互；从 [api/openapi.yaml](api/openapi.yaml) 生成 API 客户端。浏览器直接调用本仓库的 HTTP API，也直接执行浏览器版 wasm |
-| Go 服务端 | `cmd/`、`internal/` | HTTP API、四个 worker、写入租约；唯一有数据库和出站网络权限的部分 |
-| Rust/WASM | `rust/`、`wasm/` | 纯函数内核与其 wasm 产物。Go 用 wazero 加载服务端产物，浏览器加载浏览器产物 |
-
-同样的输入必须得到同样的输出、状态和数据。优化流程可以，改结果不行。无法用对比测试证明的差异要单独交给用户决定。
-
-## 目录
-
-### React 前端
-
-| 路径 | 约定 |
-| --- | --- |
-| `web/` | Vite + React 19 + TanStack Query + Tailwind 4 的单页应用，24 个功能域 |
-| `web/src/api/schema.d.ts` | 由 `api/openapi.yaml` 经 `bun run api:generate` 生成，不要手改 |
-| `web/src/api/routes.ts` | 前端唯一的路径拼写处，`bun run api:routes` 从 schema 重新生成；`routes.test.ts` 禁止别处出现 `/api/…` 字面量 |
-| `web/src/listing-core`、`web/src/render` | 浏览器侧 wasm 的 TypeScript 适配与 Worker；wasm 本体在 `wasm/dist/browser/` |
-| `web/tests` | `bun test`，网络被 `network-guard.preload.ts` 拦断 |
-
-前端 dev server 把 `/api` 与 `/mcp` 代理到 `127.0.0.1:8080`，即 Go 的默认监听地址；生产由前端自己同源分发。
-
-### Rust / WASM 源与产物
-
-| 路径 | 约定 |
-| --- | --- |
-| `rust/` | Rust 源码唯一根，单一 workspace（`Cargo.toml` / `Cargo.lock`，edition 2024）。`rust/rust-toolchain.toml` 把整个 workspace 钉在稳定工具链 1.99.0，`.cargo/config.toml` 为 wasm32 打开 simd128 |
-| `rust/crates` | 8 个 crate：`listing-core` + `listing-core-wasm`（上架规则）、`render` + `render-wasm`（PSD 渲染）、`psd-x`（PSD 读写，MIT）、`listing-tags`（禁用标签匹配）、`op-workflow`（工作流纯类型）、`wasm-host-probe`（宿主契约探针） |
-| `wasm/dist/server` | 提交入库的服务端产物：`listing-core.wasm`、`listing-tags.wasm` |
-| `wasm/dist/browser` | 提交入库的浏览器产物：`listing-state.wasm`、`render/render_wasm.wasm` 与 `render/threaded/`（WASM + JS + `.d.ts` + snippets）。`listing-state.wasm` 是 `--features browser` 编出的唯一浏览器 listing-core 模块，前端与 Go 浏览器侧共用这一份 |
-| `wasm/dist/test` | `host-probe.wasm`，只给测试用，不进 Go 二进制 |
-| `wasm/dist/SOURCES.sha256` | 输入、工具版本与全部产物的指纹清单 |
-| `wasm/embed.go` | 只嵌入 `dist/server/` 的两个生产模块；浏览器与 test 产物不进 Go 二进制 |
-| `scripts/build-wasm.sh` | 用 workspace 工具链重编全部模块并可选拷入 `wasm/dist`。`scripts/check-wasm-dist.sh` 校验清单 |
-| `web/scripts/build-render.sh` | 构建 PSD 渲染的两份产物（C ABI + `threads` 版 wasm-bindgen glue），落 `wasm/dist/browser/render/`。`threads` 版需要 nightly-2026-09-14 与 wasm-bindgen 0.2.127 |
-
-浏览器 WASM、生成的 JS / `.d.ts` 与 Worker snippets 一起入库。`make wasm` 在本地构建全部服务端和浏览器产物后刷新清单；`make wasm-check` 只校验。`make web-wasm` 只重建浏览器渲染产物，不刷新全局清单；浏览器 listing-core 模块由 `scripts/build-wasm.sh core` 与服务端模块同一次构建产出，没有单独的浏览器构建入口。Go 构建、Web 构建、Docker 和 CI 都直接消费已构建的 WASM，不编译 Rust。
-
-完整项目树、迁移记录和依赖边界见 [docs/architecture-tree.md](docs/architecture-tree.md)。仓库里只有一套路径：`rust/` 放全部 Rust 源码，`wasm/` 只放产物与 Go 嵌入。
-
-核心约束：listing-core 是纯函数，无 SQL、无 HTTP、无时钟。Go 不把这些函数改写成业务代码，服务端保存和提交只认服务端校验。详见 [docs/architecture.md](docs/architecture.md) §上架规则。
-
-### Go 服务端
-
-| 路径 | 约定 |
-| --- | --- |
-| `cmd/api` | HTTP 进程。只调用 `internal/app` |
-| `cmd/worker-listing` `cmd/worker-sync` `cmd/worker-reconcile` `cmd/worker-media-gc` | 四个 worker 进程，只调用 `internal/app`。媒体进程在删除关闭时以 0 退出；删除开启且没有 `127.0.0.1` 假桶和回执表时不以 0 退出 |
-| `cmd/writer-lease` | `writer-lease bootstrap <domain>`，插入该域第一条未撤销的写入租约。`make build` 和镜像都会构建它 |
-| `api/openapi.yaml` `api/codegen` | OpenAPI 与 oapi-codegen 配置（`api/codegen/*.yaml`，新增域加一份）。生成物在各域 `http/gen`，健康检查在 `internal/platform/health/gen`。响应字节手写 |
-| `db/migrations` | goose。只追加，不改已有文件。见 [docs/parity/queue-and-migration-differences.md](docs/parity/queue-and-migration-differences.md) |
-| `db/queries` `db/schema` `db/agent-schema` | sqlc 的查询和 schema。生成物在 `internal/platform/db/sqlc` 与 `internal/agent/gen/sqlcgen` |
-| `internal/app` | 唯一装配层：路由、`wire_*.go`、`api/` 处理函数、`worker/` 进程。`cmd` 只 import 这里 |
-| `internal/platform` | 基础设施，不 import 业务。环境变量只在 `platform/config` 解析。`platform/db` 管连接和 goose，`platform/db/tenantx` 设置 `podhub_app` / `podhub_worker` 与 `app.current_org_id`。`platform/r2` 是对象存储出口，删除和预签名只面向 `127.0.0.1` 假桶，真实 R2 主机被拒绝。`platform/egressgate` 是出站闸。`platform/llm` 做协议转换，不持有密钥，不访问供应商。`platform/wasm` 加载 wasm。`platform/writer` 判定写入租约。`platform/loadmode` 只接受 Mode R |
-| `internal/listing/core` `rules` `read` `write` `submit` | 上架。窄 wasm 在 `wasm/dist/server`，由 `internal/platform/wasm` 加载。见 [docs/parity/listing-core-host.md](docs/parity/listing-core-host.md) |
-| `internal/identity` 以及各业务单元 | `admin`、`agent`、`ai`、`automation`、`billing`、`catalog`、`delegate`、`mcp`、`media`、`ops`、`ozonerr`、`queue`、`ratings`、`seller`、`shipping`、`store`、`supplier`、`supply`、`telemetry`、`warehouse`。层目录用 `contract`、`domain`、`service`、`repo`、`http`、`jobs`、`gen`。层级表在 [docs/architecture-tree.md](docs/architecture-tree.md)。`internal/queue` 的领取循环写 `jobs` 行；River 只跑 worker |
-| `tests/archtest` `tests/integration` `tests/parity` `tests/testkit` | 分层棘轮、集成测试、字节比较、集成测试辅助。没有 Docker 时集成测试跳过，除非 `PODHUB_PARITY_DSN` 指向 loopback。CI 会跑。`testkit` 含 Docker 套接字探测与 head 指纹比对 |
-| `third_party/new-api` | 计费公式副本。许可证见该目录的 `LICENSE` 与 `NOTICE` |
-| `scripts` | wasm 清单和纯搬家检查等仓库脚本 |
-
-Go 语言版本在 `go.mod` 是 1.27.0，工具链是 go1.27.2（高于 RelayKit 要求的 1.25.1）。CI 的 setup-go 读 `go` 行；实际编译再用 `toolchain` 行的 go1.27.2。
-
-## 三层之间的契约
-
-Go 与前端只通过两样东西耦合：
-
-- **HTTP API**：`api/openapi.yaml` 是唯一契约。Go 侧用 oapi-codegen 生成 router 与 models，前端用 openapi-typescript 生成 `schema.d.ts`。spec 描述本仓库实际的路由、状态码和响应形状（[decisions.md](docs/decisions.md) D14）。`internal/app/testdata/routes.txt` 的 396 条路由由 `TestRouteTableMatchesGolden` 钉死、由 `TestRoutePathsCoveredByOpenAPI` 强制落在 spec 内；前端 `routes.test.ts` 要求 `routes.ts` 与 spec 的路径集完全一致，`mounted.test.ts` 再把 `routes.ts` 与已挂载路由对齐（spec 里有、Go 未挂载的 54 条以只减不增的名单登记）。
-- **浏览器 wasm**：`wasm/dist/browser/listing-state.wasm` 由前端直接实例化，Go 不参与。加载时机、op 表和数据形状见 [docs/parity/browser-direct.md](docs/parity/browser-direct.md) §前端契约。
-
-Go 不提供页面、静态资源或服务端渲染；路由除 `/mcp` 外都在 `/api/*` 下。
-
-## 本地
+Go 版本以 [go.mod](go.mod) 为准，前端使用 Bun。普通 Go/Web 构建消费已提交的 WASM；修改 Rust 或 WASM 构建输入时才需要重建产物。
 
 ```sh
-make test
-make build
-make generate
-make ci
-```
+# 仓库根
+bash dev.sh           # Docker 开发库、迁移、Go API 与 Vite 一起启动
+make test             # Go 测试；集成测试的数据库条件见下文
+make build            # 校验 WASM 后构建 API、migrate、lease-keeper、四个 worker、writer-lease 和 admin-init
+make generate         # sqlc 与各域 OpenAPI Go 代码
+make ci               # Rust 原生测试、Go 检查、生成物差异检查
 
-前端（在 `web/` 下，用 bun）：
-
-```sh
+# 前端
+cd web
 bun install
-bun run dev            # Vite，代理 /api 与 /mcp 到 127.0.0.1:8080
-bun run api:generate   # 从 ../api/openapi.yaml 重新生成 schema.d.ts
-bun run api:routes     # 从 schema 重建 routes.ts 的路径表
-bun run check          # build → test → api:check → deadcode → lint
+bun run dev           # Vite :1420；/api 与 /mcp 代理到 127.0.0.1:8080
+bun run api:generate  # OpenAPI → schema.d.ts
+bun run api:routes    # schema → routes.ts
+bun run check         # build → test → api:check → deadcode → lint
 ```
 
-`make build` 校验 WASM 清单后写入 `bin/api`、四个 worker 和 `bin/writer-lease`。`make generate` 在缺少或版本不符时安装 sqlc v1.31.1 与 oapi-codegen v2.8.0（版本只写在 `Makefile`），再执行 `sqlc generate`，并遍历 `api/codegen/*.yaml` 逐份生成；新增域只需加一份配置。CI 的 lint job 也跑 `make generate`。`make ci` 对齐后端 CI：gofmt、vet、archtest、清单脚本回归、WASM 清单、`go test -timeout 25m ./...`、`make generate`、`git diff --exit-code`。前端 CI 另跑 Web 构建、API 契约和测试。CI 不安装 Rust 工具链，也不重新构建 WASM；改动 Rust 后先在本地 `make wasm`，再一起提交源码、产物与清单。
+`dev.sh` 需要 Docker、Go 和 Bun。启动前会回收自己的开发端口：上一次留下的 `dev.sh` 会被停掉（走它自己的清理），本仓库遗留的监听进程直接结束；其他程序占着端口时只报出 pid 并退出，不会杀。开发库是 `podhub-dev-pg` 容器加 `podhub-dev-pgdata` 卷，重启只补跑未应用的迁移，数据默认保留；`RESET_DB=1` 丢弃卷并从零迁移，`KEEP_DB=1` 让 Postgres 在退出后继续运行（默认停止但不删除）。它关闭 Ozon 写入，默认关闭媒体删除；在 `.env` 或 `.env.local` 中设置 `CLOUD_MEDIA_GC_DELETE=1` 和 `CLOUD_INTEGRATION_CONFIG_KEY` 后重启，会运行清理 worker 并允许手动删除文件和文件夹。额外设置 `DEV_MEDIA_GC_WORKER=0` 可停止本地清理 worker，保留手动删除；此时全量清理请求和定时清理不会执行，直到 worker 启动。默认 API 为 `127.0.0.1:8080`、Web 为 `127.0.0.1:1420`。`bun run dev` 只启动前端，需要另行运行 Go API；Vite 的 API 代理默认指向 `http://127.0.0.1:8080`，可用 `DEV_CLOUD_URL` 覆盖。`DATABASE_URL` 默认只接受回环地址；非回环主机还要显式设置 `CLOUD_DATABASE_ALLOW_REMOTE_HOST=1`。
 
-`DATABASE_URL` 只能是回环地址。两个开关的解析说明在 `.env.example`。表结构的对拍物是 `tests/integration/testdata/expected-head-fingerprint.json`，迁移顺序见 `db/migrations` 与 [docs/parity/queue-and-migration-differences.md](docs/parity/queue-and-migration-differences.md)。
+写入租约：写路径只认 `CLOUD_INSTANCE_ID` 对应、60 秒内有心跳的 `writer_leases` 行，否则返回「店铺名册写入未启用」之类的 503。`scripts/dev-api.sh` 把实例固定为 `dev-local`（可用 `CLOUD_INSTANCE_ID` 覆盖），先接管全部八个域，再由 `scripts/devlease` 每 20 秒续期，随脚本退出而停止。它会撤销本地库里其他实例的租约，只用于开发库；生产由 `lease-keeper` 服务首次发放并每 20 秒续期，也可用 `writer-lease bootstrap <域>` 手动发放。
 
-## 许可证
+本地 API 依次加载 `.env` 和 `.env.local`，后者覆盖前者；本地测试 R2、OAuth、数据库及其他开发配置放在被 Git 忽略的 `.env.local`。Vite 不接收这些服务端凭据。修改后重启 `dev.sh` 生效；生产 Compose 默认只加载 `.env`。
 
-podhub-go 以 GNU AGPL-3.0（仅第 3 版，SPDX `AGPL-3.0-only`）授权，版权持有人 xxww。全文见 [LICENSE](LICENSE)，版权与第三方说明见 [NOTICE](NOTICE)，Go 依赖的许可证清单见 [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md)。
+本地使用 Compose 时显式加载两个文件。以下命令以 `http://localhost` 访问，并关闭媒体删除和 Cloudflare OAuth；如需 OAuth，须配置与实际访问地址匹配的本地客户端和回调。
 
-`internal/platform/llm` 引用的 RelayKit 与 `third_party/new-api` 公式副本都来自 QuantumNous/new-api，按 AGPL-3.0 使用，未购买商业授权。
+```sh
+CLOUD_PUBLIC_URL=http://localhost CLOUD_MEDIA_GC_DELETE=0 \
+  CLOUDFLARE_OAUTH_CLIENT_ID= CLOUDFLARE_OAUTH_CLIENT_SECRET= CLOUDFLARE_OAUTH_SCOPES= \
+  docker compose --env-file .env --env-file .env.local up -d
+```
 
-AGPL-3.0 第 13 条：如果你修改了本程序，并通过计算机网络向用户提供修改版的服务，须让这些用户能够获取该版本的对应源码（Corresponding Source）。分发二进制或镜像时，按第 6 条提供源码。
+Compose 的媒体清理 worker 不读取 `DEV_MEDIA_GC_WORKER`；启用 `CLOUD_MEDIA_GC_DELETE` 前须确认要运行自动清理。
 
-源码获取方式：[待定——源码获取地址由版权持有人确定后填写]
+店铺密钥用 `CLOUD_SELLER_CREDENTIAL_KEY` 加密托管，开发与正式环境一样只从环境变量读取，不设置时批量导入返回「Seller 密钥托管未配置」。本地写进被忽略的 `.env.local`（`dev-api.sh` 会载入），生成方式见 [.env.example](.env.example)；换掉它会让已托管的密钥无法解开。
+
+普通集成测试从共享 Docker PostgreSQL 模板克隆数据库，也可使用回环 `PODHUB_PARITY_DSN`；两者都没有时，这部分用例会跳过。使用 `StartPostgres` 的独立集群测试在 Docker 不可用时，仅在 Linux 尝试本地 PostgreSQL，启动失败会报错。不能把跳过算作通过；显式 DSN 必须是可迁移、可写测试数据的专用库。`make ci` 最后执行 `git diff --exit-code`，已有工作区修改也会让这一步失败。
+
+## 部署到 VPS
+
+单机生产形态见 [compose.yaml](compose.yaml)：Postgres、一次性 `migrate` 作业、API、`lease-keeper`、四个 worker，以及同源提供 SPA、`/api` 和 `/mcp` 反代的 Caddy。
+
+1. 安装 Docker Engine 与 Compose v2，放行 80/443；域名 A/AAAA 记录指向主机。
+2. `cp .env.example .env`，至少填写 `POSTGRES_PASSWORD`、`PODHUB_API_DB_PASSWORD`、`PODHUB_WORKER_DB_PASSWORD`、`CLOUD_INTEGRATION_CONFIG_KEY`、`CLOUD_SELLER_CREDENTIAL_KEY`、`CLOUD_PUBLIC_URL`。这些密码会原样拼进 DSN，只能使用 URL 安全字符（`A-Z a-z 0-9 - . _ ~`）；不要使用 `@ : / ? # %`。本地 HTTP 调试用 `PODHUB_SITE_ADDRESS=http://localhost` 和 `CLOUD_COOKIE_SECURE=0`；线上用域名并把 `CLOUD_COOKIE_SECURE` 保持为 1。
+3. `docker compose up -d --build`。启动顺序由依赖固定：`migrate` 成功后才启动 API/worker/lease-keeper。
+4. 首次初始化超管：`docker compose run --rm -it --entrypoint admin-init api`。
+5. 打开 `/`（用户端）或 `/admin`，并检查 `/api/health`：`writer_leases` 应列出八个域且心跳持续更新。
+
+`lease-keeper` 是必需服务。它把 `CLOUD_INSTANCE_ID` 固定的实例租约每 20 秒续到 60 秒 TTL；停掉它后，各域最后一次写入 60 秒后返回 503「店铺名册写入未启用」。不要给 API、worker 和 keeper 设置不同的实例 ID。
+
+`worker-media-gc` 默认开启并常驻消费清理任务（`compose.yaml` 未设置时传 `1`）。设置 `CLOUD_MEDIA_GC_DELETE=0` 后该服务会正常退出，`docker compose ps` 显示 `Exited (0)`，这不是故障；恢复清理时删除该变量并重启服务。
+
+升级：先备份 Postgres 卷，再 `docker compose build && docker compose up -d`；`migrate` 会重新执行，失败时 API 不会启动。回滚应用镜像不能回滚已执行的迁移，破坏性迁移需单独备份。
+
+## 初始化超级管理员
+
+数据库完成迁移后，在交互终端执行一次：
+
+```sh
+# 使用与 API 相同的 DATABASE_URL；下面是 bash dev.sh 默认的开发库
+DATABASE_URL='postgres://podhub_login_api:podhub@127.0.0.1:55432/podhub?sslmode=disable' go run ./cmd/admin-init
+```
+
+按提示输入邮箱和密码，密码不回显，也不接受命令行参数或管道输入。命令在一个事务内创建唯一超级管理员、初始化记录和审计；失败全部回滚，重复或并发执行不会覆盖账号及密码。已有同邮箱账号不会被提升权限。超管不附带租户工作空间，普通用户在初始化后才能注册。
+
+打开站点的 `/admin`，用邮箱和密码登录即可。超级管理员权限只由平台角色 `super_admin` 决定，没有验证器、恢复码或额外的二次验证步骤，也没有 step-up 时限；API 进程不需要任何验证器密钥。
+
+普通账号注册后即可使用，不要求验证邮箱，也不显示验证提醒或重发入口。邮箱仍需满足格式要求。邮件找回使用 TLS SMTP 和持久化加密发件箱。普通、管理员和工厂登录页均有找回入口；`POST /api/auth/forgot` 受理后统一返回 200，不能据此判断账号存在或邮件已送达。缺少邮件、公开站点地址或加密密钥配置时统一返回 503。
+
+平台和工厂账号可在账号设置中更换邮箱：输入当前密码并向新邮箱发送确认链接。确认前仍使用原邮箱登录；确认后所有设备需使用新邮箱重新登录。换绑与密码找回复用同一邮件配置和发件箱，申请受理不代表邮件已送达。
+
+配置 API 进程的 `CLOUD_SMTP_ADDR`（主机:端口）、`CLOUD_SMTP_FROM`、`CLOUD_SMTP_USERNAME`、`CLOUD_SMTP_PASSWORD`、`CLOUD_SMTP_TLS_MODE`（默认 `starttls`，465 端口通常用 `tls`）、`CLOUD_PUBLIC_URL`（前端公开 HTTPS 根地址；本地允许 loopback HTTP），以及至少 32 字符的 `CLOUD_INTEGRATION_CONFIG_KEY`。授权码写入本地 `.env.local`，经开发启动脚本加载后重启 API；生产使用环境变量/密钥管理。不得更换正在使用的加密密钥来启用邮件。API 启动后独立扫描发件箱，每 5 秒认领最多 4 封，SMTP 请求不持有数据库连接。只有 API 进程负责投递，不依赖队列 worker。
+
+重置和换绑链接有效期 30 分钟，单次使用；同一账号 60 秒内不重复签发同类链接。找回申请每个 IP 每 15 分钟最多受理 5 次，超限返回 429 和 `Retry-After`。临时投递失败使用原令牌退避重试（1/2/4/8 分钟，最多 5 次）；永久拒信、到期或重试耗尽后作废该链接并擦除加密载荷。密码、邮箱变更或禁用账号会作废旧链接；成功重置密码或换绑邮箱撤销该账号的所有会话。SMTP 确认丢失时可能收到重复邮件，其链接仍只能使用一次。
+
+排障可查看 `password recovery mail delivery` 日志的 `state/reason/attempt`，以及 `auth_password_reset_deliveries` 的状态与 `last_error_code`；均不记录收件地址、授权码或令牌。服务不可用期间未受理请求，恢复配置后可重新申请。临时失败自动重试，永久失败可修复配置/收件地址后重新申请；清理超过 7 天的过期令牌及对应投递记录。验证真实收件时，须使用已配置的 SMTP 和授权收件地址；隔离测试不会投递外网。
+
+`make build` 同时输出 `bin/admin-init`，Docker 镜像包含同名命令；在能连接数据库的部署环境中用交互终端运行它即可，使用普通 API 数据库角色，无需为此开放数据库超级用户。初始化不会修改数据库迁移或业务写租约。
+
+生成器版本统一维护在 [Makefile](Makefile)，`make generate` 会在缺少或版本不符时安装。环境开关的当前语义见 [架构约束](docs/architecture.md#安全开关与外部出口)；[.env.example](.env.example) 只覆盖部分配置，完整解析在 `internal/platform/config`。
+
+切片使用工作空间所有者在「设置 → 工作空间」中配置的 Cloudflare R2，不读取 `R2_TRANSIT_*`，不回退到系统中转桶；每个配置使用独立前缀。所有者可设置每天北京时间指定时间自动清理，或仅手动清理；默认每天 04:00。存储桶需启用公开访问，并允许当前站点通过 CORS 使用 GET、PUT 及 `Content-Type`、`If-None-Match`、`X-Amz-Checksum-Sha256` 请求头。服务端使用 `CLOUD_INTEGRATION_CONFIG_KEY` 加密凭据，并需要启动 `worker-media-gc` 和启用 `CLOUD_MEDIA_GC_DELETE` 才能执行定时和手动清理。用户 PSD 仅保存在本机，不上传云端；平台商品库与委托图片只按 [.env.example](.env.example) 配置 `R2_ASSETS_*`、`R2_PRIVATE_*`，管理后台不提供配置入口或写接口；详见[存储配置](docs/architecture/storage-common.md#服务端配置)。
+
+测试环境的系统桶可使用 `podhub-test-supplier` 和 `podhub-test-delegate`；前者须明确填写自己的 `PUBLIC_BASE_URL=https://pub-<32位小写十六进制>.r2.dev`，私有桶留空。切片测试桶在用户设置中填写。填写配置不会自动开放 Cloudflare 公共访问权限；浏览器直传还需按[存储配置](docs/architecture/storage-common.md#服务端配置)设置各桶的 CORS。
+
+## 目录与契约
+
+| 路径 | 职责 |
+| --- | --- |
+| `web/src` | 真实 React 页面、组件、API 接线与浏览器 WASM 适配；界面规范见 [web/README.md](web/README.md) |
+| `cmd`、`internal/app` | API、五个 worker、writer-lease、admin-init 的进程入口与唯一装配层 |
+| `internal/<域>`、`internal/platform` | 业务分层与基础设施；边界由 `tests/archtest` 约束 |
+| `internal/seller/contract`、`internal/seller/ozon` | 消费方出口契约与 Ozon 实现；其他平台按真实接入需要扩展，不复制租户、计费和队列 |
+| `api/openapi.yaml`、`api/codegen` | HTTP 契约与 Go 生成配置；前端类型和路径表也由此生成 |
+| `db/migrations`、`db/queries` | 三个压缩基线文件（角色、schema、种子）加追加式 goose 迁移与 sqlc 查询；已提交迁移由 sha256 守卫保护 |
+| `rust/crates` | 单一 Rust workspace，负责上架规则、标签匹配与 PSD 渲染 |
+| `wasm/dist` | 入库的服务端、浏览器和测试 WASM，以及 `SOURCES.sha256` 清单 |
+| `tests`、`web/tests`、`fixtures` | 分层、集成、对拍与前端验收；HTML 夹具不代替产品界面 |
+
+HTTP 路由、状态码和响应形状以当前 Go 实现及 [OpenAPI](api/openapi.yaml) 的一致性检查为准：`TestRouteTableMatchesGolden`、`TestRoutePathsCoveredByOpenAPI` 和前端 `routes.test.ts` / `mounted.test.ts`。不要在文档中另存易漂移的路由总数；未实现或未挂载接口不代表可用能力。
+
+服务端通过 wazero 加载 `wasm/dist/server/`；浏览器直接加载 `wasm/dist/browser/`。两侧共用 Rust 内核源码，各自使用对应 ABI/feature 的产物。Go 不提供页面或静态资源，生产前端需另行同源分发。完整目录、依赖层级与构建边界见 [项目树](docs/architecture-tree.md)。
+
+## WASM 交付
+
+修改 Rust 源码、lockfile 或构建输入后，在仓库根执行 `make wasm`，连同源码提交全部产物与清单。`make wasm-check` 只校验，不补构建；`scripts/build-wasm.sh core|render` 只重建一部分，之后运行 `scripts/check-wasm-dist.sh --update`。固定工具链见 `rust/rust-toolchain.toml` 与 `scripts/build-wasm.sh`。
+
+Go/Web/Docker 构建不重新编译 WASM。CI 的 Go/Web job 消费已提交产物，另有独立 Rust job 执行原生渲染与调度测试；检查项目以 [.github/workflows/ci.yml](.github/workflows/ci.yml) 为准。
 
 ## 文档
 
-- 行为约束：[docs/architecture.md](docs/architecture.md)
-- 目录与依赖规则：[docs/architecture-tree.md](docs/architecture-tree.md)
-- 未决与已决事项：[docs/decisions.md](docs/decisions.md)
-- 订阅与账期方案：[docs/architecture/subscription-billing.md](docs/architecture/subscription-billing.md)
-- 账号与权限模型：[docs/architecture/account-permission-model.md](docs/architecture/account-permission-model.md)
-- 各域对拍：[docs/parity](docs/parity/)，回归清单在 [docs/parity/regression-checklist.md](docs/parity/regression-checklist.md)
+| 要查什么 | 入口与适用范围 |
+| --- | --- |
+| 开发约束 | [AGENTS.md](AGENTS.md)、[架构约束](docs/architecture.md) |
+| 目录与依赖 | [项目树](docs/architecture-tree.md)；构建命令以 Makefile 和 package.json 为准 |
+| 决策与待办 | [决策登记](docs/decisions.md)；方案不等于实现或验收通过 |
+| 精铺能力准入 | [技术验证清单](docs/precision-listing-verification.md)；区分本地构件、外部回读和未验证能力 |
+| 前端验收 | 记录保存在本地 `design-qa.md`，不随源码提交；视觉或模拟 HTTP 通过不代表外部业务通过 |
+| 领域方案 | [订阅账期](docs/architecture/subscription-billing.md)、[账号权限](docs/architecture/account-permission-model.md)、[存储](docs/architecture/storage-common.md) |
+| 历史迁移与对拍 | [parity](docs/parity/)、[回归清单](docs/parity/regression-checklist.md)、[API 简化记录](docs/api-simplification-report.md)；按文中日期和范围解释历史结果 |
+| 版本记录 | [CHANGELOG.md](CHANGELOG.md)；版本记录不代表当前 Go 能力或部署验收 |
+
+## 许可证
+
+podhub-go 是专有软件，版权持有人 xxww，SPDX 标识 `LicenseRef-Proprietary`。全文见 [LICENSE](LICENSE)，第三方说明见 [NOTICE](NOTICE)，Go 依赖的许可证清单见 [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md)。
+
+AI 计费公式、三种协议客户端和用量归一化都是本仓库原创实现，参考公开接口文档；不链接或不拷贝 RelayKit、new-api 或其他 AGPL 项目。

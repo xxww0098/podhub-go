@@ -4,7 +4,7 @@ Standalone crate (excluded from the workspace). Requires nightly + `cargo-fuzz`.
 
 ```bash
 cargo install cargo-fuzz
-cd psdx
+cd rust/crates/psd-x  # from the repository root
 cargo +nightly fuzz run read_psd
 cargo +nightly fuzz run read_abr
 cargo +nightly fuzz run read_csh

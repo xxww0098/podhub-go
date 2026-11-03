@@ -10,20 +10,22 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
-	queue "github.com/xxww0098/podhub-go/internal/platform/jobsched"
+	queue "github.com/xxww0098/podhub-go/internal/queue/contract"
+	sellercontract "github.com/xxww0098/podhub-go/internal/seller/contract"
 )
 
 // Attempt is one queued intent the worker or the HTTP handler is sending.
 type Attempt struct {
-	OrgID       int64
-	IntentID    string
-	RowID       string
-	RowRevision int64
-	StorePK     int64
-	OfferID     string
-	RequestHash string
-	Body        []byte
-	Lease       queue.Lease
+	OrgID              int64
+	IntentID           string
+	RowID              string
+	RowRevision        int64
+	StorePK            int64
+	PhysicalAccountKey string
+	OfferID            string
+	RequestHash        string
+	Body               []byte
+	Lease              queue.Lease
 	// CrashAfterSend leaves the intent submitting and the write dispatching.
 	CrashAfterSend bool
 }
@@ -31,21 +33,36 @@ type Attempt struct {
 // RunAttempt applies Classify and writes the rows. A kill switch or a
 // connect refusal does not insert seller_upstream_writes. A crash returns
 // after the request and before the settle transaction.
-func RunAttempt(ctx context.Context, pool *pgxpool.Pool, tr Transport, in Attempt) (Outcome, error) {
+func (svc Service) RunAttempt(ctx context.Context, pool *pgxpool.Pool, tr Transport, in Attempt) (Outcome, error) {
 	if tr == nil || tr.WritesDisabled() {
 		out := Classify(Reply{WritesDisabled: true})
-		return out, settleIntent(ctx, pool, in, out)
+		return out, svc.settleIntent(ctx, pool, in, out)
+	}
+	current, err := sliceImportsCurrent(ctx, pool, in.OrgID, in.Body)
+	if err != nil {
+		return Outcome{}, err
+	}
+	if !current {
+		out := sliceExpiredOutcome()
+		return out, svc.settleIntent(ctx, pool, in, out)
 	}
 	if err := tr.Ready(ctx); errors.Is(err, ErrNotSent) {
 		out := Classify(Reply{Connect: true})
-		return out, settleIntent(ctx, pool, in, out)
+		return out, svc.settleIntent(ctx, pool, in, out)
 	} else if err != nil {
 		return Outcome{}, err
 	}
-	if err := beginSending(ctx, pool, in); err != nil {
+	if account, ok := tr.(sellercontract.PhysicalAccountTransport); ok {
+		in.PhysicalAccountKey = account.PhysicalAccountKey()
+	}
+	if err := svc.beginSending(ctx, pool, in); err != nil {
 		return Outcome{}, err
 	}
 	status, resp, err := tr.Write(ctx, "/v3/product/import", in.Body)
+	if errors.Is(err, ErrNotSent) && status == 0 {
+		out := WriteNotSent()
+		return out, svc.settleIntent(ctx, pool, in, out)
+	}
 	reply := Reply{
 		Sent: true, Status: status, Body: resp,
 		TaskID: taskID(resp), ProviderCode: providerCode(resp),
@@ -67,7 +84,7 @@ func RunAttempt(ctx context.Context, pool *pgxpool.Pool, tr Transport, in Attemp
 		}
 	}
 	out := Classify(reply)
-	if err := settleIntent(ctx, pool, in, out); err != nil {
+	if err := svc.settleIntent(ctx, pool, in, out); err != nil {
 		if reply.TaskID > 0 {
 			return out, queue.ErrReceiptHeld
 		}
@@ -85,9 +102,9 @@ func Crashed(err error) bool { return errors.Is(err, errCrashed) }
 
 // Recover parks a submitting intent that has no task id and moves a
 // dispatching write to result_unknown. It does not send.
-func Recover(ctx context.Context, pool *pgxpool.Pool, in Attempt) (Outcome, error) {
+func (svc Service) Recover(ctx context.Context, pool *pgxpool.Pool, in Attempt) (Outcome, error) {
 	out := RecoverSubmitting()
-	return out, settleIntent(ctx, pool, in, out)
+	return out, svc.settleIntent(ctx, pool, in, out)
 }
 
 func providerCode(body string) int64 {
@@ -116,41 +133,46 @@ func taskID(body string) int64 {
 	return parsed.TaskID
 }
 
-func beginSending(ctx context.Context, pool *pgxpool.Pool, in Attempt) error {
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-	if err := tenant.EnterApp(ctx, tx, in.OrgID); err != nil {
-		return err
+func (svc Service) beginSending(ctx context.Context, pool *pgxpool.Pool, in Attempt) error {
+	return svc.mutateSettlement(ctx, pool, in.Lease, func(ctx context.Context, tx pgx.Tx) error {
+		if err := tenant.EnterApp(ctx, tx, in.OrgID); err != nil {
+			return err
+		}
+		if err := requireDispatchPolicy(ctx, tx, in.OrgID, in.StorePK, 1); err != nil {
+			return err
+		}
+		return beginSendingTx(ctx, tx, in)
+	})
+}
+
+func beginSendingTx(ctx context.Context, tx pgx.Tx, in Attempt) error {
+	physical := in.PhysicalAccountKey
+	if physical == "" {
+		physical = "loopback"
 	}
 	if err := moveIntent(ctx, tx, in, Outcome{Edge: Begin, IntentState: Submitting}); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO public.seller_upstream_writes (
-			org_id, store_id, idempotency_key, request_hash, state, kind
-		) VALUES ($1, $2, $3, $4, 'dispatching', 'import')`,
+  INSERT INTO public.seller_upstream_writes (
+   org_id, store_id, idempotency_key, request_hash, state, kind
+  ) VALUES ($1, $2, $3, $4, 'dispatching', 'import')`,
 		in.OrgID, in.StorePK, in.IntentID, in.RequestHash); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO public.seller_resource_occupancies (
-			org_id, store_pk, physical_account_key, resource_kind, resource_key,
-			owner_kind, owner_ref, spec_digest, state
-		) VALUES ($1, $2, 'loopback', 'offer', $3, 'store_write', $4, $5, 'held')`,
-		in.OrgID, in.StorePK, in.OfferID, in.IntentID, digest(in.RequestHash)); err != nil {
+  INSERT INTO public.seller_resource_occupancies (
+   org_id, store_pk, physical_account_key, resource_kind, resource_key,
+   owner_kind, owner_ref, spec_digest, state
+  ) VALUES ($1, $2, $6, 'offer', $3, 'store_write', $4, $5, 'held')`,
+		in.OrgID, in.StorePK, in.OfferID, in.IntentID, digest(in.RequestHash), physical); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE public.listing_rows
-		   SET submission_state = 'submitting', updated_at = clock_timestamp()
-		 WHERE org_id = $1 AND id = $2::uuid AND revision = $3`,
-		in.OrgID, in.RowID, in.RowRevision); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
+	_, err := tx.Exec(ctx, `
+  UPDATE public.listing_rows
+  SET submission_state='submitting', updated_at=clock_timestamp()
+  WHERE org_id=$1 AND id=$2::uuid AND revision=$3`, in.OrgID, in.RowID, in.RowRevision)
+	return err
 }
 
 func digest(hash string) string {
@@ -163,8 +185,8 @@ func digest(hash string) string {
 	return hash
 }
 
-func settleIntent(ctx context.Context, pool *pgxpool.Pool, in Attempt, out Outcome) error {
-	return mutateSettlement(ctx, pool, in.Lease, func(ctx context.Context, tx pgx.Tx) error {
+func (svc Service) settleIntent(ctx context.Context, pool *pgxpool.Pool, in Attempt, out Outcome) error {
+	return svc.mutateSettlement(ctx, pool, in.Lease, func(ctx context.Context, tx pgx.Tx) error {
 		if err := settleIntentRows(ctx, tx, in, out); err != nil {
 			return err
 		}
@@ -223,9 +245,12 @@ func finishSubmitJob(ctx context.Context, tx pgx.Tx, lease queue.Lease, state, r
 	return err
 }
 
-func mutateSettlement(ctx context.Context, pool *pgxpool.Pool, lease queue.Lease, fn func(context.Context, pgx.Tx) error) error {
+func (svc Service) mutateSettlement(ctx context.Context, pool *pgxpool.Pool, lease queue.Lease, fn func(context.Context, pgx.Tx) error) error {
 	if lease.Owner != "" {
-		ok, err := queue.MutateRunning(ctx, pool, lease, fn)
+		if svc.Queue.MutateRunning == nil {
+			return errors.New("queue settlement is unavailable")
+		}
+		ok, err := svc.Queue.MutateRunning(ctx, pool, lease, fn)
 		if err != nil {
 			return err
 		}
@@ -260,18 +285,23 @@ func moveIntent(ctx context.Context, tx pgx.Tx, in Attempt, out Outcome) error {
 			task = &text
 		}
 	}
+	firstWait := ImportUnknownFirstWait
+	if out.IntentState == Accepted {
+		firstWait = ImportReconcileFirstWait
+	}
 	tag, err := tx.Exec(ctx, `
 		UPDATE public.submission_intents
 		   SET state = $4,
 		       last_error_code = NULLIF($5, ''),
 		       external_task_id = $6,
 		       reconcile_after = CASE
-		           WHEN $4 = 'unknown' THEN clock_timestamp() + interval '30 seconds'
+		           WHEN $4 = 'unknown' OR ($4 = 'accepted' AND $6::text IS NOT NULL)
+		           THEN clock_timestamp() + ($7::bigint * interval '1 second')
 		           ELSE NULL
 		       END,
 		       updated_at = clock_timestamp()
 		 WHERE org_id = $1 AND id = $2::uuid AND state = ANY($3::text[])`,
-		in.OrgID, in.IntentID, from, out.IntentState, out.IntentError, task)
+		in.OrgID, in.IntentID, from, out.IntentState, out.IntentError, task, firstWait)
 	if err != nil {
 		return err
 	}
@@ -282,6 +312,16 @@ func moveIntent(ctx context.Context, tx pgx.Tx, in Attempt, out Outcome) error {
 }
 
 func moveWrite(ctx context.Context, tx pgx.Tx, in Attempt, out Outcome) error {
+	if out.WriteState == "reconciled" && out.ReleaseReason == "not_dispatched" {
+		tag, err := tx.Exec(ctx, `UPDATE public.seller_upstream_writes SET state='reconciled',response_status=NULL,response_body=NULL,reconcile_after=NULL,error_code='not_dispatched',last_observation='{"outcome":"not_dispatched","requests":0}'::jsonb,updated_at=clock_timestamp() WHERE org_id=$1 AND idempotency_key=$2 AND state='dispatching'`, in.OrgID, in.IntentID)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() != 1 {
+			return ErrIllegalEdge
+		}
+		return nil
+	}
 	if out.WriteState == "" {
 		return nil
 	}

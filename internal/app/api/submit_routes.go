@@ -7,7 +7,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/xxww0098/podhub-go/internal/identity"
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
 	listing "github.com/xxww0098/podhub-go/internal/listing/read/http"
 	"github.com/xxww0098/podhub-go/internal/listing/submit"
@@ -28,7 +27,7 @@ func (s *Server) postBatchSubmit(w http.ResponseWriter, r *http.Request, body []
 		writeListing(w, http.StatusBadRequest, err.Error(), "bad_request")
 		return
 	}
-	data, err := submit.SendStored(r.Context(), s.Pool, p.OrgID, p.UserID, parsed, s.now())
+	data, err := s.Listing.SendStored(r.Context(), s.Pool, p.OrgID, p.UserID, parsed, s.now())
 	if writeSubmit(w, err) {
 		return
 	}
@@ -72,7 +71,7 @@ func (s *Server) postDraftSubmit(w http.ResponseWriter, r *http.Request, body []
 			return
 		}
 	}
-	data, err := submit.SendDrafts(r.Context(), s.Pool, p.OrgID, p.UserID, body, s.now())
+	data, err := s.Listing.SendDrafts(r.Context(), s.Pool, p.OrgID, p.UserID, body, s.now())
 	if writeSubmit(w, err) {
 		return
 	}
@@ -100,7 +99,7 @@ func (s *Server) draftTagGate(w http.ResponseWriter, r *http.Request, peek submi
 	if tags == nil {
 		tags = []string{}
 	}
-	verdict, err := listing.Validate(r.Context(), s.Engine, listing.Input{
+	verdict, err := s.Engine.Validate(r.Context(), listing.Input{
 		RulesVersion: peek.RulesVersion, CurrentVersion: version,
 		Tags: tags, Text: peek.Text, Rules: rules,
 	})
@@ -141,17 +140,8 @@ func (s *Server) submitActor(w http.ResponseWriter, r *http.Request) (access.Pri
 		writeListing(w, refusal.Status, refusal.Message, listingCode(refusal))
 		return access.Principal{}, false
 	}
-	if p.OrgID <= 0 || strings.TrimSpace(p.WorkspaceRole) == "" {
-		writeListing(w, http.StatusForbidden, access.MsgNoWorkspace, "forbidden")
-		return access.Principal{}, false
-	}
-	role, ok := identity.ParseWorkspaceRole(p.WorkspaceRole)
-	if !ok {
-		writeListing(w, http.StatusForbidden, access.MsgBadWorkspaceRole, "forbidden")
-		return access.Principal{}, false
-	}
-	if !role.Allows(identity.CapListingSubmit) {
-		writeListing(w, http.StatusForbidden, access.MsgListingForbidden, "forbidden")
+	if status, message, ok := access.OrgMember(p); !ok {
+		writeListing(w, status, message, "forbidden")
 		return access.Principal{}, false
 	}
 	return p, true

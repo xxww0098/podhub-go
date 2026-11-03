@@ -21,7 +21,7 @@ import (
 
 // BeginApp is the opener the process passes (tenant.BeginApp). Tenant
 // transactions go through db.InTx; a nil opener still fails closed. Grant
-// routes begin a plain transaction under the login role.
+// routes use the app role without a tenant until a grant has been authorized.
 type BeginApp func(ctx context.Context, begin func(context.Context) (pgx.Tx, error), orgID int64) (pgx.Tx, error)
 
 // errStop rolls the transaction back and reports success to the caller.
@@ -76,18 +76,14 @@ func (r Repo) withPlain(ctx context.Context, fn func(pgx.Tx) error) error {
 	if r.pool == nil {
 		return contract.Unavailable()
 	}
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return mapDB(err)
+	// Grant management runs before a tenant is selected. Staff is required to
+	// read organization_members (now RLS-scoped); every statement below still
+	// filters by the authenticated user or the grant's own org.
+	err := db.InTx(ctx, r.pool, db.Staff(), fn)
+	if errors.Is(err, errStop) {
+		return nil
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	if err := fn(tx); err != nil {
-		if errors.Is(err, errStop) {
-			return nil
-		}
-		return mapDB(err)
-	}
-	return mapDB(tx.Commit(ctx))
+	return mapDB(err)
 }
 
 func (r Repo) ListAssetSets(ctx context.Context, orgID, userID int64) ([]domain.AssetSet, error) {
@@ -268,10 +264,17 @@ func (r Repo) missing(ctx context.Context, tx pgx.Tx, orgID int64, id string) (d
 	return domain.WriteResult{}, nil
 }
 
-func (r Repo) ListGrants(ctx context.Context, userID, orgID int64) ([]domain.GrantView, error) {
+func (r Repo) ListGrants(ctx context.Context, userID, orgID int64, scope string) ([]domain.GrantView, error) {
 	var out []domain.GrantView
+	var org any = orgID
+	if scope == domain.ScopeCatalog {
+		org = nil
+	}
 	err := r.withPlain(ctx, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, sqlListGrants, userID, domain.ScopeWorkspace, orgID)
+		if err := lockUser(ctx, tx, userID); err != nil {
+			return err
+		}
+		rows, err := tx.Query(ctx, sqlListGrants, userID, scope, org)
 		if err != nil {
 			return err
 		}
@@ -288,42 +291,56 @@ func (r Repo) ListGrants(ctx context.Context, userID, orgID int64) ([]domain.Gra
 	return out, err
 }
 
-func (r Repo) CreateGrant(ctx context.Context, userID, orgID int64, name, tokenHash, tokenPrefix string, actions []string, expiresDays *int64) (domain.GrantView, error) {
+func (r Repo) CreateGrant(ctx context.Context, userID, orgID int64, name, tokenHash, tokenPrefix, scope string, actions []string, expiresDays *int64) (domain.GrantView, error) {
 	var view domain.GrantView
+	var org any = orgID
+	if scope == domain.ScopeCatalog {
+		org = nil
+	}
 	err := r.withPlain(ctx, func(tx pgx.Tx) error {
 		if err := lockUser(ctx, tx, userID); err != nil {
 			return err
 		}
-		if _, err := liveRole(ctx, tx, userID, orgID); err != nil {
-			return err
-		}
-		if err := lockUserRole(ctx, tx, userID); err != nil {
-			return err
-		}
-		role, err := liveRole(ctx, tx, userID, orgID)
-		if err != nil {
-			return err
-		}
-		for _, action := range actions {
-			if !domain.LiveAllows(role, action) {
-				return contract.ErrAuthority
+		if scope == domain.ScopeWorkspace {
+			if _, err := liveRole(ctx, tx, userID, orgID); err != nil {
+				return err
+			}
+			if err := lockUserRole(ctx, tx, userID); err != nil {
+				return err
+			}
+			role, err := liveRole(ctx, tx, userID, orgID)
+			if err != nil {
+				return err
+			}
+			for _, action := range actions {
+				if !domain.LiveAllows(role, action) {
+					return contract.ErrAuthority
+				}
 			}
 		}
 		var exp any
 		if expiresDays != nil {
 			exp = *expiresDays
 		}
-		view, err = scanGrant(tx.QueryRow(ctx, sqlInsertGrant, userID, orgID, domain.ScopeWorkspace, nil, name, tokenHash, tokenPrefix, actions, exp))
+		var err error
+		view, err = scanGrant(tx.QueryRow(ctx, sqlInsertGrant, userID, org, scope, nil, name, tokenHash, tokenPrefix, actions, exp))
 		return err
 	})
 	return view, err
 }
 
-func (r Repo) RevokeGrant(ctx context.Context, userID, orgID int64, id string) (string, error) {
+func (r Repo) RevokeGrant(ctx context.Context, userID, orgID int64, id, scope string) (string, error) {
 	var revoked string
+	var expectedOrg any = orgID
+	if scope == domain.ScopeCatalog {
+		expectedOrg = nil
+	}
 	err := r.withPlain(ctx, func(tx pgx.Tx) error {
+		if err := lockUser(ctx, tx, userID); err != nil {
+			return err
+		}
 		var org *int64
-		err := tx.QueryRow(ctx, sqlLockGrant, id, userID, domain.ScopeWorkspace, orgID).Scan(&revoked, &org)
+		err := tx.QueryRow(ctx, sqlLockGrant, id, userID, scope, expectedOrg).Scan(&revoked, &org)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return contract.ErrMissing
 		}
@@ -350,7 +367,7 @@ func (r Repo) RevokeGrant(ctx context.Context, userID, orgID int64, id string) (
 		if _, err := tx.Exec(ctx, `DELETE FROM automation_executions WHERE grant_id=$1::uuid`, revoked); err != nil {
 			return err
 		}
-		tag, err := tx.Exec(ctx, sqlDeleteGrant, revoked, userID, domain.ScopeWorkspace, orgID)
+		tag, err := tx.Exec(ctx, sqlDeleteGrant, revoked, userID, scope, expectedOrg)
 		if err != nil {
 			return err
 		}

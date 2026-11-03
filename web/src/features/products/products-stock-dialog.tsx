@@ -33,7 +33,7 @@ import { clearLive, notifyCommandError, notifyError, notifyInfo } from "@/lib/no
 
 import type { StoreProductRow } from "./products-api"
 import { dispatchChunks, reportOutcome, useOperationIds } from "./products-dispatch"
-import { STOCK_MUTATION_LIMIT, chunkRows, parseStockInput } from "./products-mutation"
+import { STOCK_MUTATION_LIMIT, chunkRows, parseStockInput, stockSku } from "./products-mutation"
 
 export function ProductStockDialog({
   open,
@@ -110,7 +110,7 @@ export function ProductStockDialog({
     void opsHttp
       .productsListWarehouses({
         store_id: storeId,
-        skus: rows.map((row) => row.sku ?? 0),
+        skus: rows.map((row) => stockSku(row.sku)),
       })
       .then((next) => {
         if (cancelled) return
@@ -119,7 +119,7 @@ export function ProductStockDialog({
         const nextWarehouseId = String(next.warehouses[0]?.warehouse_id ?? "")
         setWarehouseId(nextWarehouseId)
         const currentStock = rows.length === 1
-          ? currentStockPresent(next.stocks, rows[0]?.sku ?? 0, nextWarehouseId)
+          ? currentStockPresent(next.stocks, stockSku(rows[0]?.sku), nextWarehouseId)
           : undefined
         // 预填只信仓库口径的读数；镜像的 stockPresent 是跨来源合计（含
         // FBO），拿它当单仓预填会把 FBO 量灌进 FBS——查不到时按 0 起步。
@@ -152,7 +152,7 @@ export function ProductStockDialog({
           chunk.map((row) => ({
             productId: row.product_id,
             offerId: row.offer_id,
-            sku: row.sku ?? 0,
+            sku: stockSku(row.sku),
           })),
           Number(warehouseId),
           stock,
@@ -205,7 +205,7 @@ export function ProductStockDialog({
                 if (rows.length === 1) {
                   const currentStock = currentStockPresent(
                     warehouseStocks,
-                    rows[0]?.sku ?? 0,
+                    stockSku(rows[0]?.sku),
                     value,
                   )
                   setStockInput(String(currentStock ?? 0))

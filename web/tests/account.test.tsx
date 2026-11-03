@@ -73,7 +73,7 @@ test("account settings exposes clear only when an avatar exists", () => {
       }}
     />,
   )
-  assert.match(html, /清空头像/)
+  assert.match(html, /aria-label="清空头像"/)
 })
 
 test("Workspace owner with PlatformRole user never sees platform settings", () => {
@@ -117,6 +117,18 @@ test("account settings chips staff rank without a 角色 prefix", () => {
   assert.doesNotMatch(html, /角色 user/)
 })
 
+test("account settings does not repeat a staff rank used as the account name", () => {
+  const html = renderToStaticMarkup(
+    <AccountProfileSection
+      overview={{
+        ...overview,
+        session: { ...overview.session, name: "超级管理员", role: "super_admin" },
+      }}
+    />,
+  )
+  assert.equal((html.match(/超级管理员/g) ?? []).length, 1)
+})
+
 // The 额度 badge reads the wallet itself and renders nothing until that read
 // lands, so its markup is asserted in tests/header-wallet-balance.test.tsx. What
 // belongs here is the sidebar footer around it: quota facts stay off the
@@ -143,8 +155,7 @@ test("本机存储 reports the measured footprint and warns when the origin is e
       storage={{ usedBytes: 734003200, quotaBytes: 10737418240, persisted: true }}
     />,
   )
-  // The pane header names 本机存储; the card leads with the measured total.
-  assert.match(reported, /已用 700 MB/)
+  assert.match(reported, /浏览器估算已用 700 MB/)
   assert.match(reported, /配额 10 GB/)
   assert.match(reported, /已持久化/)
 
@@ -163,11 +174,11 @@ test("本机存储 reports the measured footprint and warns when the origin is e
       onClear={() => {}}
     />,
   )
-  assert.match(clearable, /清理本机缓存/)
+  assert.match(clearable, /aria-label="清理本机缓存"/)
   assert.equal(reported.includes("清理本机缓存"), false)
 })
 
-test("本机存储 dashboard breaks usage down per cache family with a quota bar", () => {
+test("本机存储 shows cache families without inferring a total from separate measurements", () => {
   const html = renderToStaticMarkup(
     <DeviceStorageCard
       storage={{ usedBytes: 734003200, quotaBytes: 10737418240, persisted: true }}
@@ -183,11 +194,13 @@ test("本机存储 dashboard breaks usage down per cache family with a quota bar
   )
   for (const label of ["PSD 模板", "源图", "切片产物", "静态切片缓存"]) {
     assert.match(html, new RegExp(label))
+    assert.match(html, new RegExp(`aria-label="清理${label}"`), "each family has a named clear action")
   }
+  assert.match(html, /aria-label="清理静态切片缓存"[^>]*disabled=""|disabled=""[^>]*aria-label="清理静态切片缓存"/, "an empty family cannot be cleared")
   assert.match(html, /256 MB/, "a family row reports its measured bytes")
   assert.match(html, /3 项/, "a family row reports its entry count")
-  assert.match(html, /其他浏览器数据/, "origin usage outside the render cache is still reported")
-  assert.match(html, /role="img"[^>]*本机存储用量/, "the segmented bar names what it measures")
+  assert.match(html, /分区依据本机缓存记录/)
+  assert.doesNotMatch(html, /其他浏览器数据/, "different measurement sources do not imply a remainder")
   // No pinned-sources provider is wired in this render, so the 源图 row must
   // not claim a pinned count it never asked for (browser-owned-listing 10).
   assert.doesNotMatch(html, /已钉住/)
@@ -231,4 +244,22 @@ test("an engine that cannot report storage says so instead of painting a zero", 
   assert.match(html, /当前浏览器不提供存储用量/)
   assert.equal(html.includes("已持久化"), false)
   assert.equal(html.includes("0 B"), false)
+})
+
+test("cache-family loading, failure and empty states stay distinct", () => {
+  const storage = { usedBytes: 1024, quotaBytes: 2048, persisted: true }
+  assert.match(renderToStaticMarkup(<DeviceStorageCard storage={storage} />), /正在读取缓存分类/)
+  assert.match(renderToStaticMarkup(<DeviceStorageCard storage={storage} families={null} />), /无法读取本机缓存分类/)
+  assert.match(renderToStaticMarkup(<DeviceStorageCard storage={storage} families={[]} />), /当前没有可显示的缓存分类/)
+
+  const withoutEstimate = renderToStaticMarkup(
+    <DeviceStorageCard
+      storage={null}
+      families={[{ family: "templates", entries: 1, bytes: 1024 }]}
+      onClearFamily={() => {}}
+    />,
+  )
+  assert.match(withoutEstimate, /当前浏览器不提供存储用量/)
+  assert.match(withoutEstimate, /1\.0 KB/)
+  assert.match(withoutEstimate, /aria-label="清理PSD 模板"/)
 })

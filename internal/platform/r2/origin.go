@@ -1,5 +1,5 @@
-// Package storage's origin client signs nothing. Callers pass a URL that
-// sigv4 already signed. This file only performs the loopback HTTP call.
+// Package r2's origin client signs nothing. Callers pass a URL that sigv4
+// already signed, together with its configured account for remote calls.
 package r2
 
 import (
@@ -54,6 +54,10 @@ func Exchange(ctx context.Context, req Request) (Response, error) {
 	if !originLoopback(parsed.Hostname()) {
 		return Response{}, &Fault{Remote: true, Detail: "refusing non-loopback media host"}
 	}
+	return exchange(ctx, req, httpx.Loopback(req.NoCompress))
+}
+
+func exchange(ctx context.Context, req Request, transport http.RoundTripper) (Response, error) {
 	if req.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, req.Timeout)
@@ -74,10 +78,13 @@ func Exchange(ctx context.Context, req Request) (Response, error) {
 	}
 	client := &http.Client{
 		CheckRedirect: httpx.UseLast,
-		Transport:     httpx.Loopback(req.NoCompress),
+		Transport:     transport,
 	}
 	resp, err := client.Do(httpReq)
 	if err != nil {
+		if call, ok := err.(*url.Error); ok {
+			err = call.Err // Presigned URLs contain credentials and must not reach logs.
+		}
 		return Response{}, &Fault{Detail: err.Error()}
 	}
 	defer resp.Body.Close()

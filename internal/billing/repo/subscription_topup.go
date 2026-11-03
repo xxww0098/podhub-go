@@ -14,7 +14,7 @@ import (
 
 // MinTopupMicrofen is one yuan. Top-ups below it are refused rather than
 // creating an order whose provider fee exceeds the amount.
-const MinTopupMicrofen int64 = 1_000_000
+const MinTopupMicrofen int64 = 100_000_000
 
 // CreateTopupOrder opens a wallet top-up. Before this, wallet_topup orders
 // existed only when an admin wrote the ledger; a free workspace had no way to
@@ -26,6 +26,10 @@ func CreateTopupOrder(
 	if amountMicrofen < MinTopupMicrofen {
 		return contract.OrderBrief{}, &domain.QuoteError{Status: 400, Code: domain.CodeValidation,
 			Message: "充值金额至少 1 元"}
+	}
+	if amountMicrofen%1_000_000 != 0 {
+		return contract.OrderBrief{}, &domain.QuoteError{Status: 400, Code: domain.CodeValidation,
+			Message: "充值金额必须精确到分"}
 	}
 	if provider == "" {
 		provider = "manual"
@@ -49,7 +53,7 @@ func CreateTopupOrder(
 			     topup_microfen, payment_deadline_at)
 			VALUES ($1, $2, 'wallet_topup', NULL, 1, $3, 'CNY', $4, 'pending', $5, $6, $6, $7, $8)
 			RETURNING id`,
-			publicID, orgID, amountMicrofen/1000, provider, userID, now,
+			publicID, orgID, amountMicrofen/1_000_000, provider, userID, now,
 			amountMicrofen, now.Add(PaymentWindow)).Scan(&id)
 	})
 	if err != nil {

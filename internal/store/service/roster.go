@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 
 	"github.com/xxww0098/podhub-go/internal/store/contract"
 	"github.com/xxww0098/podhub-go/internal/store/domain"
@@ -40,15 +41,23 @@ func (s Service) Roster(ctx context.Context, orgID, userID int64) (domain.Roster
 	return roster, actor, nil
 }
 
-// CreateStore is POST /api/workspaces/stores. Any usable member may create;
-// who the store lands on is AssigneeForCreate's decision.
+// CreateStore is POST /api/workspaces/stores.
 func (s Service) CreateStore(ctx context.Context, orgID, userID int64, in domain.CreateStoreInput) (domain.Row, domain.QuotaChanges, domain.Actor, *contract.APIError) {
 	if s.roster == nil {
 		return domain.Row{}, domain.QuotaChanges{}, domain.Actor{}, contract.Internal()
 	}
+	in.Name = strings.TrimSpace(in.Name)
+	if in.Name != "" {
+		if _, api := domain.NormalizeStoreName(in.Name); api != nil {
+			return domain.Row{}, domain.QuotaChanges{}, domain.Actor{}, api
+		}
+	}
 	actor, api := s.roster.LoadActor(ctx, userID, orgID)
 	if api != nil {
 		return domain.Row{}, domain.QuotaChanges{}, domain.Actor{}, api
+	}
+	if !actor.CanManageAll() {
+		return domain.Row{}, domain.QuotaChanges{}, domain.Actor{}, contract.Forbidden(contract.MsgManagerOnly)
 	}
 	var row domain.Row
 	var changes domain.QuotaChanges
@@ -70,7 +79,6 @@ func (s Service) CreateStore(ctx context.Context, orgID, userID int64, in domain
 				"client_id": saved.ClientID, "status": saved.Status(),
 				"manual_disabled": saved.ManualDisabled, "quota_suspended": saved.QuotaSuspended,
 				"assignee_membership_id": saved.AssigneeMembershipID,
-				"assignee_key_manage":    saved.AssigneeKeyManage,
 				"revision":               saved.Revision,
 				"reconciled":             auditReconcile(reconciled),
 			},
@@ -83,7 +91,7 @@ func (s Service) CreateStore(ctx context.Context, orgID, userID int64, in domain
 }
 
 // UpdateStore is PUT /api/workspaces/stores/{uuid}.
-func (s Service) UpdateStore(ctx context.Context, orgID, userID int64, role, uuid string, in domain.UpdateStoreInput) (domain.Row, domain.Actor, *contract.APIError) {
+func (s Service) UpdateStore(ctx context.Context, orgID, userID int64, _ string, uuid string, in domain.UpdateStoreInput) (domain.Row, domain.Actor, *contract.APIError) {
 	if s.roster == nil {
 		return domain.Row{}, domain.Actor{}, contract.Internal()
 	}
@@ -91,11 +99,8 @@ func (s Service) UpdateStore(ctx context.Context, orgID, userID int64, role, uui
 	if !ok {
 		return domain.Row{}, domain.Actor{}, contract.Validation(contract.MsgStoreUUID)
 	}
-	if in.Name == nil && !in.ClientIDSet && in.KeyManage == nil && in.TagUUIDs == nil && in.GroupUUID == nil {
+	if in.Name == nil && !in.ClientIDSet && in.TagUUIDs == nil && in.GroupUUID == nil {
 		return domain.Row{}, domain.Actor{}, contract.Validation(contract.MsgPatchEmpty)
-	}
-	if in.KeyManage != nil && !isOwnerRole(role) {
-		return domain.Row{}, domain.Actor{}, contract.Forbidden(contract.MsgGrantOwnerOnly)
 	}
 	actor, api := s.roster.LoadActor(ctx, userID, orgID)
 	if api != nil {
@@ -350,7 +355,7 @@ func (s Service) refreshSnapshots(ctx context.Context, orgID, userID int64, whic
 		if !snapshotStale(which, row, nowMS) {
 			continue
 		}
-		opened, api := s.credential.OpenCurrentCredential(ctx, orgID, row.UUID)
+		opened, api := s.credential.OpenCurrentCredential(ctx, orgID, actor, row.UUID)
 		if api != nil {
 			// An unopenable key is not this loop's failure to report: the
 			// roster already says whether a key exists.
@@ -445,5 +450,3 @@ func nullableGroupChange(change *domain.GroupNameChange) any {
 }
 
 func canManageRole(role string) bool { return domain.Actor{Role: role}.CanManageAll() }
-
-func isOwnerRole(role string) bool { return domain.Actor{Role: role}.IsOwner() }

@@ -15,7 +15,7 @@ function schema(): CategorySchemaView {
 }
 // Session tests isolate identity/CAS; conversion coverage owns its richer schema.
 function savedConfig(over: Partial<SupplierOzonConfigData> = {}): SupplierOzonConfigData {
-  return { product_id: "p1", description_category_id: 11, type_id: 101, language: "zh_hans", values: {}, fixed_tags: [], prompt_text: "", ai_output: { title: true, description: true, tags: true }, revision: 4, state: "valid", issues: [], usable: false, updated_at_ms: 0, ...over }
+  return { complex_values: [], product_id: "p1", description_category_id: 11, type_id: 101, language: "zh_hans", values: {}, fixed_tags: [], prompt_text: "", ai_output: { title: true, description: true, tags: true }, revision: 4, state: "valid", issues: [], usable: false, updated_at_ms: 0, ...over }
 }
 
 // ---------- 会话：基线与身份随行 ----------

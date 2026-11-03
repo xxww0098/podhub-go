@@ -7,12 +7,9 @@
  * this module is the one that may call the prepare/submit executors, `media-objects`,
  * `product-edit` and `row-state`.
  */
-import type { PreparationRequest } from "./prepare/ocr-model-routing"
 import {
   fileBytes,
-  pickDirectory,
   pickFiles,
-  PROMPT_ACCEPT,
   stageFile,
   stagedFile,
   VIDEO_ACCEPT,
@@ -50,8 +47,6 @@ import type {
   WorkflowPickVideoRequest,
   WorkflowProductSaveResult,
   WorkflowProductStatusView,
-  WorkflowPromptDirEntry,
-  WorkflowPromptDirScan,
   WorkflowRowsActionRequest,
   WorkflowUploadVideoRequest,
   WorkflowVideoMetadata,
@@ -59,7 +54,7 @@ import type {
 } from "@/bindings/commands"
 import { requestStop, type AutomationExecutionScope } from "./prepare/execution-context"
 import { runRows } from "./prepare/run-rows"
-import { sendRows } from "./submit/send-rows"
+import { sendRows, type AutomationTarget } from "./submit/send-rows"
 import { deliverMediaObject } from "./media/media-objects"
 import { isProductEditConflict, mergeProductEdit, type ProductEditFields } from "./model/product-edit"
 import { draftValidationState, rowStatusView } from "./model/row-state"
@@ -246,12 +241,13 @@ export const workflowActions = {
       })),
     }
   },
-  workflowRecognize: (request: PreparationRequest, onRow: (row: WorkflowOperationRowResult) => void) => runRows(request, "recognize", onRow),
+  workflowRecognize: (request: WorkflowRowsActionRequest, onRow: (row: WorkflowOperationRowResult) => void) => runRows(request, "recognize", onRow),
   workflowSlice: (request: WorkflowRowsActionRequest, onRow: (row: WorkflowOperationRowResult) => void) => runRows(request, "slice", onRow),
   workflowUpload: (request: WorkflowRowsActionRequest, onRow: (row: WorkflowOperationRowResult) => void) => runRows(request, "upload", onRow),
   workflowSend: (request: WorkflowRowsActionRequest, shouldStop?: (rowId: string) => boolean,
-    diagnostics?: import("./model/publish-diagnostic").PublishDiagnosticDispatch) => sendRows(request, shouldStop, { diagnostics }),
-  workflowPrepare: (request: PreparationRequest, onRow: (row: WorkflowOperationRowResult) => void, scope?: AutomationExecutionScope) => runRows(request, "prepare", onRow, scope),
+    diagnostics?: import("./model/publish-diagnostic").PublishDiagnosticDispatch, expectedTargets?: ReadonlyMap<string, AutomationTarget>) =>
+    sendRows(request, shouldStop, { diagnostics, expectedTargets }),
+  workflowPrepare: (request: WorkflowRowsActionRequest, onRow: (row: WorkflowOperationRowResult) => void, scope?: AutomationExecutionScope) => runRows(request, "prepare", onRow, scope),
   listingCardAttachVideo: async (request: WorkflowAttachVideoRequest) => {
     const card = await patchListingCard(request.draft_id, (payload) =>
       cardWithVideo(payload, request.metadata),
@@ -390,49 +386,6 @@ export const workflowActions = {
   workflowPickSourceAssets,
   workflowImportSourceAssets,
   workflowImportSourceAssetsStop,
-  workflowImportPromptPath: async (_path?: string) => {
-    const [file] = await pickFiles(PROMPT_ACCEPT)
-    if (!file) throw refuse("workflow_prompt_cancelled", "未选择提示词文件")
-    return { file_name: file.name, content: await file.text() }
-  },
-  /**
-   * The admin prompt importer's directory walk. `<input webkitdirectory>`
-   * hands back every file with its `webkitRelativePath`, so the l1/l2/type
-   * names come straight off the path the operator picked. Only the brief body
-   * is read: `.fixed-tags.txt` sidecars are eval inputs (ADR-0103),
-   * so they are ignored rather than reported as skipped.
-   */
-  workflowScanPromptDir: async (): Promise<WorkflowPromptDirScan> => {
-    const files = await pickDirectory()
-    const entries: WorkflowPromptDirEntry[] = []
-    const skipped: string[] = []
-    let root = ""
-    for (const file of files) {
-      const path = file.webkitRelativePath || file.name
-      const [pickedRoot, l1_name, l2_name, type_name, ...rest] = path.split("/")
-      root ||= pickedRoot ?? ""
-      const file_name = rest.length === 1 ? rest[0]! : ""
-      if (file_name.toLowerCase().endsWith(".fixed-tags.txt")) {
-        continue
-      }
-      const isPrompt = PROMPT_ACCEPT.split(",").some((ext) =>
-        file_name.toLowerCase().endsWith(ext),
-      )
-      if (!l1_name || !l2_name || !type_name || !isPrompt) {
-        skipped.push(path)
-        continue
-      }
-      entries.push({
-        l1_name,
-        l2_name,
-        type_name,
-        name: file_name.replace(/\.[^.]+$/, ""),
-        file_name,
-        content: await file.text(),
-      })
-    }
-    return { root, entries, skipped }
-  },
   videoPoolUploadVideo: async (request: VideoPoolUploadRequest) => {
     const file = stagedFile(request.asset_handle)
     if (!file) throw refuse("workflow_video_handle_missing", "视频文件已失效，请重新选择")

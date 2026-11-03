@@ -6,7 +6,7 @@ import { invalidateAccountOverview, rememberAccountOverview } from "@/features/a
 import { createErrorFeedback, reportFeedback } from "@/lib/error-feedback"
 import { setErrorTelemetryContext } from "@/lib/error-telemetry"
 import type { FrozenItem } from "../platforms/core"
-import type { OzonBody } from "../platforms/ozon"
+import type { OzonBody } from "../platforms/ozon/adapter"
 import { sendRefusalNotice } from "./send-report-context"
 import { readSendHttpExchange, submitOzonChunk, type OzonSendContext } from "./send-ozon-transport"
 
@@ -25,9 +25,8 @@ test("a ready row blocked on media records the submit exchange and a secret-free
   const original = globalThis.fetch
   const receipts: string[] = []
   rememberAccountOverview({
-    session: { authenticated: true, email: "person@example.invalid" },
+    session: { authenticated: true, uuid: userId, email: "person@example.invalid" },
     owned_count: 0, owned_limit: 0,
-    accounts: [{ active: true, email: "person@example.invalid", name: "Person", uuid: userId }],
     active_workspace: { id: 1, uuid: workspaceId, is_owned: true, name: "Workspace", plan: "pro", role: "owner" },
   } as AccountOverview)
   globalThis.fetch = (async (input, init) => {

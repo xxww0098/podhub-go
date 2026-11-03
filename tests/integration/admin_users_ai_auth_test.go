@@ -3,7 +3,6 @@ package integration
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/base32"
 	"encoding/hex"
 	"encoding/json"
 	"io"
@@ -14,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xxww0098/podhub-go/internal/admin/domain"
 	"github.com/xxww0098/podhub-go/internal/app"
 )
 
@@ -24,7 +22,6 @@ func TestAdminUsersAIAuth(t *testing.T) {
 	pool := migratedPool(t, ctx)
 	seedMatchingLease(t, ctx, pool, "auth", "admin users test")
 	seedMatchingLease(t, ctx, pool, "admin", "admin users test")
-	t.Setenv("CLOUD_ADMIN_TOTP_KEY", "admin-b-totp-key-at-least-32-characters")
 	t.Setenv("CLOUD_INTEGRATION_CONFIG_KEY", "admin-b-integration-key-32-characters")
 	t.Setenv("CLOUD_AI_EGRESS_ALLOW_LOOPBACK", "1")
 
@@ -52,41 +49,6 @@ func TestAdminUsersAIAuth(t *testing.T) {
 	aiAnon := usersDo(handler, http.MethodGet, "/api/admin/ai-requests", "", "")
 	if aiAnon.Code != http.StatusUnauthorized || !strings.Contains(aiAnon.Body.String(), `"code":"AUTH_REQUIRED"`) {
 		t.Fatalf("anon ai %d %s", aiAnon.Code, aiAnon.Body.String())
-	}
-
-	enroll := usersDo(handler, http.MethodPost, "/api/admin/totp/enroll", "", token)
-	if enroll.Code != http.StatusOK || enroll.Header().Get("X-Content-Type-Options") != "nosniff" {
-		t.Fatalf("enroll %d %s", enroll.Code, enroll.Body.String())
-	}
-	enrollData := jsonData(t, enroll.Body.Bytes())
-	secretRaw, _ := enrollData["secretBase32"].(string)
-	secret, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(secretRaw)
-	if err != nil || len(secret) != 20 {
-		t.Fatalf("secret %q %v", secretRaw, err)
-	}
-	codes, _ := enrollData["recoveryCodes"].([]any)
-	if len(codes) != 8 {
-		t.Fatalf("codes %#v", enrollData["recoveryCodes"])
-	}
-	if !strings.Contains(enrollData["otpauthUrl"].(string), "otpauth://totp/") {
-		t.Fatal(enrollData["otpauthUrl"])
-	}
-	code := domain.Hotp(secret, uint64(time.Now().Unix()/30))
-	empty := usersDo(handler, http.MethodPost, "/api/admin/totp/confirm", `{"code":"   "}`, token)
-	if empty.Code != http.StatusUnauthorized || !strings.Contains(empty.Body.String(), `"code":"TOTP_REQUIRED"`) {
-		t.Fatalf("empty code %d %s", empty.Code, empty.Body.String())
-	}
-	bad := usersDo(handler, http.MethodPost, "/api/admin/totp/confirm", `{"code":"000000"}`, token)
-	if bad.Code != http.StatusUnauthorized || !strings.Contains(bad.Body.String(), "验证器验证码错误") {
-		t.Fatalf("bad code %d %s", bad.Code, bad.Body.String())
-	}
-	confirm := usersDo(handler, http.MethodPost, "/api/admin/totp/confirm", `{"code":"`+code+`"}`, token)
-	if confirm.Code != http.StatusOK || !strings.Contains(confirm.Body.String(), `"ok":true`) {
-		t.Fatalf("confirm %d %s", confirm.Code, confirm.Body.String())
-	}
-	again := usersDo(handler, http.MethodPost, "/api/admin/totp/confirm", `{"code":"`+code+`"}`, token)
-	if again.Code != http.StatusConflict || !strings.Contains(again.Body.String(), `"code":"VALIDATION"`) || !strings.Contains(again.Body.String(), "验证器已绑定") {
-		t.Fatalf("reconfirm %d %s", again.Code, again.Body.String())
 	}
 
 	listed := usersDo(handler, http.MethodGet, "/api/admin/users", "", token)
@@ -186,27 +148,88 @@ func TestAdminUsersAIAuth(t *testing.T) {
 		t.Fatalf("revoked session %d %s", gone.Code, gone.Body.String())
 	}
 
-	seats := usersDo(handler, http.MethodPost, "/api/admin/users/"+userUUID+"/seats", `{"seats":2}`, token)
+	var firstJoiner, secondJoiner int64
+	for i, target := range []*int64{&firstJoiner, &secondJoiner} {
+		var joinerUser int64
+		if err := pool.QueryRow(ctx, `
+			INSERT INTO account_users (public_id, email, password_hash, role, name, target, supplier_id, plan, created_at, updated_at)
+			VALUES ($1::text, $1::text || '@example.invalid', 'x', 'user', 'joiner', '/workspace', '', 'lite', clock_timestamp(), clock_timestamp())
+			RETURNING id`, "seat-joiner-"+strconv.Itoa(i)).Scan(&joinerUser); err != nil {
+			t.Fatal(err)
+		}
+		*target = seedCompanyMember(t, ctx, pool, orgID, joinerUser, "member", i+2)
+	}
+	memberState := func(membership int64) (suspended bool) {
+		t.Helper()
+		if err := pool.QueryRow(ctx, `SELECT quota_suspended FROM organization_members WHERE id = $1`, membership).Scan(&suspended); err != nil {
+			t.Fatal(err)
+		}
+		return suspended
+	}
+	overrideState := func() (override *int64, revision int64) {
+		t.Helper()
+		if err := pool.QueryRow(ctx, `SELECT member_seat_limit_override, quota_revision FROM organizations WHERE id = $1`, orgID).Scan(&override, &revision); err != nil {
+			t.Fatal(err)
+		}
+		return override, revision
+	}
+	var ownerSuspended bool
+	_, revision := overrideState()
+
+	for _, bad := range []string{`{"seats":0}`, `{"seats":11}`, `{"seats":"3"}`, `{}`, `{"seats":2,"store_limit":9}`} {
+		rejected := usersDo(handler, http.MethodPost, "/api/admin/users/"+userUUID+"/seats", bad, token)
+		if rejected.Code != http.StatusBadRequest {
+			t.Fatalf("seats %s -> %d %s", bad, rejected.Code, rejected.Body.String())
+		}
+	}
+	if override, got := overrideState(); override != nil || got != revision {
+		t.Fatalf("rejected seats changed the workspace: override=%v revision=%d", override, got)
+	}
+
+	// Cap 1: the owner stays, every joiner is suspended.
+	seats := usersDo(handler, http.MethodPost, "/api/admin/users/"+userUUID+"/seats", `{"seats":1}`, token)
+	if seats.Code != http.StatusOK || !strings.Contains(seats.Body.String(), `"seat_limit":1`) {
+		t.Fatalf("seats %d %s", seats.Code, seats.Body.String())
+	}
+	if override, got := overrideState(); override == nil || *override != 1 || got != revision+1 {
+		t.Fatalf("override after seats=1: %v revision=%d want 1/%d", override, got, revision+1)
+	}
+	if err := pool.QueryRow(ctx, `SELECT quota_suspended FROM organization_members WHERE org_id = $1 AND role = 'owner'`, orgID).Scan(&ownerSuspended); err != nil || ownerSuspended {
+		t.Fatalf("owner must never be quota-suspended: %v %v", ownerSuspended, err)
+	}
+	if !memberState(firstJoiner) || !memberState(secondJoiner) {
+		t.Fatal("seats=1 must suspend both joiners")
+	}
+
+	// Cap 2: joiners are admitted in join order, so only the first returns.
+	seats = usersDo(handler, http.MethodPost, "/api/admin/users/"+userUUID+"/seats", `{"seats":2}`, token)
 	if seats.Code != http.StatusOK || !strings.Contains(seats.Body.String(), `"seat_limit":2`) {
 		t.Fatalf("seats %d %s", seats.Code, seats.Body.String())
 	}
-	preview := usersDo(handler, http.MethodPost, "/api/admin/users/"+userUUID+"/member-seats/preview", `{"member_seats_override":3}`, token)
-	if preview.Code != http.StatusOK || !strings.Contains(preview.Body.String(), `"storeSlots"`) {
-		t.Fatalf("preview %d %s", preview.Code, preview.Body.String())
+	if memberState(firstJoiner) || !memberState(secondJoiner) {
+		t.Fatalf("seats=2 must keep the first joiner and suspend the second: first=%v second=%v", memberState(firstJoiner), memberState(secondJoiner))
 	}
-	prev := jsonData(t, preview.Body.Bytes())
-	revision := int64(prev["revision"].(float64))
-	slots := prev["storeSlots"].(map[string]any)
-	effective := int64(slots["effective"].(float64))
-	stale := usersDo(handler, http.MethodPost, "/api/admin/users/"+userUUID+"/member-seats/apply",
-		`{"revision":`+strconv.FormatInt(revision+9, 10)+`,"expected_store_limit":`+strconv.FormatInt(effective, 10)+`}`, token)
-	if stale.Code != http.StatusConflict || !strings.Contains(stale.Body.String(), "配额状态已变化，请重新预览") {
-		t.Fatalf("stale %d %s", stale.Code, stale.Body.String())
+
+	// null clears the override: the workspace follows the global cap again.
+	cleared := usersDo(handler, http.MethodPost, "/api/admin/users/"+userUUID+"/seats", `{"seats":null}`, token)
+	if cleared.Code != http.StatusOK || !strings.Contains(cleared.Body.String(), `"seat_limit":10`) {
+		t.Fatalf("clear seats %d %s", cleared.Code, cleared.Body.String())
 	}
-	apply := usersDo(handler, http.MethodPost, "/api/admin/users/"+userUUID+"/member-seats/apply",
-		`{"revision":`+strconv.FormatInt(revision, 10)+`,"expected_store_limit":`+strconv.FormatInt(effective, 10)+`,"member_seats_override":3}`, token)
-	if apply.Code != http.StatusOK || !strings.Contains(apply.Body.String(), `"revision":`+strconv.FormatInt(revision+1, 10)) {
-		t.Fatalf("apply %d %s", apply.Code, apply.Body.String())
+	if override, got := overrideState(); override != nil || got != revision+3 {
+		t.Fatalf("override after clear: %v revision=%d want nil/%d", override, got, revision+3)
+	}
+	if memberState(firstJoiner) || memberState(secondJoiner) {
+		t.Fatal("following the global cap must restore every joiner")
+	}
+	var applied int64
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_logs WHERE action = 'account_member_seats_applied' AND entity_id = $1 AND api_path = $2`, userUUID, "/api/admin/users/"+userUUID+"/seats").Scan(&applied); err != nil || applied != 3 {
+		t.Fatalf("seat audits %d %v", applied, err)
+	}
+	for _, retired := range []string{"preview", "apply"} {
+		gone := usersDo(handler, http.MethodPost, "/api/admin/users/"+userUUID+"/member-seats/"+retired, `{}`, token)
+		if gone.Code != http.StatusNotFound && gone.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("retired member-seats/%s still answers %d %s", retired, gone.Code, gone.Body.String())
+		}
 	}
 
 	grants := usersDo(handler, http.MethodGet, "/api/admin/support-grants?org_id=0", "", token)
@@ -286,7 +309,7 @@ func TestAdminUsersAIAuth(t *testing.T) {
 	}))
 	defer upstream.Close()
 	models := usersDo(handler, http.MethodPost, "/api/admin/integrations/ai/models",
-		`{"baseUrl":"`+upstream.URL+`","apiKey":"sekret"}`, token)
+		`{"base_url":"`+upstream.URL+`","api_key":"sekret"}`, token)
 	if models.Code != http.StatusOK || !strings.Contains(models.Body.String(), `"id":"m1"`) || strings.Index(models.Body.String(), `"id":"m1"`) > strings.Index(models.Body.String(), `"id":"m2"`) {
 		t.Fatalf("models %d %s", models.Code, models.Body.String())
 	}
@@ -294,24 +317,14 @@ func TestAdminUsersAIAuth(t *testing.T) {
 		t.Fatalf("dedup %s", models.Body.String())
 	}
 	verify := usersDo(handler, http.MethodPost, "/api/admin/integrations/ai/verify",
-		`{"baseUrl":"`+upstream.URL+`","apiKey":"sekret","model":"missing"}`, token)
-	if verify.Code != http.StatusOK || !strings.Contains(verify.Body.String(), `"verified":true`) || !strings.Contains(verify.Body.String(), `"modelPresent":false`) {
+		`{"base_url":"`+upstream.URL+`","api_key":"sekret","model":"missing"}`, token)
+	if verify.Code != http.StatusOK || !strings.Contains(verify.Body.String(), `"verified":true`) || !strings.Contains(verify.Body.String(), `"model_present":false`) {
 		t.Fatalf("verify %d %s", verify.Code, verify.Body.String())
 	}
 
-	cfg := usersDo(handler, http.MethodPut, "/api/admin/integrations/config", `{"expectedRevision":0,"aiAccounts":[],"storageBuckets":[]}`, token)
-	if cfg.Code != http.StatusOK || !strings.Contains(cfg.Body.String(), `"schemaVersion":1`) || !strings.Contains(cfg.Body.String(), `"revision":1`) || strings.Contains(cfg.Body.String(), "secret") {
+	cfg := usersDo(handler, http.MethodPut, "/api/admin/integrations/config", `{"expected_revision":0,"ai_accounts":[]}`, token)
+	if cfg.Code != http.StatusOK || !strings.Contains(cfg.Body.String(), `"schema_version":1`) || !strings.Contains(cfg.Body.String(), `"revision":1`) || strings.Contains(cfg.Body.String(), "secret") {
 		t.Fatalf("config %d %s", cfg.Code, cfg.Body.String())
-	}
-
-	recovery := codes[0].(string)
-	step := usersDo(handler, http.MethodPost, "/api/admin/step-up", `{"code":"`+recovery+`"}`, token)
-	if step.Code != http.StatusOK || !strings.Contains(step.Body.String(), `"ok":true`) {
-		t.Fatalf("step %d %s", step.Code, step.Body.String())
-	}
-	spent := usersDo(handler, http.MethodPost, "/api/admin/step-up", `{"code":"`+recovery+`"}`, token)
-	if spent.Code != http.StatusUnauthorized || !strings.Contains(spent.Body.String(), "验证器验证码错误") {
-		t.Fatalf("spent recovery %d %s", spent.Code, spent.Body.String())
 	}
 
 	badName := usersDo(handler, http.MethodPost, "/api/admin/workspaces/"+orgUUID+"/dissolve", `{"name":"nope"}`, token)
@@ -327,7 +340,19 @@ func TestAdminUsersAIAuth(t *testing.T) {
 		t.Fatalf("redissolve %d %s", goneOrg.Code, goneOrg.Body.String())
 	}
 
-	if _, err := pool.Exec(ctx, `INSERT INTO user_wallets (user_id) VALUES ($1), ($2) ON CONFLICT (user_id) DO NOTHING`, superID, userID); err != nil {
+	var otherOrg int64
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO organizations (owner_user_id, name, plan, created_at, updated_at)
+		VALUES ($1, 'wallet-rls-other', 'free', clock_timestamp(), clock_timestamp()) RETURNING id`, superID).Scan(&otherOrg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO workspace_wallets (org_id) VALUES ($1), ($2) ON CONFLICT (org_id) DO NOTHING`, otherOrg, orgID); err != nil {
+		t.Fatal(err)
+	}
+	var walletlessOrg int64
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO organizations (owner_user_id, name, plan, created_at, updated_at)
+		VALUES ($1, 'wallet-rls-walletless', 'free', clock_timestamp(), clock_timestamp()) RETURNING id`, superID).Scan(&walletlessOrg); err != nil {
 		t.Fatal(err)
 	}
 	tx, err := pool.Begin(ctx)
@@ -339,19 +364,34 @@ func TestAdminUsersAIAuth(t *testing.T) {
 		t.Fatal(err)
 	}
 	var hidden int64
-	if err := tx.QueryRow(ctx, `SELECT count(*) FROM user_wallets`).Scan(&hidden); err != nil || hidden != 0 {
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM workspace_wallets`).Scan(&hidden); err != nil || hidden != 0 {
 		t.Fatalf("wallet without guc %d %v", hidden, err)
 	}
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.current_wallet_user_id', $1, true)`, strconv.FormatInt(userID, 10)); err != nil {
+	insertWallet := func(org int64) error {
+		sp, err := tx.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer sp.Rollback(ctx)
+		_, err = sp.Exec(ctx, `INSERT INTO workspace_wallets (org_id) VALUES ($1)`, org)
+		return err
+	}
+	if err := insertWallet(walletlessOrg); err == nil {
+		t.Fatal("wallet insert without org guc")
+	}
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.current_org_id', $1, true)`, strconv.FormatInt(orgID, 10)); err != nil {
 		t.Fatal(err)
 	}
 	var seen int64
-	if err := tx.QueryRow(ctx, `SELECT count(*) FROM user_wallets WHERE user_id = $1`, userID).Scan(&seen); err != nil || seen != 1 {
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM workspace_wallets WHERE org_id = $1`, orgID).Scan(&seen); err != nil || seen != 1 {
 		t.Fatalf("wallet with guc %d %v", seen, err)
 	}
 	var other int64
-	if err := tx.QueryRow(ctx, `SELECT count(*) FROM user_wallets WHERE user_id = $1`, superID).Scan(&other); err != nil || other != 0 {
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM workspace_wallets WHERE org_id = $1`, otherOrg).Scan(&other); err != nil || other != 0 {
 		t.Fatalf("other wallet %d %v", other, err)
+	}
+	if err := insertWallet(walletlessOrg); err == nil {
+		t.Fatal("wallet insert for another org")
 	}
 }
 

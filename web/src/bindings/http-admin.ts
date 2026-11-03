@@ -7,7 +7,7 @@
  */
 import { api, request as apiRequest } from "@/api/client"
 import { route, type RouteKey } from "@/api/routes"
-import type { components } from "@/api/schema"
+import type { components, operations } from "@/api/schema"
 import {
   findDirectoryPerson,
   planUserCreate,
@@ -33,8 +33,6 @@ import type {
   AdminErrorLogData,
   AdminErrorLogFilters,
   AdminErrorLogKey,
-  AdminMemberSeatApplyData,
-  AdminMemberSeatPreviewData,
   AdminPaymentOrderView,
   AdminRedeemCodeCreateRequestView,
   AdminRedeemCodesCreated,
@@ -48,19 +46,12 @@ import type {
   AdminUsageSummaryData,
   AdminUserUuidRequest,
   AdminUserView,
-  AdminUserQuotaApplyRequest,
-  AdminUserQuotaPreviewRequest,
   AdminUsersOverview,
   WalletTopupsData,
-  PublishAiPriceRequest,
 } from "./commands"
 
 type AdminAccountMutation = components["schemas"]["AdminAccountMutationData"]
 export type CatalogFetchConfigData = components["schemas"]["CatalogFetchConfigData"]
-export type CatalogFetchWbCredentialView =
-  components["schemas"]["CatalogFetchWbCredentialView"]
-export type CatalogFetchWbCredentialWriteRequest =
-  components["schemas"]["CatalogFetchWbCredentialWriteRequest"]
 export type CatalogFetchConfigWriteRequest =
   components["schemas"]["CatalogFetchConfigWriteRequest"]
 
@@ -73,7 +64,6 @@ async function actorPlatformRole(): Promise<PlatformRole> {
 const USER_FIELD_ROUTE: Record<string, RouteKey> = {
   admin: "adminUsersByUuidAdmin",
   password: "adminUsersByUuidPassword",
-  seats: "adminUsersByUuidSeats",
   status: "adminUsersByUuidStatus",
 }
 
@@ -105,12 +95,10 @@ function queryStart(query: string): string {
 
 export const adminHttp = {
   /** Platform catalog fetch configuration and immediate run. */
-  catalogFetchConfig: () => api.get<CatalogFetchConfigData>(route("catalogFetchConfig")),
+  catalogFetchConfig: () => apiRequest<CatalogFetchConfigData>("GET", route("adminCatalogFetchConfig"), undefined, {}, undefined, undefined, { responseBody: "json" }),
   saveCatalogFetchConfig: (request: CatalogFetchConfigWriteRequest) =>
-    api.put<CatalogFetchConfigData>(route("catalogFetchConfig"), request),
-  saveCatalogFetchWbCredential: (request: CatalogFetchWbCredentialWriteRequest) =>
-    api.put<CatalogFetchWbCredentialView>(route("catalogFetchConfigWbCredential"), request),
-  runCatalogFetch: () => api.post<CatalogFetchConfigData>(route("catalogFetchConfigRun")),
+    apiRequest<CatalogFetchConfigData>("PUT", route("adminCatalogFetchConfig"), request, {}, undefined, undefined, { responseBody: "json" }),
+  runCatalogFetch: () => apiRequest<CatalogFetchConfigData>("POST", route("adminCatalogFetchConfigRun"), undefined, {}, undefined, undefined, { responseBody: "json" }),
   adminListUsers: () => api.get<AdminUsersOverview>(route("adminUsers")),
   adminDissolveWorkspace: (request: AdminDissolveWorkspaceRequest) =>
     api.post<void>(route("adminWorkspacesByUuidDissolve", { uuid: request.workspace_uuid }), {
@@ -158,6 +146,11 @@ export const adminHttp = {
     )
   },
   adminListRedeemCodes: () => api.get<AdminRedeemCodesOverview>(route("adminRedeemCodes")),
+  adminListSubscriptionCoupons: () => api.get<{ coupons: components["schemas"]["AdminSubscriptionCoupon"][] }>(route("adminSubscriptionCoupons")),
+  adminCreateSubscriptionCoupon: (body: components["schemas"]["AdminSubscriptionCouponCreate"]) =>
+    api.post<components["schemas"]["AdminSubscriptionCoupon"]>(route("adminSubscriptionCoupons"), body),
+  adminSetSubscriptionCouponEnabled: (code: string, enabled: boolean) =>
+    api.put<components["schemas"]["AdminSubscriptionCoupon"]>(route("adminSubscriptionCouponsByCode", { code }), { enabled }),
   adminCreateRedeemCodes: (request: AdminRedeemCodeCreateRequestView) =>
     api.post<AdminRedeemCodesCreated>(route("adminRedeemCodes"), request),
   adminDeleteRedeemCode: (id: number) => api.del<void>(route("adminRedeemCodesById", { id })),
@@ -210,18 +203,17 @@ export const adminHttp = {
       route("adminOrdersByPublicIdCancel", { public_id: publicId }),
     ),
   adminListAiPrices: async () =>
-    (await api.get<components["schemas"]["AiPricesData"]>(route("aiPrices"))).prices,
-  adminPublishAiPrice: async (request: PublishAiPriceRequest) =>
-    (await api.put<components["schemas"]["AiPricesData"]>(route("adminAiPrices"), request))
-      .prices,
-  adminDeleteAiPrice: async (model: string) =>
-    (
-      await apiRequest<components["schemas"]["AiPricesData"]>(
-        "DELETE",
-        route("adminAiPrices"),
-        { model },
-      )
-    ).prices,
+    (await api.get<operations["adminAiPricesGet"]["responses"][200]["content"]["application/json"]["data"]>(
+      route("adminAiPrices"),
+    )).prices,
+  adminPublishAiPrice: (request: components["schemas"]["PublishAiPriceRequest"]) =>
+    apiRequest<operations["publish_price"]["responses"][200]["content"]["application/json"]["data"]>(
+      "PUT", route("adminAiPrices"), request,
+    ),
+  adminDeleteAiPrice: (model: string) =>
+    apiRequest<operations["unpublish_price"]["responses"][200]["content"]["application/json"]["data"]>(
+      "DELETE", route("adminAiPrices"), { model },
+    ),
   adminCreateUser: async (request: AdminCreateUserRequest) => {
     const body = planUserCreate(await actorPlatformRole(), request)
     return (await api.post<AdminAccountMutation>(route("adminUsers"), body)).user
@@ -255,18 +247,6 @@ export const adminHttp = {
     }),
   adminDisableUser: (request: AdminUserUuidRequest) =>
     adminUserWrite(request.uuid, "status", { enabled: false }),
-  // The account is the route, not a body field: Cloud's quota requests are
-  // `deny_unknown_fields`, so `uuid` travels in the path only.
-  adminPreviewUserQuotas: ({ uuid, ...quota }: AdminUserQuotaPreviewRequest) =>
-    api.post<AdminMemberSeatPreviewData>(
-      route("adminUsersByUuidMemberSeatsPreview", { uuid }),
-      quota,
-    ),
-  adminApplyUserQuotas: ({ uuid, ...quota }: AdminUserQuotaApplyRequest) =>
-    api.post<AdminMemberSeatApplyData>(
-      route("adminUsersByUuidMemberSeatsApply", { uuid }),
-      quota,
-    ),
   adminWorkspaceWallet: (workspaceUuid: string) =>
     api.get<WalletTopupsData>(route("adminWorkspacesByUuidWallet", { uuid: workspaceUuid })),
   adminTopupWorkspaceWallet: (request: AdminWorkspaceWalletTopupRequest) =>

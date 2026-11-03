@@ -13,16 +13,16 @@ INSERT INTO account_users (
     $1, $2, $3, 'user', $4, '/workspace', '', 'lite',
     NULL, NULL, NULL, NULL, clock_timestamp(), clock_timestamp()
 )
-ON CONFLICT (email) DO NOTHING
+ON CONFLICT (lower(email)) DO NOTHING
 RETURNING id, public_id, email, password_hash, role, name, target, supplier_id;
 
 -- name: FindUserByEmail :one
-SELECT u.id, u.public_id, u.email, c.password_hash, u.role, p.name, p.target,
+SELECT u.id, u.public_id, u.email, c.password_hash, u.session_revision, u.role, p.name, p.target,
        p.supplier_id, (u.disabled_at IS NOT NULL)::bool AS disabled
 FROM account_users u
 JOIN account_credentials c ON c.user_id = u.id
 JOIN account_profiles p ON p.user_id = u.id
-WHERE u.email = $1
+WHERE lower(u.email) = lower(sqlc.arg(email)::text)
 LIMIT 1;
 
 -- name: IssueSession :exec
@@ -132,10 +132,10 @@ SELECT key FROM plans WHERE key = $1 AND active = true LIMIT 1;
 
 -- name: InsertOrganization :one
 INSERT INTO organizations (
-    owner_user_id, name, plan, seat_limit, psd_upload_enabled, uuid,
+    owner_user_id, name, plan, uuid,
     created_at, updated_at
 ) VALUES (
-    $1, $2, $3, 1, false, gen_random_uuid(), clock_timestamp(), clock_timestamp()
+    $1, $2, $3, gen_random_uuid(), clock_timestamp(), clock_timestamp()
 )
 RETURNING id;
 
@@ -217,7 +217,7 @@ WHERE ctid IN (
 );
 
 -- name: AssertPassword :one
-SELECT password_hash, (disabled_at IS NOT NULL)::bool AS disabled
+SELECT password_hash, email, session_revision, (disabled_at IS NOT NULL)::bool AS disabled, role
 FROM account_users
 WHERE id = $1
 FOR UPDATE;
@@ -232,44 +232,22 @@ UPDATE account_users
 SET must_change_password = false
 WHERE id = $1;
 
--- name: RecentOpenEmailToken :one
-SELECT count(*)::bigint AS n
-FROM auth_email_tokens
-WHERE user_id = $1
-  AND purpose = $2
-  AND consumed_at IS NULL
-  AND created_at > clock_timestamp() - interval '60 seconds';
-
--- name: InsertEmailToken :exec
-INSERT INTO auth_email_tokens (token_hash, user_id, purpose, expires_at, created_at)
-VALUES ($1, $2, $3, ($4::text)::timestamptz, clock_timestamp());
-
 -- name: ConsumeEmailToken :one
 UPDATE auth_email_tokens
 SET consumed_at = clock_timestamp()
-WHERE token_hash = $1
+WHERE auth_email_tokens.token_hash = $1
   AND purpose = $2
   AND consumed_at IS NULL
   AND expires_at > clock_timestamp()
+  AND NOT EXISTS (SELECT 1 FROM auth_password_reset_deliveries d WHERE d.token_hash=auth_email_tokens.token_hash AND d.state IN ('failed','cancelled'))
 RETURNING user_id;
 
 -- name: LockUserState :one
 SELECT (disabled_at IS NOT NULL)::bool AS disabled,
-       (email_verified_at IS NOT NULL)::bool AS email_verified,
        email
 FROM account_users
 WHERE id = $1
 FOR UPDATE;
-
--- name: MarkEmailVerified :exec
-UPDATE account_users
-SET email_verified_at = COALESCE(email_verified_at, clock_timestamp())
-WHERE id = $1;
-
--- name: EmailVerified :one
-SELECT (email_verified_at IS NOT NULL)::bool AS verified
-FROM account_users
-WHERE id = $1;
 
 -- name: ProfileName :one
 SELECT name, name_changed_at_ms
@@ -291,16 +269,6 @@ UPDATE organization_members
 SET display_name = $1, updated_at = clock_timestamp()
 WHERE user_id = $2;
 
--- name: ResolveStacked :many
-SELECT s.token_hash, u.id AS user_id, u.public_id AS uuid, u.email, p.name,
-       CASE WHEN p.avatar_bytes IS NOT NULL THEN p.avatar_updated_at_ms END AS avatar_revision
-FROM account_sessions s
-JOIN account_users u ON u.id = s.user_id
-JOIN account_profiles p ON p.user_id = u.id
-WHERE s.token_hash = ANY($1::text[])
-  AND s.expires_at > clock_timestamp()
-  AND u.disabled_at IS NULL;
-
 -- name: ProfileMarks :one
 SELECT CASE WHEN avatar_bytes IS NOT NULL THEN avatar_updated_at_ms END AS avatar_revision,
        name_changed_at_ms
@@ -308,16 +276,24 @@ FROM account_profiles
 WHERE user_id = $1;
 
 -- name: DirectoryMembers :many
-SELECT m.id, m.user_id, m.role, m.display_name, u.email, m.manual_disabled, m.quota_suspended
+SELECT m.id, m.user_id, m.role, m.display_name, u.email, m.manual_disabled, m.quota_suspended,
+       (EXTRACT(EPOCH FROM m.created_at) * 1000)::bigint AS joined_at_ms
 FROM organization_members m
 JOIN account_users u ON u.id = m.user_id
 WHERE m.org_id = $1
 ORDER BY m.join_order ASC, m.id ASC;
 
--- name: TotpConfirmed :one
-SELECT (confirmed_at IS NOT NULL)::bool AS confirmed
-FROM account_admin_totp
-WHERE user_id = $1;
+-- name: DirectoryInvitations :many
+SELECT i.id, lower(i.uuid::text) AS uuid, i.email, i.role, i.invited_by_email,
+       (EXTRACT(EPOCH FROM i.created_at) * 1000)::bigint AS created_at_ms,
+       (EXTRACT(EPOCH FROM i.expires_at) * 1000)::bigint AS expires_at_ms
+FROM org_invitations i
+WHERE i.org_id = $1
+  AND i.accepted_at IS NULL
+  AND i.revoked_at IS NULL
+  AND i.declined_at IS NULL
+  AND i.expires_at > clock_timestamp()
+ORDER BY i.created_at DESC, i.id DESC;
 
 -- name: BindInvitations :execrows
 UPDATE org_invitations AS i

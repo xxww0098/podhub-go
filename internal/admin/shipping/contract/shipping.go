@@ -10,7 +10,8 @@ import (
 	"unicode/utf8"
 
 	corecontract "github.com/xxww0098/podhub-go/internal/admin/core/contract"
-	"github.com/xxww0098/podhub-go/internal/platform/egressgate"
+
+	sellercontract "github.com/xxww0098/podhub-go/internal/seller/contract"
 	shiprules "github.com/xxww0098/podhub-go/internal/shipping/contract"
 )
 
@@ -594,10 +595,7 @@ func SellerWritesClosed(disabled bool) *APIError {
 	if !disabled {
 		return nil
 	}
-	err := egressgate.ErrWritesDisabled
-	if errors.Is(err, egressgate.ErrWritesDisabled) {
-		return Fail(503, "WRITES_DISABLED", err.Error())
-	}
+	err := sellercontract.ErrWritesDisabled
 	return Fail(503, "WRITES_DISABLED", err.Error())
 }
 

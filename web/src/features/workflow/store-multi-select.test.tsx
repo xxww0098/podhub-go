@@ -31,8 +31,8 @@ test("StoreMultiSelect renders cleanly without crash", () => {
       needs_reentry: false,
       can_manage: true,
     can_edit_credential: true,
-    assignee_key_manage: true,
-    permissions: { manage_store: true, edit_name: true, manage_key_grants: true, manage_tags: true, test_key: true, manage_key: true, delete_store: true },
+
+    permissions: { manage_store: true, edit_name: true, manage_tags: true, test_key: true, manage_key: true, delete_store: true },
     },
     {
       id: "store_2",
@@ -58,8 +58,8 @@ test("StoreMultiSelect renders cleanly without crash", () => {
       needs_reentry: false,
       can_manage: true,
     can_edit_credential: true,
-    assignee_key_manage: true,
-    permissions: { manage_store: true, edit_name: true, manage_key_grants: true, manage_tags: true, test_key: true, manage_key: true, delete_store: true },
+
+    permissions: { manage_store: true, edit_name: true, manage_tags: true, test_key: true, manage_key: true, delete_store: true },
     },
   ]
 
@@ -114,8 +114,8 @@ test("a lapsed key is badged 密钥已过期 instead of a generic unavailable", 
     needs_reentry: false,
     can_manage: true,
     can_edit_credential: true,
-    assignee_key_manage: true,
-    permissions: { manage_store: true, edit_name: true, manage_key_grants: true, manage_tags: true, test_key: false, manage_key: true, delete_store: true },
+
+    permissions: { manage_store: true, edit_name: true, manage_tags: true, test_key: false, manage_key: true, delete_store: true },
   }
 
   // The closed `StoreMultiSelect` trigger paints only labels, so the row's

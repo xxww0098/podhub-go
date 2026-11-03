@@ -135,16 +135,17 @@ func DecidePresign(claim Claim, byScope []Object, byKey []Object) (PresignDecisi
 	return UploadNeeded, Object{}, nil
 }
 
-// ConfirmInput is what the HEAD proof produced plus the claim it proves.
+// ConfirmInput is server-verified object metadata and digest plus its claim.
 type ConfirmInput struct {
 	Claim      Claim
 	Now        time.Time
 	ExpiresAt  time.Time
 	HeadLength int64
 	HeadType   string
-	// HeadSHA256Hex is the full-object checksum the store echoed. It is empty
-	// when the store did not return one; confirm then refuses.
-	HeadSHA256Hex string
+	// HeadSHA256Hex is only a full-object SHA256 from the store, never CRC64 or
+	// a multipart checksum. ReadbackSHA256Hex hashes an independent complete GET.
+	HeadSHA256Hex     string
+	ReadbackSHA256Hex string
 }
 
 // ConfirmDecision is what confirm writes.
@@ -155,14 +156,17 @@ type ConfirmDecision struct {
 	RetireKey string
 }
 
-// DecideConfirm validates the HEAD proof and the lease. It does not write.
-// A store that cannot echo a full-object checksum cannot confirm a long-lived
-// object: there is no body read fallback.
+// DecideConfirm requires a full-object SHA256 from HEAD or a complete GET.
+// Every supplied digest must match; a contradictory HEAD is never ignored.
 func DecideConfirm(in ConfirmInput, existing []Object) (ConfirmDecision, error) {
 	if !in.ExpiresAt.After(in.Now) {
 		return ConfirmDecision{}, ErrExpired
 	}
-	if in.HeadSHA256Hex == "" || !strings.EqualFold(in.HeadSHA256Hex, in.Claim.SHA256Hex) {
+	if in.HeadSHA256Hex == "" && in.ReadbackSHA256Hex == "" {
+		return ConfirmDecision{}, ErrConflict
+	}
+	if (in.HeadSHA256Hex != "" && !strings.EqualFold(in.HeadSHA256Hex, in.Claim.SHA256Hex)) ||
+		(in.ReadbackSHA256Hex != "" && !strings.EqualFold(in.ReadbackSHA256Hex, in.Claim.SHA256Hex)) {
 		return ConfirmDecision{}, ErrConflict
 	}
 	if in.HeadLength != in.Claim.ByteLength {

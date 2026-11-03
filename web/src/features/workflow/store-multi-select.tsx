@@ -1,5 +1,6 @@
 import * as React from "react"
-import { Check, ChevronDown, Store as StoreIcon } from "lucide-react"
+import { Check, ChevronDown } from "lucide-react"
+import { StoreIcon } from "@/components/store-icon"
 import type { OzonStoreView } from "@/bindings/commands"
 import { Button } from "@/components/ui/button"
 import {

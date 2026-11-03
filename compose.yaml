@@ -1,0 +1,194 @@
+# Production-shaped single-host deployment.
+#
+#   cp .env.example .env       # fill every required value
+#   docker compose up -d --build
+#
+# The migration runs once before the API and workers. The lease keeper is a
+# long-running service; without it every domain becomes write-disabled 60s
+# after the last write.
+name: podhub
+
+x-app-image: &app-image
+  image: podhub-app:${PODHUB_IMAGE_TAG:-latest}
+  build:
+    context: .
+    dockerfile: Dockerfile
+  restart: unless-stopped
+
+x-app-env: &app-env
+  DATABASE_URL: postgres://podhub_login_api:${PODHUB_API_DB_PASSWORD:?set PODHUB_API_DB_PASSWORD}@postgres:5432/podhub?sslmode=disable
+  CLOUD_DATABASE_ALLOW_REMOTE_HOST: "1"
+  CLOUD_DNS_SERVER: ${CLOUD_DNS_SERVER:-}
+  CLOUD_INSTANCE_ID: ${CLOUD_INSTANCE_ID:-podhub-prod-1}
+  CLOUD_PUBLIC_URL: ${CLOUD_PUBLIC_URL:?set CLOUD_PUBLIC_URL}
+  CLOUD_COOKIE_SECURE: ${CLOUD_COOKIE_SECURE:-1}
+  CLOUD_INTEGRATION_CONFIG_KEY: ${CLOUD_INTEGRATION_CONFIG_KEY:?set CLOUD_INTEGRATION_CONFIG_KEY}
+  CLOUD_SELLER_CREDENTIAL_KEY: ${CLOUD_SELLER_CREDENTIAL_KEY:?set CLOUD_SELLER_CREDENTIAL_KEY}
+  CLOUD_SELLER_CREDENTIAL_KEY_ID: ${CLOUD_SELLER_CREDENTIAL_KEY_ID:-}
+  CLOUD_SELLER_CREDENTIAL_KEY_PREVIOUS: ${CLOUD_SELLER_CREDENTIAL_KEY_PREVIOUS:-}
+  CLOUD_SMTP_ADDR: ${CLOUD_SMTP_ADDR:-}
+  CLOUD_SMTP_USERNAME: ${CLOUD_SMTP_USERNAME:-}
+  CLOUD_SMTP_PASSWORD: ${CLOUD_SMTP_PASSWORD:-}
+  CLOUD_SMTP_FROM: ${CLOUD_SMTP_FROM:-}
+  CLOUD_SMTP_TLS_MODE: ${CLOUD_SMTP_TLS_MODE:-}
+  R2_ASSETS_ID: ${R2_ASSETS_ID:-}
+  R2_ASSETS_ENDPOINT: ${R2_ASSETS_ENDPOINT:-}
+  R2_ASSETS_BUCKET: ${R2_ASSETS_BUCKET:-}
+  R2_ASSETS_PUBLIC_BASE_URL: ${R2_ASSETS_PUBLIC_BASE_URL:-}
+  R2_ASSETS_ACCESS_KEY_ID: ${R2_ASSETS_ACCESS_KEY_ID:-}
+  R2_ASSETS_SECRET_ACCESS_KEY: ${R2_ASSETS_SECRET_ACCESS_KEY:-}
+  R2_ASSETS_SESSION_TOKEN: ${R2_ASSETS_SESSION_TOKEN:-}
+  R2_ASSETS_KEY_PREFIX: ${R2_ASSETS_KEY_PREFIX:-}
+  R2_PRIVATE_ID: ${R2_PRIVATE_ID:-}
+  R2_PRIVATE_ENDPOINT: ${R2_PRIVATE_ENDPOINT:-}
+  R2_PRIVATE_BUCKET: ${R2_PRIVATE_BUCKET:-}
+  R2_PRIVATE_PUBLIC_BASE_URL: ${R2_PRIVATE_PUBLIC_BASE_URL:-}
+  R2_PRIVATE_ACCESS_KEY_ID: ${R2_PRIVATE_ACCESS_KEY_ID:-}
+  R2_PRIVATE_SECRET_ACCESS_KEY: ${R2_PRIVATE_SECRET_ACCESS_KEY:-}
+  R2_PRIVATE_SESSION_TOKEN: ${R2_PRIVATE_SESSION_TOKEN:-}
+  R2_PRIVATE_KEY_PREFIX: ${R2_PRIVATE_KEY_PREFIX:-}
+  OZON_WRITE_KILL_SWITCH: ${OZON_WRITE_KILL_SWITCH:-0}
+  CLOUD_MEDIA_GC_DELETE: ${CLOUD_MEDIA_GC_DELETE:-1}
+
+services:
+  postgres:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: podhub
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - podhub-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d podhub"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  migrate:
+    <<: *app-image
+    entrypoint: ["migrate"]
+    restart: "no"
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/podhub?sslmode=disable
+      CLOUD_DATABASE_ALLOW_REMOTE_HOST: "1"
+      PODHUB_ALLOW_SUPERUSER_DB: "1"
+      PODHUB_API_DB_PASSWORD: ${PODHUB_API_DB_PASSWORD:?set PODHUB_API_DB_PASSWORD}
+      PODHUB_WORKER_DB_PASSWORD: ${PODHUB_WORKER_DB_PASSWORD:?set PODHUB_WORKER_DB_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *app-image
+    environment:
+      <<: *app-env
+      CLOUDFLARE_OAUTH_CLIENT_ID: ${CLOUDFLARE_OAUTH_CLIENT_ID:-}
+      CLOUDFLARE_OAUTH_CLIENT_SECRET: ${CLOUDFLARE_OAUTH_CLIENT_SECRET:-}
+      CLOUDFLARE_OAUTH_SCOPES: ${CLOUDFLARE_OAUTH_SCOPES:-}
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  lease-keeper:
+    <<: *app-image
+    entrypoint: ["lease-keeper"]
+    environment: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  worker-listing:
+    <<: *app-image
+    entrypoint: ["worker-listing"]
+    environment:
+      <<: *app-env
+      DATABASE_URL: postgres://podhub_login_listing_worker:${PODHUB_WORKER_DB_PASSWORD:?set PODHUB_WORKER_DB_PASSWORD}@postgres:5432/podhub?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  worker-sync:
+    <<: *app-image
+    entrypoint: ["worker-sync"]
+    environment:
+      <<: *app-env
+      DATABASE_URL: postgres://podhub_login_listing_worker:${PODHUB_WORKER_DB_PASSWORD:?set PODHUB_WORKER_DB_PASSWORD}@postgres:5432/podhub?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  worker-reconcile:
+    <<: *app-image
+    entrypoint: ["worker-reconcile"]
+    environment:
+      <<: *app-env
+      DATABASE_URL: postgres://podhub_login_reconciler:${PODHUB_WORKER_DB_PASSWORD:?set PODHUB_WORKER_DB_PASSWORD}@postgres:5432/podhub?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  worker-media-gc:
+    <<: *app-image
+    entrypoint: ["worker-media-gc"]
+    # The production default enables purge. When an operator sets
+    # CLOUD_MEDIA_GC_DELETE=0 the worker exits 0, and on-failure keeps compose
+    # from restart-looping that deliberate disable.
+    restart: on-failure
+    environment:
+      <<: *app-env
+      DATABASE_URL: postgres://podhub_login_ai_media_worker:${PODHUB_WORKER_DB_PASSWORD:?set PODHUB_WORKER_DB_PASSWORD}@postgres:5432/podhub?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  web:
+    build:
+      context: .
+      dockerfile: deploy/web.Dockerfile
+    image: podhub-web:${PODHUB_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      PODHUB_SITE_ADDRESS: ${PODHUB_SITE_ADDRESS:-http://localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+    # The admin endpoint stays on loopback in every site mode; probing it avoids
+    # an HTTP->HTTPS redirect when PODHUB_SITE_ADDRESS is a TLS hostname.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      api:
+        condition: service_healthy
+    volumes:
+      - podhub-caddy-data:/data
+      - podhub-caddy-config:/config
+
+volumes:
+  podhub-pg:
+  podhub-caddy-data:
+  podhub-caddy-config:

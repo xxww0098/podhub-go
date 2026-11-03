@@ -13,9 +13,6 @@
 
 export const CHANGELOG_VISIBLE_LIMIT = 3
 
-/** `X.Y.Z` of the product version whose notes the operator has opened. */
-export const CHANGELOG_SEEN_KEY = "podhub.changelog.seen"
-
 const SECTION_BY_TYPE: Record<string, string> = {
   feat: "新增",
   fix: "修复",
@@ -104,48 +101,6 @@ export function bundledChangelogReleases(): ChangelogRelease[] {
     return changelogReleasesFromJson(import.meta.env.PODHUB_CHANGELOG)
   } catch {
     return []
-  }
-}
-
-export function changelogHasUnread(current: string, seen: string): boolean {
-  const version = current.trim()
-  return version !== "" && version !== seen.trim()
-}
-
-export function readSeenChangelogVersion(
-  storage: Pick<Storage, "getItem"> | null,
-): string {
-  if (!storage) return ""
-  try {
-    return storage.getItem(CHANGELOG_SEEN_KEY)?.trim() ?? ""
-  } catch {
-    return ""
-  }
-}
-
-export function writeSeenChangelogVersion(
-  version: string,
-  storage: Pick<Storage, "setItem"> | null,
-): void {
-  const trimmed = version.trim()
-  if (!storage || trimmed === "") return
-  try {
-    storage.setItem(CHANGELOG_SEEN_KEY, trimmed)
-  } catch {
-    // Private mode and quota failures leave the dot in place; the dialog still opens.
-  }
-}
-
-export function browserStorage(): Storage | null {
-  try {
-    if (typeof globalThis.localStorage === "undefined") return null
-    const storage = globalThis.localStorage
-    if (typeof storage.getItem !== "function" || typeof storage.setItem !== "function") {
-      return null
-    }
-    return storage
-  } catch {
-    return null
   }
 }
 

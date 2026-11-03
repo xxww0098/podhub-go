@@ -35,6 +35,7 @@ type OrderQuery struct {
 	Stores        []string
 	AllStores     bool
 	State         string
+	Search        string
 	CursorMS      *int64
 	CursorOrderID string
 	Limit         int64

@@ -20,14 +20,14 @@ export const ALL_STATUS = "all"
 /** Operator queue tabs. Wire status/window stay what Seller already accepts. */
 export type ShippingQueue = "awaiting_label" | "awaiting_ship" | "due_today" | "all"
 
-export const QUEUE_FILTERS: { value: ShippingQueue; label: string }[] = [
-  { value: "awaiting_label", label: "待打单" },
-  { value: "awaiting_ship", label: "待发货" },
-  { value: "due_today", label: "今日截止" },
-  { value: "all", label: "全部" },
+export const QUEUE_FILTERS: { value: ShippingQueue; label: string; range: string }[] = [
+  { value: "awaiting_label", label: "待组包", range: "截止前后 7 天" },
+  { value: "awaiting_ship", label: "待发货", range: "截止前后 7 天" },
+  { value: "due_today", label: "前后 24 小时", range: "截止前后 24 小时" },
+  { value: "all", label: "全部", range: "截止前后 7 天" },
 ]
 
-export const DEFAULT_QUEUE: ShippingQueue = "awaiting_label"
+export const DEFAULT_QUEUE: ShippingQueue = "awaiting_ship"
 
 export function queueRequest(queue: ShippingQueue): {
   status: string
@@ -43,24 +43,6 @@ export function queueRequest(queue: ShippingQueue): {
     case "all":
       return { status: "", windowDays: DEFAULT_WINDOW_DAYS }
   }
-}
-
-export type ShippingAction = "label" | "ship"
-
-export function shippingActions(
-  posting: ShippingPostingView,
-): { id: ShippingAction; label: string }[] {
-  const actions: { id: ShippingAction; label: string }[] = []
-  if (posting.label_state === "label_ready") {
-    actions.push({ id: "label", label: "打单" })
-  }
-  if (posting.packing_state === "packed") {
-    actions.push({ id: "ship", label: "发货" })
-  }
-  if (actions.length === 0) {
-    actions.push({ id: "label", label: "打单" })
-  }
-  return actions
 }
 
 /// Ozon posting statuses in operator Chinese.

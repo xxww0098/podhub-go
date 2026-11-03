@@ -5,7 +5,7 @@ import type { components } from "@/api/schema"
 import type { RequestEvidence } from "@/api/client-options"
 import { cachedListingRow } from "@/bindings/listing-row-cache"
 import type { FrozenItem } from "../platforms/core"
-import type { OzonBody } from "../platforms/ozon"
+import type { OzonBody } from "../platforms/ozon/adapter"
 import { submitOzonChunk, type OzonSendContext } from "./send-ozon-transport"
 
 const endpoint = route("listingSubmit")

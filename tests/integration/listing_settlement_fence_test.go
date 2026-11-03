@@ -17,7 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/xxww0098/podhub-go/internal/listing/submit"
-	queue "github.com/xxww0098/podhub-go/internal/platform/jobsched"
+	queue "github.com/xxww0098/podhub-go/internal/queue/contract"
 	queuecontract "github.com/xxww0098/podhub-go/internal/queue/contract"
 	queuerepo "github.com/xxww0098/podhub-go/internal/queue/repo"
 )
@@ -29,11 +29,11 @@ func TestListingSettlementRejectsReclaimedLease(t *testing.T) {
 	for _, kind := range []string{"listing.submit", "listing.submit.batch"} {
 		t.Run(kind, func(t *testing.T) {
 			job, rows := settlementJob(t, ctx, pool, kind, 1)
-			tr := &heldNotSent{entered: make(chan struct{}), release: make(chan struct{})}
+			tr := &heldReadiness{entered: make(chan struct{}), release: make(chan struct{}), readyErr: submit.ErrNotSent}
 			var release sync.Once
 			defer release.Do(func() { close(tr.release) })
 			result := make(chan error, 1)
-			go func() { result <- submit.Work(ctx, pool, job, tr) }()
+			go func() { result <- listingSubmit().Work(ctx, pool, job, tr) }()
 			select {
 			case <-tr.entered:
 			case <-ctx.Done():
@@ -49,6 +49,38 @@ func TestListingSettlementRejectsReclaimedLease(t *testing.T) {
 			if tr.writes.Load() != 0 {
 				t.Fatalf("pre-dispatch refusal sent %d requests", tr.writes.Load())
 			}
+			assertReclaimedJob(t, ctx, pool, job)
+		})
+	}
+}
+
+func TestListingDispatchRejectsReclaimedLeaseAfterReadiness(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	pool := migratedPool(t, ctx)
+	for _, kind := range []string{"listing.submit", "listing.submit.batch"} {
+		t.Run(kind, func(t *testing.T) {
+			job, rows := settlementJob(t, ctx, pool, kind, 1)
+			tr := &heldReadiness{entered: make(chan struct{}), release: make(chan struct{})}
+			var release sync.Once
+			defer release.Do(func() { close(tr.release) })
+			result := make(chan error, 1)
+			go func() { result <- listingSubmit().Work(ctx, pool, job, tr) }()
+			select {
+			case <-tr.entered:
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
+			reclaimSettlementJob(t, ctx, pool, job)
+			release.Do(func() { close(tr.release) })
+			err := settlementResult(t, ctx, result)
+			if err == nil || !strings.Contains(err.Error(), "lease was lost") {
+				t.Fatalf("stale dispatch: %v", err)
+			}
+			if tr.writes.Load() != 0 {
+				t.Fatalf("reclaimed worker sent %d requests", tr.writes.Load())
+			}
+			assertRow(t, ctx, pool, rows[0], rowWant{intent: "queued", listing: "queued"})
 			assertReclaimedJob(t, ctx, pool, job)
 		})
 	}
@@ -86,7 +118,7 @@ func TestListingLateReceiptSurvivesReclaimedLease(t *testing.T) {
 			defer once.Do(func() { close(release) })
 			tr := egress(t, server.URL, false).Port()
 			result := make(chan error, 1)
-			go func() { result <- submit.Work(ctx, pool, job, tr) }()
+			go func() { result <- listingSubmit().Work(ctx, pool, job, tr) }()
 			select {
 			case <-entered:
 			case <-ctx.Done():
@@ -133,7 +165,7 @@ func TestListingBatchSettlementRollsBackOnLaterFailure(t *testing.T) {
 	if _, err := pool.Exec(ctx, `DELETE FROM submission_intents WHERE id = $1::uuid`, rows[1].IntentID); err != nil {
 		t.Fatal(err)
 	}
-	if err := submit.Work(ctx, pool, job, nil); !errors.Is(err, pgx.ErrNoRows) {
+	if err := listingSubmit().Work(ctx, pool, job, nil); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("missing second intent: %v", err)
 	}
 	assertRow(t, ctx, pool, rows[0], rowWant{intent: "queued", listing: "queued"})
@@ -158,7 +190,7 @@ func TestListingBatchSettlementSkipsPastEdges(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT updated_at FROM submission_intents WHERE id = $1::uuid`, rows[0].IntentID).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
-	if err := submit.Work(ctx, pool, job, nil); err != nil {
+	if err := listingSubmit().Work(ctx, pool, job, nil); err != nil {
 		t.Fatal(err)
 	}
 	assertRow(t, ctx, pool, rows[0], rowWant{intent: "cancelled", listing: "cancelled"})
@@ -188,7 +220,7 @@ func TestListingSettlementKeepsExistingJobSemantics(t *testing.T) {
 			if _, err := pool.Exec(ctx, `UPDATE jobs SET last_error_code = 'store_busy' WHERE id = $1`, job.ID); err != nil {
 				t.Fatal(err)
 			}
-			if err := submit.Work(ctx, pool, job, egress(t, server.URL, false).Port()); err != nil {
+			if err := listingSubmit().Work(ctx, pool, job, egress(t, server.URL, false).Port()); err != nil {
 				t.Fatal(err)
 			}
 			got := readJob(t, ctx, pool, job.ID)
@@ -208,7 +240,7 @@ func TestListingSettlementKeepsExistingJobSemantics(t *testing.T) {
 		if err := submit.ApplyStored(ctx, pool, job.OrgID, rows[0].IntentID, submit.CancelBeforeDispatch); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := submit.RunAttempt(ctx, pool, nil, attempt(rows[0], job.Lease(), false)); !errors.Is(err, submit.ErrIllegalEdge) {
+		if _, err := listingSubmit().RunAttempt(ctx, pool, nil, attempt(rows[0], job.Lease(), false)); !errors.Is(err, submit.ErrIllegalEdge) {
 			t.Fatalf("single settlement skipped an illegal edge: %v", err)
 		}
 		if got := readJob(t, ctx, pool, job.ID); got.state != "running" || got.owner == nil || *got.owner != job.Owner {
@@ -302,26 +334,27 @@ func settlementResult(t *testing.T, ctx context.Context, result <-chan error) er
 	}
 }
 
-type heldNotSent struct {
-	entered chan struct{}
-	release chan struct{}
-	writes  atomic.Int32
+type heldReadiness struct {
+	entered  chan struct{}
+	release  chan struct{}
+	writes   atomic.Int32
+	readyErr error
 }
 
-func (*heldNotSent) WritesDisabled() bool { return false }
-func (tr *heldNotSent) Ready(ctx context.Context) error {
+func (*heldReadiness) WritesDisabled() bool { return false }
+func (tr *heldReadiness) Ready(ctx context.Context) error {
 	close(tr.entered)
 	select {
 	case <-tr.release:
-		return submit.ErrNotSent
+		return tr.readyErr
 	case <-ctx.Done():
 		return ctx.Err()
 	}
 }
-func (tr *heldNotSent) Write(context.Context, string, []byte) (int, string, error) {
+func (tr *heldReadiness) Write(context.Context, string, []byte) (int, string, error) {
 	tr.writes.Add(1)
-	return 0, "", errors.New("unexpected Write after ErrNotSent")
+	return 0, "", errors.New("unexpected Write after lease reclaim")
 }
-func (*heldNotSent) Read(context.Context, string, []byte) (int, string, error) {
+func (*heldReadiness) Read(context.Context, string, []byte) (int, string, error) {
 	return 0, "", errors.New("unexpected Read")
 }

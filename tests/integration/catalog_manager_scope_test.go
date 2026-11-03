@@ -141,6 +141,7 @@ func TestSettlementArmDoesNotLeakSourceCosts(t *testing.T) {
 	const buyerOrg = int64(77001)
 	const source = "src_settle_guard"
 
+	seedAccount(t, ctx, pool, 970001, "settle-buyer@test.example", "user", "platform")
 	if _, err := pool.Exec(ctx, `INSERT INTO organizations (id, name, plan, owner_user_id, created_at, updated_at) VALUES ($1, 'buyer', 'free', 970001, clock_timestamp(), clock_timestamp())`, buyerOrg); err != nil {
 		t.Fatalf("insert org: %v", err)
 	}

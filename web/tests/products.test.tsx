@@ -21,6 +21,7 @@ import {
   filterProducts,
   promotionDiscountPercent,
   promotionWritePrice,
+  promotionFrozen,
   formatProductImageCount,
   productTabs,
   productIssueCopy,
@@ -318,133 +319,66 @@ test("single and multi-select mutations build absolute Ozon requests", () => {
   assert.equal(canDeletePermanently([{ ...product, isArchived: true, sku: 0 }]), true)
 })
 
-const promotionOffer = (
-  overrides: Partial<ProductPromotionOfferView> = {},
-): ProductPromotionOfferView => ({
-  action_id: 1977747,
-  product_id: 41,
-  participating: false,
-  price: 90,
-  action_price: 0,
-  max_action_price: 68,
-  add_mode: "NOT_SET",
-  stock: 0,
-  min_stock: 0,
-  current_boost: 15,
-  min_boost: 15,
-  max_boost: 75,
-  price_min_elastic: 78,
-  price_max_elastic: 51,
-  ...overrides,
+const promotionOffer = (overrides: Partial<ProductPromotionOfferView> = {}): ProductPromotionOfferView => ({
+  action_id: 1977747, product_id: 41, offer_id: "ART-41", sku: "1234567890123456789", name: "测试商品",
+  participating: false, price: "90", price_currency_code: "CNY", action_price: "0", max_action_price: "68", currency_code: "CNY",
+  add_mode: "", stock: null, min_stock: 0, current_boost: 15, min_boost: 15, max_boost: 75,
+  price_min_elastic: "78", price_max_elastic: "51", price_quarantined: false, ...overrides,
 })
+const productIdRef = { product_id: 41, offer_id: "ART-41" }
 
-test("promotion write price clamps a percent or a direct price to the Ozon ceiling", () => {
+test("promotion previews keep the requested amount without silently deepening the discount", () => {
   const offer = promotionOffer()
-  // 90 * 15% off is 76.50, above the 68 ceiling, so the write takes the ceiling.
-  assert.equal(promotionWritePrice(offer, { kind: "percent", percent: 15 }), 68)
-  assert.equal(promotionWritePrice(offer, { kind: "price", price: 55 }), 55)
-  assert.equal(promotionWritePrice(offer, { kind: "price", price: 80 }), 68)
-  // Seller cabinet shows two decimals: 70 → 62 is 11.43%, not 11.4.
-  assert.equal(promotionDiscountPercent(70, 62), 11.43)
+  assert.equal(promotionWritePrice(offer, { kind: "percent", percent: 15 }), "76.50")
+  assert.equal(promotionWritePrice(offer, { kind: "price", price: "55.01" }), "55.01")
+  assert.equal(promotionWritePrice(offer, { kind: "price", price: "80" }), "80.00")
+  assert.equal(promotionWritePrice(offer, { kind: "price", price: "1e2" }), null)
+  assert.equal(promotionWritePrice(offer, { kind: "price", price: "0.001" }), null)
+  assert.equal(promotionDiscountPercent("70", "62"), 11.43)
+  assert.equal(promotionWritePrice(promotionOffer({price: "0.15"}), {kind: "percent", percent: 10}), "0.14")
+  assert.equal(promotionWritePrice(offer, {kind: "percent", percent: 10.123}), null)
+  assert.equal(promotionWritePrice(promotionOffer({ currency_code: "RUB" }), { kind: "percent", percent: 20 }), null)
 })
 
-test("promotion join prices each product against its own Ozon ceiling", () => {
-  const state = applyProductSnapshot(createProductListState(), snapshot)
-  const product = state.products[0]!
-  const productIdRef = { product_id: product.productId, offer_id: product.offerId }
+test("promotion join carries explicit decimal currency, type, and rejects an over-limit amount", () => {
   const offer = promotionOffer()
-
-  assert.deepEqual(
-    buildPromotionJoinMutation(1977747, [offer], [productIdRef], (item) => item.price * 0.5),
-    {
-      kind: "promotion_join",
-      action_id: 1977747,
-      items: [{ product_id: 41, offer_id: "ART-41", action_price: 45, stock: 0 }],
-    },
-  )
-
-  // 90 * 0.75 = 67.50 clears the 68 ceiling; 90 * 0.8 = 72 does not.
-  assert.equal(
-    buildPromotionJoinMutation(1977747, [offer], [productIdRef], (item) => item.price * 0.75)
-      .kind,
-    "promotion_join",
-  )
-  assert.throws(
-    () => buildPromotionJoinMutation(1977747, [offer], [productIdRef], (item) => item.price * 0.8),
-    /上限 68/,
-  )
+  assert.deepEqual(buildPromotionJoinMutation(1977747, "ELASTIC_BOOSTING", [offer], [productIdRef], () => "45.01"), {
+    kind: "promotion_join", action_id: 1977747, action_type: "ELASTIC_BOOSTING",
+    items: [{ product_id: 41, offer_id: "ART-41", action_price: "45.01", currency_code: "CNY", stock: 0 }],
+  })
+  assert.throws(() => buildPromotionJoinMutation(1977747, "ELASTIC_BOOSTING", [offer], [productIdRef], () => "72.00"), /上限 68/)
+  assert.throws(() => buildPromotionJoinMutation(1977747, "UNKNOWN", [offer], [productIdRef], () => "45"), /支持的活动/)
+  assert.throws(() => buildPromotionJoinMutation(1977747, "ELASTIC_BOOSTING", [offer, offer], [productIdRef], () => "45"), /身份无效/)
 })
 
-test("promotion join carries the promotion's minimum committed stock", () => {
-  const state = applyProductSnapshot(createProductListState(), snapshot)
-  const product = state.products[0]!
-  const productIdRef = { product_id: product.productId, offer_id: product.offerId }
-  const request = buildPromotionJoinMutation(
-    1977747,
-    [promotionOffer({ min_stock: 3 })],
-    [productIdRef],
-    () => 45,
-  )
-  assert.equal(request.kind === "promotion_join" && request.items[0]!.stock, 3)
+test("PROMOCODE preserves committed stock and refuses unknown stock", () => {
+  const request = buildPromotionJoinMutation(1977747, "PROMOCODE", [promotionOffer({ participating: true, stock: 8, min_stock: 3 })], [productIdRef], () => "45")
+  assert.equal(request.kind === "promotion_join" && request.items[0]!.stock, 8)
+  assert.throws(() => buildPromotionJoinMutation(1977747, "PROMOCODE", [promotionOffer({ min_stock: null })], [productIdRef], () => "45"), /库存未知/)
 })
 
-test("promotion leave only names products that are actually participating", () => {
-  const offers = [
-    promotionOffer({ product_id: 41, participating: true }),
-    promotionOffer({ product_id: 42, participating: false }),
-  ]
-  // ELASTIC_BOOSTING exits by re-pricing above the product's own limit: the
-  // exit price is max(price, limit) + one kopeck, two decimals.
+test("promotion leave uses exact cents above the limit and never guesses an exchange rate", () => {
+  const offers = [promotionOffer({ participating: true }), promotionOffer({ product_id: 42 })]
   assert.deepEqual(buildPromotionLeaveMutation(1977747, "ELASTIC_BOOSTING", offers), {
-    kind: "promotion_leave",
-    action_id: 1977747,
-    product_ids: [41],
-    action_type: "ELASTIC_BOOSTING",
-    exit_prices: [{ product_id: 41, exit_price: 90.01 }],
+    kind: "promotion_leave", action_id: 1977747, action_type: "ELASTIC_BOOSTING", product_ids: [41],
+    exit_prices: [{ product_id: 41, exit_price: "90.01", currency_code: "CNY" }],
   })
-  // A PROMOCODE leave keeps the same wire shape with no exit prices to build.
-  assert.deepEqual(buildPromotionLeaveMutation(1977747, "PROMOCODE", [
-    promotionOffer({ product_id: 41, participating: true, max_action_price: 68 }),
-  ]), {
-    kind: "promotion_leave",
-    action_id: 1977747,
-    product_ids: [41],
-    action_type: "PROMOCODE",
-    exit_prices: [{ product_id: 41, exit_price: 90.01 }],
+  assert.deepEqual(buildPromotionLeaveMutation(1977747, "PROMOCODE", offers), {
+    kind: "promotion_leave", action_id: 1977747, action_type: "PROMOCODE", product_ids: [41],
   })
-  assert.throws(
-    () =>
-      buildPromotionLeaveMutation(1977747, "ELASTIC_BOOSTING", [
-        promotionOffer({ participating: false }),
-      ]),
-    /都不在该活动中/,
-  )
-  // No limit means no price is provably above it — refuse rather than price
-  // blind.
-  assert.throws(
-    () =>
-      buildPromotionLeaveMutation(1977747, "ELASTIC_BOOSTING", [
-        promotionOffer({ participating: true, max_action_price: 0 }),
-      ]),
-    /缺少活动价上限/,
-  )
-  // The exit price rides above whichever is higher: the limit beats the
-  // current price here.
-  const stockDiscount = buildPromotionLeaveMutation(1977747, "STOCK_DISCOUNT", [
-    promotionOffer({ participating: true, price: 60, max_action_price: 68 }),
-  ])
-  if (stockDiscount.kind !== "promotion_leave") return assert.fail("expected leave")
-  assert.deepEqual(stockDiscount.exit_prices, [{ product_id: 41, exit_price: 68.01 }])
+  const request = buildPromotionLeaveMutation(1977747, "STOCK_DISCOUNT", [promotionOffer({ participating: true, price: "60" })])
+  assert.equal(request.kind === "promotion_leave" && request.exit_prices?.[0]?.exit_price, "68.01")
+  assert.throws(() => buildPromotionLeaveMutation(1977747, "ELASTIC_BOOSTING", [promotionOffer()]), /都不在该活动中/)
+  assert.throws(() => buildPromotionLeaveMutation(1977747, "ELASTIC_BOOSTING", [promotionOffer({ participating: true, max_action_price: "0" })]), /缺少活动价上限/)
+  assert.throws(() => buildPromotionLeaveMutation(1977747, "ELASTIC_BOOSTING", [promotionOffer({ participating: true, currency_code: "RUB" })]), /币种不同/)
 })
 
-test("elastic boosting prices are normalized low-to-high", () => {
-  // Ozon names the deeper discount `price_max_elastic`, so the raw pair reads
-  // backwards.
+test("elastic prices are normalized and a reported freeze never grants permission", () => {
   assert.deepEqual(elasticPriceRange(promotionOffer()), { low: 51, high: 78 })
-  assert.equal(
-    elasticPriceRange(promotionOffer({ price_min_elastic: 0, price_max_elastic: 0 })),
-    null,
-  )
+  assert.equal(elasticPriceRange(promotionOffer({ price_min_elastic: "", price_max_elastic: "" })), null)
+  assert.equal(promotionFrozen(""), false)
+  assert.equal(promotionFrozen("2099-01-01T00:00:00Z"), true)
+  assert.equal(promotionFrozen("unknown"), true)
 })
 
 test("warehouse status is glossed, and an unknown status is shown verbatim", () => {
@@ -470,30 +404,10 @@ test("product issue copy matches the stable Ozon code, not its English message",
   })
 })
 
-test("promotion join refuses a re-join that would change nothing", () => {
-  const state = applyProductSnapshot(createProductListState(), snapshot)
-  const product = state.products[0]!
-  const productIdRef = { product_id: product.productId, offer_id: product.offerId }
-  // Ozon answers an unchanged re-join with neither an acceptance nor a
-  // rejection, which would reach the operator as an unexplained failure.
-  assert.throws(
-    () =>
-      buildPromotionJoinMutation(
-        1977747,
-        [promotionOffer({ participating: true, action_price: 45 })],
-        [productIdRef],
-        () => 45,
-      ),
-    /已经以该活动价参加活动/,
-  )
-  // Moving the agreed price is a real change and still goes through.
-  assert.equal(
-    buildPromotionJoinMutation(
-      1977747,
-      [promotionOffer({ participating: true, action_price: 45 })],
-      [productIdRef],
-      () => 44,
-    ).kind,
-    "promotion_join",
-  )
+test("promotion join skips unchanged participants without sending an ambiguous no-op", () => {
+  const unchanged = promotionOffer({ participating: true, action_price: "45" })
+  assert.throws(() => buildPromotionJoinMutation(1977747, "ELASTIC_BOOSTING", [unchanged], [productIdRef], () => "45.00"), /没有需要加入或改价/)
+  const request = buildPromotionJoinMutation(1977747, "ELASTIC_BOOSTING", [unchanged, promotionOffer({ product_id: 42 })], [productIdRef], () => "45")
+  assert.equal(request.kind === "promotion_join" && request.items.length, 1)
+  assert.equal(request.kind === "promotion_join" && request.items[0]!.product_id, 42)
 })

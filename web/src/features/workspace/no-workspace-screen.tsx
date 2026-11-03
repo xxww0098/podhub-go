@@ -1,9 +1,10 @@
 import { useId, useState } from "react"
-import { Plus } from "lucide-react"
+import { Building2, Check, Copy, Mail, Plus, Sparkles } from "lucide-react"
 
 import type { WorkspaceStandingView } from "@/bindings/commands"
 import { accountHttp } from "@/bindings/http-account"
 import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import {
   Card,
   CardContent,
@@ -15,7 +16,7 @@ import { DialogFooter } from "@/components/ui/dialog"
 import { Field, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
-import { notifyCommandError, notifySuccess } from "@/lib/notify"
+import { notifyCommandError, notifyError, notifySuccess } from "@/lib/notify"
 
 const NAME_MAX = 64
 
@@ -33,14 +34,44 @@ export function NoWorkspaceScreen({
   email?: string
   onCreated: (standing: WorkspaceStandingView) => void
 }) {
-  return (
-    <div className="flex w-full flex-col gap-5">
-      <h1 className="sr-only">工作空间</h1>
+  const [copied, setCopied] = useState(false)
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
+  async function copyEmail() {
+    if (!email) return
+    try {
+      await navigator.clipboard.writeText(email)
+      setCopied(true)
+      notifySuccess("邮箱已复制")
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      notifyError("无法复制，请手动选择复制")
+    }
+  }
+
+  return (
+    <div className="flex w-full flex-col gap-4">
+      <div className="flex flex-col gap-1.5 pb-1">
+        <div className="inline-flex w-fit items-center gap-1.5 rounded-full border border-primary/20 bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
+          <Sparkles className="size-3" />
+          <span>开始使用</span>
+        </div>
+        <h1 className="text-xl font-bold tracking-tight text-foreground sm:text-2xl">
+          开启你的工作空间
+        </h1>
+        <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground sm:text-sm">
+          工作空间是管理跨电商平台店铺、智能批量上架与协同团队的核心载体。你可以立即创建一个专属工作空间，或让团队管理员向你的邮箱发送邀请。
+        </p>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card size="sm" className="border-border/80 transition-shadow hover:shadow-sm">
           <CardHeader>
-            <CardTitle>创建工作空间</CardTitle>
+            <div className="flex items-center gap-2">
+              <div className="flex size-7 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <Building2 className="size-3.5" />
+              </div>
+              <CardTitle>创建工作空间</CardTitle>
+            </div>
             <CardDescription>
               你将成为所有者，使用 Free 套餐；创建后自动进入。
             </CardDescription>
@@ -50,18 +81,38 @@ export function NoWorkspaceScreen({
           </CardContent>
         </Card>
 
-        <Card>
+        <Card size="sm" className="border-border/80 transition-shadow hover:shadow-sm">
           <CardHeader>
-            <CardTitle>等待邀请</CardTitle>
+            <div className="flex items-center gap-2">
+              <div className="flex size-7 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                <Mail className="size-3.5" />
+              </div>
+              <CardTitle>等待邀请</CardTitle>
+            </div>
             <CardDescription>
               加入已有工作空间，由工作空间所有者或管理员向你发送邀请。
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3 text-compact leading-relaxed text-muted-foreground">
             {email ? (
-              <p className="break-all rounded-lg border border-border px-3 py-2 font-mono text-meta text-foreground select-all">
-                {email}
-              </p>
+              <div className="flex items-center justify-between gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2">
+                <span className="break-all font-mono text-meta text-foreground select-all">
+                  {email}
+                </span>
+                <IconButton
+                  icon={copied ? Check : Copy}
+                  iconClassName={
+                    copied
+                      ? "size-3.5 text-primary"
+                      : "size-3.5 text-muted-foreground"
+                  }
+                  label={copied ? "已复制邮箱" : "复制邮箱"}
+                  tip={copied ? "已复制" : "复制邮箱"}
+                  size="icon-xs"
+                  onClick={copyEmail}
+                  className="cursor-pointer shrink-0"
+                />
+              </div>
             ) : (
               <p>使用你注册时填写的邮箱地址。</p>
             )}
@@ -113,7 +164,7 @@ export function CreateWorkspaceForm({
 
   return (
     <form
-      className="flex flex-col gap-4"
+      className="flex flex-col gap-3"
       onSubmit={(event) => {
         event.preventDefault()
         if (valid && !busy) void submit()

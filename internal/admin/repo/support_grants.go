@@ -35,7 +35,12 @@ LEFT JOIN account_users u ON u.id = g.staff_user_id`
 
 // ListGrants reads grants and then audits. orgFilter nil lists every org.
 func (s *Store) ListGrants(ctx context.Context, actor domain.Actor, orgFilter *int64) ([]domain.Grant, *contract.Fault) {
-	rows, err := s.pool.Query(ctx, supportGrantSelect+`
+	tx, err := BeginStaff(ctx, s.pool)
+	if err != nil {
+		return nil, dbFault(err)
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, supportGrantSelect+`
 WHERE ($1::bigint IS NULL OR g.org_id = $1)
 ORDER BY g.id DESC`, orgFilter)
 	if err != nil {
@@ -51,6 +56,9 @@ ORDER BY g.id DESC`, orgFilter)
 		out = append(out, g)
 	}
 	if err := rows.Err(); err != nil {
+		return nil, dbFault(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return nil, dbFault(err)
 	}
 	if out == nil {

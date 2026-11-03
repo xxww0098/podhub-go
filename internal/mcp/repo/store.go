@@ -6,12 +6,13 @@ package mcprepo
 import (
 	"context"
 	"errors"
-	"strings"
+	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	access "github.com/xxww0098/podhub-go/internal/identity/contract"
 	"github.com/xxww0098/podhub-go/internal/mcp/domain"
 	"github.com/xxww0098/podhub-go/internal/platform/db"
 	"github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
@@ -370,6 +371,11 @@ func resolveByID(ctx context.Context, tx pgx.Tx, id string, lock bool) (*domain.
 	}
 	if org != nil {
 		g.OrgID = *org
+		// organization_members is tenant-scoped; the grant's own org is the
+		// only tenant this resolve may inspect.
+		if _, err := tx.Exec(ctx, `SELECT set_config($1, $2, true)`, tenantx.GUCCurrentOrgID, strconv.FormatInt(*org, 10)); err != nil {
+			return nil, err
+		}
 	}
 	g.SourceIDs = sources
 	if !actionsFit(g.ScopeKind, g.Actions) {
@@ -412,11 +418,11 @@ func resolveByID(ctx context.Context, tx pgx.Tx, id string, lock bool) (*domain.
 		if err != nil {
 			return nil, err
 		}
-		norm, ok := storedRole(stored)
+		norm, ok := access.ParseWorkspace(stored)
 		if !ok {
 			return nil, nil
 		}
-		g.WorkspaceRole = norm
+		g.WorkspaceRole = string(norm)
 		orgQ := `SELECT id FROM organizations WHERE id = $1 AND dissolved_at IS NULL`
 		if lock {
 			orgQ += ` FOR SHARE`
@@ -430,7 +436,7 @@ func resolveByID(ctx context.Context, tx pgx.Tx, id string, lock bool) (*domain.
 			return nil, err
 		}
 	case "supplier_catalog":
-		if !staffRole(role) {
+		if !access.IsPlatformStaff(role) {
 			return nil, nil
 		}
 	case "catalog":
@@ -438,32 +444,6 @@ func resolveByID(ctx context.Context, tx pgx.Tx, id string, lock bool) (*domain.
 		return nil, nil
 	}
 	return &g, nil
-}
-
-func storedRole(raw string) (string, bool) {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "owner":
-		return "owner", true
-	case "manager", "admin":
-		return "manager", true
-	case "member":
-		return "member", true
-	case "reviewer":
-		return "reviewer", true
-	case "viewer":
-		return "viewer", true
-	default:
-		return "", false
-	}
-}
-
-func staffRole(role string) bool {
-	switch strings.ToLower(strings.TrimSpace(role)) {
-	case "admin", "super_admin":
-		return true
-	default:
-		return false
-	}
 }
 
 func actionsFit(scope string, actions []string) bool {

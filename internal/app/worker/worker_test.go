@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"net"
 	"net/http/httptest"
 	"os"
 	"strings"
@@ -13,6 +14,37 @@ import (
 	"github.com/xxww0098/podhub-go/internal/platform/config"
 	storage "github.com/xxww0098/podhub-go/internal/platform/r2"
 )
+
+func TestWorkerRejectsInvalidDNSBeforeInstalling(t *testing.T) {
+	t.Setenv("CLOUD_DNS_SERVER", "resolver.example:53")
+	previous := install
+	t.Cleanup(func() { install = previous })
+	installed := false
+	SetInstaller(func(config.Config) { installed = true })
+	if code := Main(RoleListing); code != 1 || installed {
+		t.Fatalf("invalid DNS reached worker installation: code=%d installed=%v", code, installed)
+	}
+}
+
+func TestWorkerInstallsDNSBeforeClients(t *testing.T) {
+	t.Setenv("CLOUD_DNS_SERVER", "1.1.1.1:53")
+	t.Setenv("CLOUD_SELLER_EGRESS_ROUTES", "direct")
+	t.Setenv("CLOUD_MEDIA_GC_DELETE", "0")
+	t.Setenv("DATABASE_URL", "")
+	clearR2(t)
+	previous, previousResolver := install, net.DefaultResolver
+	t.Cleanup(func() { install = previous; net.DefaultResolver = previousResolver })
+	installed := false
+	SetInstaller(func(cfg config.Config) {
+		installed = true
+		if cfg.DNSServer != "1.1.1.1:53" || net.DefaultResolver == previousResolver || !net.DefaultResolver.PreferGo || net.DefaultResolver.Dial == nil {
+			t.Fatal("worker installer reached clients before explicit DNS was configured")
+		}
+	})
+	if code := Main(RoleMediaGC); code != 0 || !installed {
+		t.Fatalf("configured DNS prevented safe worker startup: code=%d installed=%v", code, installed)
+	}
+}
 
 func TestMediaGCIdleWhenDeleteOff(t *testing.T) {
 	t.Setenv("CLOUD_MEDIA_GC_DELETE", "0")

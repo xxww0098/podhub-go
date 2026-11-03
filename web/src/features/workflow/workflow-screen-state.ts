@@ -44,6 +44,7 @@ export function useWorkflowScreenState(initialSchema: CategorySchemaView | undef
   const [aiPromptFileName, setAiPromptFileName] = useState("")
   const [savedForms, setSavedForms] = useState<ListingCardSummary[]>([])
   const [libraryBusy, setLibraryBusy] = useState(true)
+  const [libraryLoadError, setLibraryLoadError] = useState(false)
   const [streamHealthy, setStreamHealthy] = useState(false)
   const [cardFieldOrigins, setCardFieldOrigins] = useState<FieldValueOrigin[]>([])
   const [targetStoreId, setTargetStoreId] = useState("")
@@ -91,7 +92,7 @@ export function useWorkflowScreenState(initialSchema: CategorySchemaView | undef
     setIssues, busy, setBusy, psdAsset, setPsdAsset, psdAssetTemplateIdRef,
     psdTemplateAssetId, setPsdTemplateAssetId, psdTemplateFileName, setPsdTemplateFileName, aiPromptId, setAiPromptId,
     aiPrompt, setAiPrompt, aiPromptFileName, setAiPromptFileName, savedForms, setSavedForms,
-    libraryBusy, setLibraryBusy, streamHealthy, setStreamHealthy, cardFieldOrigins, setCardFieldOrigins,
+    libraryBusy, setLibraryBusy, libraryLoadError, setLibraryLoadError, streamHealthy, setStreamHealthy, cardFieldOrigins, setCardFieldOrigins,
     targetStoreId, setTargetStoreId, aiAllowedFieldKeys, setAiAllowedFieldKeys, videoUploads, setVideoUploads,
     aiProtectedFieldKeys, ozonStores, storeAvailability, storeConfigured, storeLabel, preparationTracks,
     guidedPreparationLock, rowClearLock, runnerOpenLock, runnerGeneration, stopCardStream, wasActive,

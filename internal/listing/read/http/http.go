@@ -22,13 +22,20 @@ import (
 
 // Host is the listing read and draft-write surface. LoadRules is the
 // one-second banned-tag cache. A nil loader fails a content save closed.
+// SearchTagTokens extracts search-tag tokens from a category draft; internal
+// app passes the listing/core/domain function. A nil value fails the save closed.
 type Host struct {
-	Pool      *pgxpool.Pool
-	Engine    Engine
-	Access    access.Resolver
-	Now       func() time.Time
-	LoadRules func(context.Context) ([]Rule, error)
-	Core      Core
+	Pool              *pgxpool.Pool
+	Engine            Engine
+	Access            access.Resolver
+	Now               func() time.Time
+	LoadRules         func(context.Context) ([]Rule, error)
+	SearchTagTokens   func(schemaFields, draft []byte) ([]string, error)
+	Core              Core
+	Queue             MediaQueue
+	Transit           func(context.Context, pgx.Tx, access.Principal) (*TransitStorage, error)
+	RecognitionModels func(context.Context) ([]string, string, error)
+	ReadTaskRecords   TaskRecordReader
 	// Seller posts a Seller read. Nil records an unreadable probe and does
 	// not dial. Production passes seller.Egress.Call with write=false.
 	// Reads do not consult the kill switch.
@@ -70,7 +77,19 @@ func Mount(r chi.Router, h Host) {
 	r.Post("/api/listing/rows", h.createRow)
 	r.Get("/api/listing/rows/{id}", h.getRow)
 	r.Patch("/api/listing/rows/{id}", h.patchRow)
+	r.Delete("/api/listing/rows/{id}", h.deleteRow)
+	r.Post("/api/listing/rows/{id}/prepare", h.prepareMedia)
+	r.Post("/api/listing/rows/{id}/ai/settle", h.settleRecognition)
+	r.Post("/api/listing/rows/{id}/ai/fail", h.failRecognition)
+	r.Get("/api/listing/jobs/{id}", h.getJob)
+	r.Post("/api/listing/rows/{id}/prepare/cancel", h.cancelMedia)
+	r.Post("/api/listing/rows/{id}/media", h.completeMedia)
+	r.Post("/api/listing/rows/{id}/media/images", h.completeImages)
+	r.Post("/api/listing/rows/{id}/media/images/{index}", h.completeImage)
 	r.Get("/api/listing/intents", h.intents)
+	r.Get("/api/listing/task-records", h.taskRecords)
+	r.Get("/api/listing/store-policies/{store_id}", h.getStorePolicy)
+	r.Put("/api/listing/store-policies/{store_id}", h.putStorePolicy)
 	r.Post("/api/listing/intents/release-unknown", h.releaseUnknown)
 	r.Get("/api/listing/intents/{id}", h.getIntent)
 	r.Post("/api/listing/intents/{id}/cancel", h.cancelIntent)
@@ -98,7 +117,7 @@ func (h Host) prepare(w http.ResponseWriter, r *http.Request) (access.Principal,
 	if !ok {
 		return access.Principal{}, false
 	}
-	if status, message, allowed := access.ListingPrepare(p); !allowed {
+	if status, message, allowed := access.OrgMember(p); !allowed {
 		writeErr(w, status, message, "forbidden")
 		return access.Principal{}, false
 	}

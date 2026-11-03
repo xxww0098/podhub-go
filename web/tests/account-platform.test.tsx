@@ -26,19 +26,7 @@ test("platform staff labels preserve the super-admin rank", () => {
   }
 })
 
-test("prompt administration reads only submitted supplier prompts", () => {
-  const source = readFileSync(
-    new URL("../src/features/platform/prompts.tsx", import.meta.url),
-    "utf8",
-  )
 
-  assert.match(source, /supplierPromptsList/)
-  assert.match(source, /已提交类目/)
-  assert.match(source, /uniquePromptForImport/)
-  assert.doesNotMatch(source, /listingCardSaveCategoryPrompt/)
-  assert.doesNotMatch(source, /新增提示词/)
-  assert.doesNotMatch(source, /删除提示词/)
-})
 
 test("Admin AI allowlist is models and prices, not connection fields", () => {
   const prices = readFileSync(
@@ -65,6 +53,7 @@ test("Admin AI allowlist is models and prices, not connection fields", () => {
         thinking: false,
         thinking_format: "enable_thinking",
         priority: 0,
+        purpose: "ocr",
       }]}
       prices={[
         {
@@ -87,7 +76,7 @@ test("Admin AI allowlist is models and prices, not connection fields", () => {
   )
   assert.match(allowlist, /qwen3\.7-flash/)
   assert.match(allowlist, /当前识图/)
-  assert.match(allowlist, /添加模型/)
+  assert.match(allowlist, /aria-label="添加模型"/)
   assert.match(allowlist, /已就绪/)
   assert.match(allowlist, /下架/)
   assert.match(allowlist, /aria-label="测试 qwen3\.7-flash"/)
@@ -111,6 +100,7 @@ test("an unpublished hop model is flagged on the allowlist", () => {
         thinking: false,
         thinking_format: "enable_thinking",
         priority: 0,
+        purpose: "ocr",
       }]}
       prices={[]}
       busy={false}
@@ -141,8 +131,15 @@ test("an unpublished hop model is flagged on the allowlist", () => {
 
 const adminScreenLabel = SCREEN_LABELS["supplier-dbs"]
 
-const adminShell = (role: string, settingsRequest: "media" | null = null) =>
-  renderToStaticMarkup(
+function renderShell(node: Parameters<typeof renderToStaticMarkup>[0]) {
+  const existing = Object.getOwnPropertyDescriptor(globalThis, "window")
+  if (!existing) Object.defineProperty(globalThis, "window", { value: { location: { search: "" } }, configurable: true })
+  try { return renderToStaticMarkup(node) }
+  finally { if (!existing) Reflect.deleteProperty(globalThis, "window") }
+}
+
+const adminShell = (role: string, settingsRequest: "account" | "payment" | null = null) =>
+  renderShell(
     <AppShell
       screen="supplier-dbs"
       adminSurface
@@ -161,26 +158,46 @@ const adminShell = (role: string, settingsRequest: "media" | null = null) =>
 
 test("the /admin surface paints the staff rail, one mode and no switcher", () => {
   const html = adminShell("super_admin")
+  assert.doesNotMatch(html, /对象存储/)
   assert.match(html, new RegExp(`aria-label="${adminScreenLabel}"`))
   /* One mode leaves nothing to switch between. */
   assert.doesNotMatch(html, /aria-label="导航模式"/)
-  // Platform settings replace business navigation only while settings is open.
+  // Platform settings offer only the permitted sections.
   assert.deepEqual(
     adminSettingsRowsFor("super_admin").map((row) => row.label),
-    ["用户", "厂家账号", "OCR", "AI 账号池", "对象存储", "支付", "网络代理", "提示词", "受限标签", "类目", "兑换", "代理", "日志", "订单"],
+    ["用户", "工厂管理", "AI 账号", "支付", "网络代理", "全局受限标签", "类目", "兑换", "代理", "日志", "订单"],
   )
 })
 
-test("admin settings replace business navigation with an inline page and a return control", () => {
-  const html = adminShell("super_admin", "media")
+test("admin settings keep business navigation beside the inline pane and a return control", () => {
+  const html = adminShell("super_admin", "payment")
   assert.match(html, /aria-label="设置分区"/)
   assert.match(html, /aria-label="返回业务页面"/)
   assert.match(html, /data-settings-page/)
-  assert.doesNotMatch(html, /aria-label="主导航"|role="dialog"|data-slot="dialog-content"/)
-  assert.match(html, /aria-label="对象存储"[^>]*aria-current="page"/)
-  const refused = adminShell("admin", "media")
+  assert.match(html, /aria-label="主导航"/)
+  assert.doesNotMatch(html, /role="dialog"|data-slot="dialog-content"/)
+  const businessNav = html.slice(html.indexOf('aria-label="主导航"'), html.indexOf("</nav>", html.indexOf('aria-label="主导航"')))
+  assert.doesNotMatch(businessNav, /aria-current="page"/)
+  assert.match(html, /aria-label="支付"[^>]*aria-current="page"/)
+  const refused = adminShell("admin", "payment")
   assert.match(refused, /没有权限打开该设置/)
-  assert.doesNotMatch(refused, /aria-label="对象存储"/)
+  assert.doesNotMatch(refused, /aria-label="支付"/)
+})
+
+test("detail settings panes keep a centred reading column, rosters keep the canvas", () => {
+  const cases = [
+    /* 账号 is a form: one column with side margins, not a full-bleed sheet. */
+    { html: adminShell("super_admin", "account"), centred: true },
+    /* 支付 is a ledger; it must stay edge to edge. */
+    { html: adminShell("super_admin", "payment"), centred: false },
+  ]
+  for (const { html, centred } of cases) {
+    const column =
+      html
+        .slice(html.indexOf("data-settings-page"))
+        .match(/<div class="([^"]*\bp-[34]\b[^"]*)"/)?.[1] ?? ""
+    assert.equal(/mx-auto w-full max-w-4xl/.test(column), centred, column)
+  }
 })
 
 test("the /admin rail hides super_admin panes from an admin-rank session", () => {
@@ -190,18 +207,17 @@ test("the /admin rail hides super_admin panes from an admin-rank session", () =>
   assert.deepEqual(adminSettingsRowsFor("admin"), [])
 })
 
-test("the /admin surface paints no destination for a session that is not staff", () => {
+test("the /admin surface paints no platform destination for a session that is not staff", () => {
   const html = adminShell("user")
   assert.doesNotMatch(html, /aria-label="平台"/)
   assert.doesNotMatch(html, /平台管理/)
   assert.doesNotMatch(html, new RegExp(`aria-label="${adminScreenLabel}"`))
-  assert.doesNotMatch(html, /aria-label="数据大屏"/)
 })
 
 test("the workbench shell never paints the admin rail or an admin section", () => {
-  const html = renderToStaticMarkup(
+  const html = renderShell(
     <AppShell
-      screen="console"
+      screen="home"
       overview={{
         ...overview,
         session: { ...overview.session, role: "super_admin" },
@@ -213,7 +229,7 @@ test("the workbench shell never paints the admin rail or an admin section", () =
       <div />
     </AppShell>,
   )
-  assert.doesNotMatch(html, /aria-label="对象存储"/)
+  assert.doesNotMatch(html, /aria-label="支付"/)
   assert.doesNotMatch(html, /aria-label="提示词"/)
   assert.match(html, /aria-label="主导航"/)
 })

@@ -14,7 +14,6 @@ type (
 	Settlement      = contract.Settlement
 	Error           = contract.Error
 	Price           = contract.Price
-	PublishRequest  = contract.PublishRequest
 	RedeemResult    = domain.RedeemResult
 	RedeemError     = domain.RedeemError
 )

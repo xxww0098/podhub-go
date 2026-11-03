@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/xxww0098/podhub-go/internal/identity"
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
 	"github.com/xxww0098/podhub-go/internal/ozonerr/contract"
 	"github.com/xxww0098/podhub-go/internal/ozonerr/domain"
@@ -100,7 +99,7 @@ func (s *Server) orgReader(w http.ResponseWriter, r *http.Request) (access.Princ
 		writeListing(w, http.StatusForbidden, access.MsgNoWorkspace, "forbidden")
 		return access.Principal{}, false
 	}
-	if _, ok := identity.ParseWorkspaceRole(p.WorkspaceRole); !ok {
+	if _, ok := access.ParseWorkspace(p.WorkspaceRole); !ok {
 		writeListing(w, http.StatusForbidden, access.MsgBadWorkspaceRole, "forbidden")
 		return access.Principal{}, false
 	}

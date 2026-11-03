@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { readFileSync } from "node:fs"
 import { ROUTES } from "@/api/routes"
-import { createErrorFeedbackReporting } from "./error-feedback-reporting"
+import { createErrorFeedbackReporting, type ErrorFeedbackInput } from "./error-feedback-reporting"
 
 function harness(fetcher: typeof fetch = (async () => new Response("{}", { status: 503 })) as typeof fetch) {
   let now = 0
@@ -22,9 +23,9 @@ function harness(fetcher: typeof fetch = (async () => new Response("{}", { statu
   }
   return { ...reporting, calls, advance, offline: () => { online = false }, online: () => { online = true } }
 }
-const input = { errorId: "12345678901234567890", code: "http.failed", stage: "submit", status: 503, rowId: "row-1" }
+const input: ErrorFeedbackInput = JSON.parse(readFileSync(new URL("../../../fixtures/telemetry/error-feedback.json", import.meta.url), "utf8"))
 
-test("automatic receipts whitelist fields, deduplicate accepted IDs and preserve numeric strings", async () => {
+test("automatic receipts share the backend fixture, whitelist fields and deduplicate accepted IDs", async () => {
   const h = harness((async () => Response.json({ data: { accepted: [input.errorId], rejected: [] } })) as typeof fetch)
   h.report(input)
   await h.flush()
@@ -37,8 +38,31 @@ test("automatic receipts whitelist fields, deduplicate accepted IDs and preserve
   assert.equal(h.calls.length, 1)
   const event = JSON.parse(h.calls[0]!.body as string).events[0]
   assert.equal(event.kind, "error_feedback.v1")
+  assert.equal(event.id, input.errorId)
   assert.deepEqual(JSON.parse(event.payload_json), input)
   assert.equal(h.calls[0]!.credentials, "include")
+})
+
+test("only canonical 64-bit Base32 IDs and integer HTTP statuses enter the reporting queue", async () => {
+  const h = harness()
+  h.setContext({ sessionKey: "validation" })
+  for (const errorId of ["12345678901234567890", input.errorId.toLowerCase(), "7K3M-9Q2D-6R8PT",
+    input.errorId.slice(0, 12), `${input.errorId}0`, "G000000000000", "7K3I9Q2D6R8PT", "7K3L9Q2D6R8PT", "7K3O9Q2D6R8PT", "7K3U9Q2D6R8PT"]) {
+    h.report({ ...input, errorId })
+  }
+  for (const key of ["status", "apiStatus"] as const) {
+    for (const value of [99, 600, 503.5, "503", null, true, [503], { status: 503 }, NaN, Infinity]) {
+      h.report({ ...input, [key]: value } as ErrorFeedbackInput)
+    }
+  }
+  await h.flush()
+  assert.equal(h.calls.length, 0)
+  h.report({ ...input, status: 100, apiStatus: 599 })
+  await h.flush()
+  const payload = JSON.parse(JSON.parse(h.calls[0]!.body as string).events[0].payload_json)
+  assert.equal(payload.status, 100)
+  assert.equal(payload.apiStatus, 599)
+  h.setContext({ sessionKey: null })
 })
 
 test("bounded queue, retry attempts and offline expiry", async () => {
@@ -52,7 +76,7 @@ test("bounded queue, retry attempts and offline expiry", async () => {
   assert.equal(h.calls.length, 3)
   h.setContext({ sessionKey: "b" })
   h.offline()
-  for (let i = 0; i < 110; i++) h.report({ ...input, errorId: String(i).padStart(20, "0") })
+  for (let i = 0; i < 110; i++) h.report({ ...input, errorId: String(i).padStart(13, "0") })
   await h.flush()
   h.online()
   await h.advance(120_001)
@@ -103,7 +127,7 @@ test("a bad refusal reason is omitted and a concrete one is kept", async () => {
   const dropped = JSON.parse(JSON.parse(h.calls[0]!.body as string).events[0].payload_json)
   assert.equal(dropped.refusalReason, undefined)
   assert.equal(dropped.code, input.code)
-  h.report({ ...input, errorId: "12345678901234567891", refusalReason: "media_not_ready" })
+  h.report({ ...input, errorId: "7K3M9Q2D6R8PV", refusalReason: "media_not_ready" })
   await h.advance(250)
   const kept = JSON.parse(JSON.parse(h.calls[1]!.body as string).events[0].payload_json)
   assert.equal(kept.refusalReason, "media_not_ready")
@@ -120,7 +144,7 @@ test("invalid input is dropped; auth loss stops automatic reporting", async () =
   assert.equal(h.calls.length, 0)
   h.report(input)
   await h.flush()
-  h.report({ ...input, errorId: "00000000000000000000" })
+  h.report({ ...input, errorId: "0000000000000" })
   await h.advance(10_000)
   assert.equal(h.calls.length, 1)
 })
@@ -147,7 +171,7 @@ test("500 simultaneous failures drain in 20-item chunks without losing or duplic
   }) as typeof fetch)
   h.setContext({ sessionKey: "a" })
   for (let i = 0; i < 500; i++) {
-    const event = { ...input, errorId: String(i).padStart(20, "0") }
+    const event = { ...input, errorId: String(i).padStart(13, "0") }
     h.report(event)
     h.report(event)
   }
@@ -163,7 +187,7 @@ test("1000-item bound and partial receipt retry do not discard unacknowledged ev
     return Response.json({ data: { accepted: ids.slice(0, 10), rejected: [] } })
   }) as typeof fetch)
   h.setContext({ sessionKey: "a" })
-  for (let i = 0; i < 1_100; i++) h.report({ ...input, errorId: String(i).padStart(20, "0") })
+  for (let i = 0; i < 1_100; i++) h.report({ ...input, errorId: String(i).padStart(13, "0") })
   for (let i = 0; i < 110; i++) await h.advance(1_000)
   const sent = h.calls.flatMap((call) => JSON.parse(call.body as string).events.map((event: { id: string }) => event.id))
   assert.equal(new Set(sent).size, 1_000)

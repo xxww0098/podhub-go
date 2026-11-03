@@ -6,6 +6,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	bill "github.com/xxww0098/podhub-go/internal/billing/contract"
 	"github.com/xxww0098/podhub-go/internal/platform/db"
 	sign "github.com/xxww0098/podhub-go/internal/platform/r2/sigv4"
 	"github.com/xxww0098/podhub-go/internal/platform/writer"
@@ -20,8 +21,11 @@ type BeginApp func(ctx context.Context, begin func(context.Context) (pgx.Tx, err
 type Repo struct {
 	pool         *pgxpool.Pool
 	begin        BeginApp
-	assets       *sign.Account
+	assets       func(context.Context) (sign.Account, error)
 	catalogStore *sign.Account
+	profileValid func(string) bool
+	holdTx       func(context.Context, pgx.Tx, int64, string, *int64, int64) (bill.WalletRow, error)
+	settleTx     func(context.Context, pgx.Tx, int64, string, *int64, int64, int64) (bill.Settlement, error)
 }
 
 // New keeps the pool and the tenant opener. A nil pool cannot open a transaction.
@@ -29,10 +33,27 @@ func New(pool *pgxpool.Pool, begin BeginApp) Repo {
 	return Repo{pool: pool, begin: begin}
 }
 
-// WithBlobs keeps loopback object accounts. A nil account is "not configured".
-func (r Repo) WithBlobs(assets, catalog *sign.Account) Repo {
+func (r Repo) WithProfileValidation(validate func(string) bool) Repo {
+	r.profileValid = validate
+	return r
+}
+
+// WithBlobs resolves private storage on each download and captures catalog storage.
+func (r Repo) WithBlobs(assets func(context.Context) (sign.Account, error), catalog *sign.Account) Repo {
 	r.assets = assets
 	r.catalogStore = catalog
+	return r
+}
+
+// WithMoney injects the billing wallet functions dispatch settlement needs.
+// The signatures match the billing repo functions internal/app passes. A nil
+// function fails the settlement instead of calling through.
+func (r Repo) WithMoney(
+	hold func(context.Context, pgx.Tx, int64, string, *int64, int64) (bill.WalletRow, error),
+	settle func(context.Context, pgx.Tx, int64, string, *int64, int64, int64) (bill.Settlement, error),
+) Repo {
+	r.holdTx = hold
+	r.settleTx = settle
 	return r
 }
 

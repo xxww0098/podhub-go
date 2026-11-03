@@ -12,10 +12,26 @@ import type { components } from "@/api/schema"
 
 import { refuse } from "./refusal"
 
-type IntegrationConfig = components["schemas"]["IntegrationConfigData"]
-type MediaAccount = components["schemas"]["IntegrationMediaAccountView"]
+type IntegrationConfig = components["schemas"]["AdminIntegrationConfigView"]
 type WorkspaceStoreRoster = components["schemas"]["WorkspaceStoreRosterData"]
-type ReplaceRequest = components["schemas"]["ReplaceIntegrationConfigRequest"]
+type ReplaceRequest = components["schemas"]["AdminIntegrationConfigWriteRequest"]
+
+export function isAiRuntime(value: unknown): value is components["schemas"]["AdminIntegrationAiRuntime"] {
+  if (!value || typeof value !== "object") return false
+  const runtime = value as Record<string, unknown>
+  const counts = [runtime.max_concurrency_global, runtime.max_concurrency_user, runtime.max_concurrency_account, runtime.user_rate_per_minute]
+  return counts.every((count) => typeof count === "number" && Number.isInteger(count) && count >= 0 && count <= 100_000)
+    && typeof runtime.lease_ttl_seconds === "number" && Number.isInteger(runtime.lease_ttl_seconds)
+    && runtime.lease_ttl_seconds >= 1 && runtime.lease_ttl_seconds <= 3600
+    && typeof runtime.allow_public_egress === "boolean"
+}
+
+export function requireAiConfigComplete(config: IntegrationConfig): void {
+  if (!isAiRuntime(config.ai_runtime)) throw refuse("integration_ai_invalid", "AI 运行配置未确认，请更新服务并刷新后重试")
+  if (!Array.isArray(config.ai_accounts) || config.ai_accounts.some((row) => row.purpose !== "ocr" && row.purpose !== "image")) {
+    throw refuse("integration_ai_invalid", "账号用途未确认，请更新服务并刷新后重试")
+  }
+}
 
 // --- Ozon Store upsert ------------------------------------------------------
 
@@ -113,96 +129,18 @@ export function readActiveStore(workspaceUuid: string): string | null {
   return activeStoreMap()[workspaceUuid] ?? null
 }
 
-export function writeActiveStore(workspaceUuid: string, storeId: string): void {
-  try {
-    const next = { ...activeStoreMap(), [workspaceUuid]: storeId }
-    globalThis.localStorage?.setItem(ACTIVE_STORE_KEY, JSON.stringify(next))
-  } catch {
-    // A browser that refuses storage still gets a working screen; the pick
-    // just does not survive the reload.
-  }
-}
-
-// --- Media accounts ---------------------------------------------------------
-
-export type UpsertMediaAccount = {
-  role: components["schemas"]["IntegrationMediaRole"]
-  label: string
-  provider: components["schemas"]["IntegrationMediaProvider"]
-  endpoint: string
-  region: string
-  bucket: string
-  key_prefix: string
-  public_base_url: string
-  force_path_style: boolean
-  access_key_id: string
-  secret_access_key: string
-  session_token: string
-}
-
-export type MediaCredential = [string, string, string, string]
-
-export function applyMediaUpsert(
-  config: IntegrationConfig,
-  request: UpsertMediaAccount,
-): { config: IntegrationConfig, credential?: MediaCredential } {
-  const accessKeyId = request.access_key_id.trim()
-  const secretAccessKey = request.secret_access_key.trim()
-  const replaceCredentials = accessKeyId.length > 0 || secretAccessKey.length > 0
-  const role = request.role
-  const existing = config.storage_buckets.find((item) => item.role === role)
-  if (!existing && !replaceCredentials) {
-    throw refuse("integration_media_invalid", "首次配置必须填写 Access Key / Secret Key")
-  }
-  const view: MediaAccount = {
-    id: existing?.id ?? `s3_${role}`,
-    label: request.label.trim(),
-    role,
-    provider: request.provider,
-    endpoint: request.endpoint.trim(),
-    region: request.region.trim(),
-    bucket: request.bucket.trim(),
-    key_prefix: request.key_prefix.trim(),
-    public_base_url: request.public_base_url.trim(),
-    force_path_style: request.force_path_style,
-    active: true,
-  }
-  const storage_buckets = existing
-    ? config.storage_buckets.map((item) => (item.role === role ? view : item))
-    : [...config.storage_buckets, view]
-  return {
-    config: { ...config, storage_buckets },
-    credential: replaceCredentials
-      ? [view.id, accessKeyId, secretAccessKey, request.session_token.trim()]
-      : undefined,
-  }
-}
-
-/** One account per role: a role is present or it is not. */
-export function applyMediaDelete(config: IntegrationConfig, role: IntegrationConfig["storage_buckets"][number]["role"]): IntegrationConfig {
-  if (!config.storage_buckets.some((row) => row.role === role)) {
-    throw refuse("integration_media_invalid", "存储桶未配置")
-  }
-  return {
-    ...config,
-    storage_buckets: config.storage_buckets.filter((row) => row.role !== role),
-  }
-}
-
 /**
  * Rebuild the staff write rows from the read views, attaching key material to
  * exactly the account being edited. Every other row travels with an empty
- * secret, which Cloud reads as "keep the stored one".
- *
- * `supplierDbStorage` / `delegateAssetsStorage` ride every write: the snapshot
- * replace treats an absent section as "not configured", so leaving one off
- * would silently wipe that bucket on any unrelated save.
+ * secret, which Cloud reads as "keep the stored one". Every write carries the
+ * snapshot's own `purpose` per row and its `ai_runtime`, so no write can
+ * reset either to a default.
  */
 export function replaceIntegrationConfigRequest(
   config: IntegrationConfig,
   aiCredential?: [string, string],
-  mediaCredential?: MediaCredential,
 ): ReplaceRequest {
+  requireAiConfigComplete(config)
   return {
     expected_revision: config.revision,
     ai_default_model: config.ai_default_model,
@@ -217,44 +155,8 @@ export function replaceIntegrationConfigRequest(
       thinking: view.thinking,
       thinking_format: view.thinking_format,
       priority: view.priority,
+      purpose: view.purpose,
     })),
-    storage_buckets: config.storage_buckets.map((view) => {
-      const own = mediaCredential && mediaCredential[0] === view.id ? mediaCredential : undefined
-      return {
-        id: view.id,
-        label: view.label,
-        role: view.role,
-        provider: view.provider,
-        endpoint: view.endpoint,
-        region: view.region,
-        bucket: view.bucket,
-        key_prefix: view.key_prefix,
-        public_base_url: view.public_base_url,
-        force_path_style: view.force_path_style,
-        access_key_id: own?.[1] ?? "",
-        secret_access_key: own?.[2] ?? "",
-        session_token: own?.[3] ?? "",
-        active: view.active,
-      }
-    }),
+    ai_runtime: config.ai_runtime,
   }
-}
-
-/**
- * The 1×1 PNG Cloud identifies a connection test by
- * (`src/media/object_key.rs` `HEALTHCHECK_PNG`). A divergent copy would be billed
- * and collected as if it were seller media, so these are exactly those bytes.
- */
-export const HEALTHCHECK_PNG = Uint8Array.from([
-  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
-  0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
-  0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x08, 0xd7, 0x63, 0xf8, 0xcf, 0xc0, 0xf0,
-  0x1f, 0x00, 0x05, 0x00, 0x01, 0xff, 0x89, 0x99, 0x3d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45,
-  0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
-])
-
-/** Lowercase SHA-256 of the health-check PNG — the digest Cloud keys the probe on. */
-export async function healthcheckDigest(): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", HEALTHCHECK_PNG)
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("")
 }

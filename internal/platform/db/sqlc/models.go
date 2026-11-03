@@ -8,11 +8,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type AccountAdminTotp struct {
-	UserID      int64
-	ConfirmedAt pgtype.Timestamptz
-}
-
 type AccountCredential struct {
 	UserID       int64
 	PasswordHash string
@@ -32,10 +27,9 @@ type AccountProfile struct {
 }
 
 type AccountSession struct {
-	TokenHash        string
-	UserID           int64
-	ExpiresAt        pgtype.Timestamptz
-	AdminStepUpUntil pgtype.Timestamptz
+	TokenHash string
+	UserID    int64
+	ExpiresAt pgtype.Timestamptz
 }
 
 type AccountUser struct {
@@ -53,13 +47,13 @@ type AccountUser struct {
 	UpdatedAt              pgtype.Timestamptz
 	ActiveOrgID            pgtype.Int8
 	LastLoginAt            pgtype.Timestamptz
-	EmailVerifiedAt        pgtype.Timestamptz
 	InvitedByAgentUserID   pgtype.Int8
 	AgentAttributedAt      pgtype.Timestamptz
 	AgentAttributionBps    pgtype.Int4
 	AgentAttributionSource pgtype.Text
 	AccountKind            string
 	MustChangePassword     bool
+	SessionRevision        int64
 }
 
 type AiRequest struct {
@@ -107,6 +101,7 @@ type AuthEmailToken struct {
 	TokenHash  string
 	UserID     int64
 	Purpose    string
+	NewEmail   pgtype.Text
 	ExpiresAt  pgtype.Timestamptz
 	ConsumedAt pgtype.Timestamptz
 	CreatedAt  pgtype.Timestamptz
@@ -119,6 +114,26 @@ type AuthLoginAttempt struct {
 	WindowStart   pgtype.Timestamptz
 	NextAllowedAt pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
+}
+
+type AuthPasswordResetDelivery struct {
+	TokenHash        string
+	State            string
+	SecretNonce      []byte
+	SecretCiphertext []byte
+	Attempts         int32
+	NextAttemptAt    pgtype.Timestamptz
+	LeaseToken       pgtype.Text
+	LeaseUntil       pgtype.Timestamptz
+	LastErrorCode    pgtype.Text
+	DeliveredAt      pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+type AuthPasswordResetRequest struct {
+	IpHash      string
+	WindowStart pgtype.Timestamptz
+	Requests    int32
 }
 
 type BannedTag struct {
@@ -182,15 +197,19 @@ type ListingRow struct {
 }
 
 type OrgInvitation struct {
-	ID            int64
-	OrgID         int64
-	Email         string
-	AcceptedAt    pgtype.Timestamptz
-	RevokedAt     pgtype.Timestamptz
-	DeclinedAt    pgtype.Timestamptz
-	ExpiresAt     pgtype.Timestamptz
-	InviteeUserID pgtype.Int8
-	UpdatedAt     pgtype.Timestamptz
+	ID             int64
+	OrgID          int64
+	Email          string
+	Role           string
+	InvitedByEmail string
+	CreatedAt      pgtype.Timestamptz
+	Uuid           pgtype.UUID
+	AcceptedAt     pgtype.Timestamptz
+	RevokedAt      pgtype.Timestamptz
+	DeclinedAt     pgtype.Timestamptz
+	ExpiresAt      pgtype.Timestamptz
+	InviteeUserID  pgtype.Int8
+	UpdatedAt      pgtype.Timestamptz
 }
 
 type Organization struct {
@@ -198,8 +217,6 @@ type Organization struct {
 	OwnerUserID       int64
 	Name              string
 	Plan              string
-	SeatLimit         int64
-	PsdUploadEnabled  bool
 	Uuid              pgtype.UUID
 	DissolvedAt       pgtype.Timestamptz
 	AvatarBytes       []byte
@@ -233,18 +250,12 @@ type PlatformInitialization struct {
 }
 
 type Subscription struct {
-	OrgID             int64
-	Status            string
-	PlanKey           string
-	TermStart         pgtype.Timestamptz
-	TermEnd           pgtype.Timestamptz
-	ExtraStores       int32
-	ExtraMembers      int32
-	NextPlanKey       pgtype.Text
-	NextExtraStores   int32
-	NextExtraMembers  int32
-	NextKeepStoreIds  []pgtype.UUID
-	NextKeepMemberIds []int64
-	Revision          int64
-	UpdatedAt         pgtype.Timestamptz
+	OrgID     int64
+	Status    string
+	PlanKey   string
+	TermStart pgtype.Timestamptz
+	TermEnd   pgtype.Timestamptz
+	Stores    int32
+	Revision  int64
+	UpdatedAt pgtype.Timestamptz
 }

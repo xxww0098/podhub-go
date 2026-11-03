@@ -1,11 +1,10 @@
 package contract
 
 import (
-	"errors"
 	"strings"
 	"testing"
 
-	"github.com/xxww0098/podhub-go/internal/platform/egressgate"
+	sellercontract "github.com/xxww0098/podhub-go/internal/seller/contract"
 )
 
 func i64p(n int64) *int64 { return &n }
@@ -236,7 +235,7 @@ func TestWriteGates(t *testing.T) {
 		t.Fatal("enabled")
 	}
 	err := SellerWritesClosed(true)
-	if err == nil || err.Code != "WRITES_DISABLED" || err.Status != 503 || !errors.Is(egressgate.ErrWritesDisabled, egressgate.ErrWritesDisabled) || err.Error() != egressgate.ErrWritesDisabled.Error() {
+	if err == nil || err.Code != "WRITES_DISABLED" || err.Status != 503 || err.Error() != sellercontract.ErrWritesDisabled.Error() {
 		t.Fatal(err)
 	}
 	if SellerWritesClosed(false) != nil {

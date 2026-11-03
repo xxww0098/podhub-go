@@ -4,7 +4,6 @@ import (
 	"io"
 	"mime"
 	"net/http"
-	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
@@ -18,6 +17,41 @@ func (h handler) dispatchX1(w http.ResponseWriter, r *http.Request, rt Route, ac
 	source := chi.URLParam(r, "source_id")
 	product := chi.URLParam(r, "product_id")
 	switch rt.Method + " " + rt.Path {
+	case "POST /api/supplier-catalog/sources/{source_id}/uploads":
+		body, ok := readStrictJSON(w, r, fam, domain.BodyLimitBytes)
+		if !ok {
+			return true
+		}
+		out, err := svc.IssueCatalogUpload(r.Context(), actor, source, body, r.Header.Get("x-podhub-store-checksum"))
+		if err != nil {
+			writeFail(w, fam, err)
+			return true
+		}
+		writeData(w, http.StatusOK, uploadEnvelope(out))
+		return true
+	case "POST /api/supplier-catalog/sources/{source_id}/uploads/confirm":
+		body, ok := readStrictJSON(w, r, fam, domain.ConfirmBodyLimit)
+		if !ok {
+			return true
+		}
+		out, err := svc.ConfirmCatalogUpload(r.Context(), actor, source, body)
+		if err != nil {
+			writeFail(w, fam, err)
+			return true
+		}
+		writeData(w, http.StatusOK, out)
+		return true
+	case "POST /api/supplier-catalog/sources/{source_id}/uploads/abort":
+		body, ok := readStrictJSON(w, r, fam, domain.ConfirmBodyLimit)
+		if !ok {
+			return true
+		}
+		if err := svc.AbortCatalogUpload(r.Context(), actor, source, body); err != nil {
+			writeFail(w, fam, err)
+			return true
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return true
 	case "POST /api/admin/supplier-db-storage/directories":
 		body, ok := readStrictJSON(w, r, fam, domain.BodyLimitBytes)
 		if !ok {
@@ -155,37 +189,12 @@ func (h handler) dispatchX1(w http.ResponseWriter, r *http.Request, rt Route, ac
 		}
 		writeData(w, http.StatusOK, rowEnvelope(row))
 		return true
-	case "GET /api/admin/supplier-dbs/{source_id}/rows/{product_id}/prompt/diff":
-		revision, qerr := diffRevision(r)
-		if qerr != "" {
-			writeQuery(w, qerr)
-			return true
-		}
-		out, err := svc.PromptDiff(r.Context(), actor, source, product, revision)
-		if err != nil {
-			writeFail(w, fam, err)
-			return true
-		}
-		writeData(w, http.StatusOK, out)
-		return true
 	case "POST /api/admin/supplier-dbs/{source_id}/rows/{product_id}/prompt/preview":
 		body, ok := readStrictJSON(w, r, fam, domain.BodyLimitBytes)
 		if !ok {
 			return true
 		}
 		out, err := svc.PreviewPrompt(body)
-		if err != nil {
-			writeFail(w, fam, err)
-			return true
-		}
-		writeData(w, http.StatusOK, out)
-		return true
-	case "POST /api/admin/supplier-dbs/{source_id}/rows/{product_id}/prompt/publish":
-		body, ok := readStrictJSON(w, r, fam, domain.BodyLimitBytes)
-		if !ok {
-			return true
-		}
-		out, err := svc.PublishPrompt(r.Context(), actor, source, product, body)
 		if err != nil {
 			writeFail(w, fam, err)
 			return true
@@ -242,28 +251,6 @@ func (h handler) dispatchX1(w http.ResponseWriter, r *http.Request, rt Route, ac
 			return true
 		}
 		writeData(w, http.StatusOK, out)
-		return true
-	case "POST /api/admin/supplier-prompts/sync":
-		out, err := svc.SyncPrompts(r.Context(), actor)
-		if err != nil {
-			writeFail(w, fam, err)
-			return true
-		}
-		writeData(w, http.StatusOK, out)
-		return true
-	case "PATCH /api/admin/supplier-prompts/{product_id}":
-		body, ok := readStrictJSON(w, r, fam, domain.BodyLimitBytes)
-		if !ok {
-			return true
-		}
-		out, err := svc.PatchPrompt(r.Context(), actor, product, body)
-		if err != nil {
-			writeFail(w, fam, err)
-			return true
-		}
-		writeData(w, http.StatusOK, struct {
-			Prompt domain.Prompt `json:"prompt"`
-		}{out})
 		return true
 	default:
 		return false
@@ -326,17 +313,4 @@ func storageQuery(r *http.Request) (string, *string, string) {
 		cursor = &c
 	}
 	return prefix, cursor, ""
-}
-
-func diffRevision(r *http.Request) (*int32, string) {
-	vs, ok := r.URL.Query()["revision"]
-	if !ok || len(vs) == 0 {
-		return nil, ""
-	}
-	n, err := strconv.ParseInt(vs[0], 10, 32)
-	if err != nil {
-		return nil, "revision: invalid digit found in string"
-	}
-	v := int32(n)
-	return &v, ""
 }

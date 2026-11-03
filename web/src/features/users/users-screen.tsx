@@ -1,22 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   Building2,
-  Check,
-  Copy,
-  Crown,
+  ChartNoAxesColumn,
+  ChevronLeft,
+  ChevronRight,
+  Ellipsis,
   Eye,
   EyeOff,
   KeyRound,
-  Layers,
   Lock,
   Pencil,
+  RefreshCw,
   Search,
   ShieldCheck,
-  Store,
   Trash2,
-  User,
   UserPlus,
   Users,
+  Wallet,
   X,
 } from "lucide-react"
 
@@ -24,15 +24,16 @@ import type {
   AdminDirectoryPersonView,
   AdminDirectoryWorkspaceView,
   AdminUsersOverview,
+  WalletTopupsData,
 } from "@/bindings/commands"
 import { adminHttp } from "@/bindings/http-admin"
 import { IdentityMark } from "@/components/identity-mark"
-import { PlatformAdminEmpty, PlatformAdminFact, PlatformAdminFilter, PlatformAdminRefresh, PlatformAdminSearch, PlatformAdminSummary, PlatformAdminSurface, PlatformAdminTab } from "@/components/platform-admin-surface"
+import { PlatformAdminEmpty, PlatformAdminSearch, PlatformAdminSummary } from "@/components/platform-admin-surface"
 import { PlatformAdminDialog, PlatformAdminDialogFooter } from "@/components/platform-admin-dialog"
 import { formatCompactQuota } from "@/components/workspace-quota-facts"
 import { formatRole, PlanMark } from "@/components/workspace-display"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import {
@@ -55,6 +56,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Spinner } from "@/components/ui/spinner"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Switch } from "@/components/ui/switch"
 import {
   Table,
@@ -73,6 +75,8 @@ import {
   type DirectoryFilter,
   type DirectoryMemberRow,
 } from "@/features/users/directory-members"
+import { applyWalletToWorkspace } from "@/features/users/wallet-grants"
+import { WorkspaceWalletDialog } from "@/features/users/workspace-wallet-dialog"
 import { formatDateTimeShort } from "@/lib/format"
 import { formatYuan } from "@/lib/money"
 import { notifyCommandError, notifySuccess } from "@/lib/notify"
@@ -168,10 +172,16 @@ function PasswordVisibilityField({
 
 type ViewMode = "members" | "workspaces"
 
+export function directoryPage(total: number, page: number, pageSize: number) {
+  const pageCount = Math.max(1, Math.ceil(total / pageSize))
+  const currentPage = Math.max(1, Math.min(page, pageCount))
+  return { pageCount, currentPage, firstRow: (currentPage - 1) * pageSize }
+}
+
 /**
- * Platform SuperAdmin directory: account authorization and read-only
- * workspace standing. Plan seats and wallet grants move through 兑换码 —
- * this panel only assigns platform roles (admin/user) and login status.
+ * Platform SuperAdmin directory: account authorization, workspace standing,
+ * and each workspace's own wallet (grant / revoke). Plan seats move through
+ * 兑换码; this panel assigns platform roles (admin/user) and login status.
  * Cloud: GET /api/admin/users returns workspaces + unaffiliated Users.
  */
 export function UsersScreen({
@@ -186,6 +196,8 @@ export function UsersScreen({
   const [query, setQuery] = useState("")
   const [statusFilter, setStatusFilter] = useState<DirectoryFilter>("all")
   const [workspaceFilter, setWorkspaceFilter] = useState("all")
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
   const [directory, setDirectory] = useState<AdminUsersOverview>()
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string>()
@@ -193,6 +205,7 @@ export function UsersScreen({
   const [createOpen, setCreateOpen] = useState(false)
   const [editing, setEditing] = useState<AdminDirectoryPersonView>()
   const [pendingDeleteWorkspace, setPendingDeleteWorkspace] = useState<AdminDirectoryWorkspaceView>()
+  const [walletWorkspaceUuid, setWalletWorkspaceUuid] = useState<string>()
   const [resetting, setResetting] = useState<AdminDirectoryPersonView>()
   const [pendingDisable, setPendingDisable] = useState<AdminDirectoryPersonView>()
   const [selectedUuids, setSelectedUuids] = useState<ReadonlySet<string>>(new Set())
@@ -322,6 +335,9 @@ export function UsersScreen({
     workspaceFilter !== "all" && workspaceFilter !== "unaffiliated"
       ? workspaces.find((workspace) => workspace.uuid === workspaceFilter)
       : undefined
+  const walletWorkspace = walletWorkspaceUuid
+    ? workspaces.find((workspace) => workspace.uuid === walletWorkspaceUuid)
+    : undefined
 
   // Filtered workspaces for the Workspaces & Quotas tab
   const visibleWorkspaces = useMemo(() => {
@@ -337,6 +353,11 @@ export function UsersScreen({
         ),
     )
   }, [workspaces, query])
+
+  const totalRows = viewMode === "members" ? visibleMembers.length : visibleWorkspaces.length
+  const { pageCount, currentPage, firstRow } = directoryPage(totalRows, page, pageSize)
+  const pageMembers = visibleMembers.slice(firstRow, firstRow + pageSize)
+  const pageWorkspaces = visibleWorkspaces.slice(firstRow, firstRow + pageSize)
 
   async function createUser(input: {
     email: string
@@ -428,30 +449,18 @@ export function UsersScreen({
     }
   }
 
-  return (
-    <div className="flex min-h-0 w-full flex-1 flex-col gap-4">
-      <h1 className="sr-only">用户</h1>
+  function applyWallet(workspaceUuid: string, wallet: WalletTopupsData) {
+    setDirectory((current) => applyWalletToWorkspace(current, workspaceUuid, wallet))
+  }
 
-      {/* Platform totals as one fact strip — the tabs and status filter below
-          already count members. A focused workspace's banner replaces it. */}
-      {focusedWorkspace ? null : (
-      <PlatformAdminSummary>
-        <PlatformAdminFact
-          label="工作空间"
-          value={directory?.workspace_count ?? workspaces.length}
-          mono
-        />
-        <PlatformAdminFact label="席位" value={`${totalSeatsUsed} / ${totalSeatLimit}`} mono />
-        <PlatformAdminFact label="钱包可用" value={formatYuan(totalWalletAvailable)} mono />
-        {totalWalletHeld > 0 ? (
-          <PlatformAdminFact label="预留" value={formatYuan(totalWalletHeld)} mono />
-        ) : null}
-      </PlatformAdminSummary>
-      )}
+  return (
+    <Popover open={Boolean(editing)} onOpenChange={(open) => { if (!open && !busy) setEditing(undefined) }}>
+    <div className="users-directory flex min-h-0 w-full flex-1 flex-col gap-3 overflow-hidden p-3">
+      <h1 className="sr-only">用户</h1>
 
       {/* Focused Workspace Banner */}
       {focusedWorkspace ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border px-4 py-3 text-compact">
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-card px-3 py-2 text-compact">
           <div className="flex flex-wrap items-center gap-2.5">
             <div className="flex items-center gap-1.5 font-semibold text-foreground">
               <Building2 className="size-3.5 text-brand-ink" />
@@ -464,9 +473,6 @@ export function UsersScreen({
               <span>
                 成员 {focusedWorkspace.seats_used}/{focusedWorkspace.seat_limit}
               </span>
-              <span>
-                店铺 {focusedWorkspace.plan === "lite" ? 1 : focusedWorkspace.seat_limit * 5}
-              </span>
               <span>余额 {formatYuan(focusedWorkspace.wallet_available_microfen)}</span>
               {focusedWorkspace.wallet_held_microfen > 0 ? (
                 <span>预留 {formatYuan(focusedWorkspace.wallet_held_microfen)}</span>
@@ -475,143 +481,102 @@ export function UsersScreen({
             </PlatformAdminSummary>
           </div>
           <div className="flex items-center gap-1.5">
-            <Button
-              type="button"
-              size="xs"
-              variant="ghost"
-              className="cursor-pointer text-destructive hover:bg-destructive/10 text-xs"
+            <IconButton
+              icon={Wallet}
+              label={`管理钱包 ${focusedWorkspace.name}`}
+              tip="管理钱包"
+              size="icon-xs"
+              className="cursor-pointer"
               disabled={busy}
-              aria-label={`删除工作空间 ${focusedWorkspace.name}`}
+              onClick={() => setWalletWorkspaceUuid(focusedWorkspace.uuid)}
+            />
+            <IconButton
+              icon={Trash2}
+              label={`删除工作空间 ${focusedWorkspace.name}`}
+              tip="删除工作空间"
+              size="icon-xs"
+              className="cursor-pointer text-destructive hover:bg-destructive/10"
+              disabled={busy}
               onClick={() => setPendingDeleteWorkspace(focusedWorkspace)}
-            >
-              <Trash2 className="size-3" />
-              删除工作空间
-            </Button>
-            <Button
-              type="button"
-              size="xs"
-              variant="ghost"
-              className="cursor-pointer text-muted-foreground hover:text-foreground text-xs"
-              onClick={() => setWorkspaceFilter("all")}
-            >
-              清除聚焦
-            </Button>
+            />
+            <IconButton
+              icon={X}
+              label="清除聚焦"
+              size="icon-xs"
+              className="cursor-pointer"
+              onClick={() => { setWorkspaceFilter("all"); setPage(1) }}
+            />
           </div>
         </div>
       ) : null}
 
-      {/* Main Admin Surface */}
-      <PlatformAdminSurface
-        bodyClassName={
-          viewMode === "members" ? "flex flex-col overflow-hidden" : "overflow-y-auto"
-        }
-        toolbar={
-          <div className="flex w-full flex-col gap-3">
-            {/* Upper row: View Switcher Tabs & Primary Actions */}
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex min-w-0 flex-wrap items-center" role="tablist" aria-label="视图模式">
-                <PlatformAdminTab
-                  active={viewMode === "members"}
-                  onClick={() => setViewMode("members")}
-                >
-                  <Users className="size-3.5" aria-hidden />
-                  账号与成员
-                  <span className="font-mono text-meta tabular-nums opacity-70">
-                    {uniquePeople.length}
-                  </span>
-                </PlatformAdminTab>
-                <PlatformAdminTab
-                  active={viewMode === "workspaces"}
-                  onClick={() => setViewMode("workspaces")}
-                >
-                  <Layers className="size-3.5" aria-hidden />
-                  工作空间与权益
-                  <span className="font-mono text-meta tabular-nums opacity-70">
-                    {workspaces.length}
-                  </span>
-                </PlatformAdminTab>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <PlatformAdminRefresh busy={busy} onClick={() => void reload(true)} />
-                <Button
-                  size="sm"
-                  className="cursor-pointer"
-                  onClick={() => setCreateOpen(true)}
-                  disabled={busy || loading || Boolean(loadError)}
-                >
-                  <UserPlus className="size-3.5" data-icon="inline-start" />
-                  创建账户
-                </Button>
-              </div>
+      <section aria-label="用户目录" className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <div className="shrink-0">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 pb-3">
+            <PlatformAdminSearch value={query} onChange={(value) => { setQuery(value); setPage(1) }}
+              label={viewMode === "members" ? "搜索工作空间或账户" : "搜索工作空间"}
+              placeholder={viewMode === "members" ? "搜索姓名、邮箱或工作空间…" : "搜索工作空间、所有者或档位…"}
+              className="min-w-32 flex-1 basis-32 sm:max-w-none" />
+            <Select value={viewMode} onValueChange={(value) => { if (value) { setViewMode(value as ViewMode); setPage(1) } }}>
+              <SelectTrigger size="sm" className="w-auto min-w-32" aria-label="目录视图"><SelectValue>{() => viewMode === "members" ? "账号与成员" : "工作空间与权益"}</SelectValue></SelectTrigger>
+              <SelectContent><SelectItem value="members">账号与成员</SelectItem><SelectItem value="workspaces">工作空间与权益</SelectItem></SelectContent>
+            </Select>
+            {viewMode === "members" ? <>
+              <Select value={statusFilter} onValueChange={(value) => { if (value) { setStatusFilter(value as DirectoryFilter); setPage(1) } }}>
+                <SelectTrigger size="sm" aria-label="按状态筛选"><SelectValue>{() => ({ all: "全部状态", active: "已启用", disabled: "已停用", privileged: "特权", unaffiliated: "未加入" })[statusFilter]}</SelectValue></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">全部状态 ({uniquePeople.length})</SelectItem>
+                  <SelectItem value="active">已启用 ({activeCount})</SelectItem>
+                  <SelectItem value="disabled">已停用 ({disabledCount})</SelectItem>
+                  <SelectItem value="privileged">特权 ({privilegedCount})</SelectItem>
+                  <SelectItem value="unaffiliated">未加入 ({unaffiliated.length})</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={workspaceFilter} onValueChange={(value) => { setWorkspaceFilter(value ?? "all"); setPage(1) }}>
+                <SelectTrigger size="sm" className="max-w-48" aria-label="按工作空间筛选">
+                  <SelectValue>{() => workspaceFilter === "unaffiliated" ? "未加入工作空间" : workspaces.find((workspace) => workspace.uuid === workspaceFilter)?.name ?? "全部工作空间"}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">全部工作空间 ({workspaces.length})</SelectItem>
+                  <SelectItem value="unaffiliated">未加入工作空间 ({unaffiliated.length})</SelectItem>
+                  {workspaces.map((workspace) => <SelectItem key={workspace.uuid} value={workspace.uuid}>{workspace.name} ({workspace.members.length}人)</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </> : null}
+            <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2">
+              <Popover>
+                <PopoverTrigger render={<IconButton icon={ChartNoAxesColumn} label="账户概览" variant="outline" size="icon-sm" />} />
+                <PopoverContent align="end" className="w-80 max-w-[calc(100vw-2rem)]">
+                  <dl aria-label="账户概览" className="grid grid-cols-2 gap-x-4 gap-y-4">
+                    {[
+                      { label: "总账户", value: uniquePeople.length.toLocaleString("zh-CN"), detail: `${privilegedCount} 个特权账户`, icon: Users },
+                      { label: "已启用账户", value: activeCount.toLocaleString("zh-CN"), detail: `${disabledCount} 个已停用`, icon: ShieldCheck },
+                      { label: "工作空间", value: (directory?.workspace_count ?? workspaces.length).toLocaleString("zh-CN"), detail: `席位 ${totalSeatsUsed} / ${totalSeatLimit}`, icon: Building2 },
+                      { label: "钱包可用", value: formatYuan(totalWalletAvailable), detail: `预留 ${formatYuan(totalWalletHeld)}`, icon: Wallet },
+                    ].map(({ label, value, detail, icon: Icon }) => (
+                      <div key={label} className="min-w-0">
+                        <dt className="flex items-center gap-1.5 text-compact text-muted-foreground"><Icon aria-hidden className="size-4" />{label}</dt>
+                        <dd className="mt-1.5 font-medium tabular-nums">{directory ? value : "—"}</dd>
+                        <dd className="text-meta text-muted-foreground">{directory ? detail : "—"}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </PopoverContent>
+              </Popover>
+              <IconButton icon={RefreshCw} label="刷新" tip="刷新用户目录" size="icon-sm" variant="outline" disabled={busy || loading} onClick={() => void reload(true)} />
+              <Button
+                type="button"
+                size="sm" variant="brand"
+                aria-label="创建账户"
+                onClick={() => setCreateOpen(true)}
+                disabled={busy || loading || Boolean(loadError)}
+              >
+                <UserPlus aria-hidden />创建账户
+              </Button>
             </div>
-
-            {/* Lower row: Filters & Search */}
-            {viewMode === "members" ? (
-              <div className="flex flex-wrap items-center justify-between gap-2.5 pt-0.5">
-                <div className="flex flex-1 flex-wrap items-center gap-2">
-                  <PlatformAdminSearch
-                    value={query}
-                    onChange={setQuery}
-                    label="搜索工作空间或账户"
-                    placeholder="搜索姓名、邮箱、工作空间或 UUID…"
-                    className="w-full sm:w-64"
-                  />
-
-                  <Select value={workspaceFilter} onValueChange={(value) => setWorkspaceFilter(value ?? "all")}>
-                    <SelectTrigger size="sm" className="w-full min-w-0 cursor-pointer sm:w-auto sm:min-w-36" aria-label="按工作空间筛选">
-                      <SelectValue>
-                        {() =>
-                          workspaceFilter === "unaffiliated"
-                            ? "未加入工作空间"
-                            : workspaces.find((workspace) => workspace.uuid === workspaceFilter)?.name ?? "全部工作空间"
-                        }
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">全部工作空间 ({workspaces.length})</SelectItem>
-                      <SelectItem value="unaffiliated">未加入工作空间 ({unaffiliated.length})</SelectItem>
-                      {workspaces.map((workspace) => (
-                        <SelectItem key={workspace.uuid} value={workspace.uuid}>
-                          {workspace.name} ({workspace.members.length}人)
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <PlatformAdminFilter
-                  label="按状态筛选"
-                  value={statusFilter}
-                  options={
-                    [
-                      { id: "all", label: "全部", count: uniquePeople.length },
-                      { id: "active", label: "已启用", count: activeCount },
-                      { id: "disabled", label: "已停用", count: disabledCount },
-                      { id: "privileged", label: "特权", count: privilegedCount },
-                      { id: "unaffiliated", label: "未加入", count: unaffiliated.length },
-                    ] as const
-                  }
-                  onValueChange={setStatusFilter}
-                />
-              </div>
-            ) : (
-              <div className="flex flex-wrap items-center justify-between gap-2.5 pt-0.5">
-                <PlatformAdminSearch
-                  value={query}
-                  onChange={setQuery}
-                  label="搜索工作空间"
-                  placeholder="搜索工作空间名称、所有者或档位…"
-                  className="w-full sm:w-80"
-                />
-                <div className="text-xs text-muted-foreground">
-                  已显示 <span className="font-mono font-medium text-foreground">{visibleWorkspaces.length}</span> / {workspaces.length} 个工作空间
-                </div>
-              </div>
-            )}
           </div>
-        }
-      >
+        </div>
+        <div className="flex min-h-0 flex-1 flex-col overflow-auto rounded-xl border border-border bg-card">
         {loading ? (
           <PlatformAdminEmpty
             icon={Users}
@@ -653,6 +618,7 @@ export function UsersScreen({
                     setQuery("")
                     setStatusFilter("all")
                     setWorkspaceFilter("all")
+                    setPage(1)
                   }}
                 >
                   清空筛选条件
@@ -660,12 +626,12 @@ export function UsersScreen({
               }
             />
           ) : (
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card">
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
               {selectedPeople.length > 0 ? (
                 <div
                   role="toolbar"
                   aria-label="批量操作"
-                  className="flex flex-wrap items-center justify-between gap-2 border-b border-border/80 bg-muted/30 px-3 py-2"
+                  className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-brand-soft/40 px-3 py-2"
                 >
                   <span className="text-compact font-medium text-foreground tabular-nums">
                     已选 {selectedPeople.length} 个账户
@@ -676,16 +642,13 @@ export function UsersScreen({
                     ) : null}
                   </span>
                   <div className="flex items-center gap-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
+                    <IconButton
+                      icon={X}
+                      label="清除选择"
+                      size="icon-sm"
                       className="cursor-pointer"
                       onClick={() => setSelectedUuids(new Set())}
-                    >
-                      <X className="size-3.5" aria-hidden />
-                      清除选择
-                    </Button>
+                    />
                     <Button
                       type="button"
                       size="sm"
@@ -700,33 +663,39 @@ export function UsersScreen({
                   </div>
                 </div>
               ) : null}
-              <Table containerClassName="min-h-0 flex-1 overflow-auto">
-                <TableHeader className="sticky top-0 z-10 bg-card">
-                  <TableRow className="hover:bg-transparent border-b border-border/80 text-xs font-semibold text-muted-foreground">
+              <Table variant="directory" className="min-h-0 min-w-[800px] table-fixed" containerClassName="min-h-0 flex-1 overflow-auto">
+                <colgroup>
+                  <col className="w-10" />
+                  <col className="w-1/4" />
+                  <col className="w-1/4" />
+                  <col className="w-1/5" />
+                  <col className="w-52" />
+                </colgroup>
+                <TableHeader className="sticky top-0 z-10">
+                  <TableRow className="hover:bg-transparent">
                     <TableHead className="w-10 pr-0">
                       <Checkbox
+                        className="max-md:after:-inset-3.5"
                         checked={allVisibleSelected}
                         indeterminate={!allVisibleSelected && someVisibleSelected}
                         aria-label="选择当前筛选的全部账户"
                         onCheckedChange={(checked) => toggleSelectAll(checked === true)}
                       />
                     </TableHead>
-                    <TableHead>姓名</TableHead>
-                    <TableHead>邮箱</TableHead>
+                    <TableHead>用户 / 邮箱</TableHead>
                     <TableHead>工作空间</TableHead>
-                    <TableHead>角色</TableHead>
                     <TableHead>状态</TableHead>
-                    <TableHead>最近登录时间</TableHead>
-                    <TableHead className="w-36 text-right">操作</TableHead>
+                    <TableHead className="w-52 text-right">操作</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {visibleMembers.map((row) => (
+                  {pageMembers.map((row) => (
                     <MemberRow
                       key={`${row.workspace?.uuid ?? "none"}-${row.person.uuid}`}
                       row={row}
                       busy={busy}
                       selected={selectedUuids.has(row.person.uuid)}
+                      editing={editing?.uuid === row.person.uuid}
                       onEdit={setEditing}
                       onDisable={setPendingDisable}
                       onResetPassword={setResetting}
@@ -761,25 +730,25 @@ export function UsersScreen({
               }
             />
           ) : (
-            <div className="overflow-hidden rounded-xl border border-border bg-card">
-              <Table>
-                <TableHeader className="bg-muted/40">
-                  <TableRow className="hover:bg-transparent border-b border-border/80">
-                    <TableHead className="text-xs font-semibold text-muted-foreground">工作空间名称</TableHead>
-                    <TableHead className="text-xs font-semibold text-muted-foreground">档位配置</TableHead>
-                    <TableHead className="text-xs font-semibold text-muted-foreground">成员配置</TableHead>
-                    <TableHead className="text-xs font-semibold text-muted-foreground">店铺配置</TableHead>
-                    <TableHead className="text-xs font-semibold text-muted-foreground">钱包余额</TableHead>
-                    <TableHead className="text-xs font-semibold text-muted-foreground">月度 Token</TableHead>
-                    <TableHead className="w-44 text-right text-xs font-semibold text-muted-foreground">操作</TableHead>
+            <div className="min-h-0 flex-1 overflow-auto">
+              <Table variant="directory" className="min-w-240" containerClassName="overflow-visible">
+                <TableHeader className="sticky top-0 z-10">
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead>工作空间名称</TableHead>
+                    <TableHead>档位配置</TableHead>
+                    <TableHead>成员配置</TableHead>
+                    <TableHead>钱包余额</TableHead>
+                    <TableHead>月度 Token</TableHead>
+                    <TableHead className="w-44 text-right">操作</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {visibleWorkspaces.map((workspace) => (
+                  {pageWorkspaces.map((workspace) => (
                     <WorkspaceQuotaRow
                       key={workspace.uuid}
                       workspace={workspace}
                       busy={busy}
+                      onOpenWallet={(target) => setWalletWorkspaceUuid(target.uuid)}
                       onDeleteWorkspace={setPendingDeleteWorkspace}
                     />
                   ))}
@@ -788,9 +757,27 @@ export function UsersScreen({
             </div>
           )
         )}
-      </PlatformAdminSurface>
+        </div>
+        {!loading && !loadError && directory ? (
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 px-1 pt-3 text-compact text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-2">
+              <span aria-live="polite">共 {totalRows.toLocaleString("zh-CN")} 条</span>
+              <span>每页</span>
+              <Select value={String(pageSize)} onValueChange={(value) => { if (value) { setPageSize(Number(value)); setPage(1) } }}>
+                <SelectTrigger size="sm" className="w-24" aria-label="每页条数"><SelectValue>{() => `${pageSize} 条`}</SelectValue></SelectTrigger>
+                <SelectContent><SelectItem value="10">10 条</SelectItem><SelectItem value="20">20 条</SelectItem><SelectItem value="50">50 条</SelectItem></SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center gap-2">
+              <IconButton icon={ChevronLeft} label="上一页" variant="outline" size="icon-sm" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)} />
+              <span aria-label={`第 ${currentPage} 页，共 ${pageCount} 页`} className="flex size-9 items-center justify-center rounded-md bg-brand text-brand-foreground tabular-nums">{currentPage}</span>
+              <IconButton icon={ChevronRight} label="下一页" variant="outline" size="icon-sm" disabled={currentPage >= pageCount} onClick={() => setPage(currentPage + 1)} />
+            </div>
+          </div>
+        ) : null}
+      </section>
 
-      {/* Dialogs */}
+      {/* Account edits float above the directory; destructive actions retain their dialogs. */}
       <CreateDialog
         open={createOpen}
         busy={busy}
@@ -798,7 +785,8 @@ export function UsersScreen({
         onOpenChange={setCreateOpen}
         onCreate={createUser}
       />
-      <EditUserDialog
+      <PopoverContent side="right" align="center" collisionAvoidance={{ side: "shift", align: "shift" }} aria-labelledby="user-editor-title" className="flex max-h-[calc(100svh-24px)] w-80 overflow-hidden p-0">
+      <EditUserForm
         user={editing}
         busy={busy}
         actorRole={actorRole}
@@ -808,12 +796,8 @@ export function UsersScreen({
           setEditing(undefined)
           setResetting(user)
         }}
-        userWorkspace={
-          editing
-            ? memberRows.find((r) => r.person.uuid === editing.uuid)?.workspace ?? undefined
-            : undefined
-        }
       />
+      </PopoverContent>
       <ResetPasswordDialog
         user={resetting}
         busy={busy}
@@ -847,7 +831,13 @@ export function UsersScreen({
         onClose={() => setPendingDeleteWorkspace(undefined)}
         onConfirm={(workspace) => void deleteWorkspace(workspace)}
       />
+      <WorkspaceWalletDialog
+        workspace={walletWorkspace}
+        onClose={() => setWalletWorkspaceUuid(undefined)}
+        onChanged={applyWallet}
+      />
     </div>
+    </Popover>
   )
 }
 
@@ -877,7 +867,7 @@ function DeleteWorkspaceDialog({
         if (!open) onClose()
       }}
       title={workspace ? `删除「${workspace.name}」？` : "删除工作空间？"}
-      description="删除后无法恢复。成员立即失去访问；店铺密钥会被清除；未用完的店铺位作废；创建者的钱包余额保留；待支付订单会取消。"
+      description="删除后无法恢复。成员立即失去访问；店铺密钥会被清除；未用完的店铺位作废；该工作空间钱包的余额不会转移或退款；待支付订单会取消。"
       confirmText="删除工作空间"
       variant="destructive"
       size="md"
@@ -909,10 +899,11 @@ function DeleteWorkspaceDialog({
   )
 }
 
-function MemberRow({
+export function MemberRow({
   row,
   busy,
   selected,
+  editing,
   onEdit,
   onDisable,
   onResetPassword,
@@ -921,6 +912,7 @@ function MemberRow({
   row: DirectoryMemberRow
   busy: boolean
   selected: boolean
+  editing?: boolean
   onEdit: (person: AdminDirectoryPersonView) => void
   onDisable: (person: AdminDirectoryPersonView) => void
   onResetPassword: (person: AdminDirectoryPersonView) => void
@@ -930,24 +922,18 @@ function MemberRow({
   const status = asStatus(person)
   const membership = membershipLabel(person.membership_role)
   const isSuperAdmin = person.role === "super_admin"
-  const isAdmin = person.role === "admin"
-  const [copied, setCopied] = useState(false)
-
-  const copyUuid = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    void navigator.clipboard.writeText(person.uuid)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1500)
-    notifySuccess("已复制 UUID", { description: person.uuid })
-  }
+  const roleLabel = person.role_label || platformRoleLabel(person.role)
+  const [moreOpen, setMoreOpen] = useState(false)
 
   return (
     <TableRow
       data-state={selected ? "selected" : undefined}
-      className="group/row transition-colors hover:bg-muted/35"
+      data-editing={editing || undefined}
+      className="group/row text-compact transition-colors"
     >
       <TableCell className="w-10 pr-0">
         <Checkbox
+          className="max-md:after:-inset-3.5"
           checked={selected}
           aria-label={`选择 ${person.name}`}
           onCheckedChange={(checked) => onSelectedChange(checked === true)}
@@ -957,186 +943,80 @@ function MemberRow({
         <div className="flex min-w-0 items-center gap-2.5">
           <Avatar name={person.name} status={status} role={person.role} />
           <div className="flex min-w-0 flex-col">
-            <button
-              type="button"
-              onClick={() => onEdit(person)}
-              className="flex items-center gap-1.5 text-left font-medium text-foreground hover:text-brand focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring cursor-pointer"
-            >
-              <span className="truncate text-compact">{person.name}</span>
-            </button>
-            <div className="flex items-center gap-1 text-meta text-muted-foreground">
-              <span className="font-mono text-2xs truncate max-w-28 opacity-80" title={person.uuid}>
-                {person.uuid.slice(0, 8)}…
-              </span>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      type="button"
-                      onClick={copyUuid}
-                      className="cursor-pointer text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-                      aria-label="复制用户 UUID"
-                    />
-                  }
-                >
-                  {copied ? <Check className="size-2.5 text-st-good-ink" /> : <Copy className="size-2.5" />}
-                </TooltipTrigger>
-                <TooltipContent>{copied ? "已复制" : "复制完整 UUID"}</TooltipContent>
-              </Tooltip>
+            <div className="flex min-w-0 items-center gap-1.5">
+              <PopoverTrigger render={<button
+                type="button"
+                onClick={() => onEdit(person)}
+                disabled={busy}
+                className="flex min-w-0 max-w-full items-center gap-1.5 text-left font-medium text-foreground hover:text-brand focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring cursor-pointer max-md:min-h-11 max-md:min-w-11"
+              />}>
+                <span className="truncate text-compact" title={person.name}>{person.name}</span>
+              </PopoverTrigger>
+              {roleLabel !== person.name ? <span className="shrink-0 text-meta text-muted-foreground">{roleLabel}</span> : null}
+              {isSuperAdmin ? <Tooltip>
+                <TooltipTrigger render={<span className="inline-flex shrink-0 cursor-help items-center gap-1 text-meta text-st-attest-ink" />}><Lock className="size-2.5" />系统</TooltipTrigger>
+                <TooltipContent>唯一超级管理员，由服务器端 admin init 一次性创建并保存在系统中；不可停用或降级</TooltipContent>
+              </Tooltip> : null}
+            </div>
+            <div className="flex min-w-0 items-center gap-1.5 text-compact text-muted-foreground">
+              <span className="max-w-64 truncate select-all" title={person.email}>{person.email}</span>
             </div>
           </div>
         </div>
       </TableCell>
 
-      <TableCell className="font-mono text-compact text-muted-foreground">
-        <span className="select-all">{person.email}</span>
-      </TableCell>
-
       <TableCell>
         {workspace ? (
-          <div className="flex flex-col">
-            <div className="flex items-center gap-1.5">
-              <span className="truncate text-compact font-medium">
+          <div className="flex min-w-0 flex-col">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <span className="max-w-56 truncate text-compact font-medium" title={workspace.name}>
                 {workspace.name}
               </span>
               <PlanMark plan={workspace.plan} />
             </div>
             {membership ? (
               <span className="flex items-center gap-1 text-meta text-muted-foreground">
-                <span className={cn(
-                  "inline-block rounded-xs px-1 py-px text-2xs font-medium",
-                  person.membership_role === "owner" ? "bg-st-attest-soft text-st-attest-ink" : "bg-muted text-muted-foreground",
-                )}>
+                <span className="text-meta text-muted-foreground">
                   {membership}
                 </span>
-                <span className="opacity-60">· 占用名额</span>
               </span>
             ) : null}
           </div>
         ) : (
-          <span className="text-faint-foreground text-xs">未加入工作空间</span>
+          <span className="text-xs text-faint-foreground">未加入工作空间</span>
         )}
-      </TableCell>
-
-      <TableCell>
-        <div className="flex flex-wrap items-center gap-1.5">
-          <Badge
-            variant={isSuperAdmin ? "brand" : isAdmin ? "secondary" : "outline"}
-            className={cn(
-              "h-5 gap-1 px-1.5 text-2xs font-medium",
-              isSuperAdmin && "border-brand/40 bg-brand-soft text-brand-ink font-semibold",
-              isAdmin && "border-brand/30 bg-brand-soft text-brand-ink",
-            )}
-          >
-            {isSuperAdmin ? (
-              <Crown className="size-2.5 text-st-attest-ink" />
-            ) : isAdmin ? (
-              <ShieldCheck className="size-2.5" />
-            ) : (
-              <User className="size-2.5 opacity-60" />
-            )}
-            {person.role_label || platformRoleLabel(person.role)}
-          </Badge>
-          {isSuperAdmin ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span className="inline-flex h-5 cursor-help items-center gap-1 rounded-md border border-dashed border-st-attest/40 bg-st-attest-soft px-1.5 text-2xs font-medium text-st-attest-ink" />
-                }
-              >
-                <Lock className="size-2.5" />
-                系统
-              </TooltipTrigger>
-              <TooltipContent>
-                唯一超级管理员，由服务器端 admin init 一次性创建并保存在系统中；不可停用或降级
-              </TooltipContent>
-            </Tooltip>
-          ) : null}
-        </div>
       </TableCell>
 
       <TableCell>
         <StatusCell status={status} suspended={person.membership_status === "suspended"} />
-      </TableCell>
-
-      <TableCell className="text-compact text-muted-foreground tabular-nums">
-        {person.last_login_at ? (
-          formatDateTimeShort(person.last_login_at)
-        ) : (
-          <span className="text-faint-foreground">从未登录</span>
-        )}
+        <div className="mt-1 whitespace-nowrap text-meta tabular-nums text-muted-foreground">
+          {person.last_login_at ? `最近登录 ${formatDateTimeShort(person.last_login_at)}` : "从未登录"}
+        </div>
       </TableCell>
 
       <TableCell className="text-right">
-        <div className="flex items-center justify-end gap-1">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 cursor-pointer gap-1 px-2 text-xs font-medium hover:bg-brand-soft/60 hover:text-brand-ink"
-                  aria-label={isSuperAdmin ? "查看账号" : "编辑账号"}
-                  disabled={!person.editable || busy}
-                  onClick={() => onEdit(person)}
-                />
-              }
-            >
-              {isSuperAdmin ? (
-                <Eye className="size-3.5" aria-hidden />
-              ) : (
-                <Pencil className="size-3.5" aria-hidden />
-              )}
-              <span>{isSuperAdmin ? "查看" : "编辑"}</span>
-            </TooltipTrigger>
-          <TooltipContent>
-            {isSuperAdmin
-              ? "超级管理员由服务器初始化创建，账号详情只读"
-              : "编辑账号角色与登录状态"}
-          </TooltipContent>
-        </Tooltip>
+        <div className="flex items-center justify-end gap-1 whitespace-nowrap">
+          <PopoverTrigger render={<IconButton
+            icon={isSuperAdmin ? Eye : Pencil}
+            size="icon-sm"
+            label={isSuperAdmin ? "查看账号" : "编辑账号"}
+            tip={isSuperAdmin ? "超级管理员由服务器初始化创建，账号详情只读" : "编辑账号角色与登录状态"}
+            disabled={busy || (!person.editable && !isSuperAdmin)}
+            onClick={() => onEdit(person)}
+          />} />
 
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                type="button"
-                size="icon-xs"
-                variant="ghost"
-                className="size-7 cursor-pointer text-muted-foreground hover:bg-muted hover:text-foreground"
-                aria-label="重置密码"
-                disabled={!person.editable || busy}
-                onClick={() => onResetPassword(person)}
-              />
-            }
-          >
-            <KeyRound className="size-3" aria-hidden />
-          </TooltipTrigger>
-          <TooltipContent>重置登录密码</TooltipContent>
-        </Tooltip>
+        <IconButton icon={KeyRound} size="icon-sm" label="重置密码"
+          disabled={!person.editable || busy} onClick={() => onResetPassword(person)} />
 
         {/* The unique system-created SuperAdmin can never be disabled;
             rendering a dead trash button implies the action exists. */}
         {isSuperAdmin ? null : (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  size="icon-xs"
-                  variant="ghost"
-                  aria-label="停用"
-                  disabled={!person.manageable || busy}
-                  className="size-7 cursor-pointer text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                  onClick={() => onDisable(person)}
-                />
-              }
-            >
-              <Trash2 className="size-3" aria-hidden />
-            </TooltipTrigger>
-            <TooltipContent>停用该账户</TooltipContent>
-          </Tooltip>
+          <Popover open={moreOpen} onOpenChange={setMoreOpen}>
+            <PopoverTrigger render={<IconButton icon={Ellipsis} size="icon-sm" label={`更多操作 ${person.name}`} tip="更多操作" disabled={!person.manageable || busy || status === "disabled"} />} />
+            <PopoverContent align="end" className="w-auto p-1">
+              <Button type="button" size="sm" variant="destructive" aria-label="停用" disabled={!person.manageable || busy} onClick={() => { setMoreOpen(false); onDisable(person) }}><Trash2 aria-hidden />停用账户</Button>
+            </PopoverContent>
+          </Popover>
         )}
       </div>
     </TableCell>
@@ -1147,23 +1027,24 @@ function MemberRow({
 function WorkspaceQuotaRow({
   workspace,
   busy,
+  onOpenWallet,
   onDeleteWorkspace,
 }: {
   workspace: AdminDirectoryWorkspaceView
   busy: boolean
+  onOpenWallet: (workspace: AdminDirectoryWorkspaceView) => void
   onDeleteWorkspace: (workspace: AdminDirectoryWorkspaceView) => void
 }) {
   const percent = workspace.seat_limit > 0 ? Math.round((workspace.seats_used / workspace.seat_limit) * 100) : 0
   const isHighUsage = percent >= 90
-  const storeLimit = workspace.plan === "lite" ? 1 : workspace.seat_limit * 5
 
   return (
-    <TableRow className="group/workspace-row transition-colors hover:bg-muted/35">
+    <TableRow className="group/workspace-row text-xs transition-colors md:[&>td]:py-1.5">
       <TableCell>
-        <div className="flex flex-col">
-          <div className="flex items-center gap-2">
-            <span className="font-medium text-foreground text-compact">{workspace.name}</span>
-            <span className="font-mono text-2xs text-muted-foreground">#{workspace.id}</span>
+        <div className="flex min-w-0 flex-col">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="max-w-56 truncate text-xs font-medium text-foreground" title={workspace.name}>{workspace.name}</span>
+            <span className="font-mono text-meta tabular-nums text-muted-foreground">#{workspace.id}</span>
           </div>
           <span className="text-meta text-muted-foreground">
             {workspace.members.length} 名成员 · 创建于 {workspace.created_at.slice(0, 10)}
@@ -1176,15 +1057,12 @@ function WorkspaceQuotaRow({
           <div className="flex items-center gap-1.5">
             <PlanMark plan={workspace.plan} />
           </div>
-          <span className="text-2xs text-muted-foreground">
-            {workspace.plan === "lite" ? "默认档 · 1 店" : "付费档 · 5 店/席"}
-          </span>
         </div>
       </TableCell>
 
       <TableCell>
         <div className="flex flex-col gap-1 min-w-28 max-w-40">
-          <div className="flex items-center justify-between text-xs">
+          <div className="flex items-center justify-between text-meta">
             <span className="text-muted-foreground">席位占用</span>
             <span className="font-mono tabular-nums font-medium">
               {workspace.seats_used} / {workspace.seat_limit}
@@ -1199,31 +1077,19 @@ function WorkspaceQuotaRow({
               style={{ width: `${Math.min(percent, 100)}%` }}
             />
           </div>
-          <span className="font-mono text-2xs text-muted-foreground">
+          <span className="font-mono text-meta tabular-nums text-muted-foreground">
             {workspace.seat_limit} 席位上限
           </span>
         </div>
       </TableCell>
 
       <TableCell>
-        <div className="flex flex-col gap-0.5 min-w-28">
-          <div className="flex items-center gap-1.5 font-mono text-xs font-semibold text-foreground tabular-nums">
-            <Store className="size-3.5 text-muted-foreground shrink-0" aria-hidden />
-            <span>{storeLimit} 家店铺</span>
-          </div>
-          <span className="text-2xs text-muted-foreground">
-            {workspace.plan === "lite" ? "默认档 · 1 店" : "席位联动 · 5 店/席"}
-          </span>
-        </div>
-      </TableCell>
-
-      <TableCell>
         <div className="flex flex-col">
-          <span className="font-mono text-xs font-semibold tabular-nums text-foreground">
+          <span className="font-mono text-xs font-medium tabular-nums text-foreground">
             {formatYuan(workspace.wallet_available_microfen)}
           </span>
           {workspace.wallet_held_microfen > 0 ? (
-            <span className="font-mono text-2xs text-muted-foreground">
+            <span className="font-mono text-meta tabular-nums text-muted-foreground">
               预留 {formatYuan(workspace.wallet_held_microfen)}
             </span>
           ) : null}
@@ -1237,17 +1103,28 @@ function WorkspaceQuotaRow({
       </TableCell>
 
       <TableCell className="text-right">
-        <Button
-          type="button"
-          size="icon-xs"
-          variant="ghost"
-          className="size-7 cursor-pointer text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-          disabled={busy}
-          aria-label={`删除工作空间 ${workspace.name}`}
-          onClick={() => onDeleteWorkspace(workspace)}
-        >
-          <Trash2 className="size-3" />
-        </Button>
+        <div className="flex items-center justify-end gap-1">
+          <IconButton
+            icon={Wallet}
+            iconClassName="size-3"
+            label={`管理钱包 ${workspace.name}`}
+            tip="管理钱包"
+            size="icon-xs"
+            className="size-7 cursor-pointer text-muted-foreground"
+            disabled={busy}
+            onClick={() => onOpenWallet(workspace)}
+          />
+          <IconButton
+            icon={Trash2}
+            iconClassName="size-3"
+            label={`删除工作空间 ${workspace.name}`}
+            tip="删除工作空间"
+            size="icon-xs"
+            className="size-7 cursor-pointer text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+            disabled={busy}
+            onClick={() => onDeleteWorkspace(workspace)}
+          />
+        </div>
       </TableCell>
     </TableRow>
   )
@@ -1268,7 +1145,7 @@ function Avatar({
         kind="user"
         name={name}
         role={role}
-        className={cn("size-7", status === "disabled" && "opacity-60 grayscale")}
+        className={cn("size-8", status === "disabled" && "opacity-60 grayscale")}
       />
       <span
         aria-hidden
@@ -1290,278 +1167,83 @@ function StatusCell({ status, suspended }: { status: AccountStatus; suspended: b
       ? { dot: "bg-st-bad", label: STATUS_LABEL.disabled, ink: "font-medium text-st-bad-ink" }
       : suspended
         ? { dot: "bg-st-attest", label: "名额受限", ink: "font-medium text-st-attest-ink" }
-        : { dot: "bg-st-good", label: STATUS_LABEL.active, ink: "text-muted-foreground" }
+      : { dot: "bg-st-good", label: STATUS_LABEL.active, ink: "text-st-good-ink" }
   return (
-    <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs">
+    <span className={cn("inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2 py-1 text-xs", status === "disabled" ? "bg-st-bad-soft" : suspended ? "bg-st-attest-soft" : "bg-st-good-soft")}>
       <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", verdict.dot)} />
       <span className={verdict.ink}>{verdict.label}</span>
     </span>
   )
 }
 
-/**
- * Edit one account's platform role and login status (账号编辑).
- */
-function EditUserDialog({
-  user,
-  busy,
-  actorRole,
-  onClose,
-  onSave,
-  onResetPassword,
-  userWorkspace,
+export function EditUserForm({
+  user, busy, actorRole, onClose, onSave, onResetPassword,
 }: {
   user?: AdminDirectoryPersonView
   busy: boolean
   actorRole?: string | null
   onClose: () => void
-  onSave: (next: {
-    uuid: string
-    role: AssignableRole | "super_admin"
-    enabled: boolean
-  }) => void
+  onSave: (next: { uuid: string; role: AssignableRole | "super_admin"; enabled: boolean }) => void
   onResetPassword: (user: AdminDirectoryPersonView) => void
-  userWorkspace?: AdminDirectoryWorkspaceView
 }) {
-  const [role, setRole] = useState<AssignableRole | "super_admin">("user")
-  const [enabled, setEnabled] = useState(true)
-  const [copied, setCopied] = useState(false)
+  const [role, setRole] = useState<AssignableRole | "super_admin">(
+    user?.role === "admin" || user?.role === "super_admin" ? user.role : "user",
+  )
+  const [enabled, setEnabled] = useState(user ? asStatus(user) === "active" : true)
   const systemOwned = user?.role === "super_admin"
 
   useEffect(() => {
     if (!user) return
-    setRole(
-      user.role === "admin" || user.role === "super_admin" || user.role === "user"
-        ? user.role
-        : "user",
-    )
+    setRole(user.role === "admin" || user.role === "super_admin" ? user.role : "user")
     setEnabled(asStatus(user) === "active")
-    setCopied(false)
   }, [user])
 
-  const copyUuid = () => {
-    if (!user) return
-    void navigator.clipboard.writeText(user.uuid)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1500)
-    notifySuccess("已复制 UUID", { description: user.uuid })
-  }
+  if (!user) return null
 
   return (
-    <PlatformAdminDialog
-      open={Boolean(user)}
-      onOpenChange={(open) => {
-        if (!open) onClose()
-      }}
-      header={
-        user ? (
-          <div className="flex items-center gap-3">
-            <IdentityMark kind="user" name={user.name} role={user.role} className="size-9" />
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <DialogTitle className="text-base font-semibold truncate">
-                  {user.name}
-                </DialogTitle>
-                <Badge variant={enabled ? "secondary" : "destructive"} className="h-5 text-2xs">
-                  {enabled ? "账号正常" : "已停用"}
-                </Badge>
-              </div>
-              <DialogDescription className="text-meta text-muted-foreground break-all">
-                {user.email}
-              </DialogDescription>
-            </div>
-          </div>
-        ) : undefined
-      }
-      footer={
-        user ? (
-          <>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="mr-auto text-muted-foreground hover:text-foreground cursor-pointer"
-              disabled={!user.editable || busy}
-              onClick={() => onResetPassword(user)}
-            >
-              <KeyRound className="size-3.5" data-icon="inline-start" />
-              重置密码
-            </Button>
-            <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={busy} className="cursor-pointer">
-              {systemOwned ? "关闭" : "取消"}
-            </Button>
-            {/* systemOwned accounts are read-only here: the rank is created by
-                the server-side admin init and the last SuperAdmin cannot be
-                disabled, so nothing can save. */}
-            {systemOwned ? null : (
-              <Button
-                type="button"
-                size="sm"
-                className="cursor-pointer"
-                disabled={busy || (!user.editable && !user.manageable)}
-                onClick={() =>
-                  onSave({
-                    uuid: user.uuid,
-                    role,
-                    enabled,
-                  })
-                }
-              >
-                {busy ? <Spinner data-icon="inline-start" /> : <ShieldCheck data-icon="inline-start" />}
-                保存更改
-              </Button>
-            )}
-          </>
-        ) : undefined
-      }
-    >
-      {user ? (
-            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-5">
-              {/* Identity & Basic facts */}
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-4 text-compact">
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-meta text-muted-foreground">用户标识 (UUID)</span>
-                  <span className="font-mono text-foreground select-all break-all">{user.uuid}</span>
-                </div>
-                <Button
-                  type="button"
-                  size="xs"
-                  variant="outline"
-                  className="cursor-pointer gap-1"
-                  onClick={copyUuid}
-                >
-                  {copied ? <Check className="size-3 text-st-good-ink" /> : <Copy className="size-3" />}
-                  {copied ? "已复制" : "复制"}
-                </Button>
-              </div>
-
-              {/* Section 1: Platform Role Authorization */}
-              <div className="flex flex-col gap-2">
-                <div className="flex items-center justify-between">
-                  <FieldLabel className="text-xs font-semibold text-foreground">
-                    平台角色
-                  </FieldLabel>
-                  {systemOwned ? (
-                    <span className="text-meta font-medium text-st-attest-ink">
-                      由服务器初始化创建
-                    </span>
-                  ) : null}
-                </div>
-
-                {systemOwned ? (
-                  <div className="flex items-center gap-3 rounded-lg border border-st-attest/30 bg-st-attest-soft p-3 text-xs">
-                    <Crown className="size-4 text-st-attest-ink shrink-0" />
-                    <div>
-                      <p className="font-medium text-foreground">超级管理员 · 全局唯一</p>
-                      <p className="text-meta text-muted-foreground">
-                        由服务器端 admin init 一次性创建并保存在系统中，不经过面板创建或变更；
-                        不可降级、停用或删除。
-                      </p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="平台角色">
-                    {assignableRoles(actorRole).map((option) => {
-                      const isOptionAdmin = option === "admin"
-                      const checked = role === option
-                      return (
-                        <button
-                          key={option}
-                          type="button"
-                          role="radio"
-                          aria-checked={checked}
-                          disabled={!user.manageable || busy}
-                          onClick={() => setRole(option)}
-                          className={cn(
-                            "flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-45",
-                            checked
-                              ? "border-brand/60 bg-brand-soft/40 ring-1 ring-brand/30"
-                              : "border-border hover:bg-muted/50",
-                          )}
-                        >
-                          <div className="flex w-full items-center justify-between">
-                            <span className="flex items-center gap-1.5 font-medium text-xs text-foreground">
-                              {isOptionAdmin ? (
-                                <ShieldCheck className="size-3.5 text-brand-ink" />
-                              ) : (
-                                <User className="size-3.5 text-muted-foreground" />
-                              )}
-                              {platformRoleLabel(option)}
-                            </span>
-                            {checked ? <Check className="size-3 text-brand-ink" /> : null}
-                          </div>
-                          <p className="text-meta text-muted-foreground leading-snug">
-                            {isOptionAdmin
-                              ? "具备平台管理员权限，可管理普通用户与查看运行日志"
-                              : "仅访问所属工作空间分配的功能，无平台管理后台权限"}
-                          </p>
-                        </button>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {/* Section 2: Login and access status */}
-              <div className="flex flex-col gap-2">
-                <div className="flex items-center justify-between">
-                  <FieldLabel className="text-xs font-semibold text-foreground">
-                    账号状态
-                  </FieldLabel>
-                  {systemOwned ? (
-                    <span className="text-meta font-medium text-st-attest-ink">
-                      由系统托管
-                    </span>
-                  ) : null}
-                </div>
-                <div className="rounded-lg border border-border p-3 space-y-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex flex-col gap-0.5">
-                      <span className="text-xs font-medium text-foreground">
-                        账号登录与访问状态
-                      </span>
-                      <p className="text-meta text-muted-foreground">
-                        {enabled
-                          ? "账号状态正常，可正常登录系统并使用被授权的工作空间"
-                          : "账号已停用，将拒绝新会话登录，已有数据与店铺绑定保持不变"}
-                      </p>
-                    </div>
-                    <Switch
-                      checked={enabled}
-                      disabled={!user.manageable || busy}
-                      onCheckedChange={setEnabled}
-                      aria-label="账户启用状态"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Section 3: Workspace Affiliation & Standing */}
-              <div className="flex flex-col gap-2">
-                <FieldLabel className="text-xs font-semibold text-foreground">
-                  工作空间归属与成员
-                </FieldLabel>
-                {userWorkspace ? (
-                  <div className="flex items-center justify-between rounded-lg border border-border p-3">
-                    <div className="flex flex-col gap-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-medium text-foreground">{userWorkspace.name}</span>
-                        <PlanMark plan={userWorkspace.plan} />
-                      </div>
-                      <span className="text-meta text-muted-foreground">
-                        成员占用: {userWorkspace.seats_used}/{userWorkspace.seat_limit} · 店铺额度: {userWorkspace.plan === "lite" ? 1 : userWorkspace.seat_limit * 5} 家 · 钱包可用: {formatYuan(userWorkspace.wallet_available_microfen)}
-                      </span>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="rounded-lg border border-dashed border-border p-3 text-center text-xs text-muted-foreground">
-                    该账号尚未加入任何工作空间
-                  </div>
-                )}
-              </div>
-            </div>
-      ) : null}
-    </PlatformAdminDialog>
+    <section aria-labelledby="user-editor-title" className="flex max-h-[inherit] min-h-0 flex-1 flex-col outline-none">
+      <header className="flex shrink-0 items-center gap-2 border-b border-border p-3">
+        <IdentityMark kind="user" name={user.name} role={user.role} className="size-8 shrink-0" />
+        <div className="min-w-0 flex-1">
+          <h2 id="user-editor-title" className="truncate text-sm font-medium">{user.name}</h2>
+          <p className="break-all text-xs text-muted-foreground">{user.email}</p>
+        </div>
+        <IconButton icon={X} label="关闭账号详情" tip="关闭" size="icon-sm" disabled={busy} onClick={onClose} />
+      </header>
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
+        <fieldset className="min-w-0">
+          <legend className="mb-2 text-sm font-medium">平台角色</legend>
+          {systemOwned ? <p className="text-sm text-muted-foreground">超级管理员 · 系统只读</p> : <div className="grid grid-cols-2 gap-2">
+            {assignableRoles(actorRole).map((option) => <label key={option} className={cn(
+              "flex min-h-9 min-w-0 cursor-pointer items-center rounded-md border px-2 py-2 has-focus-visible:ring-2 has-focus-visible:ring-ring max-md:min-h-11",
+              role === option ? "border-brand bg-brand-soft/50" : "border-border",
+              (!user.manageable || busy) && "cursor-not-allowed opacity-50",
+            )}>
+              <span className="flex items-center gap-2 text-sm font-medium">
+                <input type="radio" name="user-platform-role" value={option} checked={role === option}
+                  disabled={!user.manageable || busy} onChange={() => setRole(option)} className="size-4 shrink-0 accent-brand" />
+                {platformRoleLabel(option)}
+              </span>
+            </label>)}
+          </div>}
+        </fieldset>
+        <label htmlFor="user-enabled" className="flex min-h-9 items-center justify-between gap-3 max-md:min-h-11">
+          <span className="text-sm">启用账号</span>
+          <Switch id="user-enabled" checked={enabled} disabled={!user.manageable || busy}
+            onCheckedChange={setEnabled} aria-label="账户启用状态" />
+        </label>
+      </div>
+      <footer className="flex shrink-0 flex-wrap items-center gap-2 border-t border-border p-3">
+        <Button type="button" variant="ghost" size="sm" className="mr-auto" disabled={!user.editable || busy} onClick={() => onResetPassword(user)}>
+          <KeyRound aria-hidden className="size-4" />重置密码
+        </Button>
+        <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={busy}>{systemOwned ? "关闭" : "取消"}</Button>
+        {systemOwned ? null : <Button type="button" size="sm" disabled={busy || (!user.editable && !user.manageable)}
+          onClick={() => onSave({ uuid: user.uuid, role, enabled })}>
+          {busy ? <Spinner aria-hidden /> : null}保存更改
+        </Button>}
+      </footer>
+    </section>
   )
 }
 

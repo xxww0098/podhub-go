@@ -7,7 +7,6 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -233,7 +232,6 @@ type StoreCiphertext struct {
 	ManualDisabled     bool
 	QuotaSuspended     bool
 	AssigneeMembership *int64
-	AssigneeKeyManage  bool
 }
 
 // loadStoreCiphertext is credential_store::load_store: the row the credential
@@ -244,14 +242,14 @@ func loadStoreCiphertext(ctx context.Context, tx pgx.Tx, orgID int64, uuid strin
 	err := tx.QueryRow(ctx, `
 		SELECT s.id, s.org_id, lower(s.uuid::text), s.client_id, s.credential_revision,
 		       s.revision, s.manual_disabled, s.quota_suspended,
-		       s.assignee_membership_id, s.assignee_key_manage, s.deleted_at_ms
+		       s.assignee_membership_id, s.deleted_at_ms
 		  FROM public.organization_stores s
 		 WHERE s.org_id = $1 AND s.uuid = $2::uuid
 		 LIMIT 1
 		 FOR UPDATE`, orgID, uuid).Scan(
 		&out.StoreID, &out.OrgID, &out.UUID, &out.ClientID, &out.CredentialRevision,
 		&out.Revision, &out.ManualDisabled, &out.QuotaSuspended,
-		&out.AssigneeMembership, &out.AssigneeKeyManage, &deleted)
+		&out.AssigneeMembership, &deleted)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return StoreCiphertext{}, contract.NotFound(contract.MsgStoreMissing)
 	}
@@ -274,7 +272,6 @@ func (s StoreCiphertext) asRow() domain.Row {
 		QuotaSuspended:       s.QuotaSuspended,
 		CredentialRevision:   s.CredentialRevision,
 		AssigneeMembershipID: s.AssigneeMembership,
-		AssigneeKeyManage:    s.AssigneeKeyManage,
 		Revision:             s.Revision,
 	}
 }
@@ -462,13 +459,10 @@ func loadVerificationSummary(ctx context.Context, tx pgx.Tx, orgID, storeID, cre
 	return out, nil
 }
 
-// exportRows reads every live store the actor may manage keys for. The
-// visibility and grant rules are applied in memory because they depend on the
-// actor, not on the row.
+// exportRows reads the current credentials of every live store in the workspace.
 func exportRows(ctx context.Context, tx pgx.Tx, orgID int64) ([]exportRow, *contract.APIError) {
 	rows, err := tx.Query(ctx, `
 		SELECT s.id, lower(s.uuid::text), s.name, s.credential_revision,
-		       s.assignee_membership_id, s.assignee_key_manage,
 		       c.client_id, c.key_id, c.envelope_version, c.nonce, c.ciphertext,
 		       c.wrapped_dek, c.dek_nonce, c.key_fingerprint
 		  FROM public.organization_stores s
@@ -484,7 +478,6 @@ func exportRows(ctx context.Context, tx pgx.Tx, orgID int64) ([]exportRow, *cont
 	for rows.Next() {
 		var row exportRow
 		if err := rows.Scan(&row.StoreID, &row.UUID, &row.Name, &row.CredentialRevision,
-			&row.AssigneeMembership, &row.AssigneeKeyManage,
 			&row.ClientID, &row.KeyID, &row.Version, &row.Nonce, &row.Ciphertext,
 			&row.WrappedDEK, &row.DEKNonce, &row.Fingerprint); err != nil {
 			return nil, asAPIError(err, contract.MsgUnavailable)
@@ -502,8 +495,6 @@ type exportRow struct {
 	UUID               string
 	Name               string
 	CredentialRevision int64
-	AssigneeMembership *int64
-	AssigneeKeyManage  bool
 	ClientID           *string
 	KeyID              string
 	Version            int
@@ -512,13 +503,4 @@ type exportRow struct {
 	WrappedDEK         []byte
 	DEKNonce           []byte
 	Fingerprint        []byte
-}
-
-// jsonOrNil renders a nullable extra for the audit payload.
-func jsonOrNil(value any) any {
-	raw, err := json.Marshal(value)
-	if err != nil {
-		return nil
-	}
-	return json.RawMessage(raw)
 }

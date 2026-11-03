@@ -3,7 +3,7 @@ import { useSyncExternalStore } from "react"
 import { supplierDbsHttp, type SupplierDb, type SupplierDbDetail, type SupplierDbRow, type SupplierDbPropDef, type UpsertSupplierDbRequest, type UpsertSupplierDbPropRequest, type UpsertSupplierDbRowRequest } from "@/bindings/http-supplier-dbs"
 import { errorMessage } from "@/lib/error-message"
 import { createSessionCache } from "@/lib/session-cache"
-import { copySupplierOzonConfig, supplierOzonConfigIO, type SupplierOzonConfigIO } from "./supplier-ozon-config"
+import { copySupplierOzonConfig, copySupplierOzonFields, supplierOzonConfigIO, type SupplierOzonConfigIO } from "./supplier-ozon-config"
 import { EMPTY_ROW_REQUEST, rowToUpsert, propToUpsert, type SupplierDbsClient, type SupplierDbsState, type SupplierDbsStore, type SupplierDbDetailState, type SupplierDbDraft, type MutationResult } from "./supplier-dbs-model"
 import { failed } from "./supplier-dbs-errors"
 import { bindSupplierDbsAuthority } from "./supplier-dbs-authority"
@@ -44,7 +44,7 @@ export function createSupplierDbsStore(
         return {
           ...state,
           status: "error",
-          error: errorMessage(reason, "无法读取平台货源"),
+          error: errorMessage(reason, "无法读取平台商品库"),
           reason,
         }
       }
@@ -205,8 +205,8 @@ export function createSupplierDbsStore(
     ...(draft.acceptsDelegate === undefined
       ? {}
       : { acceptsDelegate: draft.acceptsDelegate }),
-    ...(draft.accountEmail?.trim()
-      ? { accountEmail: draft.accountEmail.trim().toLowerCase() }
+    ...(draft.factoryId?.trim()
+      ? { factoryId: draft.factoryId.trim() }
       : {}),
   })
 
@@ -233,7 +233,7 @@ export function createSupplierDbsStore(
   ): Promise<MutationResult<void>> => {
     const detail = state.details[sourceId]?.detail
     if (!detail) {
-      return { ok: false, issues: [{ field: "", message: "平台货源尚未加载" }] }
+      return { ok: false, issues: [{ field: "", message: "平台商品库尚未加载" }] }
     }
     const defsById = new Map(detail.propDefs.map((def) => [def.propId, def]))
     const generation = sessionGeneration
@@ -322,7 +322,7 @@ export function createSupplierDbsStore(
             emitDetail(sourceId, {
               status: "error",
               detail: current.detail,
-              error: errorMessage(reason, "无法读取平台货源"),
+              error: errorMessage(reason, "无法读取平台商品库"),
               reason,
             })
           }
@@ -344,6 +344,59 @@ export function createSupplierDbsStore(
       } catch (reason) {
         return failed(reason, "新建行失败")
       }
+    },
+    createVariant: async (sourceId, productId, initial) => {
+      const generation = sessionGeneration
+      let parent = state.details[sourceId]?.detail?.rows.find((row) => row.productId === productId && !row.archived)
+      if (!parent) return failed("商品不存在或尚未加载", "新增规格失败")
+      if (!parent.size.trim()) return failed("请先填写原规格名称，再添加其他规格", "新增规格失败")
+      const size = initial.size.trim()
+      if (!size) return failed("请填写规格名称", "新增规格失败")
+      const group = parent.variantGroup?.trim() || parent.productId
+      if (state.details[sourceId]?.detail?.rows.some((row) => !row.archived && (row.productId === productId || row.variantGroup?.trim() === group) && row.size.trim() === size)) return failed("同款中已存在这个规格名称", "新增规格失败")
+      if (!parent.variantGroup?.trim()) {
+        const result = await writeRowImpl(sourceId, productId, { variantGroup: group })
+        if (!result.ok) return result
+        parent = result.value
+      }
+      if (generation !== sessionGeneration) return failed("会话已变化，请重新打开商品", "新增已取消")
+      try {
+        const data = await client.supplierDbRowCreate(sourceId, {
+          ...rowToUpsert(parent), ...initial,
+          platformCode: "", size, variantGroup: group, archived: false,
+          descriptionCategoryId: parent.descriptionCategoryId, typeId: parent.typeId,
+          promptContent: "", promptFileName: "", promptName: "",
+          costCents: initial.costCents ?? null, shippingCostCents: initial.shippingCostCents ?? null,
+          grossWeightG: initial.grossWeightG ?? null,
+          packWidthMm: initial.packWidthMm ?? null, packHeightMm: initial.packHeightMm ?? null, packDepthMm: initial.packDepthMm ?? null, packWeightG: null,
+          expectedRevision: null,
+        })
+        if (generation !== sessionGeneration) return failed("会话已变化，请重新打开商品", "新增已取消")
+        applyRow(sourceId, data.row, true)
+        if (generation !== sessionGeneration) return failed("会话已变化，请重新打开商品", "新增已取消")
+        try {
+          await copySupplierOzonFields(configIO, sourceId, productId, data.row)
+          return { ok: true, value: { row: data.row } }
+        } catch (configCopyError) {
+          return { ok: true, value: { row: data.row, configCopyError } }
+        }
+      } catch (reason) { return failed(reason, "新增规格失败") }
+    },
+    syncProductOzon: async (sourceId, productId) => {
+      const generation = sessionGeneration
+      const rows = state.details[sourceId]?.detail?.rows ?? []
+      const parent = rows.find((row) => row.productId === productId && !row.archived)
+      if (!parent) return failed("商品不存在或尚未加载", "同步 Ozon 字段失败")
+      try {
+        for (const row of rows) {
+          if (!parent.variantGroup?.trim() || row.archived || row.productId === productId || row.variantGroup?.trim() !== parent.variantGroup?.trim()) continue
+          if (generation !== sessionGeneration) return failed("会话已变化", "同步已取消")
+          if (!await copySupplierOzonFields(configIO, sourceId, productId, row)) return failed(`规格“${row.size || row.platformCode}”的类目与商品配置不一致，请先统一类目`, "同步 Ozon 字段失败")
+        }
+        const fresh = await client.supplierDbGet(sourceId)
+        if (generation === sessionGeneration) emitDetail(sourceId, { status: "ready", detail: fresh })
+        return { ok: true, value: undefined }
+      } catch (reason) { return failed(reason, "同款字段未全部同步，请重试；已保存的规格保留") }
     },
     updateRow: writeRowImpl,
     patchCell: writeRowImpl,

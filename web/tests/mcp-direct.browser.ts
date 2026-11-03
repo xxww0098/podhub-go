@@ -26,8 +26,8 @@ export async function consumeFavorite(executorUrl: string) {
   if (job.kind !== "favorite" || typeof input.productId !== "string" || typeof input.favorite !== "boolean") {
     throw new Error("Invalid favorite command")
   }
-  const card = document.querySelector(`[data-gallery-card="${CSS.escape(input.productId)}"]`)
-  if (!card?.querySelector("[data-gallery-card-favorite]")) {
+  const card = document.querySelector(`[data-gallery-product="${CSS.escape(input.productId)}"]`)
+  if (!card?.querySelector("[data-gallery-favorite]")) {
     throw new Error("Probe may only change a visible catalog product")
   }
   if (isFavorite(input.productId) !== input.favorite) toggleFavorite(input.productId)

@@ -11,15 +11,16 @@ import (
 
 // Service fills store names from seller info and groups stores by legal name.
 type Service struct {
-	dir        Directory
-	info       SellerInfo
-	cred       Credential
-	tags       TagDirectory
-	roster     RosterDirectory
-	credential CredentialDirectory
-	products   ProductDirectory
-	snapshots  SnapshotDirectory
-	thumbs     ThumbnailSource
+	dir              Directory
+	info             SellerInfo
+	cred             Credential
+	tags             TagDirectory
+	roster           RosterDirectory
+	credential       CredentialDirectory
+	products         ProductDirectory
+	productWorkspace ProductWorkspaceDirectory
+	snapshots        SnapshotDirectory
+	thumbs           ThumbnailSource
 	// syncDisabled is OZON_PRODUCT_SYNC_DISABLED, captured at assembly. It
 	// stops scheduling and verify from leaving; reads still render.
 	syncDisabled bool
@@ -144,7 +145,7 @@ func (s Service) apply(ctx context.Context, orgID int64, storeUUID, clientID, ap
 		return Result{}, err
 	}
 	out := resultFrom(saved)
-	out.Filled = filled
+	out.Filled = filled && saved.Source != domain.SourceManual
 	out.UpstreamFailed = state != domain.KeyValid
 	currency := saved.Currency
 	if patch.Currency != nil {

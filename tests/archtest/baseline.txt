@@ -1,3 +1,2 @@
 # single-parse-points
 internal/admin/repo/dissolve.go: "app.current_org_id" may only appear under internal/platform/db/tenantx
-internal/agent/repo/wallet.go: "app.current_org_id" may only appear under internal/platform/db/tenantx

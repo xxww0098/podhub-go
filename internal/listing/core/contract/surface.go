@@ -1,7 +1,6 @@
 package contract
 
 import (
-	"context"
 	"errors"
 )
 
@@ -88,19 +87,3 @@ type SendDecision struct {
 	Rejected []string
 	Message  string
 }
-
-// Funcs below are assigned by listing/core/service/engine (and domain, for
-// SearchTagTokens) in init. Callers go through the flat listing package,
-// which reads these variables at call time.
-var (
-	OpenEmbedded     func(ctx context.Context) (Engine, error)
-	Open             func(ctx context.Context, wasm []byte) (Engine, error)
-	RulesVersion     func(rules []Rule) (string, error)
-	Validate         func(ctx context.Context, engine Engine, in Input) (Verdict, error)
-	ForbidSave       func(ctx context.Context, engine Engine, tags []string, rules []Rule) (SaveDecision, error)
-	StripForAI       func(ctx context.Context, engine Engine, tags []string, rules []Rule) (AIDecision, error)
-	StripBeforeSend  func(ctx context.Context, engine Engine, text string, rules []Rule) (SendDecision, error)
-	SearchTagTokens  func(schemaFields, draft []byte) ([]string, error)
-	TagsWASMFromEnv  func() ([]byte, error)
-	ProbeWASMFromEnv func() ([]byte, error)
-)

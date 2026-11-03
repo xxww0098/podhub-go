@@ -1,7 +1,14 @@
 import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
 import test from "node:test"
+import { fileURLToPath } from "node:url"
 import { renderToStaticMarkup } from "react-dom/server"
 
+import { formatYuan } from "@/lib/money"
+import { WalletBalanceBadge } from "@/components/workspace-quota-facts"
+
+import { AiLogTableView, formatLogCost, logFailureText, logPageCount, type AiLogState } from "./ai-log-table"
+import { WalletLedgerTable, formatSignedYuan, ledgerNoteLabel } from "./wallet-ledger-table"
 import { AbsorbedReliefNote, UsageStatsPanel } from "./usage-stats-panel"
 
 import {
@@ -20,6 +27,10 @@ test("absorbed>0 surfaces the platform relief note; an uncapped window stays cle
   assert.match(capped, /含平台封顶减免 ¥0\.40/)
   assert.equal(renderToStaticMarkup(<AbsorbedReliefNote absorbedMicrofen={0} />), "")
 })
+
+function readNearby(relative: string): string {
+  return readFileSync(fileURLToPath(new URL(relative, import.meta.url)), "utf8")
+}
 
 function replaceGlobal(name: PropertyKey, value: unknown): () => void {
   const previous = Object.getOwnPropertyDescriptor(globalThis, name)
@@ -182,4 +193,96 @@ test("buildDailyPoints keeps a zero bucket for days nobody called", () => {
       ["08/21", 0, 0],
     ],
   )
+})
+
+test("the header wallet chip keeps its place and reads — until a wallet lands", () => {
+  const empty = renderToStaticMarkup(<WalletBalanceBadge wallet={null} onOpenUsage={() => {}} />)
+  assert.match(empty, /<button/)
+  assert.match(empty, /aria-label="钱包余额 —"/)
+  assert.match(empty, />—</)
+
+  const filled = renderToStaticMarkup(
+    <WalletBalanceBadge
+      wallet={{ balance_microfen: 250_000_000, held_microfen: 0, available_microfen: 250_000_000, spent_microfen: 0, updated_at: "2026-10-30T00:00:00Z" }}
+      onOpenUsage={() => {}}
+    />,
+  )
+  assert.match(filled, /钱包余额 ¥2\.50 CNY/)
+})
+
+test("wallet ledger: 中文类型、带符号金额、变动后余额、备注；空与失败各一行", () => {
+  const html = renderToStaticMarkup(
+    <WalletLedgerTable
+      failed={false}
+      ledger={[
+        { entry_type: "topup", amount_microfen: 100_000_000, balance_after_microfen: 100_000_000, note: "手动充值", created_at: "2026-10-30T01:00:00Z" },
+        { entry_type: "settle", amount_microfen: -300_000, balance_after_microfen: 99_700_000, note: "", created_at: "2026-10-30T02:00:00Z" },
+      ]}
+    />,
+  )
+  assert.match(html, /最近 50 条/)
+  assert.match(html, />充值</)
+  assert.match(html, />结算</)
+  assert.match(html, /\+¥1\.00/)
+  assert.match(html, /-¥0\.003/)
+  assert.match(html, /¥0\.997/)
+  assert.match(html, /手动充值/)
+  assert.equal(formatSignedYuan(0), "—")
+
+  assert.match(renderToStaticMarkup(<WalletLedgerTable ledger={[]} failed={false} />), /暂无钱包流水/)
+  assert.match(renderToStaticMarkup(<WalletLedgerTable ledger={null} failed />), /钱包流水读取失败/)
+})
+
+const logItem = (over: Record<string, unknown> = {}) => ({
+  id: 1, user_id: 1, created_at: 1_761_800_000, type: 2, content: "quota 300000", username: "u", token_name: "",
+  model_name: "gpt-5", quota: 300_000, prompt_tokens: 1200, completion_tokens: 80, use_time: 4, is_stream: false,
+  channel: 0, token_id: 0, group: "default", ip: "", request_id: "req-123", upstream_request_id: "", other: {},
+  ...over,
+})
+
+test("AI log table: tokens, quota as microfen yuan, failure text", () => {
+  const state: AiLogState = {
+    status: "ready",
+    page: { page: 1, page_size: 20, total: 41, items: [logItem(), logItem({ id: 2, type: 5, content: "上游超时", request_id: "req-9" })] },
+  }
+  const html = renderToStaticMarkup(<AiLogTableView state={state} page={1} onExport={() => {}} />)
+  assert.match(html, /gpt-5/)
+  assert.match(html, /1,200/)
+  assert.match(html, /¥0\.003/)
+  assert.match(html, /req-123/)
+  assert.match(html, /上游超时/)
+  assert.match(html, /第 1 \/ 3 页 · 共 41 条/)
+  assert.match(html, /导出 CSV/)
+  assert.doesNotMatch(html, />渠道<|>IP</)
+  assert.doesNotMatch(html, /QuantumNous|New API contributors/)
+  assert.equal(formatLogCost(300_000), "¥0.003")
+  assert.equal(logFailureText(logItem()), null)
+  assert.equal(logPageCount(0), 1)
+})
+
+test("AI log table: empty and failed states keep their own copy", () => {
+  const empty = renderToStaticMarkup(
+    <AiLogTableView state={{ status: "ready", page: { page: 1, page_size: 20, total: 0, items: [] } }} page={1} />,
+  )
+  assert.match(empty, /暂无调用日志/)
+  const failed = renderToStaticMarkup(<AiLogTableView state={{ status: "failed" }} page={1} onRetry={() => {}} />)
+  assert.match(failed, /AI 调用日志读取失败/)
+  assert.match(failed, /重试/)
+})
+
+test("recharge and redeem copy name the Workspace wallet, not the creator", () => {
+  for (const file of ["./recharge-dialog.tsx", "../plans/redeem-code-dialog.tsx"]) {
+    const source = readNearby(file)
+    assert.doesNotMatch(source, /创建者.{0,2}钱包|同一.创建者/)
+  }
+  assert.match(readNearby("./recharge-dialog.tsx"), /当前工作空间的钱包/)
+})
+
+test("the server's English absorbed note reads in Chinese; other notes pass through", () => {
+  assert.equal(
+    ledgerNoteLabel("platform absorbed 153240 microfen above the per-request ceiling"),
+    `平台承担超出单次上限的 ${formatYuan(153240)}`,
+  )
+  assert.equal(ledgerNoteLabel("兑换码充值"), "兑换码充值")
+  assert.equal(ledgerNoteLabel(""), "")
 })

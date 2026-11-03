@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/xxww0098/podhub-go/internal/platform/db/sqlc"
+	"github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
 )
 
 func (s *Service) Register(r *http.Request) Result {
@@ -57,18 +58,21 @@ func (s *Service) Register(r *http.Request) Result {
 	if err != nil {
 		return dbResult(err)
 	}
-	token, err := s.sessionToken(r, hash)
+	token, err := s.sessionToken(r, hash, 0)
 	if err != nil {
 		return dbResult(err)
 	}
 	var created sqlc.InsertAccountUserRow
 	var replay bool
-	err = s.inTx(r.Context(), func(q *sqlc.Queries) (bool, error) {
+	err = s.inTx(r.Context(), func(tx pgx.Tx, q *sqlc.Queries) (bool, error) {
 		ready, err := q.PlatformReady(r.Context())
 		if errors.Is(err, pgx.ErrNoRows) || (err == nil && !ready) {
 			return true, errNotReady
 		}
 		if err != nil {
+			return false, err
+		}
+		if err := lockInvitationEmail(r.Context(), tx, email); err != nil {
 			return false, err
 		}
 		row, err := q.InsertAccountUser(r.Context(), sqlc.InsertAccountUserParams{
@@ -82,7 +86,7 @@ func (s *Service) Register(r *http.Request) Result {
 			return false, err
 		}
 		created = row
-		orgID, err := s.bootstrap(r.Context(), q, row.ID, email, row.Name)
+		orgID, err := s.bootstrap(r.Context(), tx, q, row.ID, email, row.Name)
 		if err != nil {
 			return false, err
 		}
@@ -90,6 +94,9 @@ func (s *Service) Register(r *http.Request) Result {
 			InviteeUserID: pgtype.Int8{Int64: row.ID, Valid: true}, Lower: email,
 		})
 		if err != nil {
+			return false, err
+		}
+		if err := notifyPendingInvitations(r.Context(), tx, row.ID); err != nil {
 			return false, err
 		}
 		if err := q.IssueSession(r.Context(), sqlc.IssueSessionParams{
@@ -130,21 +137,15 @@ func (s *Service) Register(r *http.Request) Result {
 	if err != nil {
 		return dbResult(err)
 	}
-	cred := SessionCredentials(r.Header)
-	live, err := s.liveStack(r.Context(), cred)
-	if err != nil {
-		return dbResult(err)
-	}
-	stack := MergedStack(live, created.ID, token)
 	return Result{
 		Status:  http.StatusOK,
 		Body:    loginBody(token, created.PublicID, created.Role, created.Email, created.Name, created.SupplierID, created.Target),
-		Cookies: SessionCookies(token, stack),
+		Cookies: SessionCookies(token),
 	}
 }
 
 func (s *Service) registerReplay(r *http.Request, email, password, ip string) Result {
-	user, err := s.q(r.Context()).FindUserByEmail(r.Context(), email)
+	user, err := s.findUserByEmail(r.Context(), email)
 	if err != nil {
 		return dbResult(err)
 	}
@@ -153,30 +154,29 @@ func (s *Service) registerReplay(r *http.Request, email, password, ip string) Re
 		if user.Disabled {
 			return authResult(http.StatusUnauthorized, msgDisabled, "AUTH_INVALID")
 		}
-		token := DeriveSessionToken(user.PasswordHash, key)
-		cred := SessionCredentials(r.Header)
-		live, err := s.liveStack(r.Context(), cred)
-		if err != nil {
-			return dbResult(err)
-		}
-		err = s.inTx(r.Context(), func(q *sqlc.Queries) (bool, error) {
+		token := DeriveSessionToken(sessionSeed(user.PasswordHash, user.SessionRevision), key)
+		err = s.inTx(r.Context(), func(_ pgx.Tx, q *sqlc.Queries) (bool, error) {
+			role, err := assertLoginCredential(r.Context(), q, user.ID, user.PasswordHash, user.Email, user.SessionRevision)
+			if err != nil {
+				return false, err
+			}
+			user.Role = role
 			return true, s.issue(r.Context(), q, user.ID, user.Role, token, "POST", "/api/auth/login", "session_issued", `{"summary":"签发会话"}`, 0)
 		})
 		if err != nil {
-			return dbResult(err)
+			return loginCredentialResult(err)
 		}
-		stack := MergedStack(live, user.ID, token)
 		return Result{
 			Status:  http.StatusOK,
 			Body:    loginBody(token, user.PublicID, user.Role, user.Email, user.Name, user.SupplierID, user.Target),
-			Cookies: SessionCookies(token, stack),
+			Cookies: SessionCookies(token),
 		}
 	}
 	s.recordFailure(r.Context(), email, ip)
 	return authResult(http.StatusBadRequest, msgRegistered, "VALIDATION")
 }
 
-func (s *Service) bootstrap(ctx context.Context, q *sqlc.Queries, userID int64, email, display string) (int64, error) {
+func (s *Service) bootstrap(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, userID int64, email, display string) (int64, error) {
 	if _, err := q.LockAccount(ctx, userID); err != nil {
 		return 0, err
 	}
@@ -194,7 +194,7 @@ func (s *Service) bootstrap(ctx context.Context, q *sqlc.Queries, userID int64, 
 		if err != nil {
 			return 0, err
 		}
-		if err := insertFreeSubscription(ctx, q, orgID); err != nil {
+		if err := insertFreeSubscription(ctx, tx, q, orgID); err != nil {
 			return 0, err
 		}
 	} else if err != nil {
@@ -221,7 +221,12 @@ func (s *Service) bootstrap(ctx context.Context, q *sqlc.Queries, userID int64, 
 // insertFreeSubscription gives a new workspace its subscription row. Every
 // projection and every quote locks this row, so a workspace without one is a
 // 409 on the billing screen rather than a silently free tier.
-func insertFreeSubscription(ctx context.Context, q *sqlc.Queries, orgID int64) error {
+func insertFreeSubscription(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, orgID int64) error {
+	// Registration just created this workspace. Scope the forced-RLS write to
+	// that ID without granting the account access to any other subscription.
+	if err := tenantx.EnterApp(ctx, tx, orgID); err != nil {
+		return err
+	}
 	return q.InsertFreeSubscription(ctx, orgID)
 }
 

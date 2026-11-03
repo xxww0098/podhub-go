@@ -16,6 +16,7 @@ import (
 	"github.com/xxww0098/podhub-go/internal/platform/config"
 	"github.com/xxww0098/podhub-go/internal/platform/db"
 	"github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
+	"github.com/xxww0098/podhub-go/tests/testkit"
 )
 
 func TestOwnershipStaffRLSAndCash(t *testing.T) {
@@ -68,7 +69,7 @@ func TestOwnershipStaffRLSAndCash(t *testing.T) {
 	if err := bare.QueryRow(ctx, `SELECT count(*) FROM supplier_withdrawals`).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("missing staff GUC saw %d withdrawals (%v)", n, err)
 	}
-	if err := bare.QueryRow(ctx, `SELECT count(*) FROM sc_source_members`).Scan(&n); err != nil || n != 0 {
+	if err := bare.QueryRow(ctx, `SELECT count(*) FROM sc_factory_members`).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("missing staff GUC saw %d members (%v)", n, err)
 	}
 
@@ -150,7 +151,7 @@ func adminParityDB(t testing.TB) (*pgxpool.Pool, context.Context) {
 	t.Helper()
 	dsn := os.Getenv("PODHUB_PARITY_DSN")
 	if dsn == "" {
-		if _, err := os.Stat("/var/run/docker.sock"); err != nil {
+		if !testkit.DockerAvailable() {
 			t.Skip("docker daemon is not available")
 		}
 	}

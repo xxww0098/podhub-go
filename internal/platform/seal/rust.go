@@ -147,33 +147,15 @@ func Fingerprint(kek []byte, clientID, apiKey string) []byte {
 	return mac.Sum(nil)
 }
 
-// SnapshotBucket is one camelCase storage account inside the integration
-// snapshot. Role is transit, assets or private.
-type SnapshotBucket struct {
-	ID              string `json:"id"`
-	Label           string `json:"label"`
-	Role            string `json:"role"`
-	Provider        string `json:"provider"`
-	Endpoint        string `json:"endpoint"`
-	Region          string `json:"region"`
-	Bucket          string `json:"bucket"`
-	KeyPrefix       string `json:"keyPrefix"`
-	PublicBaseURL   string `json:"publicBaseUrl"`
-	ForcePathStyle  bool   `json:"forcePathStyle"`
-	AccessKeyID     string `json:"accessKeyId"`
-	SecretAccessKey string `json:"secretAccessKey"`
-	SessionToken    string `json:"sessionToken"`
-	Active          bool   `json:"active"`
-}
-
 // Snapshot is StoredConfig. Unknown fields are rejected.
+// AIRuntime is optional and read by the admin snapshot parser, not here.
 // Payment is optional. The crypto vector omits it. A present payment object
 // uses StoredPaymentConfig (providers required, unknown keys rejected).
 type Snapshot struct {
 	SchemaVersion  int                  `json:"schemaVersion"`
 	AIAccounts     json.RawMessage      `json:"aiAccounts"`
 	AIDefaultModel string               `json:"aiDefaultModel"`
-	Buckets        []SnapshotBucket     `json:"storageBuckets"`
+	AIRuntime      json.RawMessage      `json:"aiRuntime,omitempty"`
 	Payment        *StoredPaymentConfig `json:"payment,omitempty"`
 }
 
@@ -181,14 +163,17 @@ type Snapshot struct {
 func ParseSnapshot(plain []byte) (Snapshot, error) {
 	dec := json.NewDecoder(bytes.NewReader(plain))
 	dec.DisallowUnknownFields()
-	var stored Snapshot
+	var stored struct {
+		Snapshot
+		RetiredStorage json.RawMessage `json:"storageBuckets"`
+	}
 	if err := dec.Decode(&stored); err != nil {
 		return Snapshot{}, errors.New("已加密的连接配置快照无法解析")
 	}
 	if stored.SchemaVersion != 1 {
 		return Snapshot{}, errors.New("已存储的连接配置 schema 版本不受支持")
 	}
-	return stored, nil
+	return stored.Snapshot, nil
 }
 
 func splitPair(plain []byte) (string, string, error) {

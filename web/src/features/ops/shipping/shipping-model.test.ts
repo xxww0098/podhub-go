@@ -7,6 +7,7 @@ import {
   ALL_STATUS,
   DEFAULT_QUEUE,
   DEFAULT_WINDOW_DAYS,
+  QUEUE_FILTERS,
   SHIPPING_POLL_INTERVAL_MS,
   commandFailure,
   deadlineLabel,
@@ -22,7 +23,6 @@ import {
   queueRequest,
   requestStatus,
   rowToneStatus,
-  shippingActions,
   shippingStatusLabel,
 } from "./shipping-model"
 
@@ -55,7 +55,7 @@ test("all-status filter is not sent to Ozon as a status", () => {
 })
 
 test("queue tabs map onto the existing status and window request", () => {
-  assert.equal(DEFAULT_QUEUE, "awaiting_label")
+  assert.equal(DEFAULT_QUEUE, "awaiting_ship")
   assert.deepEqual(queueRequest("awaiting_label"), {
     status: "awaiting_packaging",
     windowDays: DEFAULT_WINDOW_DAYS,
@@ -69,22 +69,12 @@ test("queue tabs map onto the existing status and window request", () => {
     status: "",
     windowDays: DEFAULT_WINDOW_DAYS,
   })
-})
-
-test("packed label-ready rows expose 打单 and 发货", () => {
-  assert.deepEqual(
-    shippingActions(
-      posting({
-        packing_state: "packed",
-        label_state: "label_ready",
-      }),
-    ).map((item) => item.label),
-    ["打单", "发货"],
-  )
-  assert.deepEqual(
-    shippingActions(posting()).map((item) => item.label),
-    ["打单"],
-  )
+  assert.deepEqual(QUEUE_FILTERS.map(({ label }) => label), [
+    "待组包",
+    "待发货",
+    "前后 24 小时",
+    "全部",
+  ])
 })
 
 test("a status is translated for the operator and never for Ozon", () => {

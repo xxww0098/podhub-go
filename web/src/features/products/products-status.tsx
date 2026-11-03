@@ -1,7 +1,6 @@
-/** 店铺商品表的读数展示：状态页签（即合计）、覆盖率注脚、漏斗窗口注脚。 */
+/** Ozon 商品表的读数展示：状态页签（即合计）、覆盖率注脚、漏斗窗口注脚。 */
 import { TriangleAlert } from "lucide-react"
-
-import { Tabs, TabsIndicator, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { formatShortDay } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
@@ -11,6 +10,14 @@ import type {
   StoreProductsOverviewData,
   StoreProductStatusFilter,
 } from "./products-api"
+
+const METRICS_ERROR_LABEL: Record<string, string> = {
+  restricted: "店铺套餐不含 Ozon 分析接口",
+  rate_limited: "Ozon 限流中，稍后自动重试",
+  refused: "Ozon 暂未提供漏斗数据",
+  invalid: "Ozon 返回的漏斗数据有误",
+  unavailable: "漏斗数据暂不可用",
+}
 
 export type ProductCounts = {
   total?: number | null
@@ -31,29 +38,19 @@ const STATUS_TABS: {
   pick: (counts: ProductCounts) => number | null | undefined
   tone?: "bad" | "warn"
 }[] = [
-  { value: ALL, label: "所有", pick: (counts) => counts.total },
-  { value: "on_sale", label: "销售中", pick: (counts) => counts.onSale },
-  { value: "processing", label: "准备销售", pick: (counts) => counts.processing },
+  { value: ALL, label: "全部商品", pick: (counts) => counts.total },
+  { value: "on_sale", label: "在售", pick: (counts) => counts.onSale },
+  { value: "processing", label: "处理中", pick: (counts) => counts.processing },
   {
     value: "moderation_failed",
-    label: "错误",
+    label: "审核失败",
     pick: (counts) => counts.moderationFailed,
     tone: "bad",
   },
-  // 镜像没有 Ozon 问题清单，「待修改」落在「隐藏」桶上——非在售也非待审的行。
-  { value: "hidden", label: "待修改", pick: (counts) => counts.hidden, tone: "warn" },
-  { value: "delisted", label: "商品已下架", pick: (counts) => counts.delisted },
-  { value: "archived", label: "档案", pick: (counts) => counts.archived },
+  { value: "hidden", label: "隐藏", pick: (counts) => counts.hidden, tone: "warn" },
+  { value: "delisted", label: "已下架", pick: (counts) => counts.delisted },
+  { value: "archived", label: "已归档", pick: (counts) => counts.archived },
 ]
-
-/** `metrics_error` codes — the funnel axis's own refusal vocabulary. */
-const METRICS_ERROR_LABEL: Record<string, string> = {
-  restricted: "店铺套餐不含 Ozon 分析接口",
-  rate_limited: "Ozon 限流中，稍后自动重试",
-  refused: "Ozon 暂未提供漏斗数据",
-  invalid: "Ozon 返回的漏斗数据有误",
-  unavailable: "漏斗数据暂不可用",
-}
 
 export function fmtTime(ms: number | null | undefined): string {
   if (!ms) return "—"
@@ -89,31 +86,36 @@ export function StatusTabs({
   freshness,
   status,
   onStatus,
+  disabled = false,
 }: {
   counts: ProductCounts
   freshness: ProductFreshness | "totals"
   status: StoreProductStatusFilter | undefined
   onStatus: (next: StoreProductStatusFilter | undefined) => void
+  disabled?: boolean
 }) {
   return (
+    <div className="min-w-0 md:flex-1">
     <Tabs
+      className="min-w-0"
       value={status ?? ALL}
       onValueChange={(next) => {
         if (!next || next === ALL) onStatus(undefined)
         else onStatus(next as StoreProductStatusFilter)
       }}
     >
-      <TabsList variant="line" className="min-w-max" aria-label="商品状态">
-        <TabsIndicator variant="line" />
+      <TabsList className="w-full flex-wrap border-0 bg-transparent p-0" style={{ gap: 4 }} aria-label="商品状态">
+        {/* Per-tab highlights stay aligned when the list wraps or resizes. */}
         {STATUS_TABS.map((tab) => {
           const label = countLabel(tab.pick(counts), freshness)
           const notable = label !== "—" && label !== "未知" && label !== "0"
           return (
-            <TabsTrigger key={tab.value} value={tab.value} variant="line" className="whitespace-nowrap">
+            <TabsTrigger key={tab.value} value={tab.value} disabled={disabled} className="group h-8 gap-0.5 whitespace-nowrap px-1 text-sm data-active:text-brand max-md:min-h-11 max-md:min-w-11">
+              <span aria-hidden className="pointer-events-none absolute inset-0 -z-10 rounded-sm bg-brand-soft opacity-0 transition-opacity group-data-active:opacity-100" />
               <span>{tab.label}</span>
               <strong
                 className={cn(
-                  "font-mono text-xs font-semibold tabular-nums",
+                  "rounded-full bg-muted px-1.5 text-meta font-medium tabular-nums text-muted-foreground group-data-active:bg-brand group-data-active:text-white",
                   notable && tab.tone === "bad" && "text-st-bad-ink",
                   notable && tab.tone === "warn" && "text-st-attest-ink",
                 )}
@@ -125,6 +127,7 @@ export function StatusTabs({
         })}
       </TabsList>
     </Tabs>
+    </div>
   )
 }
 
@@ -140,42 +143,18 @@ export function CoverageNote({
   const uncovered = stores.filter(
     (store) => store.freshness === "never" || store.freshness === "expired",
   )
+  const details = `已统计 ${coverage.read}/${coverage.total} 家店铺${newest_sync_at_ms ? `，最新更新 ${fmtTime(newest_sync_at_ms)}` : ""}${uncovered.length > 0 ? `。未计入：${uncovered.map((store) => `${store.name} ${freshnessLabel(store.freshness)}`).join("、")}` : coverage.read < coverage.total ? "。未计入的店铺不在合计里" : ""}`
   return (
-    <p className={cn("text-xs text-muted-foreground", className)}>
-      已统计 {coverage.read}/{coverage.total} 家店铺
-      {newest_sync_at_ms ? `，最新更新 ${fmtTime(newest_sync_at_ms)}` : ""}
-      {uncovered.length > 0
-        ? `。未计入：${uncovered
-            .map((store) => `${store.name} ${freshnessLabel(store.freshness)}`)
-            .join("、")}`
-        : coverage.read < coverage.total
-          ? "。未计入的店铺不在合计里"
-          : ""}
+    <p className={cn("text-meta text-muted-foreground", className)} title={details} aria-label={details}>
+      店铺 {coverage.read}/{coverage.total}
+      {newest_sync_at_ms ? ` · ${fmtWindowStamp(newest_sync_at_ms)}` : ""}
+      {coverage.read < coverage.total ? ` · 未计入 ${coverage.total - coverage.read}` : ""}
     </p>
   )
 }
 
-/** The funnel window's one-line caption in the card header — 「近 14 天 ·
- * 至 09-25」when a page landed, or the refusal reason when it could not. */
-export function FunnelNote({
-  metrics,
-  metricsError,
-}: {
-  metrics: StoreProductMetrics | null
-  metricsError: string | null
-}) {
-  if (metricsError) {
-    return (
-      <span className="ml-auto inline-flex items-center gap-1 text-xs text-st-attest-ink">
-        <TriangleAlert className="size-3" aria-hidden />
-        销售漏斗：{METRICS_ERROR_LABEL[metricsError] ?? "漏斗数据暂不可用"}
-      </span>
-    )
-  }
+export function FunnelNote({ metrics, metricsError }: { metrics: StoreProductMetrics | null; metricsError: string | null }) {
+  if (metricsError) return <span className="ml-auto inline-flex items-center gap-1 text-xs text-st-attest-ink"><TriangleAlert className="size-3" aria-hidden />销售漏斗：{METRICS_ERROR_LABEL[metricsError] ?? "漏斗数据暂不可用"}</span>
   if (!metrics) return null
-  return (
-    <span className="ml-auto text-xs text-muted-foreground">
-      销售漏斗：近 {metrics.period_days} 天 · 至 {formatShortDay(metrics.through_day)}
-    </span>
-  )
+  return <span className="ml-auto text-xs text-muted-foreground">销售漏斗：近 {metrics.period_days} 天 · 至 {formatShortDay(metrics.through_day)}</span>
 }

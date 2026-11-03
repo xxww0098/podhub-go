@@ -67,6 +67,7 @@ type fakeSeller struct {
 	checksum  bool
 	offersSet bool
 	key       string
+	search    string
 	err       error
 }
 
@@ -108,8 +109,8 @@ func (f *fakeSeller) DeleteAsset(context.Context, service.Actor, string) (string
 	f.called = "delete-asset"
 	return "a", true, f.err
 }
-func (f *fakeSeller) Orders(context.Context, service.Actor, string, string, string, *int64) ([]contract.Order, bool, string, error) {
-	f.called = "orders"
+func (f *fakeSeller) Orders(_ context.Context, _ service.Actor, _, _, search, _ string, _ *int64) ([]contract.Order, bool, string, error) {
+	f.called, f.search = "orders", search
 	return []contract.Order{}, false, "", f.err
 }
 func (f *fakeSeller) Order(context.Context, service.Actor, string) (contract.Order, error) {
@@ -225,15 +226,15 @@ func TestQueryRejectionPlainText(t *testing.T) {
 	r := mountOwner(t, seller, nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/seller/delegate/bindings", nil))
-	if rec.Code != http.StatusBadRequest || rec.Body.String() != "Failed to deserialize query string: missing field `storeId`" {
+	if rec.Code != http.StatusBadRequest || rec.Body.String() != "Failed to deserialize query string: missing field `store_id`" {
 		t.Fatalf("bindings %d %q %s", rec.Code, rec.Header().Get("Content-Type"), rec.Body.Bytes())
 	}
 	if seller.called != "" {
 		t.Fatal("query rejection called the seller")
 	}
 	rec = httptest.NewRecorder()
-	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/seller/delegate/posting-states?storeId=s", nil))
-	if rec.Body.String() != "Failed to deserialize query string: missing field `postingNumbers`" {
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/seller/delegate/posting-states?store_id=s", nil))
+	if rec.Body.String() != "Failed to deserialize query string: missing field `posting_numbers`" {
 		t.Fatalf("states %s", rec.Body.Bytes())
 	}
 	rec = httptest.NewRecorder()
@@ -243,10 +244,19 @@ func TestQueryRejectionPlainText(t *testing.T) {
 	}
 }
 
+func TestOrdersSearchReachesSeller(t *testing.T) {
+	seller := &fakeSeller{}
+	rec := httptest.NewRecorder()
+	mountOwner(t, seller, nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/seller/delegate/orders?search=Factory%25", nil))
+	if rec.Code != http.StatusOK || seller.search != "Factory%" {
+		t.Fatalf("status=%d search=%q", rec.Code, seller.search)
+	}
+}
+
 func TestStrictJSONAndIdempotency(t *testing.T) {
 	seller := &fakeSeller{}
 	r := mountOwner(t, seller, nil)
-	req := httptest.NewRequest(http.MethodPost, "/api/seller/delegate/orders", strings.NewReader(`{"storeId":"s"`))
+	req := httptest.NewRequest(http.MethodPost, "/api/seller/delegate/orders", strings.NewReader(`{"store_id":"s"`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
@@ -257,7 +267,7 @@ func TestStrictJSONAndIdempotency(t *testing.T) {
 		t.Fatal("bad json reached the seller")
 	}
 
-	req = httptest.NewRequest(http.MethodPost, "/api/seller/delegate/orders", strings.NewReader(`{"storeId":"s","postingNumber":"p"}`))
+	req = httptest.NewRequest(http.MethodPost, "/api/seller/delegate/orders", strings.NewReader(`{"store_id":"s","posting_number":"p"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec = httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
@@ -265,7 +275,7 @@ func TestStrictJSONAndIdempotency(t *testing.T) {
 		t.Fatalf("key %s", rec.Body.Bytes())
 	}
 
-	req = httptest.NewRequest(http.MethodPost, "/api/seller/delegate/orders", strings.NewReader(`{"storeId":"s","postingNumber":"p","offerIds":[]}`))
+	req = httptest.NewRequest(http.MethodPost, "/api/seller/delegate/orders", strings.NewReader(`{"store_id":"s","posting_number":"p","offer_ids":[]}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Idempotency-Key", "abc")
 	rec = httptest.NewRecorder()
@@ -274,7 +284,7 @@ func TestStrictJSONAndIdempotency(t *testing.T) {
 		t.Fatalf("create %+v", seller)
 	}
 
-	req = httptest.NewRequest(http.MethodPost, "/api/seller/delegate/postings", strings.NewReader(`{"storeId":"s"}`))
+	req = httptest.NewRequest(http.MethodPost, "/api/seller/delegate/postings", strings.NewReader(`{"store_id":"s"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec = httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
@@ -294,9 +304,9 @@ func TestPresignCacheControl(t *testing.T) {
 		t.Fatalf("bad %s %s", rec.Header().Get("Cache-Control"), rec.Body.Bytes())
 	}
 
-	req = httptest.NewRequest(http.MethodPost, "/api/seller/delegate/assets/presign", strings.NewReader(`{"bindingId":"b","sha256":"ab","bytes":1,"mime":"image/png","fileName":"a.png"}`))
+	req = httptest.NewRequest(http.MethodPost, "/api/seller/delegate/assets/presign", strings.NewReader(`{"binding_id":"b","sha256":"ab","bytes":1,"mime":"image/png","file_name":"a.png"}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-podhub-store-checksum", "ab")
+	req.Header.Set("x-podhub-store-checksum", "sha256")
 	rec = httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound || rec.Header().Get("Cache-Control") != "private, no-store" {
@@ -307,26 +317,53 @@ func TestPresignCacheControl(t *testing.T) {
 	}
 
 	seller.err = nil
-	req = httptest.NewRequest(http.MethodPost, "/api/seller/delegate/assets/presign", strings.NewReader(`{"bindingId":"b","sha256":"ab","bytes":1,"mime":"image/png","fileName":"a.png"}`))
+	req = httptest.NewRequest(http.MethodPost, "/api/seller/delegate/assets/presign", strings.NewReader(`{"binding_id":"b","sha256":"ab","bytes":1,"mime":"image/png","file_name":"a.png"}`))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-podhub-store-checksum", "sha256")
 	rec = httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK || rec.Header().Get("Cache-Control") != "private, no-store" || !strings.Contains(rec.Body.String(), `"objectKey":"k"`) {
+	wantGrant := `{"data":{"upload":{"object_key":"k","upload":{"url":"http://127.0.0.1/u","headers":{"content_type":"image/png","if_none_match":"*"},"expires_at_ms":1},"upload_ticket":"t"}}}`
+	if rec.Code != http.StatusOK || rec.Header().Get("Cache-Control") != "private, no-store" || rec.Body.String() != wantGrant || !seller.checksum {
 		t.Fatalf("ok %d %s %s", rec.Code, rec.Header().Get("Cache-Control"), rec.Body.Bytes())
 	}
 
-	req = httptest.NewRequest(http.MethodPost, "/api/seller/delegate/assets", strings.NewReader(`{"bindingId":"b","uploadTicket":"t","fileName":"a.png"}`))
+	req = httptest.NewRequest(http.MethodPost, "/api/seller/delegate/assets", strings.NewReader(`{"binding_id":"b","upload_ticket":"t","file_name":"a.png"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec = httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK || rec.Header().Get("Cache-Control") != "" || !strings.Contains(rec.Body.String(), `"assetId":"a"`) {
+	if rec.Code != http.StatusOK || rec.Header().Get("Cache-Control") != "" || !strings.Contains(rec.Body.String(), `"asset_id":"a"`) {
 		t.Fatalf("finalize %d %q %s", rec.Code, rec.Header().Get("Cache-Control"), rec.Body.Bytes())
 	}
 }
 
+func TestDelegateRejectsCamelCaseBodies(t *testing.T) {
+	for _, tc := range []struct {
+		method, path, body string
+	}{
+		{http.MethodPost, "/api/seller/delegate/bindings", `{"storeId":"s","offerId":"o","sourceId":"src"}`},
+		{http.MethodPatch, "/api/seller/delegate/bindings/b", `{"expectedRevision":1,"active":true}`},
+		{http.MethodPost, "/api/seller/delegate/assets/presign", `{"bindingId":"b","sha256":"ab","bytes":1,"mime":"image/png","fileName":"a.png"}`},
+		{http.MethodPost, "/api/seller/delegate/assets", `{"bindingId":"b","uploadTicket":"t","fileName":"a.png"}`},
+		{http.MethodPost, "/api/seller/delegate/orders", `{"storeId":"s","postingNumber":"p"}`},
+		{http.MethodPost, "/api/seller/delegate/postings", `{"storeId":"s"}`},
+	} {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			seller := &fakeSeller{}
+			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Idempotency-Key", "test-key")
+			rec := httptest.NewRecorder()
+			mountOwner(t, seller, nil).ServeHTTP(rec, req)
+			if rec.Code != http.StatusBadRequest || seller.called != "" {
+				t.Fatalf("non-contract body accepted: status=%d called=%q", rec.Code, seller.called)
+			}
+		})
+	}
+}
+
 func TestAssetRouteErrorBytes(t *testing.T) {
-	presign := `{"bindingId":"b","sha256":"ab","bytes":1,"mime":"image/png","fileName":"a.png"}`
-	finalize := `{"bindingId":"b","uploadTicket":"t","fileName":"a.png"}`
+	presign := `{"binding_id":"b","sha256":"ab","bytes":1,"mime":"image/png","file_name":"a.png"}`
+	finalize := `{"binding_id":"b","upload_ticket":"t","file_name":"a.png"}`
 	cases := []struct {
 		name   string
 		method string
@@ -347,7 +384,7 @@ func TestAssetRouteErrorBytes(t *testing.T) {
 		{"finalize session", http.MethodPost, "/api/seller/delegate/assets", finalize, contract.Forbidden("上传期间登录或工作空间已变化"), 403, `{"error":"上传期间登录或工作空间已变化","code":"forbidden"}`, "private, no-store"},
 		{"finalize decrypt", http.MethodPost, "/api/seller/delegate/assets", finalize, contract.Internal(), 500, `{"error":"服务暂不可用","code":"internal"}`, "private, no-store"},
 		{"delete lease", http.MethodDelete, "/api/seller/delegate/assets/11111111-1111-4111-8111-111111111111", "", contract.WritesDisabled(), 503, `{"error":"委托订单写入未启用","code":"writes_disabled"}`, ""},
-		{"delete ok", http.MethodDelete, "/api/seller/delegate/assets/11111111-1111-4111-8111-111111111111", "", nil, 200, `{"data":{"assetId":"a","reclaimed":true}}`, ""},
+		{"delete ok", http.MethodDelete, "/api/seller/delegate/assets/11111111-1111-4111-8111-111111111111", "", nil, 200, `{"data":{"asset_id":"a","reclaimed":true}}`, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -368,13 +405,13 @@ func TestAssetRouteErrorBytes(t *testing.T) {
 
 func TestSourcesEnvelope(t *testing.T) {
 	seller := &fakeSeller{}
-	viewer := chi.NewRouter()
-	Mount(viewer, Deps{Session: fixedSession{userID: 7, orgID: 3, role: "viewer"}, Seller: seller})
+	member := chi.NewRouter()
+	Mount(member, Deps{Session: fixedSession{userID: 7, orgID: 3, role: "member"}, Seller: seller})
 	rec := httptest.NewRecorder()
-	viewer.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/seller/delegate/sources", nil))
-	want := `{"data":{"sources":[{"sourceId":"src","name":"厂","country":"CN","icon":"i"}]}}`
+	member.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/seller/delegate/sources", nil))
+	want := `{"data":{"sources":[{"source_id":"src","name":"厂","country":"CN","icon":"i"}]}}`
 	if rec.Code != http.StatusOK || rec.Body.String() != want || seller.canManage {
-		t.Fatalf("viewer %d %s manage=%v", rec.Code, rec.Body.Bytes(), seller.canManage)
+		t.Fatalf("member %d %s manage=%v", rec.Code, rec.Body.Bytes(), seller.canManage)
 	}
 }
 

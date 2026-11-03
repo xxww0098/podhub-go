@@ -1,6 +1,6 @@
 # Go 工具链升级
 
-只改编译器版本。没有改函数体、业务状态、`db/migrations` 或 `api/openapi.yaml`。没有升级任何依赖。
+本文记录 2026-10-16 的工具链升级与当时验证结果；当前版本以 `go.mod`、`Dockerfile` 和 CI 配置为准。该次升级只改编译器版本。没有改函数体、业务状态、`db/migrations` 或 `api/openapi.yaml`。没有升级任何依赖。
 
 ## 版本
 
@@ -21,7 +21,7 @@ sqlc v1.31.1 和 oapi-codegen v2.8.0 没有升级。它们自己的模块仍用 
 
 合并 `origin/main`（`f39065c`，PR #23）之后，窄 wasm 在 `wasm/dist`，源码当时还在 `wasm/` 下的独立 Rust 工程里。字节没有变。相对 `origin/main` 的 diff 只有 `Dockerfile`、`README.md`、`docs/architecture.md`、`go.mod`。当时的 CI 路径过滤不命中，不会重编 wasm。`scripts/check-wasm-dist.sh` 输出 `wasm dist hash ok`。
 
-现在源码在 `rust/crates/{listing-tags,wasm-host-probe}`，与其余 crate 同属一个 workspace；CI 不再有路径过滤，每次运行都校验 `wasm/dist/SOURCES.sha256`。
+现在源码在 `rust/crates/listing-core-wasm`，与其余 crate 同属一个 workspace；CI 不再有路径过滤，每次运行都校验 `wasm/dist/SOURCES.sha256`。
 
 | 产物 | 升级前的位置与 sha256 | 升级后 |
 | --- | --- | --- |
@@ -42,7 +42,3 @@ sqlc v1.31.1 和 oapi-codegen v2.8.0 没有升级。它们自己的模块仍用 
 ## 结果为什么不变
 
 没有改流程。Go 1.27 的 `gofmt` 对齐修正没有碰到本仓库的文件。`go vet` 没有新的告警。`encoding/json` 换了实现，但现有测试比较的是响应字节和状态，没有断言标准库错误文案；这些测试仍然通过。
-
-## 需要用户决定
-
-无。

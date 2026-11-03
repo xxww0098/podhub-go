@@ -23,8 +23,7 @@ var ErrDockerUnavailable = errors.New("docker daemon is not available")
 
 // MigrateFunc applies migrations to an empty database and closes every
 // connection it opened before returning. Integration tests pass db.Migrate,
-// including its allow-missing option. On an empty database that option
-// applies every file in version order.
+// so the template is built exactly as production builds it.
 type MigrateFunc func(ctx context.Context, dsn string) error
 
 // PrepareMigratedTemplate starts one Postgres container, creates

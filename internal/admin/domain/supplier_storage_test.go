@@ -58,7 +58,7 @@ func TestStaffRowDenialShape(t *testing.T) {
 		Brand: "无品牌", PackWidthMM: i64(400), PackHeightMM: i64(300), PackDepthMM: i64(100), PackWeightG: i64(350),
 		Contents: "短袖 T恤 ×1", PromptName: "T恤印花", PromptFileName: "tee.txt",
 		Description: "卖家可见描述", InternalNote: "打样贵", Revision: 1, CreatedBy: "pub",
-		CreatorName: str("平台货源管理员"),
+		CreatorName: str("供应商商品库管理员"),
 	}
 	row.EmptyRowSlices()
 	row.FillReadiness(RowFacts{SourceListed: true})
@@ -77,7 +77,7 @@ func TestStaffRowDenialShape(t *testing.T) {
 	for _, needle := range []string{
 		`"revision":1`, `"published":false`, `"archived":false`, `"platformPriceCents":null`,
 		`"denial":"sku_not_published"`, `"ozonConfigDenial":"catalog_missing"`,
-		`"category":false`, `"platformPrice":false`, `"creatorName":"平台货源管理员"`,
+		`"category":false`, `"platformPrice":false`, `"creatorName":"供应商商品库管理员"`,
 	} {
 		if !strings.Contains(body, needle) {
 			t.Fatalf("missing %s in %s", needle, body)

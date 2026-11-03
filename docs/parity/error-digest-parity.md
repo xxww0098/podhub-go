@@ -6,19 +6,13 @@ OTel 中间件、`pg_stat_statements`、`POST /api/listing/client-logs` 没有�
 
 ## 做了什么
 
-1. 追加迁移 `00300_error_digest.sql`。没有修改 `00001`–`00293`。新表 `error_digest` 只存指纹、路由模板、状态码、计数、首次/最近时间、已脱敏摘要，外加小时窗口和可空 `org_id`。不存请求体、密钥、邮箱、手机号、Api-Key，也不存租户名称。`org_id` 非空的行 `FORCE ROW LEVEL SECURITY`，`podhub_app` 只能读写本组织。`org_id` 为空的平台汇总行用单独的策略：`podhub_digest_platform` 可写，超级管理员观察者（`app.platform_observer_id`）可只读。
+1. 当时追加迁移 `00300_error_digest.sql`（现已并入基线 `00002_schema.sql`）。新表 `error_digest` 只存指纹、路由模板、状态码、计数、首次/最近时间、已脱敏摘要，外加小时窗口和可空 `org_id`。不存请求体、密钥、邮箱、手机号、Api-Key，也不存租户名称。`org_id` 非空的行 `FORCE ROW LEVEL SECURITY`，`podhub_app` 只能读写本组织。`org_id` 为空的平台汇总行用单独的策略：`podhub_digest_platform` 可写，超级管理员观察者（`app.platform_observer_id`）可只读。
 2. `PruneErrorLogs` 不对 `event_inbox_events` 发无条件整表 `DELETE`。它 `SET ROLE podhub_error_prune` 后只调用 `prune_aged_inbox`。该角色是 `NOBYPASSRLS`，没有这张表的 `DELETE`，也没有 `EXECUTE` 以外的授权。函数正文按 `received_at < clock_timestamp() - interval` 删除每一种 kind：五种错误类、两种计费类，以及未知 kind。`received_at` 等于截止时间的行留下。`client_listing_logs` 仍是原来的按龄删除，没有 `level` 条件。`internal/telemetry/jobs.Run` 仍返回 `not_ported`，删除数仍是 0，没有和 `PruneErrorLogs` 合成。
-3. worker 里的 River 周期任务 `podhub.error_digest`（id `error-digest-hourly`，间隔 1 小时，`RunOnStart` 为 false）先按 `docs/parity/ozon-error-catalog-parity.md` 清空超过 180 天的 Ozon 活样本，再把上一 UTC 小时的错误类 inbox 行聚合成 `error_digest`。样本清理失败只打日志。它不改 `jobs`、计费、inbox 或写闸。`GET /api/admin/error-digest` 给已提权的超级管理员只读平台行。
+3. worker 里的 River 周期任务 `podhub.error_digest`（id `error-digest-hourly`，间隔 1 小时，`RunOnStart` 为 false）先按 `docs/parity/ozon-error-catalog-parity.md` 清空超过 180 天的 Ozon 活样本，再把上一 UTC 小时的错误类 inbox 行聚合成 `error_digest`。样本清理失败只打日志。它不改 `jobs`、计费、inbox 或写闸。读 inbox 的 `ErrorWindow` 在 00368 之后以 `podhub_digest_platform` 执行（只授 `org_id`、`kind`、`payload_json`、`received_at` 四列的 SELECT），否则 `podhub_login_*_worker` 对 `event_inbox_events` 无权限、摘要每小时都是 0 行。历史接口 `GET /api/admin/error-digest` 已从当前路由表撤下；摘要存储和聚合任务仍存在，不表示当前有可访问的管理端摘要 API。
 
-## 路由 golden
+## 当前 HTTP 边界
 
-只多了一行，中间件仍是 3（otel、CSRF、identity），ops 仍是 19：
-
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| GET | `/api/admin/error-digest` | 新的只读接口。operationId `admin_get_api_admin_error-digest`。未登录 `AUTH_REQUIRED`，非超级管理员 403。正文只有指纹、路由模板、状态码、计数、时间和摘要 |
-
-没有改已有路由的方法或路径。
+`internal/admin/http/platform.go` 与 `internal/app/testdata/routes.txt` 当前未注册 `/api/admin/error-digest`，旧 operationId `admin_get_api_admin_error-digest` 不是当前公开契约。历史集成测试与仓储函数只能证明当时的处理或内部能力，不能证明这个入口仍可调用。
 
 ## 与 Rust 的删除行集
 
@@ -38,8 +32,8 @@ OTel 中间件、`pg_stat_statements`、`POST /api/listing/client-logs` 没有�
 1. **client-logs 采集与按龄删除。** 路由、开关、插入和 `DELETE FROM client_listing_logs WHERE received_at < ...` 都没加 `level`。过龄的 info 与 error 仍一起消失。`TestClientLogPruneStatementUnchanged` 锁住这条 SQL。`TestErrorDigestPruneParityAndRLS` 在回环库上插入过龄的 info 与 error，删除后剩下 0 行。
 2. **inbox 的按龄删除。** 时间谓词仍是 `received_at < clock_timestamp() - (秒 || ' seconds')::interval`，没有 kind 条件。语句在 `prune_aged_inbox` 里，调用方不拼 `DELETE`。`podhub_error_prune` 直接 `DELETE` 会权限失败。`TestPruneRowSetMatchesRust` 对拍行集，包括计费类和未知 kind，以及 `received == cutoff`。
 3. **计费 inbox 行。** 已决定：过龄就删，与收窄前相同。小时摘要仍只投影五种错误类，不把计费用量写进 `error_digest`。
-4. **`event_inbox_events` 的表定义。** 没有 `ENABLE ROW LEVEL SECURITY`，没有新策略，没有动 `00001`–`00293`。指纹对比里的这张表不变。新函数使非扩展函数数从 34 变为 35，正文仍必须出现在 goose SQL 里。
-5. **现有 HTTP 正文。** `GET /api/admin/error-logs` 仍返回邮箱和 diagnostic。摘要是旁路表和新的只读路由。OTel 中间件计数仍是 3。
+4. **`event_inbox_events` 的表定义。** 没有 `ENABLE ROW LEVEL SECURITY`，没有新策略。指纹对比里的这张表不变（该机制已随迁移压缩删除）。新函数使非扩展函数数从 34 变为 35。
+5. **现有 HTTP 正文。** `GET /api/admin/error-logs` 仍是已注册接口；摘要是旁路表，原摘要只读路由当前未注册。
 6. **River。** `podhub.noop` 仍在。新周期任务不写 `jobs.state`。`TestDigestWorkerDoesNotDecideBusinessState` 只调用写入闭包。
 7. **脱敏。** 摘要由 kind、已脱敏 code、路由模板拼成，最长 80 个字符。不复制 message、stack、email、phone、请求体。数字段、UUID、查询串会变成 `{id}` 或占位符。过不了毒化检查的投影整行丢弃，不写入命中片段。
 
@@ -86,6 +80,6 @@ go test ./tests/integration/ -count=1 -run 'TestErrorDigestPruneParityAndRLS|Tes
 
 1. 已决定：过龄计费 inbox（`billing.ai-token-usage.v1`、`billing.object-upload-usage.v1`）按 14 天删除，未知 kind 过龄也删。删除集合与收窄前一致。`prune_aged_inbox` 只带时间谓词；`podhub_error_prune` 仍无表级 `DELETE`，且 `NOBYPASSRLS`。
 2. `client_listing_logs` 的 `debug` / `info` / `warn` 仍按 14 天删除。若只留 `level = 'error'`，删除结果会变，本次没有改。
-3. `GET /api/admin/error-logs` 仍返回邮箱和 diagnostic 原文。摘要是另一条路由。
+3. `GET /api/admin/error-logs` 仍返回邮箱和 diagnostic 原文；摘要旁路表不替代它，当前也没有独立摘要 HTTP 入口。
 4. `store_product_metrics` 仍无 Go 插入。OTel 中间件、`pg_stat_statements`、client-logs 采集都保持原样。
 5. 上面的自动开 PR 设计没有实现。真要跑，还要单独决定只读副本和导出目录，并且仍然永不合并。

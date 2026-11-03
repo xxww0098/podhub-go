@@ -1,9 +1,9 @@
 package app
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
+	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"io"
@@ -21,18 +21,38 @@ import (
 	"github.com/xxww0098/podhub-go/internal/platform/seal"
 )
 
-func TestDelegateSnapshotAndCredentialVectors(t *testing.T) {
+func TestDelegateUsesTheStoreCredentialKeyDerivation(t *testing.T) {
+	key := bytes.Repeat([]byte{7}, 32)
+	for _, raw := range []string{hex.EncodeToString(key), base64.StdEncoding.EncodeToString(key), strings.Repeat("k", 32)} {
+		cfg := config.Config{SellerCredentialKey: raw, SellerCredentialKeyID: "k1"}
+		dek := bytes.Repeat([]byte{8}, 32)
+		nonce, ciphertext, err := seal.SealBlob(dek, seal.StoreAAD(7, 42, 3), []byte("client\x00fixture-api-key"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		dekNonce, wrapped, err := seal.SealBlob(seal.DeriveKEK(raw), seal.WrapAAD(7, 42, "k1"), dek)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cred := contract.SealedCredential{OrgID: 7, StorePK: 42, CredentialRevision: 3,
+			KeyID: "k1", EnvelopeVersion: 2, Nonce: nonce, Ciphertext: ciphertext, DEKNonce: dekNonce, WrappedDEK: wrapped}
+		id, api, err := openDelegateCredential(cfg, cred)
+		if err != nil || id != "client" || api != "fixture-api-key" {
+			t.Fatalf("store credential cannot be opened: %v", err)
+		}
+		cred.CredentialRevision++
+		if _, _, err := openDelegateCredential(cfg, cred); err == nil {
+			t.Fatal("credential generation mismatch accepted")
+		}
+	}
+}
+
+func TestDelegateCredentialVectors(t *testing.T) {
 	raw, err := os.ReadFile("../platform/seal/testdata/crypto-vectors.json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var doc struct {
-		Integration struct {
-			Key    string `json:"key_string"`
-			Nonce  string `json:"nonce_hex"`
-			Cipher string `json:"ciphertext_hex"`
-			Plain  string `json:"plaintext_utf8"`
-		} `json:"integration_config"`
 		V1 struct {
 			Key      string `json:"key_string"`
 			ClientID string `json:"client_id"`
@@ -49,33 +69,6 @@ func TestDelegateSnapshotAndCredentialVectors(t *testing.T) {
 	}
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatal(err)
-	}
-	nonce := decodeHex(t, doc.Integration.Nonce)
-	ct := decodeHex(t, doc.Integration.Cipher)
-	account, err := accountFromSnapshot(doc.Integration.Key, nonce, ct)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if account.Bucket != "podhub-private" || !account.ForcePathStyle || account.ID != "delegate" {
-		t.Fatalf("account %+v", account)
-	}
-	if _, err := accountFromSnapshot("short", nonce, ct); err == nil || err.Error() != "平台连接配置密钥未设置" {
-		t.Fatalf("short: %v", err)
-	}
-	if _, err := accountFromSnapshot(seal.ExampleIntegrationKey, nonce, ct); err == nil || err.Error() != "平台连接配置密钥不能使用 .env.example 中的占位值" {
-		t.Fatalf("example: %v", err)
-	}
-	if _, err := accountFromSnapshot(doc.Integration.Key, nonce, []byte("bad")); err == nil || err.Error() != contract.MsgUnavailable {
-		t.Fatalf("bad cipher: %v", err)
-	}
-	off := strings.Replace(doc.Integration.Plain, `"active":true`, `"active":false`, 1)
-	if _, err := accountFromSnapshot(doc.Integration.Key, nonce, sealGCM(t, doc.Integration.Key, nonce, []byte(off))); err == nil || err.Error() != contract.MsgStorageMissing {
-		t.Fatalf("inactive: %v", err)
-	}
-	bumped := []byte(doc.Integration.Plain)
-	bumped[len(`{"schemaVersion":`)] = '9'
-	if _, err := accountFromSnapshot(doc.Integration.Key, nonce, sealGCM(t, doc.Integration.Key, nonce, bumped)); err == nil || err.Error() != contract.MsgUnavailable {
-		t.Fatalf("schema: %v", err)
 	}
 
 	cfg := config.Config{SellerCredentialKey: doc.V1.Key, SellerCredentialKeyID: "k1"}
@@ -318,23 +311,6 @@ func errorAs(err error, api **contract.APIError) bool {
 		err = unwrap.Unwrap()
 	}
 	return false
-}
-
-func sealGCM(t *testing.T, key string, nonce, plain []byte) []byte {
-	t.Helper()
-	kek, err := seal.IntegrationKEK(key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	block, err := aes.NewCipher(kek)
-	if err != nil {
-		t.Fatal(err)
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return gcm.Seal(nil, nonce, plain, []byte(seal.SnapshotAAD))
 }
 
 func decodeHex(t *testing.T, s string) []byte {

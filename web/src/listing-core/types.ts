@@ -356,7 +356,13 @@ export type FreezeListingOutput =
 /** The shared contract's classification for the one paid retry. */
 export type OcrRetryClass = "blind" | "corrective" | "permanent"
 
-/** `listing_core::ocr_contract::parse_completion`, with `desc` renamed. */
+export type ProductProfile = { product_type_ru: string; facts_ru: string }
+export type OcrAnswerInput = { profile: ProductProfile; fixed_tags: string[] } & (
+  | { completion: unknown; preview_theme?: never }
+  | { preview_theme: string; completion?: never }
+)
+
+/** Shared scene validation and product-fact assembly. */
 export type ParsedOcrAnswer = {
   ru: string
   tags: string[]
@@ -445,12 +451,9 @@ export type OcrFacts = {
   originalStatus: string
   originalUsable?: boolean
   originalRequestId: string
-  retryStatus: string
-  retryUsable?: boolean
-  retryRequestId: string
 }
 
-export type OcrStep = "wait" | "settle" | "unusable" | "simple_retry" | "pause" | "purchase_original"
+export type OcrStep = "wait" | "settle" | "unusable" | "pause" | "purchase_original"
 
 export type OcrPlan = {
   step: OcrStep

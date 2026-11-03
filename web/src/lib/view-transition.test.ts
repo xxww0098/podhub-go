@@ -120,6 +120,35 @@ test("runViewTransition skips the snapshot when reduced motion is requested", ()
   }
 })
 
+test("runViewTransition consumes a skipped snapshot without an unhandled rejection or replay", async () => {
+  const previousDocument = Object.getOwnPropertyDescriptor(globalThis, "document")
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window")
+  const unhandled: unknown[] = []
+  const recordUnhandled = (reason: unknown) => unhandled.push(reason)
+  let rejectReady!: (reason: unknown) => void
+  const ready = new Promise<void>((_resolve, reject) => { rejectReady = reject })
+  let mutations = 0
+  Object.defineProperty(globalThis, "document", { configurable: true, value: {
+    startViewTransition(update: () => void) { update(); return { ready } },
+  } })
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { matchMedia: () => ({ matches: false }) } })
+  process.on("unhandledRejection", recordUnhandled)
+  try {
+    runViewTransition(() => { mutations += 1 })
+    // A second navigation or skipTransition() rejects ready after the update committed.
+    rejectReady(new DOMException("Transition skipped", "AbortError"))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    assert.deepEqual(unhandled, [])
+    assert.equal(mutations, 1)
+  } finally {
+    process.off("unhandledRejection", recordUnhandled)
+    if (previousDocument) Object.defineProperty(globalThis, "document", previousDocument)
+    else Reflect.deleteProperty(globalThis, "document")
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow)
+    else Reflect.deleteProperty(globalThis, "window")
+  }
+})
+
 test("module canvas dissolve refuses plus-lighter and names only the canvas", () => {
   const css = readFileSync(new URL("../index.css", import.meta.url), "utf8")
   const shell = readFileSync(

@@ -1,5 +1,7 @@
 import { useContext, useReducer, useState } from "react"
+import { Copy } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import { getDiagnosticCopyData, getDiagnosticDetail } from "@/lib/error-telemetry"
 import type { DiagnosticDetail, OriginalUnavailableReason } from "@/lib/diagnostic-memory"
 import { notifyCommandError } from "@/lib/notify"
@@ -82,7 +84,7 @@ export function PublishDiagnosticDetails({ diagnosticId, traceId, readPorts = re
           <div><dt className="text-muted-foreground">本机原文</dt><dd className="break-words">{originalStatus}</dd></div>
         </> : null}
       </dl>
-      <div><Button type="button" size="xs" variant="outline" onClick={(gesture) => {
+      <div><IconButton icon={Copy} label="复制诊断信息" size="icon-xs" variant="outline" onClick={(gesture) => {
         gesture.stopPropagation()
         try {
           // Read and initiate the write in this gesture's stack. Never await a
@@ -108,7 +110,7 @@ export function PublishDiagnosticDetails({ diagnosticId, traceId, readPorts = re
           notifyCommandError(undefined, copyFailure)
         }
         refresh()
-      }}>复制诊断信息</Button></div>
+      }} /></div>
       {id && event && report ? <div><Button type="button" size="xs" variant="outline" disabled={reporting}
         onClick={(gesture) => {
           gesture.stopPropagation()

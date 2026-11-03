@@ -189,7 +189,7 @@ func room(target domain.ImageTarget, rev int64, replacements []string) error {
 		return domain.Fail(404, "NOT_FOUND", "记录不存在或未上架")
 	}
 	if target.Managed {
-		return domain.Fail(409, "CONFLICT", "该行由平台货源管理，请在平台货源中操作")
+		return domain.Fail(409, "CONFLICT", "该行由供应商商品库管理，请在供应商商品库中操作")
 	}
 	if target.Revision != rev {
 		return domain.Fail(409, "CONFLICT", "记录已被更新，请刷新后重试")

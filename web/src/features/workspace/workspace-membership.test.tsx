@@ -17,7 +17,7 @@ import {
   InvitationsTable,
   MemberRoleAdjuster,
   MembersTable,
-  invitationOutcome,
+  canRemoveWorkspaceMember,
 } from "./workspace-screen"
 
 const created: WorkspaceInvitationCreatedView = {
@@ -58,21 +58,6 @@ const standing: WorkspaceStandingView = {
   owned_limit: 3,
 }
 
-test("invitation outcome does not depend on whether the address already has an account", () => {
-  const held = invitationOutcome({ ...created, notified: false })
-  const delivered = invitationOutcome(created)
-
-  assert.deepEqual(held, delivered)
-  assert.match(held.description, /invitee@example\.invalid/)
-  assert.match(held.description, /浏览器登录/)
-  assert.match(held.description, /通知列表/)
-  assert.match(held.description, /注册后/)
-  assert.doesNotMatch(held.description, /Desktop/)
-  assert.match(held.description, /私密链接只发给/)
-  assert.match(held.description, /确认工作空间与权限再接受/)
-  assert.doesNotMatch(`${held.title} ${held.description}`, new RegExp(created.token))
-})
-
 test("成员表只移除成员，邀请的痕迹一点都不留", () => {
   const html = renderToStaticMarkup(
     <MembersTable
@@ -83,7 +68,8 @@ test("成员表只移除成员，邀请的痕迹一点都不留", () => {
     />
   )
 
-  assert.match(html, /aria-label="将 member@example\.invalid 移出工作空间"/)
+  assert.match(html, /aria-label="已在册成员 的操作"/)
+  assert.equal(canRemoveWorkspaceMember(membershipRow, true), true)
   assert.doesNotMatch(html, /撤销|邀请|有效期/)
 })
 
@@ -95,6 +81,13 @@ test("邀请表撤销邀请，并列出邀请人和有效期", () => {
   assert.match(html, /aria-label="撤销 invitee@example\.invalid 的邀请"/)
   assert.match(html, /owner@example\.invalid/)
   assert.doesNotMatch(html, /移出工作空间/)
+})
+
+test("主管不能撤销主管邀请", () => {
+  const html = renderToStaticMarkup(<InvitationsTable invitations={[{ ...invitationRow, role: "manager" }]}
+    loading={false} onRevoke={() => {}} canRevoke={(invitation) => invitation.role === "member"} />)
+  assert.doesNotMatch(html, /aria-label="撤销 /)
+  assert.match(html, /owner@example.invalid/)
 })
 
 test("两种停用读得出区别：人为停的，和名额不够被挤下去的", () => {
@@ -119,9 +112,12 @@ test("两种停用读得出区别：人为停的，和名额不够被挤下去�
     />
   )
 
-  assert.match(html, /已停用 · 超出成员名额/)
-  // 人为停用那行不能也说「超出成员名额」，否则运营分不清该恢复权限还是该加购名额。
-  assert.equal(html.split("超出成员名额").length - 1, 1)
+  const rows = html.match(/<tr[^>]*>[\s\S]*?<\/tr>/g) ?? []
+  const manual = rows.find((row) => row.includes("manual@example.invalid")) ?? ""
+  const quota = rows.find((row) => row.includes("quota@example.invalid")) ?? ""
+  assert.match(manual, /已停用/)
+  assert.doesNotMatch(manual, /超出成员名额/)
+  assert.match(quota, /已停用 · 超出成员名额/)
 })
 
 test("the owner row and the signed-in account itself are never removable", () => {
@@ -149,7 +145,7 @@ test("dissolve sits with the owner actions and names its cost in the confirm cop
   assert.match(html, /解散工作空间/)
   assert.doesNotMatch(html, /注销/)
   // The dialog is closed in static markup, so the cost copy is asserted at its source.
-  assert.match(source, /解散后无法恢复。[^"]*创建者的钱包余额保留/)
+  assert.match(source, /解散后无法恢复。[^"]*该工作空间钱包的余额不会转移或退款/)
 })
 
 test("leaving names what the member loses and asks only once", () => {
@@ -201,13 +197,13 @@ test("the degraded shell names each suspended Workspace instead of guessing one"
   assert.match(fallback, /离开工作空间/)
 })
 
-test("members table offers copy and view detail actions on all member rows", () => {
+test("members table exposes an accessible action menu on each member row", () => {
   const html = renderToStaticMarkup(
     <MembersTable members={[membershipRow]} loading={false} onOpen={() => {}} />
   )
 
-  assert.match(html, /aria-label="复制 member@example\.invalid"/)
-  assert.match(html, /aria-label="查看 已在册成员 的详情"/)
+  assert.match(html, /aria-label="已在册成员 的操作"/)
+  assert.match(html, /aria-haspopup="menu"/)
 })
 
 test("a role that may not manage the roster sees neither revoke nor remove", () => {

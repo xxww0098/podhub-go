@@ -454,11 +454,11 @@ func writeFillConflict(w http.ResponseWriter, conflict fillConflict) {
 		Error    string `json:"error"`
 		Code     string `json:"code"`
 		Conflict struct {
-			ServerRevision     int64           `json:"serverRevision"`
-			ServerPayload      json.RawMessage `json:"serverPayload"`
-			ClientBaseRevision int64           `json:"clientBaseRevision"`
-			ClientChanges      json.RawMessage `json:"clientChanges"`
-			LastEditorID       *int64          `json:"lastEditorId,omitempty"`
+			ServerRevision     int64           `json:"server_revision"`
+			ServerPayload      json.RawMessage `json:"server_payload"`
+			ClientBaseRevision int64           `json:"client_base_revision"`
+			ClientChanges      json.RawMessage `json:"client_changes"`
+			LastEditorID       *int64          `json:"last_editor_id,omitempty"`
 		} `json:"conflict"`
 	}{
 		Error: "商品行已被他人更新，请刷新后重试",

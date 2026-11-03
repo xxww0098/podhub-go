@@ -35,6 +35,11 @@ fn editor_rules_apply_to_arbitrary_attribute_keys() {
                 ..ListingFieldConstraints::default()
             },
             attribute_id: Some("1000".to_owned()),
+            options: vec![crate::records::ListingFieldOption {
+                id: "12".to_owned(),
+                value: "棉".to_owned(),
+                ..crate::records::ListingFieldOption::default()
+            }],
             ..ListingFieldDefinition::default()
         });
     std::sync::Arc::make_mut(&mut draft.schema_snapshot)
@@ -185,6 +190,14 @@ fn choice_cardinality_follows_collection_and_accepts_legacy_single_item() {
                 ..ListingFieldConstraints::default()
             },
             attribute_id: Some("2000".to_owned()),
+            options: [("1", "中国"), ("4", "俄罗斯")]
+                .into_iter()
+                .map(|(id, value)| crate::records::ListingFieldOption {
+                    id: id.to_owned(),
+                    value: value.to_owned(),
+                    ..crate::records::ListingFieldOption::default()
+                })
+                .collect(),
             ..ListingFieldDefinition::default()
         });
     std::sync::Arc::make_mut(&mut draft.schema_snapshot)
@@ -201,6 +214,14 @@ fn choice_cardinality_follows_collection_and_accepts_legacy_single_item() {
                 dictionary_id: Some("45".to_owned()),
             },
             attribute_id: Some("2001".to_owned()),
+            options: [("2", "成人"), ("3", "儿童")]
+                .into_iter()
+                .map(|(id, value)| crate::records::ListingFieldOption {
+                    id: id.to_owned(),
+                    value: value.to_owned(),
+                    ..crate::records::ListingFieldOption::default()
+                })
+                .collect(),
             ..ListingFieldDefinition::default()
         });
     let choice = |id: &str, label: &str| ChoiceValue {

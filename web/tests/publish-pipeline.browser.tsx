@@ -8,7 +8,7 @@ import type { CardPayload, CategorySchemaSnapshot, LeanRow } from "@/listing-cor
 import { createSchemaCache } from "@/features/workflow/schema-cache"
 import { sha256 } from "@/features/workflow/platforms/core"
 import { createListingSendCapabilities } from "@/features/workflow/platforms"
-import { createOzonRepair } from "@/features/workflow/platforms/ozon-repair"
+import { createOzonRepair } from "@/features/workflow/platforms/ozon/repair"
 import { PublishPipelineWb } from "./publish-pipeline-wb"
 import { installPipelineMocks, type FixtureMode } from "./publish-pipeline-mocks"
 import { beginAction, endAction, markReady, recordCommit, recordNative, recordQueue, recordState, evidenceSnapshot, settlePaint, type ActionName } from "./publish-pipeline-metrics"
@@ -91,7 +91,7 @@ function Fixture() {
         async reuploadRows(selected, signal) {
           const response = await fetch("/api/media/fixture-reupload", { method: "POST", signal, body: JSON.stringify(selected.map((row) => ({ id: row.id, rev: row.rev, images: (row.row as LeanRow).media.images }))) })
           if (!response.ok) throw new Error("Fixture media owner refused upload")
-          return (await response.json() as { data: import("@/features/workflow/platforms/ozon-repair").ConfirmedRowUpload[] }).data
+          return (await response.json() as { data: import("@/features/workflow/platforms/ozon/repair").ConfirmedRowUpload[] }).data
         },
       })
       const capabilities = createListingSendCapabilities({ ...repair, core, card: () => golden.card, cardId: scope.cardId })

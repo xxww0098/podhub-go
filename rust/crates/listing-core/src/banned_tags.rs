@@ -191,7 +191,11 @@ fn ban_flags(tokens: &[&str], rules: &[BannedTagRule]) -> Vec<bool> {
             continue;
         }
         for start in 0..=tokens.len() - width {
-            let joined = normalize_tag_token(&tokens[start..start + width].join(" "));
+            let joined = tokens[start..start + width]
+                .iter()
+                .map(|token| normalize_tag_token(token))
+                .collect::<Vec<_>>()
+                .join("_");
             if token_matches(&joined, rule) {
                 for flag in &mut flags[start..start + width] {
                     *flag = true;
@@ -347,6 +351,10 @@ mod tests {
             rejected,
             vec!["электронная".to_owned(), "сигарета".to_owned()]
         );
+        let tags = ["#роза", "#электронная", "#сигарета", "#море"].map(str::to_owned);
+        let (kept, rejected) = partition_tags(&tags, &rules);
+        assert_eq!(kept, ["#роза", "#море"]);
+        assert_eq!(rejected, ["#электронная", "#сигарета"]);
         // The plural adjective is a different first stem. The cigarette piece
         // still falls to the `сигарета` rule once that rule is loaded.
         let both = [stem_rule("электронная_сигарета"), stem_rule("сигарета")];

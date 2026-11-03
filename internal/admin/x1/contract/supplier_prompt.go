@@ -3,99 +3,27 @@ package contract
 import (
 	"bytes"
 	"crypto/sha256"
-	"embed"
 	"encoding/hex"
 	"encoding/json"
+	ai "github.com/xxww0098/podhub-go/internal/ai/contract"
 	"strings"
-	"unicode"
 
 	contract "github.com/xxww0098/podhub-go/internal/admin/core/contract/outcome"
 )
 
-//go:embed ocr_prompt.ru.txt
-var ocrPromptFile embed.FS
+// TemplateSHA256 identifies the one shared visual prompt.
+func TemplateSHA256() string { return ai.VisualPromptSHA256() }
 
-// ocrPromptText and ocrPromptSHA256 are fixed at init from the embedded template.
-// Compose and TemplateSHA256 do not read the file again.
-var (
-	ocrPromptText   string
-	ocrPromptSHA256 string
-)
+func BriefValid(raw string) bool { _, err := CanonicalProfile(raw); return err == nil }
 
-func init() {
-	raw, err := ocrPromptFile.ReadFile("ocr_prompt.ru.txt")
-	if err != nil {
-		panic("ocr_prompt.ru.txt: " + err.Error())
-	}
-	text := string(raw)
-	if strings.Count(text, "{brief}") != 1 || strings.Count(text, "{fixed_tags}") != 1 || strings.Count(text, "Только JSON.") != 1 {
-		panic("ocr_prompt.ru.txt: want exactly one {brief}, one {fixed_tags}, and one Только JSON.")
-	}
-	ocrPromptText = text
-	sum := sha256.Sum256(raw)
-	ocrPromptSHA256 = hex.EncodeToString(sum[:])
-}
+var profileFields = []string{"product_type_ru", "facts_ru"}
 
-// TemplateSHA256 is sha256 of the embedded ocr_prompt.ru.txt bytes.
-func TemplateSHA256() string {
-	return ocrPromptSHA256
-}
-
-// BriefValid reports whether the published cell is a canonical six-line card.
-func BriefValid(raw string) bool {
-	if strings.TrimSpace(raw) == "" {
-		return false
-	}
-	_, err := CanonicalBrief(raw)
-	return err == nil
-}
-
-// LineValue drops blank lines, takes the index, and strips the label.
-func LineValue(brief string, index int) string {
-	var lines []string
-	for _, line := range strings.Split(brief, "\n") {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		lines = append(lines, line)
-	}
-	if index < 0 || index >= len(lines) {
+func LineValue(raw string, index int) string {
+	var values map[string]string
+	if index < 0 || index >= len(profileFields) || json.Unmarshal([]byte(raw), &values) != nil {
 		return ""
 	}
-	line := lines[index]
-	if index < len(briefLabels) {
-		line = strings.TrimPrefix(line, briefLabels[index])
-	}
-	return strings.TrimSpace(line)
-}
-
-// Compose fills {brief} and {fixed_tags} once each.
-// It only joins the already-loaded template, the brief, the tags, and an optional ban sentence.
-// Banned terms insert a sentence before the last "Только JSON.".
-func Compose(brief string, tags []string, banned []string) string {
-	head, rest, ok := strings.Cut(ocrPromptText, "{brief}")
-	if !ok {
-		return ""
-	}
-	mid, tail, ok := strings.Cut(rest, "{fixed_tags}")
-	if !ok {
-		return ""
-	}
-	text := head + strings.TrimSpace(brief) + mid + strings.Join(tags, " ") + strings.TrimRightFunc(tail, unicode.IsSpace)
-	if len(banned) == 0 {
-		return text
-	}
-	const marker = "Только JSON."
-	idx := strings.LastIndex(text, marker)
-	if idx < 0 {
-		return text
-	}
-	var terms []string
-	for _, term := range banned {
-		terms = append(terms, "#"+strings.TrimPrefix(strings.TrimSpace(term), "#"))
-	}
-	insert := "Дополнительно запрещены теги и их словоформы: " + strings.Join(terms, ", ") + ". "
-	return text[:idx] + insert + text[idx:]
+	return values[profileFields[index]]
 }
 
 // RecognitionDigest is sha256 of the compact JSON array [text, tags].
@@ -158,62 +86,7 @@ type AiOutput struct {
 // DefaultAI is title, description and tags all true.
 func DefaultAI() AiOutput { return AiOutput{Title: true, Description: true, Tags: true} }
 
-// DiffLine is one of the six card rows.
-type DiffLine struct {
-	Label     string `json:"label"`
-	Published string `json:"published"`
-	Draft     string `json:"draft"`
-	Changed   bool   `json:"changed"`
-}
-
-// PromptDiff is SupplierPromptDiffData.
-type PromptDiff struct {
-	Revision           int32      `json:"revision"`
-	PublishedRevision  *int32     `json:"publishedRevision,omitempty"`
-	Lines              []DiffLine `json:"lines"`
-	PublishedFixedTags []string   `json:"publishedFixedTags"`
-	DraftFixedTags     []string   `json:"draftFixedTags"`
-	FixedTagsChanged   bool       `json:"fixedTagsChanged"`
-	PublishedAiOutput  AiOutput   `json:"publishedAiOutput"`
-	DraftAiOutput      AiOutput   `json:"draftAiOutput"`
-	AiOutputChanged    bool       `json:"aiOutputChanged"`
-}
-
-// BuildDiff compares a draft snapshot with the published snapshot.
-func BuildDiff(revision int32, publishedRevision *int32, publishedBrief string, publishedTags []string, publishedAI AiOutput, draftBrief string, draftTags []string, draftAI AiOutput) PromptDiff {
-	if publishedTags == nil {
-		publishedTags = []string{}
-	}
-	if draftTags == nil {
-		draftTags = []string{}
-	}
-	lines := make([]DiffLine, len(briefLabels))
-	for i, label := range briefLabels {
-		pub := LineValue(publishedBrief, i)
-		draft := LineValue(draftBrief, i)
-		lines[i] = DiffLine{Label: label, Published: pub, Draft: draft, Changed: pub != draft}
-	}
-	return PromptDiff{
-		Revision: revision, PublishedRevision: publishedRevision, Lines: lines,
-		PublishedFixedTags: publishedTags, DraftFixedTags: draftTags,
-		FixedTagsChanged:  !sameStrings(publishedTags, draftTags),
-		PublishedAiOutput: publishedAI, DraftAiOutput: draftAI,
-		AiOutputChanged: publishedAI != draftAI,
-	}
-}
-
-func sameStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
+// DiffLine is one confirmed fact.
 // Preview is SupplierPromptPreviewData.
 type Preview struct {
 	Text           string `json:"text"`
@@ -223,7 +96,7 @@ type Preview struct {
 
 // BuildPreview composes the card and both digests. It does not write.
 func BuildPreview(brief string, tags []string) (Preview, error) {
-	canon, err := CanonicalBrief(brief)
+	canon, err := CanonicalProfile(brief)
 	if err != nil {
 		return Preview{}, fail(contract.KindValidation, err.Error())
 	}
@@ -231,6 +104,7 @@ func BuildPreview(brief string, tags []string) (Preview, error) {
 	if err != nil {
 		return Preview{}, err
 	}
-	text := Compose(canon, norm, nil)
+	profile, _ := ai.ParseProductProfile(canon)
+	text := profile.TitleBase() + ` "<тема>"`
 	return Preview{Text: text, SHA256: RecognitionDigest(text, norm), TemplateSHA256: TemplateSHA256()}, nil
 }

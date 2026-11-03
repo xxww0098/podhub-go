@@ -9,7 +9,7 @@ test.after(() => {
 
 import { readCategoryTreeCache, writeCategoryTreeCache } from "./category-tree-cache"
 
-const KEY = "podhub.workflow.category-tree.v1"
+const KEY = "podhub.workflow.category-tree.v2"
 
 const leaf = {
   description_category_id: 1,
@@ -47,6 +47,13 @@ test("a tree fetched within the day is served from the cache", () => {
   const items = stubStorage()
   store(items, new Date(Date.now() - 60_000).toISOString())
   assert.deepEqual(readCategoryTreeCache(), [leaf])
+})
+
+test("the previous broken projection is discarded before its expiry", () => {
+  const items = stubStorage()
+  items.set("podhub.workflow.category-tree.v1", JSON.stringify({ language: "zh_hans", fetchedAt: new Date().toISOString(), tree: [leaf] }))
+  assert.equal(readCategoryTreeCache(), null)
+  assert.equal(items.has("podhub.workflow.category-tree.v1"), false)
 })
 
 test("a stale, unstamped or future-stamped tree misses and evicts itself", () => {

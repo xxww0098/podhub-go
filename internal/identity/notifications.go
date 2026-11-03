@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/xxww0098/podhub-go/internal/platform/db/sqlc"
+	"github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
 )
 
 const notificationPageSize = 50
@@ -47,6 +48,10 @@ SELECT n.id, n.created_at,
   'amount_cents', n.payload->'amountCents', 'public_id', n.payload->>'publicId'))
  WHEN 'agent_withdrawal_rejected' THEN jsonb_build_object('withdrawal', jsonb_build_object(
   'amount_cents', n.payload->'amountCents', 'public_id', n.payload->>'publicId', 'reject_reason', n.payload->'rejectReason'))
+ WHEN 'subscription_renewal_due' THEN jsonb_build_object('subscription', jsonb_build_object(
+  'public_id', n.payload->>'publicId', 'amount_cents', n.payload->'amountCents', 'term_end_ms', n.payload->'termEndMs'))
+ WHEN 'subscription_frozen' THEN jsonb_build_object('subscription', jsonb_build_object(
+  'workspace_name', n.payload->>'workspaceName'))
  WHEN 'delegate_order_event' THEN jsonb_build_object('delegate_event', jsonb_build_object(
   'event', n.payload->>'event', 'order_id', n.payload->>'orderId', 'posting_number', n.payload->>'postingNumber',
   'source_name', n.payload->>'sourceName', 'tracking_no', n.payload->'trackingNo', 'reject_reason', n.payload->'rejectReason'))
@@ -77,6 +82,9 @@ func (s *Service) Notifications(r *http.Request) Result {
 		return dbResult(err)
 	}
 	defer tx.Rollback(r.Context())
+	if err := tenantx.EnterStaff(r.Context(), tx); err != nil {
+		return dbResult(err)
+	}
 	var total, unread int64
 	if err := tx.QueryRow(r.Context(), `SELECT count(*), count(*) FILTER (WHERE read_at IS NULL) FROM notifications WHERE user_id = $1 AND dismissed_at IS NULL`, acc.id).Scan(&total, &unread); err != nil {
 		return dbResult(err)
@@ -137,6 +145,9 @@ func (s *Service) MarkNotificationsRead(r *http.Request, id string) Result {
 		return dbResult(err)
 	}
 	defer tx.Rollback(r.Context())
+	if err := tenantx.EnterStaff(r.Context(), tx); err != nil {
+		return dbResult(err)
+	}
 	q := sqlc.New(tx)
 	if _, err := q.LockAccount(r.Context(), acc.id); err != nil {
 		return dbResult(err)

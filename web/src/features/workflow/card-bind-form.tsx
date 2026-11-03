@@ -7,6 +7,7 @@ import type {
 } from "@/bindings/commands"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
@@ -66,8 +67,8 @@ export function bindFormIssues(input: {
   if (!input.promptId.trim()) {
     issues.push({
       fieldId: `${input.idPrefix}-prompt`,
-      label: "提示词",
-      message: "选择该类目的提示词。",
+      label: "商品事实",
+      message: "选择该类目的商品事实。",
     })
   }
   return issues
@@ -134,8 +135,8 @@ export function CardBindForm({
   const promptPlaceholder = !ready
     ? "先选择类目"
     : prompts.length
-      ? "选择本类目提示词"
-      : "该类目暂无提示词"
+      ? "选择本类目商品事实"
+      : "该类目暂无商品事实"
   const credentialIssue = composeSellerCredentialIssue(storeId, stores)
   const [submitIssues, setSubmitIssues] = useState<BindFormIssue[]>([])
 
@@ -199,18 +200,14 @@ export function CardBindForm({
         <Field data-invalid={fieldInvalid(`${idPrefix}-category-search`) || undefined}>
           <div className="flex items-center justify-between gap-2">
             <FieldLabel htmlFor={`${idPrefix}-category-search`}>类目</FieldLabel>
-            <Button
-              type="button"
-              size="xs"
-              variant="ghost"
-              className="text-muted-foreground"
+            <IconButton
+              icon={RefreshCw}
+              label="重新拉取类目"
+              size="icon-xs"
+              className={cn("text-muted-foreground", treeBusy && "[&_svg]:animate-spin")}
               disabled={disabled || treeBusy || Boolean(credentialIssue)}
-              aria-label="重新拉取类目"
               onClick={onRefreshTree}
-            >
-              <RefreshCw aria-hidden className={cn(treeBusy && "animate-spin")} />
-              重新拉取
-            </Button>
+            />
           </div>
           {credentialIssue ? (
             <Alert variant="destructive" role="status">
@@ -229,7 +226,7 @@ export function CardBindForm({
               ) : null}
             </Alert>
           ) : !treeBusy && tree.length === 0 ? (
-            <p className="text-xs text-muted-foreground">类目尚未就绪；可点上方「重新拉取」。</p>
+            <p className="text-xs text-muted-foreground">类目尚未就绪；可点上方「重新拉取类目」按钮。</p>
           ) : null}
           <CategoryTripleSelect
             id={`${idPrefix}-category`}
@@ -246,7 +243,7 @@ export function CardBindForm({
 
         <Field data-invalid={fieldInvalid(`${idPrefix}-prompt`) || undefined}>
           <div className="flex items-center gap-1.5">
-            <FieldLabel htmlFor={`${idPrefix}-prompt`}>提示词</FieldLabel>
+            <FieldLabel htmlFor={`${idPrefix}-prompt`}>商品事实</FieldLabel>
             {onRefreshPrompts ? (
               <Tooltip>
                 <TooltipTrigger
@@ -258,7 +255,7 @@ export function CardBindForm({
                       className="text-muted-foreground hover:text-foreground"
                       disabled={disabled || !ready || promptRefreshBusy}
                       onClick={onRefreshPrompts}
-                      aria-label="刷新提示词"
+                      aria-label="刷新商品事实"
                     />
                   }
                 >
@@ -294,7 +291,7 @@ export function CardBindForm({
             <SelectContent>
               {prompts.length === 0 ? (
                 <SelectItem value="__empty" disabled>
-                  {ready ? "该类目暂无提示词" : "先选择类目"}
+                  {ready ? "该类目暂无商品事实" : "先选择类目"}
                 </SelectItem>
               ) : (
                 prompts.map((prompt) => (
@@ -374,16 +371,13 @@ export function CardBindForm({
             </span>
           </button>
           {hasPsd && onClearPsd ? (
-            <Button
-              type="button"
+            <IconButton
+              icon={X}
+              label="清除 PSD 绑定"
               size="icon-xs"
-              variant="ghost"
-              aria-label="清除 PSD 绑定"
               disabled={disabled}
               onClick={onClearPsd}
-            >
-              <X aria-hidden />
-            </Button>
+            />
           ) : null}
           </div>
         </Field>

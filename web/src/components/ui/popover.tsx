@@ -30,11 +30,12 @@ function PopoverContent({
   alignOffset = 0,
   side = "bottom",
   sideOffset = 6,
+  collisionAvoidance,
   ...props
 }: PopoverPrimitive.Popup.Props &
   Pick<
     PopoverPrimitive.Positioner.Props,
-    "align" | "alignOffset" | "side" | "sideOffset"
+    "align" | "alignOffset" | "side" | "sideOffset" | "collisionAvoidance"
   >) {
   return (
     <PopoverPrimitive.Portal>
@@ -44,11 +45,12 @@ function PopoverContent({
         alignOffset={alignOffset}
         side={side}
         sideOffset={sideOffset}
+        collisionAvoidance={collisionAvoidance}
       >
         <PopoverPrimitive.Popup
           data-slot="popover-content"
           className={cn(
-            "z-50 w-80 max-w-[calc(100vw-24px)] origin-(--transform-origin) rounded-xl bg-popover p-3 text-popover-foreground shadow-overlay ring-1 ring-foreground/10 outline-none transition-[opacity,transform,translate,scale] duration-150 ease-settle data-ending-style:duration-100 data-starting-style:translate-y-1 data-starting-style:scale-[0.98] data-starting-style:opacity-0 data-ending-style:translate-y-1 data-ending-style:scale-[0.98] data-ending-style:opacity-0",
+            "z-50 max-h-[min(var(--available-height,100dvh),calc(100dvh-1.5rem))] w-80 max-w-[calc(100vw-24px)] origin-(--transform-origin) overflow-auto overscroll-contain rounded-xl bg-popover p-3 text-popover-foreground shadow-overlay ring-1 ring-foreground/10 outline-none transition-[opacity,transform,translate,scale] duration-150 ease-settle data-ending-style:duration-100 data-starting-style:translate-y-1 data-starting-style:scale-[0.98] data-starting-style:opacity-0 data-ending-style:translate-y-1 data-ending-style:scale-[0.98] data-ending-style:opacity-0",
             className,
           )}
           {...props}

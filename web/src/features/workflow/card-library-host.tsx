@@ -10,6 +10,7 @@ import {
   listingCardSaveCategoryDraft,
   listingCardSaveDefaultField,
   listingCardSaveDefaultPrice,
+  listingCardSaveProfitAssumptions,
   listingCardSavePsd,
   listingCardSaveStore,
 } from "@/features/workflow/card/card-writes"
@@ -26,8 +27,7 @@ import type {
 } from "@/bindings/commands"
 import { accountHttp } from "@/bindings/http-account"
 import { renderOpfs } from "@/bindings/render-opfs"
-import { beginPsdTransfer, clearPsdTransfer, failPsdTransfer, linkPsdTransfer, notePsdHash } from "./card/psd-transfer"
-import { acceptUserTemplate, cancelUserTemplate, resumeReadablePsdUploads } from "./card/template-assets"
+import { beginPsdTransfer, clearPsdTransfer, failPsdTransfer, notePsdHash } from "./card/psd-transfer"
 import { workflowActions } from "./workflow-actions"
 import {
   clearLive,
@@ -131,8 +131,9 @@ type CardLibraryHostProps = {
   forms: ListingCardSummary[]
   setForms: Dispatch<SetStateAction<ListingCardSummary[]>>
   busy: boolean
+  loadError?: boolean
   setBusy: (busy: boolean) => void
-  refreshForms: () => Promise<void>
+  refreshForms: (options?: { force?: boolean }) => Promise<void>
   videoUploads: Record<string, { done: number; total: number }>
   setVideoUploads: Dispatch<SetStateAction<Record<string, { done: number; total: number }>>>
   workspaceId?: number
@@ -154,6 +155,7 @@ export function CardLibraryHost({
   forms,
   setForms,
   busy,
+  loadError,
   setBusy,
   refreshForms,
   videoUploads,
@@ -199,10 +201,6 @@ export function CardLibraryHost({
   useEffect(() => () => {
     clearLive(CATEGORY_TREE_LIVE)
     clearLive(COMPOSE_TREE_EMPTY_LIVE)
-  }, [])
-
-  useEffect(() => {
-    void resumeReadablePsdUploads()
   }, [])
 
   useEffect(() => {
@@ -426,7 +424,7 @@ export function CardLibraryHost({
     }
   }
 
-  /** 名册里主题 / JSON富内容 两列的写入口。 */
+  /** 名册里主题与 JSON 富内容的写入口。 */
   async function saveDefaultFieldValue(
     form: ListingCardSummary,
     fieldKey: string,
@@ -440,7 +438,7 @@ export function CardLibraryHost({
     )
   }
 
-  /** One Card's Category Schema for the 主题 picker; the flight cache dedupes. */
+  /** One Card's Category Schema for default field editors; the flight cache dedupes. */
   function loadCardSchema(form: ListingCardSummary): Promise<CategorySchemaView> {
     return categorySchemaFlight({
       description_category_id: form.description_category_id,
@@ -496,14 +494,13 @@ export function CardLibraryHost({
         }),
         onProgress: (loaded, total) => notePsdHash(form.draft_id, loaded, total),
       })
-      acceptUserTemplate(managed.asset_id)
-      linkPsdTransfer(form.draft_id, managed.asset_id, () => cancelUserTemplate(managed.asset_id))
       const saved = await listingCardSavePsd(
         form.draft_id,
         managed.asset_id,
         managed.asset.file_name,
       )
       setForms((current) => upsertSavedForm(current, saved))
+      clearPsdTransfer(form.draft_id)
     } catch (reason) {
       if (commandCode(reason) !== "workflow_template_cancelled") {
         notifyCommandError(reason, "无法保存 PSD 绑定，请稍后重试。")
@@ -603,7 +600,7 @@ export function CardLibraryHost({
       )
     } catch (reason) {
       if (throwOnError) throw reason
-      notifyCommandError(reason, "无法加载该类目提示词，请稍后重试。")
+      notifyCommandError(reason, "无法加载该类目商品事实，请稍后重试。")
       return []
     }
   }
@@ -660,7 +657,7 @@ export function CardLibraryHost({
       const prompts = await loadCategoryPrompts(descriptionCategoryId, typeId, true)
       setComposePrompts(prompts)
     } catch (reason) {
-      notifyCommandError(reason, "无法刷新提示词，请稍后重试。")
+      notifyCommandError(reason, "无法刷新商品事实，请稍后重试。")
     } finally {
       setComposePromptRefreshBusy(false)
     }
@@ -793,7 +790,7 @@ export function CardLibraryHost({
       (item) => item.prompt_id === composePromptId,
     )
     if (!prompt?.prompt_id || !prompt.name.trim()) {
-      notifyError("请选择本类目提示词。")
+      notifyError("请选择本类目商品事实。")
       return
     }
     const accountPromise = accountHttp.accountGetOverview().catch((reason) => {
@@ -1004,7 +1001,7 @@ export function CardLibraryHost({
     notifyLive({
       id: COMPOSE_TREE_EMPTY_LIVE,
       type: "info",
-      title: "还没有配置可用类目。请先在平台为类目添加提示词。",
+      title: "还没有配置可用类目。请先在平台商品库管理配置商品事实，再添加商品。",
     })
     return () => clearLive(COMPOSE_TREE_EMPTY_LIVE)
   }, [composing, treeBusy, promptLeavesBusy, categoryTree.length, composeCategoryTree.length])
@@ -1014,6 +1011,8 @@ export function CardLibraryHost({
       forms={forms}
       videoUploads={videoUploads}
       busy={busy || composeBusy}
+      loadError={loadError}
+      onRetryLoad={() => void refreshForms({ force: true })}
       composing={composing}
       composeBusy={composeBusy}
       composeSaving={composeSaving}
@@ -1064,6 +1063,17 @@ export function CardLibraryHost({
       savingPsdId={savingPsdId}
       onSavePrice={(form, price) => saveDefaultPrice(form, price)}
       onSaveOldPrice={(form, price) => saveDefaultPrice(form, price, "old_price")}
+      onProfitApply={async (form, input) => {
+        if (busy || savingPriceId || form.supplier_unavailable) throw new Error("价格正在保存，请稍后再试")
+        setSavingPriceId(form.draft_id)
+        try {
+          const saved = await listingCardSaveProfitAssumptions(form.draft_id, input, true)
+          setForms((current) => upsertSavedForm(current, saved))
+          await syncRowsForDefaultField(saved.draft_id, "price", { kind: "text", value: saved.price! })
+        } finally {
+          setSavingPriceId(undefined)
+        }
+      }}
       savingPriceId={savingPriceId}
       onSaveDefaultField={saveDefaultFieldValue}
       savingDefaultFieldId={savingDefaultFieldId}

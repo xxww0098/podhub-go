@@ -26,16 +26,15 @@ LICENSE_NAMES = (
     "UNLICENSE.md",
 )
 
-ROOT_SPDX = "AGPL-3.0-only"
-# SHA-256 of https://www.gnu.org/licenses/agpl-3.0.txt. The root LICENSE must
-# be that file byte for byte; "-only" is stated in NOTICE, not in the text.
-ROOT_LICENSE_SHA256 = "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0"
+ROOT_SPDX = "LicenseRef-Proprietary"
+# SHA-256 of the root LICENSE. The file must stay byte for byte identical.
+ROOT_LICENSE_SHA256 = "c15e3e20ce5ac388b7f2177d024a08deaaff02ae6492aa3e19d79ad50ef677a9"
 
-# Licenses whose code may be combined into an AGPL-3.0-only work. MPL-2.0 is
-# allowed through its section 3.3 only while no file carries Exhibit B.
-AGPL_COMPATIBLE = {
+# Licenses whose code may be combined into a proprietary, closed-source work.
+# MPL-2.0 stays file-level copyleft: modified MPL files must remain under MPL.
+# AGPL, GPL and LGPL are deliberately absent.
+CLOSED_SOURCE_COMPATIBLE = {
     "0BSD",
-    "AGPL-3.0",
     "Apache-2.0",
     "BSD-2-Clause",
     "BSD-3-Clause",
@@ -50,7 +49,7 @@ AGPL_COMPATIBLE = {
 }
 
 # (module, detected id) pairs reviewed by hand. Anything else outside
-# AGPL_COMPATIBLE fails the check.
+# CLOSED_SOURCE_COMPATIBLE fails the check.
 REVIEWED = {
     ("github.com/iris-contrib/schema", "NOASSERTION"): "无许可证文件；README.md 的 License 一节是 BSD-3-Clause。不被任何包导入。",
     ("github.com/opencontainers/go-digest", "CC-BY-SA-4.0"): "LICENSE.docs 只覆盖文档，代码是 Apache-2.0。只在集成测试中使用。",
@@ -292,7 +291,7 @@ def render(pairs):
         license_id, filename, digest = classify(directory, names)
         if mod.get("Main"):
             if filename != "LICENSE" or digest != ROOT_LICENSE_SHA256:
-                sys.exit("root LICENSE is not the unmodified GNU AGPL-3.0 text (sha256 %s)" % ROOT_LICENSE_SHA256)
+                sys.exit("root LICENSE is not the committed proprietary notice (sha256 %s)" % ROOT_LICENSE_SHA256)
             license_id = ROOT_SPDX
             version = "(main)"
         else:
@@ -309,7 +308,7 @@ def render(pairs):
         if path == main_path:
             continue
         for part in license_id.split(" AND "):
-            if part in AGPL_COMPATIBLE:
+            if part in CLOSED_SOURCE_COMPATIBLE:
                 continue
             reason = REVIEWED.get((path, part))
             if reason:
@@ -318,7 +317,6 @@ def render(pairs):
                 incompatible.append("%s %s: %s" % (path, version, part))
     if incompatible:
         sys.exit("licenses not known to be compatible with %s:\n%s" % (ROOT_SPDX, "\n".join(incompatible)))
-    agpl = [row for row in rows if "AGPL" in row[2] and row[0] != main_path]
     lines = [
         "# Third-party licenses",
         "",
@@ -327,13 +325,14 @@ def render(pairs):
         "检查模式发现与重新扫描的结果不一致时退出码为 1。",
         "",
         "本清单只记录每个 Go 模块自己的许可证文件。它不是法律意见。",
-        "podhub-go 本身是 `%s`，版权持有人 xxww，见根目录 `LICENSE` 与 `NOTICE`。" % ROOT_SPDX,
-        "根目录 `LICENSE` 须与 gnu.org 的 AGPL-3.0 原文逐字节一致，否则脚本退出。",
+        "podhub-go 本身是专有软件（`%s`），版权持有人 xxww，见根目录 `LICENSE` 与 `NOTICE`。" % ROOT_SPDX,
+        "根目录 `LICENSE` 须与已提交的专有声明逐字节一致，否则脚本退出。",
         "",
-        "## AGPL-3.0 兼容性",
+        "## 闭源兼容性",
         "",
-        "每个模块的许可证须在下列集合内：%s。" % "、".join(sorted(AGPL_COMPATIBLE, key=str.lower)),
+        "每个模块的许可证须在下列集合内：%s。" % "、".join(sorted(CLOSED_SOURCE_COMPATIBLE, key=str.lower)),
         "集合外的许可证只有逐条复核过的才放行，见下表；其余任何一条都会让脚本退出。",
+        "AGPL、GPL 和 LGPL 不在集合内。",
         "",
         "| Module | Version | License | 复核结论 |",
         "| --- | --- | --- | --- |",
@@ -343,22 +342,6 @@ def render(pairs):
             lines.append("| %s | %s | %s | %s |" % (cell(path), cell(version), cell(part), cell(reason)))
     else:
         lines.append("| - | - | - | - |")
-    lines.extend(
-        [
-            "",
-            "## AGPL 模块",
-            "",
-            "这些模块与本仓库同为 GNU AGPL-3.0。用户不购买 RelayKit 商业授权，它们按 AGPL-3.0 使用。说明见根目录 `NOTICE`。",
-            "",
-            "| Module | Version | Replace |",
-            "| --- | --- | --- |",
-        ]
-    )
-    if agpl:
-        for path, version, _license_id, _filename, _digest, replace in agpl:
-            lines.append("| %s | %s | %s |" % (cell(path), cell(version), cell(replace)))
-    else:
-        lines.append("| - | - | - |")
     lines.extend(
         [
             "",

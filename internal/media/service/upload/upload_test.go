@@ -33,7 +33,7 @@ func TestPresignKeyAndTicket(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := "uploads/2026-10-15/" + strconv.FormatInt(now.UnixMilli(), 10) + "-" + workspace +
-		"/images/teams/" + workspace + "/sha256/" + digest + ".jpg"
+		"/" + digest + ".jpg"
 	if got.ObjectKey != want {
 		t.Fatalf("key %s", got.ObjectKey)
 	}

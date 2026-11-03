@@ -4,13 +4,9 @@ import test from "node:test"
 
 import { changelogJsonFromRoot } from "../../vite.changelog.ts"
 import {
-  CHANGELOG_SEEN_KEY,
   CHANGELOG_VISIBLE_LIMIT,
-  changelogHasUnread,
   changelogReleasesFromJson,
   parseChangelog,
-  readSeenChangelogVersion,
-  writeSeenChangelogVersion,
   type ChangelogRelease,
 } from "./changelog.ts"
 
@@ -46,7 +42,6 @@ test("仓库 CHANGELOG 解析出最近 3 个版本，并按新增优化修复分
     "类目字段缓存缺变体维度元数据时不再被当成「过期不可用」：普通读取、草稿与校验照常，只有分组判定会要求刷新材料，不会再出现「类目需要同步」却同步不掉的循环",
     "改价、改库存、促销、归档、恢复、删除商品，以及确认分组执行，不再因为写入账本回执编号读错类型或漂移比对读错字段而报「服务暂不可用」「商品属性已变化」",
     "识图写俄语时，会把词里能确定的拉丁形近字改成对应的西里尔字母，包括以前对不上的 г、ш 和 Ь。英文词里误写的西里尔形近字会改回拉丁字母。对不上的字母再识别一次时，会指出是哪几个词、哪几个字母；指不出来就不再扣第二次",
-    "店铺名册显示期末余额，销售额按当日汇率从卢布换算成店铺币种（默认取俄罗斯央行公布的每日牌价）",
   ])
   const shown = releases.flatMap((release) => summary(release)).join("\n")
   for (const word of [
@@ -236,37 +231,4 @@ test("JSON 往返保留代码，垃圾输入变成空列表", () => {
   assert.deepEqual(changelogReleasesFromJson([{ version: "nope" }, { version: "1.2.3", sections: "x" }]), [
     { version: "1.2.3", date: "", note: "", sections: [] },
   ])
-})
-
-test("已读版本存在 localStorage，读写失败时当成没看过", () => {
-  assert.equal(changelogHasUnread("0.0.93", ""), true)
-  assert.equal(changelogHasUnread("0.0.93", "0.0.92"), true)
-  assert.equal(changelogHasUnread("0.0.93", "0.0.93"), false)
-  assert.equal(changelogHasUnread("", ""), false)
-  assert.equal(changelogHasUnread("  ", "0.0.93"), false)
-
-  const saved = new Map<string, string>()
-  const storage = {
-    getItem: (key: string) => saved.get(key) ?? null,
-    setItem: (key: string, value: string) => {
-      saved.set(key, value)
-    },
-  }
-  assert.equal(readSeenChangelogVersion(storage), "")
-  writeSeenChangelogVersion(" 0.0.93 ", storage)
-  assert.equal(saved.get(CHANGELOG_SEEN_KEY), "0.0.93")
-  assert.equal(readSeenChangelogVersion(storage), "0.0.93")
-
-  const broken = {
-    getItem: () => {
-      throw new Error("denied")
-    },
-    setItem: () => {
-      throw new Error("quota")
-    },
-  }
-  assert.equal(readSeenChangelogVersion(broken), "")
-  assert.doesNotThrow(() => writeSeenChangelogVersion("0.0.93", broken))
-  assert.equal(readSeenChangelogVersion(null), "")
-  assert.doesNotThrow(() => writeSeenChangelogVersion("0.0.93", null))
 })

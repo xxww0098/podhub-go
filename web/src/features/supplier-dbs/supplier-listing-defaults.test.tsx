@@ -5,11 +5,15 @@
  */
 import assert from "node:assert/strict"
 import test from "node:test"
+import { Children, isValidElement, type ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 
-import type { CategorySchemaView } from "@/bindings/commands"
+import type { CategorySchemaView, WorkflowCategoryDraft } from "@/bindings/commands"
 import type { SupplierDbRow } from "@/bindings/http-supplier-dbs"
 import { CategoryFieldsForm } from "@/features/workflow/category-fields-form"
+import { ComplexGroups } from "@/features/workflow/workflow-fields"
+import { displayComplexGroupName } from "@/features/workflow/workflow-shared"
+import { writeWorkflowValue } from "@/features/workflow/workflow-draft"
 import {
   rowDefaultsProgress,
   rowDefaultsSummary,
@@ -329,31 +333,37 @@ test("供应商字段筛选：零、false、字典与复杂组值计数，空白
   assert.equal(supplierDefaultFields(view, draft, "all", "不匹配").visible.length, 0)
 })
 
-test("供应商字段默认展示已填写，逐图来源只有说明，复用原字段控件", () => {
+test("供应商字段默认必填，全部入口保留，逐图来源默认折叠且只读", () => {
   const view = schema()
+  view.fields = view.fields.map((item) => item.key === "dimension_unit"
+    ? { ...item, constraints: { ...item.constraints, required: true } }
+    : item)
   view.fields.push(field({ key: "name", name: "名称", source: "fixed", editor: "text" }))
   const html = renderToStaticMarkup(<SupplierRowDefaultsForm schema={view}
     draft={seedSupplierRowDefaults(view, {}, COORD)} onUpdateValue={() => {}}
     onAddComplexItem={() => {}} onRemoveComplexItem={() => {}} />)
-  assert.match(html, /搜索平台字段/)
-  assert.match(html, /平台字段筛选/)
-  assert.match(html, /1 项已填写 · 2 项可配置/)
+  assert.match(html, /搜索OZON字段/)
+  assert.match(html, /aria-label="OZON字段筛选"/)
+  assert.match(html, /aria-pressed="true"[^>]*>必填/)
+  assert.match(html, /aria-pressed="false"[^>]*>全部/)
+  assert.match(html, /已填 1\/1/)
+  assert.doesNotMatch(html, /待补 1 项必填/)
   assert.match(html, /物流与税务/)
   assert.match(html, /逐图生成的字段/)
   assert.doesNotMatch(fieldMarkup(html, "price"), /<input/)
   assert.doesNotMatch(fieldMarkup(html, "name"), /<input/)
+  assert.doesNotMatch(html, /data-field-key="currency_code"/)
   assert.match(html, /data-field-key="dimension_unit"/)
+  assert.doesNotMatch(html.match(/<details[^>]*data-supplier-row-owned-fields=""[^>]*>/)?.[0] ?? "", /\bopen=/)
+  assert.match(html, /aria-label="Ozon 字段列表"/)
+  assert.match(html, /aria-label="Ozon 配置操作"/)
 })
 
-test("平台页签：Ozon 类目独立且 WB 可进入准确空态", () => {
+test("平台配置只显示可用的 Ozon 字段", () => {
   const html = renderToStaticMarkup(<SupplierRowPlatformTab row={row()}
-    onPatch={async () => true} onNavigateMedia={() => {}} />)
-  assert.match(html, /aria-label="销售平台"/)
+    onPatch={async () => true} onNavigateMedia={() => {}} configEpoch={0} onConfigSaved={() => {}} />)
   assert.match(html, /aria-label="Ozon 类目"/)
-  assert.match(html, /data-supplier-row-wb-empty/)
-  assert.match(html, /暂未开放供应商商品的 WB 类目与字段配置/)
-  assert.doesNotMatch(html, /aria-label="WB 类目"/)
-  assert.match(html, /<button[^>]*aria-disabled="false"[^>]*>WB<\/button>/)
+  assert.doesNotMatch(html, /aria-label="销售平台"|data-supplier-row-wb-empty|>WB<\/button>/)
 })
 
 
@@ -374,4 +384,122 @@ test("待填写与已填写筛选在字段失焦前保留正在编辑的控件",
   assert.equal(supplierDefaultFields(view, draft, "all", "", "barcode").visible.length, 1)
   assert.equal(supplierDefaultFields(view, draft, "required", "", "barcode").visible.length, 0, "聚焦不扩大必填范围")
   assert.equal(supplierDefaultFields(view, draft, "all", "其他字段", "barcode").visible.length, 0, "搜索条件照常生效")
+})
+
+test("字段错误保留必填语义，并精确关联第二条复杂组控件", () => {
+  const view=schema()
+  view.fields=[field({key:"width",name:"包装宽度",source:"fixed",editor:"integer",constraints:{required:true,collection:false}}),field({key:"attribute_8790",name:"PDF 链接",attribute_id:8790,complex_id:8788,editor:"url",complex_group_collection:true,constraints:{required:true,collection:false}})]
+  view.complex_groups=[{complex_id:8788,name:"PDF",collection:true,field_keys:["attribute_8790"]}]
+  const html=renderToStaticMarkup(<SupplierRowDefaultsForm schema={view} draft={{values:{},complex_values:[{complex_id:8788,items:[{values:{attribute_8790:{kind:"url",value:"https://example.com/1.pdf"}}},{values:{attribute_8790:{kind:"url",value:"invalid"}}}]}]}} issues={[{field_key:"width",code:"required",message:"请填写包装宽度"},{field_key:"attribute_8790",complex_id:8788,item_index:1,code:"invalid_url",message:"请输入有效 URL"}]} onUpdateValue={()=>{}} onAddComplexItem={()=>{}} onRemoveComplexItem={()=>{}} />)
+  assert.match(html,/aria-label="Ozon 配置校验问题"/)
+  assert.match(html,/PDF 链接 · 第 2 项：请输入有效 URL/)
+  for (const id of ["workflow-width", "workflow-attribute_8790-8788-1"]) {
+    const input = html.match(new RegExp(`<input[^>]*id="${id}"[^>]*>`))?.[0] ?? ""
+    assert.match(input, /aria-required="true"/)
+    assert.match(input, /aria-invalid="true"/)
+    assert.ok(input.includes(`aria-describedby="${id}-error"`))
+  }
+  assert.doesNotMatch(html,/<input[^>]*id="workflow-attribute_8790-8788-0"[^>]*aria-invalid="true"/)
+  assert.match(html,/id="workflow-attribute_8790-8788-1-error" role="alert"/)
+})
+
+
+test("货源币种不进供应商默认字段，由店铺合同决定", () => {
+  const view = schema()
+  const draft = { values: {}, complex_values: [] }
+  for (const filter of ["required", "all", "filled", "empty"] as const) {
+    assert.ok(
+      supplierDefaultFields(view, draft, filter, "").visible.every((field) => field.key !== "currency_code"),
+      filter,
+    )
+  }
+  assert.equal(seedSupplierRowDefaults(view, {}, COORD).values.currency_code, undefined)
+})
+
+test("必填进度覆盖每条复杂项，筛选不改已有的零、false、选项 ID 和条目顺序", () => {
+  const view = schema()
+  view.fields = [
+    field({ key: "width", source: "fixed", editor: "integer", constraints: { required: true, collection: false } }),
+    field({ key: "attribute_1", editor: "boolean", constraints: { required: true, collection: false } }),
+    field({ key: "attribute_2", editor: "single_select", constraints: { required: true, collection: false } }),
+    field({ key: "attribute_8790", attribute_id: 8790, complex_id: 8788, editor: "url", constraints: { required: true, collection: false } }),
+  ]
+  const draft: WorkflowCategoryDraft = { values: {
+    width: { kind: "integer" as const, value: 0 },
+    attribute_1: { kind: "boolean" as const, value: false },
+    attribute_2: { kind: "single_select" as const, value: { dictionary_value_id: 42, value: "已选" } },
+  }, complex_values: [{ complex_id: 8788, items: [
+    { item_id: "first", values: { attribute_8790: { kind: "url" as const, value: "https://example.com/1.pdf" } } },
+    { item_id: "second", values: {} },
+  ] }] }
+  const before = structuredClone(draft)
+  for (const filter of ["required", "all", "empty", "filled", "invalid"] as const) {
+    const result = supplierDefaultFields(view, draft, filter, "")
+    assert.equal(result.required, 4)
+    assert.equal(result.filled, 4)
+    assert.equal(result.missingRequired, 1, "第一条填写不能掩盖第二条必填为空")
+  }
+  assert.deepEqual(draft, before)
+  assert.equal(supplierDefaultFields(view, { ...draft, complex_values: [] }, "all", "").missingRequired, 1)
+})
+
+test("复杂组按已知字段命名，未知组保持原名，折叠仍保留条目 ID、顺序和值", () => {
+  const view = schema()
+  view.fields = [
+    field({ key: "attribute_8789", name: "文件名", attribute_id: 8789, complex_id: 8788, editor: "text" }),
+    field({ key: "attribute_8790", name: "文件链接", attribute_id: 8790, complex_id: 8788, editor: "url" }),
+    field({ key: "attribute_21841", attribute_id: 21841, complex_id: 100001, editor: "url" }),
+    field({ key: "attribute_21845", attribute_id: 21845, complex_id: 100002, editor: "url" }),
+  ]
+  view.complex_groups = [
+    { complex_id: 8788, name: "属性", collection: true, field_keys: ["attribute_8789", "attribute_8790"] },
+    { complex_id: 100001, name: "属性", collection: true, field_keys: ["attribute_21841"] },
+    { complex_id: 100002, name: "属性", collection: false, field_keys: ["attribute_21845"] },
+  ]
+  assert.deepEqual(view.complex_groups.map((group) => displayComplexGroupName(group, view.fields)), ["PDF 附件", "商品视频", "视频封面"])
+  assert.equal(displayComplexGroupName({ complex_id: 100001, name: "自定义联动参数", collection: false, field_keys: ["other"] }, view.fields), "自定义联动参数")
+  const draft = { values: {}, complex_values: [{ complex_id: 8788, items: [
+    { item_id: "ci_first", values: { attribute_8789: { kind: "text" as const, value: "说明书" }, attribute_8790: { kind: "url" as const, value: "https://example.com/first.pdf" } } },
+    { item_id: "ci_second", values: { attribute_8789: { kind: "text" as const, value: "证书" }, attribute_8790: { kind: "url" as const, value: "invalid" } } },
+  ] }] }
+  const before = structuredClone(draft)
+  let writes = 0
+  const html = renderToStaticMarkup(<ComplexGroups schema={view} targetStoreId="" draft={draft}
+    visibleFieldKeys={new Set(view.fields.map((field) => field.key))} forceOpen={false} compact
+    issues={[{ field_key: "attribute_8790", complex_id: 8788, item_index: 1, code: "invalid_url", message: "URL 无效" }]}
+    onChange={() => { writes++ }} onAdd={() => { writes++ }} onRemove={() => { writes++ }} />)
+  for (const label of ["PDF 附件", "商品视频", "视频封面", "2 条", "证书", "说明书", "URL 无效"]) assert.ok(html.includes(label), label)
+  assert.ok(html.indexOf('data-complex-item-id="ci_first"') < html.indexOf('data-complex-item-id="ci_second"'))
+  assert.match(html, /aria-label="添加PDF 附件"/)
+  assert.match(html, /aria-label="删除PDF 附件第 2 项"/)
+  assert.match(html, /<details[^>]*open=""[^>]*data-complex-item="1"/)
+  assert.match(html, /id="workflow-attribute_8790-8788-1"[^>]*aria-invalid="true"/)
+  assert.deepEqual(draft, before)
+  assert.equal(writes, 0)
+})
+
+test("新复杂条目首次输入获得 ID 时保留编辑器身份，避免丢失键盘输入", () => {
+  const view = schema()
+  view.fields = [field({ key: "attribute_8790", name: "PDF 文件", editor: "url", complex_id: 8788 })]
+  view.complex_groups = [{ complex_id: 8788, name: "PDF", collection: true, field_keys: ["attribute_8790"] }]
+  const blank = seedSupplierRowDefaults(view, {}, COORD)
+  const typed = writeWorkflowValue(blank, "attribute_8790", { kind: "url", value: "h" }, { complexId: 8788, itemIndex: 0 })
+  assert.ok(typed.complex_values[0].items[0].item_id)
+  const keys = (draft: WorkflowCategoryDraft) => {
+    const result: Array<string | null> = []
+    const visit = (node: ReactNode) => Children.forEach(node, (child) => {
+      if (!isValidElement<Record<string, unknown>>(child)) return
+      if (child.props["data-complex-item"] !== undefined) result.push(child.key)
+      visit(child.props.children as ReactNode)
+    })
+    visit(ComplexGroups({ schema: view, targetStoreId: "", draft, issues: [],
+      visibleFieldKeys: new Set(["attribute_8790"]), forceOpen: false, compact: true,
+      onChange: () => {}, onAdd: () => {}, onRemove: () => {},
+    }))
+    assert.equal(result.length, 1)
+    return result
+  }
+  assert.deepEqual(keys(typed), keys(blank))
+  const cleared = writeWorkflowValue(typed, "attribute_8790", undefined, { complexId: 8788, itemIndex: 0 })
+  assert.deepEqual(keys(cleared), keys(typed))
 })

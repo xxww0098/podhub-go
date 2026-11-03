@@ -18,13 +18,13 @@ import (
 // product grouping, and unknown-write settlement do not have their Rust
 // SQL in this process; their ticks log that and return idle so they cannot
 // invent a job. The gap list is in docs/parity/seller-parity.md.
-func Attach(scans []queueservice.DueScan, pool *pgxpool.Pool, eg *Egress) {
+func Attach(scans []queueservice.DueScan, pool *pgxpool.Pool, eg *Egress, tr submit.Transport) {
 	for i := range scans {
 		switch scans[i].Name {
 		case "UnknownImportsScan":
 			batch := scans[i].Batch
 			scans[i].Tick = func(ctx context.Context) (bool, error) {
-				n, err := submit.ProbeDue(ctx, pool, eg.Port(), batch)
+				n, err := submit.ProbeDue(ctx, pool, tr, batch)
 				return n > 0, err
 			}
 		case "UnknownWritesScan":

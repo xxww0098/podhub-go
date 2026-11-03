@@ -7,6 +7,7 @@ import { createStoreGate } from "./stores-screen";
 const BASE = {
   rosterLoaded: true,
   hasWorkspace: true,
+  canManageRoster: true,
   storesUsed: 1,
   storeLimit: 5,
   busy: undefined,
@@ -27,11 +28,9 @@ test("every busy kind disables creation with the busy reason", () => {
   const kinds: StoreBusyKind[] = [
     "load",
     "save",
-    "clear",
     "delete",
     "test",
     "assign",
-    "grant",
     "import",
     "export",
     "tag",
@@ -51,6 +50,10 @@ test("each blocking condition maps to exactly one reason", () => {
   assert.deepEqual(createStoreGate({ ...BASE, hasWorkspace: false }), {
     canCreate: false,
     disabledReason: "请先加入或创建 Workspace",
+  });
+  assert.deepEqual(createStoreGate({ ...BASE, canManageRoster: false }), {
+    canCreate: false,
+    disabledReason: "只有工作空间所有者或管理员可以新增店铺",
   });
   assert.deepEqual(
     createStoreGate({ ...BASE, storesUsed: 5, storeLimit: 5 }),

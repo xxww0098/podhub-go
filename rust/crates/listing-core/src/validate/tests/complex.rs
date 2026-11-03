@@ -82,6 +82,14 @@ fn preserves_repeated_complex_items_as_distinct_groups() {
             attribute_id: Some("2002".to_owned()),
             complex_id: Some("77".to_owned()),
             complex_group_collection: true,
+            options: [("1", "中国"), ("2", "俄罗斯")]
+                .into_iter()
+                .map(|(id, value)| crate::records::ListingFieldOption {
+                    id: id.to_owned(),
+                    value: value.to_owned(),
+                    ..crate::records::ListingFieldOption::default()
+                })
+                .collect(),
             ..ListingFieldDefinition::default()
         });
     draft.complex_values.insert(

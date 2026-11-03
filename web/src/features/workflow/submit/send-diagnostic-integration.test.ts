@@ -13,7 +13,7 @@ import { notifyCommandError } from "@/lib/notify"
 import { ERROR_FEEDBACK_KEYS } from "@/lib/error-feedback-reporting"
 import { safeUserAgent } from "@/lib/error-report-environment"
 import { diagnosticReferenceFrom } from "../model/publish-diagnostic"
-import { createOzonAdapter } from "../platforms/ozon"
+import { createOzonAdapter } from "../platforms/ozon/adapter"
 import { createPublishDiagnosticOperation } from "./queue/diagnostics"
 import { createPublishDiagnosticRoute } from "./use-publish-diagnostics"
 import { submitOzonChunk, type OzonSendContext } from "./send-ozon-transport"
@@ -27,7 +27,7 @@ type InboxEvent = { id: string; kind: string; schema_version: number; payload_js
 function assertFeedbackEvent(event: InboxEvent) {
   assert.equal(event.kind, "error_feedback.v1")
   assert.equal(event.schema_version, 1)
-  assert.match(event.id, /^[0-9]{20}$/)
+  assert.match(event.id, /^[0-9A-F][0-9A-HJKMNP-TV-Z]{12}$/)
   const payload = JSON.parse(event.payload_json)
   assert.equal(payload.errorId, event.id)
   assert.ok(Object.keys(payload).every(key => (ERROR_FEEDBACK_KEYS as readonly string[]).includes(key)))

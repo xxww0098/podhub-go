@@ -1,5 +1,4 @@
 import { useState } from "react"
-import { OcrModelControls } from "./ocr-model-controls"
 import {
   ChevronDown,
   CirclePause,
@@ -55,6 +54,7 @@ import { SendAllButton } from "./workbench-send-controls"
 
 type WorkbenchRibbonProps = {
   rows: ListingRow[]
+  totalRowCount?: number
   scopes: WorkbenchScopes
   selectionScopes: BatchSelectionScope[]
   stores: WorkbenchStores
@@ -103,6 +103,7 @@ type WorkbenchRibbonProps = {
  */
 export function WorkbenchRibbon({
   rows,
+  totalRowCount = rows.length,
   scopes,
   selectionScopes,
   stores,
@@ -147,7 +148,7 @@ export function WorkbenchRibbon({
    * column reads as a selection that was never made. This chip is what says
    * whose rows the counts are.
    */
-  const scopeLabel = selectedMode ? `已选 ${scopes.picked.length}` : `全部 ${rows.length}`
+  const scopeLabel = selectedMode ? `已选 ${scopes.picked.length}` : `当前视图 ${rows.length}`
   // The group's track template is chosen by its children, not the other way
   // round: a fixed grid drops an extra child onto a clipped second row.
   const mediaGroupClass = supplierBound
@@ -159,12 +160,12 @@ export function WorkbenchRibbon({
 
   return (
     <section
-      className="h-12 w-full min-w-0 max-w-full shrink-0 overflow-hidden rounded-xl border border-border/80 bg-card shadow-[0_1px_2px_rgba(0,0,0,0.03)]"
+      className="h-10 w-full min-w-0 max-w-full shrink-0 overflow-hidden border-b border-border bg-card"
       aria-label="商品批量操作"
     >
       <div
         data-slot="workbench-action-ribbon"
-        className="no-scrollbar h-full w-full min-w-0 overflow-x-auto overflow-y-hidden overscroll-x-contain px-2"
+        className="no-scrollbar h-full w-full min-w-0 overflow-x-auto overflow-y-hidden overscroll-x-contain px-1"
       >
         <div className="flex h-full min-w-max items-center">
           <div
@@ -173,6 +174,7 @@ export function WorkbenchRibbon({
             data-toolbar-slot="selection"
             className={cn(
               RIBBON_SELECT_GROUP,
+              !selectedMode && "w-28",
               selectedMode && RIBBON_SELECT_GROUP_PICKED,
             )}
           >
@@ -189,7 +191,7 @@ export function WorkbenchRibbon({
                   >
                     <ListFilter aria-hidden />
                     <span className="flex items-center gap-0.5">
-                      {scopeLabel}
+                      {selectedMode ? scopeLabel : `本视图 ${rows.length}`}
                       <ChevronDown aria-hidden className="size-3 opacity-60" />
                     </span>
                   </Button>
@@ -239,12 +241,11 @@ export function WorkbenchRibbon({
                       aria-label={`删除所选 ${scopes.picked.length} 张图片`}
                     >
                       <Trash2 aria-hidden />
-                      删除
                     </Button>
                   }
                 />
                 <TooltipContent>
-                  删除此行。已传到 Ozon 的商品不受影响
+                  删除所选行。已传到 Ozon 的商品不受影响
                 </TooltipContent>
               </Tooltip>
             ) : null}
@@ -281,7 +282,7 @@ export function WorkbenchRibbon({
             className={cn(
               mediaGroupClass,
               boundStoreIds.length > 1 &&
-                rows.length > 0 &&
+                totalRowCount > 0 &&
                 mediaGroupWithStoresClass,
             )}
           >
@@ -301,12 +302,11 @@ export function WorkbenchRibbon({
                     aria-label="导入图片"
                   >
                     <ImagePlus aria-hidden />
-                    <span>导入</span>
                   </Button>
                 }
               />
               <TooltipContent>
-                多选图片；拖入文件夹导入一层
+                导入图片：多选图片；拖入文件夹导入一层
               </TooltipContent>
             </Tooltip>
             {supplierBound ? null : (
@@ -323,9 +323,9 @@ export function WorkbenchRibbon({
                 <span>默认字段</span>
               </Button>
             )}
-            {boundStoreIds.length > 1 && rows.length > 0 ? (
+            {boundStoreIds.length > 1 && totalRowCount > 0 ? (
               <StoreQuotaPicker
-                rowCount={rows.length}
+                rowCount={totalRowCount}
                 storeSlices={stores.storeSlices}
                 storeMap={stores.storeMap}
                 boundStoreIds={boundStoreIds}
@@ -385,8 +385,6 @@ export function WorkbenchRibbon({
             disabled={busy || queueLocked || guidedPreparation.active}
             onRetryFailed={onRunDeliverRows}
           />
-
-          <OcrModelControls disabled={busy || queueLocked || preparing || preparationRunning(activity) || guidedPreparation.active} />
 
           {liveStatusCards.length ? (
             <>

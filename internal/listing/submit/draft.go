@@ -1,14 +1,11 @@
 package submit
 
 import (
-	"bytes"
-	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"io"
 	"strings"
 	"time"
 
@@ -18,7 +15,7 @@ import (
 
 	"github.com/xxww0098/podhub-go/internal/listing/core/contract"
 	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
-	queue "github.com/xxww0098/podhub-go/internal/platform/jobsched"
+	queue "github.com/xxww0098/podhub-go/internal/queue/contract"
 )
 
 const schemaTTLMS = int64(24 * time.Hour / time.Millisecond)
@@ -95,7 +92,7 @@ type BatchItem struct {
 // SendDrafts is POST /api/listing/submit once the body is a draft.
 // It freezes each item through listing-core wasm and enqueues
 // listing.submit.batch. It does not dial Ozon.
-func SendDrafts(ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, body []byte, now time.Time) (DraftData, error) {
+func (svc Service) SendDrafts(ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, body []byte, now time.Time) (DraftData, error) {
 	if pool == nil {
 		return DraftData{}, statusErr(503, "服务暂不可用", "internal")
 	}
@@ -132,14 +129,18 @@ func SendDrafts(ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, bo
 	if err != nil {
 		return DraftData{}, err
 	}
-	snapshot, revision := loaded.snapshot, loaded.current
-	workspace, err := workspaceUUID(ctx, tx, orgID)
+	contract, err := storeContractCurrency(ctx, tx, orgID, req.StoreID)
 	if err != nil {
 		return DraftData{}, err
 	}
+	cardPayload, err := stampContractCurrency(card.payload, "defaults", contract)
+	if err != nil {
+		return DraftData{}, statusErr(500, "服务暂不可用", "internal")
+	}
+	snapshot, revision := loaded.snapshot, loaded.current
 	schema, err := json.Marshal(map[string]json.RawMessage{
 		"snapshot":        snapshot,
-		"searchMaterials": []byte("[]"),
+		"searchMaterials": loaded.search,
 	})
 	if err != nil {
 		return DraftData{}, statusErr(500, "服务暂不可用", "internal")
@@ -162,11 +163,23 @@ func SendDrafts(ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, bo
 			items = append(items, *blocked)
 			continue
 		}
-		if skip, hit := ImageIssue(draftImageURLs(patched), workspace, nowMS); hit {
+		if skip, hit := ImageIssue(draftImageURLs(patched), nowMS); hit {
 			items = append(items, DraftItem{RowID: rowID, Outcome: "skipped", SkipReason: string(skip)})
 			continue
 		}
-		frozen, refusal, err := freezeDraft(ctx, mod, schema, card.payload, patched, rowID)
+		current, err := sliceReceiptsCurrent(ctx, tx, orgID, draftImageURLs(patched))
+		if err != nil {
+			return DraftData{}, statusErr(503, "切片状态暂不可用", "internal")
+		}
+		if !current {
+			items = append(items, DraftItem{RowID: rowID, Outcome: "skipped", SkipReason: "media_expired"})
+			continue
+		}
+		patched, err = stampContractCurrency(patched, "draft", contract)
+		if err != nil {
+			return DraftData{}, statusErr(400, "Draft 格式无效", "bad_request")
+		}
+		frozen, refusal, err := freezeDraft(ctx, mod, schema, cardPayload, patched, rowID)
 		if err != nil {
 			return DraftData{}, err
 		}
@@ -216,7 +229,7 @@ func SendDrafts(ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, bo
 		}
 		return data, nil
 	}
-	enqueued, err := enqueueDrafts(ctx, tx, orgID, userID, req.StoreID, admitted, now)
+	enqueued, err := svc.enqueueDrafts(ctx, tx, orgID, userID, req.StoreID, admitted, now)
 	if err != nil {
 		return DraftData{}, err
 	}
@@ -229,7 +242,7 @@ func SendDrafts(ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, bo
 
 // SendStored freezes the requested server revisions and enqueues
 // listing.submit.batch. A concurrent edit during admission rolls back the batch.
-func SendStored(ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, req BatchBody, now time.Time) (BatchData, error) {
+func (svc Service) SendStored(ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, req BatchBody, now time.Time) (BatchData, error) {
 	if err := req.Validate(); err != nil {
 		return BatchData{}, statusErr(400, err.Error(), "bad_request")
 	}
@@ -252,8 +265,12 @@ func SendStored(ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, re
 	var ready []frozen
 	recordRevision := false
 	storeID := req.StoreID
+	contract, err := storeContractCurrency(ctx, tx, orgID, storeID)
+	if err != nil {
+		return BatchData{}, err
+	}
 	for _, rowID := range req.RowIDs {
-		item, one, recorded, err := freezeStored(ctx, tx, mod, orgID, storeID, rowID, req.ExpectedRevisions[rowID], now)
+		item, one, recorded, err := freezeStored(ctx, tx, mod, orgID, storeID, contract, rowID, req.ExpectedRevisions[rowID], now)
 		if err != nil {
 			return BatchData{}, err
 		}
@@ -289,7 +306,7 @@ func SendStored(ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, re
 		}
 		return BatchData{Items: items}, nil
 	}
-	enqueued, err := enqueueDrafts(ctx, tx, orgID, userID, storeID, admitted, now)
+	enqueued, err := svc.enqueueDrafts(ctx, tx, orgID, userID, storeID, admitted, now)
 	if err != nil {
 		return BatchData{}, err
 	}
@@ -357,31 +374,24 @@ func loadCard(ctx context.Context, tx pgx.Tx, orgID int64, cardID string) (cardR
 
 type loadedSchema struct {
 	snapshot json.RawMessage
+	search   json.RawMessage
 	current  string
 	legacy   string
 	after    []schemaField
 }
 
 func loadSnapshot(ctx context.Context, tx pgx.Tx, mod contract.Module, card cardRow) (loadedSchema, error) {
-	var payload []byte
+	var fields json.RawMessage
 	var fetched int64
+	var revision string
 	err := tx.QueryRow(ctx, `
-		SELECT payload, fetched_at_ms FROM public.ozon_catalog_schema_cache
+		SELECT fields, fetched_at_ms, COALESCE(schema_revision, '') FROM public.ozon_category_current
 		 WHERE description_category_id = $1 AND type_id = $2 AND language = $3`,
-		card.category, card.typeID, card.language).Scan(&payload, &fetched)
+		card.category, card.typeID, card.language).Scan(&fields, &fetched, &revision)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && time.Now().UnixMilli()-fetched > schemaTTLMS) {
 		return loadedSchema{}, statusErr(409, "正在更新类目字段，请稍后重试", "schema_sync_required")
 	}
 	if err != nil {
-		return loadedSchema{}, statusErr(500, "服务暂不可用", "internal")
-	}
-	zr, err := gzip.NewReader(bytes.NewReader(payload))
-	if err != nil {
-		return loadedSchema{}, statusErr(500, "服务暂不可用", "internal")
-	}
-	defer zr.Close()
-	fields, err := io.ReadAll(io.LimitReader(zr, 4<<20+1))
-	if err != nil || len(fields) > 4<<20 {
 		return loadedSchema{}, statusErr(500, "服务暂不可用", "internal")
 	}
 	after, err := parseSchemaFields(fields)
@@ -396,21 +406,44 @@ func loadSnapshot(ctx context.Context, tx pgx.Tx, mod contract.Module, card card
 	if err != nil {
 		return loadedSchema{}, statusErr(500, "服务暂不可用", "internal")
 	}
-	snapshot, err := mod.Snapshot(ctx, input)
-	if err != nil {
-		return loadedSchema{}, statusErr(500, "服务暂不可用", "internal")
-	}
 	legacy, err := mod.LegacyRevision(ctx, input)
 	if err != nil {
 		return loadedSchema{}, statusErr(500, "服务暂不可用", "internal")
 	}
-	var rev struct {
-		Revision string `json:"schema_revision"`
+	var snapshot []byte
+	if revision != "" {
+		err = tx.QueryRow(ctx, `SELECT snapshot FROM public.listing_schema_revisions WHERE schema_revision = $1`, revision).Scan(&snapshot)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return loadedSchema{}, statusErr(409, "正在更新类目字段，请稍后重试", "schema_sync_required")
+		}
+		if err != nil {
+			return loadedSchema{}, statusErr(500, "服务暂不可用", "internal")
+		}
+	} else {
+		snapshot, err = mod.Snapshot(ctx, input)
+		if err != nil {
+			return loadedSchema{}, statusErr(500, "服务暂不可用", "internal")
+		}
+		var rev struct {
+			Revision string `json:"schema_revision"`
+		}
+		if err := json.Unmarshal(snapshot, &rev); err != nil || rev.Revision == "" {
+			return loadedSchema{}, statusErr(500, "服务暂不可用", "internal")
+		}
+		revision = rev.Revision
 	}
-	if err := json.Unmarshal(snapshot, &rev); err != nil || rev.Revision == "" {
+	var search json.RawMessage
+	err = tx.QueryRow(ctx, `
+		SELECT COALESCE(jsonb_agg(jsonb_build_object(
+		  'descriptionCategoryId',description_category_id,'attributeId',attribute_id,
+		  'dictionaryId',dictionary_id,'valueId',option_id,'label',value)
+		  ORDER BY attribute_id,dictionary_id,option_id),'[]'::jsonb)
+		FROM public.catalog_dictionary_search_material
+		WHERE description_category_id=$1 AND type_id=$2 AND language=$3`, card.category, card.typeID, card.language).Scan(&search)
+	if err != nil {
 		return loadedSchema{}, statusErr(500, "服务暂不可用", "internal")
 	}
-	return loadedSchema{snapshot: snapshot, current: rev.Revision, legacy: legacy, after: after}, nil
+	return loadedSchema{snapshot: snapshot, search: search, current: revision, legacy: legacy, after: after}, nil
 }
 
 func gateSchema(ctx context.Context, tx pgx.Tx, raw []byte, loaded loadedSchema) ([]byte, *DraftItem, bool, error) {
@@ -436,15 +469,6 @@ func gateSchema(ctx context.Context, tx pgx.Tx, raw []byte, loaded loadedSchema)
 		}
 	}
 	return raw, nil, decision.Record, nil
-}
-
-func workspaceUUID(ctx context.Context, tx pgx.Tx, orgID int64) (string, error) {
-	var id string
-	err := tx.QueryRow(ctx, `SELECT uuid::text FROM public.organizations WHERE id = $1`, orgID).Scan(&id)
-	if err != nil {
-		return "", statusErr(500, "服务暂不可用", "internal")
-	}
-	return id, nil
 }
 
 type frozen struct {
@@ -523,7 +547,7 @@ func freezeLean(ctx context.Context, mod contract.Module, schema, card, lean []b
 	}, nil, nil
 }
 
-func freezeStored(ctx context.Context, tx pgx.Tx, mod contract.Module, orgID int64, storeID, rowID string, expectedRevision int64, now time.Time) (*BatchItem, frozen, bool, error) {
+func freezeStored(ctx context.Context, tx pgx.Tx, mod contract.Module, orgID int64, storeID, contract, rowID string, expectedRevision int64, now time.Time) (*BatchItem, frozen, bool, error) {
 	var revision int64
 	var rowStore *string
 	var rowPayload, cardPayload []byte
@@ -560,6 +584,16 @@ func freezeStored(ctx context.Context, tx pgx.Tx, mod contract.Module, orgID int
 	if err != nil {
 		return nil, frozen{}, false, err
 	}
+	if blocked == nil {
+		patched, err = stampContractCurrency(patched, "draft", contract)
+		if err != nil {
+			return nil, frozen{}, false, statusErr(500, "服务暂不可用", "internal")
+		}
+		cardPayload, err = stampContractCurrency(cardPayload, "defaults", contract)
+		if err != nil {
+			return nil, frozen{}, false, statusErr(500, "服务暂不可用", "internal")
+		}
+	}
 	if record {
 		if err := noteSchemaRevision(ctx, tx, loaded.current, loaded.snapshot); err != nil {
 			return nil, frozen{}, false, statusErr(500, "服务暂不可用", "internal")
@@ -568,15 +602,18 @@ func freezeStored(ctx context.Context, tx pgx.Tx, mod contract.Module, orgID int
 	if blocked != nil {
 		return &BatchItem{RowID: rowID, Skipped: "compose_failed", Detail: "schema_stale", Fields: blocked.Fields}, frozen{}, record, nil
 	}
-	workspace, err := workspaceUUID(ctx, tx, orgID)
-	if err != nil {
-		return nil, frozen{}, false, err
-	}
-	if skip, hit := ImageIssue(draftImageURLs(patched), workspace, now.UnixMilli()); hit {
+	if skip, hit := ImageIssue(draftImageURLs(patched), now.UnixMilli()); hit {
 		return &BatchItem{RowID: rowID, Skipped: "compose_failed", Detail: string(skip)}, frozen{}, record, nil
 	}
+	current, err := sliceReceiptsCurrent(ctx, tx, orgID, draftImageURLs(patched))
+	if err != nil {
+		return nil, frozen{}, false, statusErr(503, "切片状态暂不可用", "internal")
+	}
+	if !current {
+		return &BatchItem{RowID: rowID, Skipped: "compose_failed", Detail: "media_expired"}, frozen{}, record, nil
+	}
 	schema, err := json.Marshal(map[string]json.RawMessage{
-		"snapshot": loaded.snapshot, "searchMaterials": []byte("[]"),
+		"snapshot": loaded.snapshot, "searchMaterials": loaded.search,
 	})
 	if err != nil {
 		return nil, frozen{}, false, statusErr(500, "服务暂不可用", "internal")
@@ -663,9 +700,9 @@ var newID = uuid.NewString
 const insertIntentSQL = `
 			INSERT INTO public.submission_intents (
 				id, org_id, store_id, listing_row_id, row_revision, client_operation_id,
-				request_hash, state, offer_id, card_id
+				request_hash, state, offer_id, card_id, slice_image_urls
 			) VALUES (
-				$1::uuid, $2, $3::uuid, $4::uuid, $5, $6, $7, 'queued', $8, NULLIF($9, '')::uuid
+				$1::uuid, $2, $3::uuid, $4::uuid, $5, $6, $7, 'queued', $8, NULLIF($9, '')::uuid, $10::text[]
 			)
 			ON CONFLICT (org_id, store_id, client_operation_id) DO NOTHING
 			RETURNING (extract(epoch FROM updated_at) * 1000)::bigint`
@@ -675,8 +712,117 @@ const readIntentSQL = `
 				  FROM public.submission_intents
 				 WHERE org_id = $1 AND store_id = $2::uuid AND client_operation_id = $3`
 
-func enqueueDrafts(ctx context.Context, tx pgx.Tx, orgID, userID int64, storeID string, ready []frozen, now time.Time) ([]DraftItem, error) {
+// storeContractCurrency reads the one currency Ozon's Seller contract fixes
+// for this Store. Empty means /v1/seller/info has not been read yet, so the
+// destination currency is unknown.
+func storeContractCurrency(ctx context.Context, tx pgx.Tx, orgID int64, storeID string) (string, error) {
+	var contract string
+	err := tx.QueryRow(ctx, `
+		SELECT COALESCE(company_currency, '')
+		  FROM public.organization_stores
+		 WHERE org_id = $1 AND uuid = $2::uuid`, orgID, storeID).Scan(&contract)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", statusErr(404, "店铺不存在", "not_found")
+	}
+	if err != nil {
+		return "", statusErr(500, "服务暂不可用", "internal")
+	}
+	return strings.ToUpper(strings.TrimSpace(contract)), nil
+}
+
+// stampContractCurrency makes the destination Store's contract currency the
+// Draft's currency. A Card and a supplier config are shared by every Store the
+// Card targets, so neither can choose the currency Ozon accepts. The send is
+// the first point that knows the destination, and this is where it decides.
+func stampContractCurrency(payload []byte, holder, contract string) ([]byte, error) {
+	if contract == "" || len(payload) == 0 {
+		return payload, nil
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(payload, &doc); err != nil {
+		return nil, err
+	}
+	container, _ := doc[holder].(map[string]any)
+	if container == nil {
+		container = map[string]any{}
+		doc[holder] = container
+	}
+	values, _ := container["values"].(map[string]any)
+	if values == nil {
+		values = map[string]any{}
+		container["values"] = values
+	}
+	values["currency_code"] = map[string]any{"kind": "text", "value": contract}
+	dropString(container, "cleared", "currency_code")
+	dropString(doc, "handEditedKeys", "currency_code")
+	return json.Marshal(doc)
+}
+
+// dropString removes one member from a string array, deleting the empty array
+// so the payload does not grow or keep a stale decision.
+func dropString(doc map[string]any, field, want string) {
+	list, _ := doc[field].([]any)
+	if len(list) == 0 {
+		return
+	}
+	kept := list[:0]
+	for _, item := range list {
+		if text, ok := item.(string); ok && text == want {
+			continue
+		}
+		kept = append(kept, item)
+	}
+	if len(kept) == 0 {
+		delete(doc, field)
+		return
+	}
+	doc[field] = kept
+}
+
+// requireStoreCurrency refuses a send whose frozen item currency contradicts
+// the store's known contract currency. Ozon accepts the import task and only
+// rejects the row asynchronously with currency_differs_from_contract, so this
+// is the last local gate before a write. The freeze already stamps the known
+// contract currency; this check catches a freeze path that skipped it. An
+// empty company_currency means the store has not been read from
+// /v1/seller/info yet; a send is not blocked on missing knowledge.
+func requireStoreCurrency(ctx context.Context, tx pgx.Tx, orgID int64, storeID string, ready []frozen) error {
+	contract, err := storeContractCurrency(ctx, tx, orgID, storeID)
+	if err != nil {
+		return err
+	}
+	if contract == "" {
+		return nil
+	}
+	for _, row := range ready {
+		currency := frozenCurrency(row.importBody)
+		if currency == "" || currency == contract {
+			continue
+		}
+		return statusErr(409, "商品币种 "+currency+" 与店铺合同币种 "+contract+" 不一致，本批未发送；请重新测试店铺连接刷新合同币种后重试", "currency_mismatch")
+	}
+	return nil
+}
+
+// frozenCurrency reads the single import item's currency. An unreadable body
+// is left to the existing freeze and dispatch checks.
+func frozenCurrency(body []byte) string {
+	var parsed struct {
+		Items []struct {
+			Currency string `json:"currency_code"`
+		} `json:"items"`
+	}
+	if json.Unmarshal(body, &parsed) != nil || len(parsed.Items) != 1 {
+		return ""
+	}
+	return strings.ToUpper(strings.TrimSpace(parsed.Items[0].Currency))
+}
+
+func (svc Service) enqueueDrafts(ctx context.Context, tx pgx.Tx, orgID, userID int64, storeID string, ready []frozen, now time.Time) ([]DraftItem, error) {
 	if err := requireStoreSubscription(ctx, tx, orgID, userID, storeID, now); err != nil {
+		return nil, err
+	}
+	if err := requireStoreCurrency(ctx, tx, orgID, storeID, ready); err != nil {
 		return nil, err
 	}
 
@@ -697,7 +843,7 @@ func enqueueDrafts(ctx context.Context, tx pgx.Tx, orgID, userID int64, storeID 
 	for i, row := range ready {
 		minted[i] = newID()
 		batch.Queue(insertIntentSQL,
-			minted[i], orgID, storeID, row.rowID, row.revision, row.clientOp, row.digest, row.offerID, row.cardID)
+			minted[i], orgID, storeID, row.rowID, row.revision, row.clientOp, row.digest, row.offerID, row.cardID, sliceImageURLs(row.importBody))
 		batch.Queue(readIntentSQL, orgID, storeID, row.clientOp)
 	}
 	var replays []int
@@ -795,13 +941,10 @@ func enqueueDrafts(ctx context.Context, tx pgx.Tx, orgID, userID int64, storeID 
 			SubmitterUserID: userID, MaxAttempts: 8, Priority: 50,
 		})
 	}
-	if err := tenant.EnterWorker(ctx, tx); err != nil {
-		return nil, statusErr(500, "服务暂不可用", "internal")
+	if svc.Queue.EnqueueOn == nil {
+		return nil, statusErr(503, "服务暂不可用", "internal")
 	}
-	if _, err := queue.EnqueueOn(ctx, tx, jobs, 0); err != nil {
-		return nil, statusErr(500, "服务暂不可用", "internal")
-	}
-	if err := tenant.EnterApp(ctx, tx, orgID); err != nil {
+	if _, err := svc.Queue.EnqueueOn(ctx, tx, jobs, 0); err != nil {
 		return nil, statusErr(500, "服务暂不可用", "internal")
 	}
 	return views, nil

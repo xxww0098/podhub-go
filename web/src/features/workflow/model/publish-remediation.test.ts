@@ -24,7 +24,7 @@ const report = (
   allowed_actions: allowed,
 })
 
-const PSD_REFUSAL = "发送未执行：PSD 尚未云端保存或未绑定该类目，请重新绑定模板"
+const PSD_REFUSAL = "发送未执行：本机 PSD 不可用，请重新绑定模板"
 const killed: WorkflowProductLifecycle = {
   ...rejected,
   last_error_code: "OZON_WRITES_DISABLED",
@@ -134,7 +134,7 @@ test("a current PSD refusal is the cause, not the older write pause", () => {
   assert.doesNotMatch(text(remediation), /OZON_WRITES_DISABLED|写入已被暂停|维护/)
   assert.match(remediation.scope, /未提交到 Ozon/)
   assert.match(remediation.scope, /8 张商品图片保留/)
-  assert.match(remediation.steps.join(""), /上架方案.*同一个原始 PSD.*云端保存/s)
+  assert.match(remediation.steps.join(""), /上架方案.*同一个原始 PSD.*本机 PSD 校验和绑定完成/s)
   assert.equal(remediation.action, undefined, "no callback can rebind a PSD, so none is offered")
 })
 

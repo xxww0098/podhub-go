@@ -18,7 +18,7 @@ type StoreSeat struct {
 
 // PlanStoreSuspension decides quota_suspended for live stores that are not
 // manual_disabled. Manual and deleted rows are omitted: the caller must not
-// flip them. limit is the override when set, otherwise plans.max_stores.
+// flip them. limit is the projected organizations.store_limit.
 // A missing plan passes 0, which suspends every live non-manual store.
 // Order is create_order, then id. The first limit stores stay unsuspended.
 func PlanStoreSuspension(limit int64, rows []StoreSeat) map[int64]bool {

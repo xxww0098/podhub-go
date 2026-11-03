@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/xxww0098/podhub-go/internal/platform/seal"
@@ -51,16 +52,24 @@ func assertIntegrationVector(t *testing.T, raw json.RawMessage) {
 	if err := json.Unmarshal(raw, &vector); err != nil {
 		t.Fatal(err)
 	}
+	// The vector predates aiRuntime and environment-only storage.
 	snap, legacy, err := ParseStored([]byte(vector.Plain))
-	if err != nil || legacy || len(snap.Buckets) != 1 || snap.Buckets[0].ID != "delegate" || !snap.Buckets[0].Active {
-		t.Fatalf("parse vector: legacy=%v err=%v buckets=%+v", legacy, err, snap.Buckets)
+	if err != nil || !legacy {
+		t.Fatalf("parse vector: legacy=%v err=%v", legacy, err)
+	}
+	if snap.AIRuntime != DefaultAIRuntime() {
+		t.Fatalf("vector runtime %+v", snap.AIRuntime)
 	}
 	again, err := json.Marshal(snap)
-	if err != nil || string(again) != vector.Plain {
-		t.Fatalf("writer bytes\n got %s\nwant %s\nerr %v", again, vector.Plain, err)
+	want := `{"schemaVersion":1,"aiAccounts":[],"aiDefaultModel":"","aiRuntime":{"maxConcurrencyGlobal":0,"maxConcurrencyUser":0,"maxConcurrencyAccount":0,"userRatePerMinute":0,"leaseTtlSeconds":90,"allowPublicEgress":false}}`
+	if err != nil || string(again) != want {
+		t.Fatalf("writer bytes\n got %s\nwant %s\nerr %v", again, want, err)
 	}
-	if err := readersAccept(t, again); err != nil {
+	if _, err := seal.ParseSnapshot(again); err != nil {
 		t.Fatal(err)
+	}
+	if _, legacy, err := ParseStored(again); err != nil || legacy {
+		t.Fatalf("migrated vector reread legacy=%v err=%v", legacy, err)
 	}
 	key := KeySHA256(vector.KeyString)
 	nonce, err := hex.DecodeString(vector.NonceHex)
@@ -71,7 +80,7 @@ func assertIntegrationVector(t *testing.T, raw json.RawMessage) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plain, err := Open(key, []byte(configAAD), nonce, cipher)
+	plain, err := Open(key, []byte(seal.SnapshotAAD), nonce, cipher)
 	if err != nil || string(plain) != vector.Plain {
 		t.Fatalf("open vector: %v %s", err, plain)
 	}
@@ -85,52 +94,29 @@ func TestAdminWriteRoundTripAndSnakeRewrite(t *testing.T) {
 	payment := &seal.StoredPaymentConfig{Providers: []seal.StoredPaymentProvider{{
 		Provider: "manual", Enabled: false, Values: map[string]string{"appId": "kept"},
 	}}}
-	transit := StoredBucket{
-		ID: "media", Label: "中转", Role: "transit", Provider: "cloudflare",
-		Endpoint: "https://acct.r2.cloudflarestorage.com", Region: "auto", Bucket: "podhub-transit",
-		KeyPrefix: "slices", PublicBase: "https://transit.podhub.si", ForcePath: true,
-		AccessKey: "AKIA", SecretKey: "secret", SessionToken: "", Active: true,
-	}
-	private := transit
-	private.ID = "delegate"
-	private.Label = "delegate-assets"
-	private.Role = "private"
-	private.Bucket = "podhub-private"
-	private.KeyPrefix = ""
-	private.PublicBase = ""
-	assets := transit
-	assets.ID = "supplier"
-	assets.Role = "assets"
-	assets.Bucket = "podhub-assets"
-	assets.PublicBase = "https://assets.podhub.si"
 	snap := Snapshot{
 		SchemaVersion: 1,
 		AIAccounts: []StoredAI{{
 			ID: "ai", Label: "主账号", BaseURL: "https://ai.example", APIFormat: "chat_completions",
-			Model: "m", APIKey: "k", Active: true, Thinking: "provider_default", ThinkingFormat: "none", Priority: 3,
+			Model: "m", APIKey: "k", Active: true, Thinking: "provider_default", ThinkingFormat: "none", Priority: 3, Purpose: PurposeOCR,
 		}},
 		AIDefaultModel: "m",
-		Buckets:        []StoredBucket{transit, assets, private},
+		AIRuntime:      AIRuntime{MaxConcurrencyGlobal: 8, MaxConcurrencyUser: 2, MaxConcurrencyAccount: 4, UserRatePerMinute: 30, LeaseTTLSeconds: 120, AllowPublicEgress: true},
 		Payment:        payment,
 	}
 	camel, err := json.Marshal(snap)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := readersAccept(t, camel); err != nil {
+	if _, err := seal.ParseSnapshot(camel); err != nil {
 		t.Fatal(err)
 	}
 	parsed, legacy, err := ParseStored(camel)
-	if err != nil || legacy || parsed.AIAccounts[0].APIKey != "k" || parsed.Buckets[0].KeyPrefix != "slices" || mustPayment(t, parsed.Payment) != mustPayment(t, payment) {
+	if err != nil || legacy || parsed.AIAccounts[0].APIKey != "k" || parsed.AIAccounts[0].Purpose != PurposeOCR || parsed.AIRuntime != snap.AIRuntime || mustPayment(t, parsed.Payment) != mustPayment(t, payment) {
 		t.Fatalf("camel reread legacy=%v err=%v %+v", legacy, err, parsed)
 	}
-	accounts, err := parseSnapshot(camel)
-	if err != nil || len(accounts) != 3 || accounts[0].AccessKeyID != "AKIA" || accounts[0].PublicBaseURL != "https://transit.podhub.si" || accounts[0].KeyPrefix != "slices" {
-		t.Fatalf("buckets %v %+v", err, accounts)
-	}
 
-	// The single-account document is upgraded to roles: the active media
-	// account is transit, then supplier and delegate keep their own roles.
+	// Rewriting old documents preserves AI and payment and removes storage.
 	snake := []byte(`{"schema_version":1,"ai_default_model":"m","ai_accounts":[{"id":"ai","label":"主账号","base_url":"https://ai.example","api_format":"chat_completions","model":"m","api_key":"k","active":true,"thinking":"provider_default","thinking_format":"none","priority":3}],"media_accounts":[{"id":"media","label":"切片","provider":"cloudflare","endpoint":"https://acct.r2.cloudflarestorage.com","region":"auto","bucket":"podhub-slices","key_prefix":"slices","public_base_url":"https://cdn.example","force_path_style":true,"access_key_id":"AKIA","secret_access_key":"secret","session_token":"","active":true}],"supplier_db_storage":{"id":"supplier","label":"切片","provider":"cloudflare","endpoint":"https://acct.r2.cloudflarestorage.com","region":"auto","bucket":"supplier-db","key_prefix":"slices","public_base_url":"https://supplier.example","force_path_style":true,"access_key_id":"AKIA","secret_access_key":"secret","session_token":"","active":true},"delegate_assets_storage":{"id":"delegate","label":"delegate-assets","provider":"cloudflare","endpoint":"https://acct.r2.cloudflarestorage.com","region":"auto","bucket":"delegate-assets","key_prefix":"","public_base_url":"","force_path_style":true,"access_key_id":"AKIA","secret_access_key":"secret","session_token":"","active":true},"payment":{"providers":[{"provider":"manual","enabled":false,"values":{"appId":"kept"}}]}}`)
 	if _, err := seal.ParseSnapshot(snake); err == nil {
 		t.Fatal("delegate reader accepted snake_case")
@@ -139,15 +125,15 @@ func TestAdminWriteRoundTripAndSnakeRewrite(t *testing.T) {
 	if err != nil || !legacy {
 		t.Fatalf("snake read legacy=%v err=%v", legacy, err)
 	}
-	if len(old.Buckets) != 3 || old.Buckets[0].Role != "transit" || old.Buckets[1].Role != "assets" || old.Buckets[2].Role != "private" {
-		t.Fatalf("upgrade %+v", old.Buckets)
-	}
 	rewritten, err := json.Marshal(old)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if strings.Contains(string(rewritten), "AKIA") || strings.Contains(string(rewritten), "storageBuckets") {
+		t.Fatal("rewritten snapshot retained storage settings")
+	}
 	again, legacy, err := ParseStored(rewritten)
-	if err != nil || legacy || again.Buckets[2].Bucket != "delegate-assets" || mustPayment(t, again.Payment) != mustPayment(t, payment) {
+	if err != nil || legacy || again.AIAccounts[0].APIKey != "k" || mustPayment(t, again.Payment) != mustPayment(t, payment) {
 		t.Fatalf("rewritten reread legacy=%v err=%v", legacy, err)
 	}
 	if _, _, err := ParseStored([]byte(`{"schemaVersion":2,"aiAccounts":[],"aiDefaultModel":"","storageBuckets":[]}`)); err == nil || err.Error() != errSnapshotVersion.Error() {
@@ -168,17 +154,6 @@ func mustPayment(t *testing.T, payment *seal.StoredPaymentConfig) string {
 		t.Fatal(err)
 	}
 	return string(raw)
-}
-
-func readersAccept(t *testing.T, plain []byte) error {
-	t.Helper()
-	if _, err := seal.ParseSnapshot(plain); err != nil {
-		return err
-	}
-	if _, err := parseSnapshot(plain); err != nil {
-		return err
-	}
-	return nil
 }
 
 func assertCredentialV1(t *testing.T, raw json.RawMessage) {

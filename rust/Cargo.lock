@@ -363,15 +363,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "listing-tags"
-version = "0.0.0"
-dependencies = [
- "serde",
- "serde_json",
- "unicode-normalization",
-]
-
-[[package]]
 name = "litrs"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -820,10 +811,6 @@ checksum = "7ef64dbcc55df09c7e5a46182d181c2cfa3e925f3da937ea764728b4bbb9dcbf"
 dependencies = [
  "unicode-ident",
 ]
-
-[[package]]
-name = "wasm-host-probe"
-version = "0.0.0"
 
 [[package]]
 name = "wasm_sync"

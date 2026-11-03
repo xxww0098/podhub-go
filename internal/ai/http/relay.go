@@ -1,123 +1,47 @@
 package aihttp
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"log/slog"
-	"math"
-	"net/http"
-	"net/url"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	billing "github.com/xxww0098/podhub-go/internal/billing/contract"
+	"github.com/xxww0098/podhub-go/internal/platform/aiclient"
 	"github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
-	"github.com/xxww0098/podhub-go/internal/platform/httpx"
-	"github.com/xxww0098/podhub-go/internal/platform/llm"
-	"github.com/xxww0098/podhub-go/internal/platform/newapibilling"
 	"github.com/xxww0098/podhub-go/internal/platform/writer"
 )
 
-const maxBody = 2 * 1024 * 1024
+const maxBody = aiclient.MaxBody
 
-// Upstream posts one Chat Completions body. The host still checks the URL is loopback.
-type Upstream interface {
-	Complete(ctx context.Context, endpoint string, body []byte) (status int, response []byte, err error)
-}
-
-// HTTPUpstream is the loopback client. It refuses any host that is not loopback.
-type HTTPUpstream struct {
-	Client *http.Client
-}
-
-// defaultUpstreamClient does not follow redirects and does not use a proxy.
-var defaultUpstreamClient = httpx.RestrictedClient()
-
-func (h HTTPUpstream) Complete(ctx context.Context, endpoint string, body []byte) (int, []byte, error) {
-	if err := Loopback(endpoint); err != nil {
-		return 0, nil, err
-	}
-	client := h.Client
-	if client == nil {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, 60*time.Second)
-		defer cancel()
-		client = defaultUpstreamClient
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return 0, nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, nil, err
-	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
-	return resp.StatusCode, raw, err
-}
-
-// Loopback refuses a URL whose host is not 127.0.0.1, localhost, or ::1.
-func Loopback(raw string) error {
-	parsed, err := url.Parse(raw)
-	if err != nil {
-		return err
-	}
-	switch strings.ToLower(parsed.Hostname()) {
-	case "127.0.0.1", "localhost", "::1":
-		return nil
-	default:
-		return errors.New("upstream host refused")
-	}
-}
-
-// Deps wires chat. A nil Converter uses llm.Default. A nil Upstream uses HTTPUpstream.
-// Limits nil reads the environment. BaseURL empty refuses before a hold.
+// Deps wires chat. Text resolves the active provider account for one model and
+// format; nil refuses every text request before a hold. Limits loads the
+// platform AI ceilings for one request; an error fails the request closed. Nil
+// means every ceiling off with the default lease TTL.
 type Deps struct {
-	Pool      *pgxpool.Pool
-	Upstream  Upstream
-	Converter llm.Converter
-	BaseURL   string
-	AccountID string
-	Limits    *Limits
+	Pool   *pgxpool.Pool
+	Text   TextResolver
+	Limits func(context.Context) (Limits, error)
+	Images *ImageRuntime
+	OCR    *OCRRuntime
+	Wallet Wallet
 }
 
-func (d Deps) limits() Limits {
-	if d.Limits != nil {
-		return *d.Limits
+func (d Deps) limits(ctx context.Context) (Limits, Response) {
+	if d.Limits == nil {
+		return Limits{}, Response{}
 	}
-	return LimitsFromEnv()
-}
-
-func (d Deps) account() string {
-	if d.AccountID != "" {
-		return d.AccountID
+	limits, err := d.Limits(ctx)
+	if err != nil {
+		return Limits{}, fail(503, "RELAY_UNAVAILABLE", "AI 服务配置暂不可用")
 	}
-	return "loopback"
-}
-
-func (d Deps) converter() llm.Converter {
-	if d.Converter != nil {
-		return d.Converter
-	}
-	return llm.Default()
-}
-
-func (d Deps) upstream() Upstream {
-	if d.Upstream != nil {
-		return d.Upstream
-	}
-	return HTTPUpstream{}
+	return limits, Response{}
 }
 
 // Response is one AI HTTP result. JSON is nil when Status is zero.
@@ -127,10 +51,15 @@ type Response struct {
 	JSON       any
 }
 
-// Chat runs hold, loopback completion, and settle for one Idempotency-Key.
-func Chat(ctx context.Context, deps Deps, orgID, userID int64, idempotency string, body []byte) Response {
+// Chat runs hold, one native provider call, and settle for one
+// Idempotency-Key. format is the inbound wire format and the account format;
+// this build never converts between them.
+func Chat(ctx context.Context, deps Deps, format aiclient.Format, orgID, userID int64, idempotency string, body []byte) Response {
 	if deps.Pool == nil {
 		return fail(500, "INTERNAL", "服务暂不可用")
+	}
+	if !format.Valid() {
+		return fail(400, "VALIDATION", "不支持该 AI 接口格式")
 	}
 	key, ok := Key(idempotency)
 	if !ok {
@@ -139,33 +68,49 @@ func Chat(ctx context.Context, deps Deps, orgID, userID int64, idempotency strin
 	if len(body) > maxBody {
 		return fail(400, "VALIDATION", "请求格式无效")
 	}
-	model, err := requestModel(body)
+	model, err := aiclient.Model(body)
 	if err != nil {
 		return fail(400, "VALIDATION", "请求格式无效")
 	}
-	if replay, ok := lookup(ctx, deps.Pool, orgID, key, "ai_token"); ok {
+	stamped, err := aiclient.Stamp(body, model, format)
+	if errors.Is(err, aiclient.ErrStreaming) {
+		return fail(400, "VALIDATION", "当前不支持流式响应")
+	}
+	if err != nil {
+		return fail(400, "VALIDATION", "请求格式无效")
+	}
+	if replay, ok := lookup(ctx, deps.Pool, orgID, key, "ai_token", format); ok {
 		return replay
 	}
-	endpoint, err := endpoint(deps.BaseURL)
-	if err != nil {
-		return fail(503, "RELAY_UNAVAILABLE", "模型价格未发布")
+	if deps.Wallet.CurrentForModel == nil {
+		return fail(500, "INTERNAL", "服务暂不可用")
 	}
-	price, found, err := billing.CurrentForModel(ctx, deps.Pool, model)
+	price, found, err := currentPrice(ctx, deps, orgID, model)
 	if err != nil {
 		return fail(500, "INTERNAL", "服务暂不可用")
 	}
 	if !found {
 		return fail(503, "RELAY_UNAVAILABLE", "模型价格未发布")
 	}
-	schedule := scheduleOf(price)
-	if _, err := newapibilling.QuoteSettle(schedule, newapibilling.Usage{}); err != nil {
+	if _, err := price.ChargeUsage(billing.Usage{}); err != nil {
 		return fail(503, "RELAY_UNAVAILABLE", "模型价格未发布")
 	}
-	holdMicro, err := newapibilling.QuotePrepay(schedule, EstimatePromptTokens(body))
+	holdMicro, err := price.QuotePrepay()
 	if err != nil {
 		return fail(503, "RELAY_UNAVAILABLE", "模型价格未发布")
 	}
-	lease, status, message := Acquire(ctx, deps.Pool, deps.limits(), userID, deps.account(), true)
+	if deps.Text == nil {
+		return fail(503, "RELAY_UNAVAILABLE", "模型服务未配置")
+	}
+	provider, err := deps.Text.Resolve(ctx, model, format)
+	if err != nil || provider.AccountID == "" || provider.Complete == nil {
+		return fail(503, "RELAY_UNAVAILABLE", "模型服务未配置")
+	}
+	limits, resp := deps.limits(ctx)
+	if resp.Status != 0 {
+		return resp
+	}
+	lease, status, message := Acquire(ctx, deps.Pool, limits, userID, provider.AccountID, true)
 	if status != 0 {
 		code := "BUSY"
 		if status == 503 {
@@ -179,65 +124,62 @@ func Chat(ctx context.Context, deps Deps, orgID, userID int64, idempotency strin
 	}
 	defer lease.Release(context.Background())
 
-	opened, resp := openHold(ctx, deps, orgID, userID, key, model, price, holdMicro)
+	opened, resp := openHold(ctx, deps, orgID, userID, key, model, format, provider.AccountID, price, holdMicro)
 	if resp.Status != 0 {
 		return resp
 	}
-	stamped, err := Stamp(body, model)
+	statusCode, raw, err := provider.Complete(ctx, stamped)
 	if err != nil {
-		_ = releaseRequest(ctx, deps.Pool, orgID, opened, "failed", "invalid_request", nil)
-		return fail(502, "UPSTREAM_FAILED", "AI 服务请求失败，本次未计费")
-	}
-	if err := deps.converter().AcceptChat(ctx, stamped, model); err != nil {
-		slog.Warn("relaykit accept chat", "err", err)
-	}
-	statusCode, raw, err := deps.upstream().Complete(ctx, endpoint, stamped)
-	if err != nil {
-		class := "transport_unknown"
-		terminal := "unbilled_unknown"
-		if Loopback(endpoint) != nil {
-			class = "relay_configuration"
-			terminal = "failed"
+		terminal, class := "unbilled_unknown", "transport_unknown"
+		if errors.Is(err, aiclient.ErrFormat) || errors.Is(err, aiclient.ErrInvalid) {
+			terminal, class = "failed", "relay_configuration"
 		}
-		_ = releaseRequest(ctx, deps.Pool, orgID, opened, terminal, class, nil)
+		_ = releaseRequest(ctx, deps, orgID, opened, terminal, class, nil)
 		if terminal == "failed" {
 			return fail(502, "UPSTREAM_FAILED", "AI 服务请求失败，本次未计费")
 		}
 		return fail(504, "UPSTREAM_UNKNOWN", "AI 服务请求失败，本次未计费，请更换新的 Idempotency-Key 重试")
 	}
-	if statusCode != http.StatusOK {
-		return settleFault(ctx, deps.Pool, orgID, opened, statusCode, raw)
+	if statusCode != 200 {
+		return settleFault(ctx, deps, orgID, opened, statusCode, raw)
 	}
-	folded, err := FoldCompletion(raw)
+	completion := raw
+	if format == aiclient.ChatCompletions {
+		completion, err = FoldCompletion(raw)
+		if err != nil {
+			_ = releaseRequest(ctx, deps, orgID, opened, "unbilled_unknown", "missing_usage", raw)
+			return fail(502, "UPSTREAM_UNBILLABLE", "AI 服务请求失败，本次未计费，请更换新的 Idempotency-Key 重试")
+		}
+	}
+	usage, responseID, err := ParseUsage(format, completion)
 	if err != nil {
-		_ = releaseRequest(ctx, deps.Pool, orgID, opened, "unbilled_unknown", "missing_usage", raw)
+		_ = releaseRequest(ctx, deps, orgID, opened, "unbilled_unknown", "missing_usage", completion)
 		return fail(502, "UPSTREAM_UNBILLABLE", "AI 服务请求失败，本次未计费，请更换新的 Idempotency-Key 重试")
 	}
-	if err := deps.converter().AcceptCompletion(ctx, folded, model); err != nil {
-		slog.Warn("relaykit accept completion", "err", err)
-	}
-	usage, responseID, err := ParseUsage(folded)
+	charge, err := opened.Price.ChargeUsage(usage)
 	if err != nil {
-		_ = releaseRequest(ctx, deps.Pool, orgID, opened, "unbilled_unknown", "missing_usage", folded)
+		_ = releaseRequest(ctx, deps, orgID, opened, "unbilled_unknown", "usage_not_priceable", completion)
 		return fail(502, "UPSTREAM_UNBILLABLE", "AI 服务请求失败，本次未计费，请更换新的 Idempotency-Key 重试")
 	}
-	narrow, err := narrowUsage(usage)
-	if err != nil {
-		_ = releaseRequest(ctx, deps.Pool, orgID, opened, "unbilled_unknown", "usage_not_priceable", folded)
-		return fail(502, "UPSTREAM_UNBILLABLE", "AI 服务请求失败，本次未计费，请更换新的 Idempotency-Key 重试")
-	}
-	settled, err := newapibilling.QuoteSettle(scheduleOf(opened.Price), narrow)
-	if err != nil {
-		_ = releaseRequest(ctx, deps.Pool, orgID, opened, "unbilled_unknown", "usage_not_priceable", folded)
-		return fail(502, "UPSTREAM_UNBILLABLE", "AI 服务请求失败，本次未计费，请更换新的 Idempotency-Key 重试")
-	}
-	view, err := settleRequest(ctx, deps.Pool, orgID, opened, usage, settled, responseID, folded)
+	view, err := settleRequest(ctx, deps, orgID, opened, usage, charge, responseID, completion)
 	if err != nil {
 		return fail(500, "INTERNAL", "服务暂不可用")
 	}
 	return Response{Status: 200, JSON: map[string]any{
-		"completion": json.RawMessage(folded), "billing": view, "listing_row": nil,
+		"completion": json.RawMessage(completion), "billing": view, "listing_row": nil,
 	}}
+}
+
+// currentPrice reads the in-effect price through the tenant role. The price
+// table is not readable by the login role, so a bare pool read is denied;
+// every tenant query has to enter podhub_app inside its transaction.
+func currentPrice(ctx context.Context, deps Deps, orgID int64, model string) (billing.Price, bool, error) {
+	tx, err := tenantx.BeginApp(ctx, deps.Pool.Begin, orgID)
+	if err != nil {
+		return billing.Price{}, false, err
+	}
+	defer tx.Rollback(ctx)
+	return deps.Wallet.CurrentForModel(ctx, tx, model)
 }
 
 type openedHold struct {
@@ -249,13 +191,16 @@ type openedHold struct {
 	Price     billing.Price
 }
 
-func openHold(ctx context.Context, deps Deps, orgID, userID int64, key, model string, price billing.Price, hold int64) (openedHold, Response) {
+func openHold(ctx context.Context, deps Deps, orgID, userID int64, key, model string, format aiclient.Format, accountID string, price billing.Price, hold int64) (openedHold, Response) {
 	tx, err := deps.Pool.Begin(ctx)
 	if err != nil {
 		return openedHold{}, fail(500, "INTERNAL", "服务暂不可用")
 	}
 	defer endTx(ctx, tx)
-	if err := tenantx.EnterApp(ctx, tx, orgID); err != nil || billing.RequireOrg(ctx, tx, orgID) != nil {
+	if err := tenantx.EnterApp(ctx, tx, orgID); err != nil {
+		return openedHold{}, fail(500, "INTERNAL", "服务暂不可用")
+	}
+	if deps.Wallet.RequireOrg == nil || deps.Wallet.RequireOrg(ctx, tx, orgID) != nil {
 		return openedHold{}, fail(500, "INTERNAL", "服务暂不可用")
 	}
 	if resp := assertBilling(ctx, tx); resp.Status != 0 {
@@ -278,11 +223,11 @@ func openHold(ctx context.Context, deps Deps, orgID, userID int64, key, model st
 		     output_microfen_per_million, reasoning_microfen_per_million, held_microfen,
 		     thinking_depth, channel_name, api_format, dispatched_at)
 		VALUES ($1, $2, $3, $4, 'ai_token', $5, $6, 'dispatching', $7, $8, $9, $10, $11, $12, $13, $14,
-		        NULL, NULL, 'chat_completions', clock_timestamp())
+		        NULL, NULL, $15, clock_timestamp())
 		ON CONFLICT (org_id, idempotency_key) WHERE status <> 'failed' DO NOTHING
 		RETURNING id, created_at`,
-		publicID, orgID, userID, key, model, deps.account(), price.ID, price.BillingMode, price.PerRequest,
-		price.Input, price.CachedInput, price.Output, price.Reasoning, hold).Scan(&opened.ID, &opened.CreatedAt)
+		publicID, orgID, userID, key, model, accountID, price.ID, price.BillingMode, price.PerRequest,
+		price.Input, price.CachedInput, price.Output, price.Reasoning, hold, string(format)).Scan(&opened.ID, &opened.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		resp := fail(409, "REQUEST_IN_FLIGHT", "相同 Idempotency-Key 的请求仍在处理")
 		resp.RetryAfter = "1"
@@ -292,7 +237,10 @@ func openHold(ctx context.Context, deps Deps, orgID, userID int64, key, model st
 		return openedHold{}, fail(500, "INTERNAL", "服务暂不可用")
 	}
 	if hold > 0 {
-		if _, err := billing.HoldTx(ctx, tx, orgID, publicID, &opened.ID, hold); err != nil {
+		if deps.Wallet.HoldTx == nil {
+			return openedHold{}, fail(500, "INTERNAL", "服务暂不可用")
+		}
+		if _, err := deps.Wallet.HoldTx(ctx, tx, orgID, publicID, &opened.ID, hold); err != nil {
 			var funds *billing.Error
 			if errors.As(err, &funds) && funds.Insufficient {
 				return openedHold{}, fail(402, "INSUFFICIENT_BALANCE", funds.Error())
@@ -306,8 +254,13 @@ func openHold(ctx context.Context, deps Deps, orgID, userID int64, key, model st
 	return opened, Response{}
 }
 
-func settleRequest(ctx context.Context, pool *pgxpool.Pool, orgID int64, opened openedHold, usage billing.Usage, settled newapibilling.Settlement, responseID string, body []byte) (billingView, error) {
-	tx, err := pool.Begin(ctx)
+func settleRequest(ctx context.Context, deps Deps, orgID int64, opened openedHold, usage billing.Usage, charge billing.Charge, responseID string, body []byte) (billingView, error) {
+	return settleRequestWith(ctx, deps, orgID, opened, usage, charge, responseID, body, nil)
+}
+
+// settleRequestWith pins an image result in the same transaction as its wallet charge.
+func settleRequestWith(ctx context.Context, deps Deps, orgID int64, opened openedHold, usage billing.Usage, charge billing.Charge, responseID string, body []byte, persist func(pgx.Tx) error) (billingView, error) {
+	tx, err := deps.Pool.Begin(ctx)
 	if err != nil {
 		return billingView{}, err
 	}
@@ -325,17 +278,16 @@ func settleRequest(ctx context.Context, pool *pgxpool.Pool, orgID int64, opened 
 	if status != "held" && status != "dispatching" {
 		return billingView{}, errors.New("terminal")
 	}
-	charged, absorbed := int64(0), settled.Microfen
+	charged, absorbed := int64(0), charge.Total
 	if opened.Held > 0 {
-		wallet, err := billing.SettleTx(ctx, tx, orgID, opened.PublicID, &opened.ID, opened.Held, settled.Microfen)
+		if deps.Wallet.SettleTx == nil {
+			return billingView{}, errWalletNotWired
+		}
+		wallet, err := deps.Wallet.SettleTx(ctx, tx, orgID, opened.PublicID, &opened.ID, opened.Held, charge.Total)
 		if err != nil {
 			return billingView{}, err
 		}
 		charged, absorbed = wallet.ChargedMicrofen, wallet.AbsorbedMicrofen
-	}
-	charge := billing.Charge{
-		UncachedInput: settled.Uncached, CachedInput: settled.Cached,
-		Output: settled.Output, Reasoning: settled.Reasoning, Total: settled.Microfen,
 	}
 	var upstream *string
 	if responseID != "" {
@@ -363,7 +315,7 @@ func settleRequest(ctx context.Context, pool *pgxpool.Pool, orgID int64, opened 
 	if err := tx.QueryRow(ctx, `SELECT COALESCE(name, '') FROM account_users WHERE id = $1`, opened.UserID).Scan(&username); err != nil {
 		return billingView{}, err
 	}
-	other, err := logOther(settled, charged, absorbed, int(usage.CachedPromptTokens))
+	other, err := logOther(charge, charged, absorbed, int(usage.CachedPromptTokens))
 	if err != nil {
 		return billingView{}, err
 	}
@@ -373,12 +325,17 @@ func settleRequest(ctx context.Context, pool *pgxpool.Pool, orgID int64, opened 
 	}
 	if err := insertConsumeLog(ctx, tx, consumeLog{
 		OrgID: orgID, RequestID: opened.ID, UserID: opened.UserID, CreatedAt: time.Now().Unix(),
-		Content: fmt.Sprintf("quota %d", settled.Quota), Username: username, Model: opened.Price.Model,
-		Quota: settled.Quota, Prompt: int(usage.PromptTokens), Completion: int(usage.CompletionTokens),
-		UseTime: use, Group: newapibilling.UsingGroup, IP: clientIPFrom(ctx),
+		Content: fmt.Sprintf("quota %d", charge.Total), Username: username, Model: opened.Price.Model,
+		Quota: int(charge.Total), Prompt: int(usage.PromptTokens), Completion: int(usage.CompletionTokens),
+		UseTime: use, Group: "default", IP: clientIPFrom(ctx),
 		PublicID: opened.PublicID, UpstreamID: responseID, Other: other,
 	}); err != nil {
 		return billingView{}, err
+	}
+	if persist != nil {
+		if err := persist(tx); err != nil {
+			return billingView{}, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return billingView{}, err
@@ -389,8 +346,8 @@ func settleRequest(ctx context.Context, pool *pgxpool.Pool, orgID int64, opened 
 	return view, nil
 }
 
-func releaseRequest(ctx context.Context, pool *pgxpool.Pool, orgID int64, opened openedHold, status, class string, body []byte) error {
-	tx, err := pool.Begin(ctx)
+func releaseRequest(ctx context.Context, deps Deps, orgID int64, opened openedHold, status, class string, body []byte) error {
+	tx, err := deps.Pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
@@ -410,7 +367,10 @@ func releaseRequest(ctx context.Context, pool *pgxpool.Pool, orgID int64, opened
 		return nil
 	}
 	if held > 0 {
-		if _, err := billing.ReleaseTx(ctx, tx, orgID, opened.PublicID, &opened.ID, held, class); err != nil {
+		if deps.Wallet.ReleaseTx == nil {
+			return errWalletNotWired
+		}
+		if _, err := deps.Wallet.ReleaseTx(ctx, tx, orgID, opened.PublicID, &opened.ID, held, class); err != nil {
 			return err
 		}
 	}
@@ -429,7 +389,7 @@ func releaseRequest(ctx context.Context, pool *pgxpool.Pool, orgID int64, opened
 	return tx.Commit(ctx)
 }
 
-func settleFault(ctx context.Context, pool *pgxpool.Pool, orgID int64, opened openedHold, status int, body []byte) Response {
+func settleFault(ctx context.Context, deps Deps, orgID int64, opened openedHold, status int, body []byte) Response {
 	terminal := "unbilled_unknown"
 	class := "upstream_request_error"
 	code := "UPSTREAM_FAILED"
@@ -447,15 +407,16 @@ func settleFault(ctx context.Context, pool *pgxpool.Pool, orgID int64, opened op
 	case status >= 500 && status <= 599:
 		class = "upstream_server_error"
 	}
-	if err := releaseRequest(ctx, pool, orgID, opened, terminal, class, body); err != nil {
+	if err := releaseRequest(ctx, deps, orgID, opened, terminal, class, body); err != nil {
 		return fail(500, "INTERNAL", "服务暂不可用")
 	}
 	return fail(502, code, message)
 }
 
-func lookup(ctx context.Context, pool *pgxpool.Pool, orgID int64, key, operation string) (Response, bool) {
+func lookup(ctx context.Context, pool *pgxpool.Pool, orgID int64, key, operation string, format aiclient.Format) (Response, bool) {
 	var row struct {
 		Operation string
+		Format    string
 		Status    string
 		Body      []byte
 		Class     *string
@@ -468,7 +429,7 @@ func lookup(ctx context.Context, pool *pgxpool.Pool, orgID int64, key, operation
 	}
 	defer tx.Rollback(ctx)
 	err = tx.QueryRow(ctx, `
-		SELECT operation, status, response_body, error_class, public_id, model,
+		SELECT operation, api_format, status, response_body, error_class, public_id, model,
 		       prompt_tokens, cached_prompt_tokens, completion_tokens, reasoning_completion_tokens,
 		       uncached_input_microfen, cached_input_microfen, output_microfen, reasoning_microfen,
 		       total_microfen, charged_microfen, absorbed_microfen, held_microfen,
@@ -478,7 +439,7 @@ func lookup(ctx context.Context, pool *pgxpool.Pool, orgID int64, key, operation
 		  FROM ai_requests
 		 WHERE org_id = $1 AND idempotency_key = $2
 		 ORDER BY id DESC LIMIT 1`, orgID, key).Scan(
-		&row.Operation, &row.Status, &row.Body, &row.Class, &row.View.RequestID, &row.View.Model,
+		&row.Operation, &row.Format, &row.Status, &row.Body, &row.Class, &row.View.RequestID, &row.View.Model,
 		&row.View.PromptTokens, &row.View.CachedPromptTokens, &row.View.CompletionTokens, &row.View.ReasoningCompletionTokens,
 		&row.View.UncachedInput, &row.View.CachedInput, &row.View.Output, &row.View.Reasoning,
 		&row.View.Total, &row.View.Charged, &row.View.Absorbed, &row.View.Price.MaxRequest,
@@ -493,6 +454,9 @@ func lookup(ctx context.Context, pool *pgxpool.Pool, orgID int64, key, operation
 	if row.Operation != operation {
 		return fail(400, "VALIDATION", "相同 Idempotency-Key 不能复用于另一种 AI 操作"), true
 	}
+	if row.Format != "" && row.Format != string(format) {
+		return fail(409, "IDEMPOTENCY_CONFLICT", "相同 Idempotency-Key 不能复用于另一种 AI 接口格式"), true
+	}
 	row.View.Status = row.Status
 	row.View.ErrorClass = row.Class
 	if created != nil {
@@ -506,6 +470,9 @@ func lookup(ctx context.Context, pool *pgxpool.Pool, orgID int64, key, operation
 	row.View.Price.Model = row.View.Model
 	switch row.Status {
 	case "failed":
+		if operation == "ocr" {
+			return fail(409, "REQUEST_ENDED", "该识别请求已失败，请读取任务恢复状态"), true
+		}
 		return Response{}, false
 	case "held", "dispatching":
 		resp := fail(409, "REQUEST_IN_FLIGHT", "相同 Idempotency-Key 的请求仍在处理")
@@ -577,28 +544,6 @@ func viewFrom(opened openedHold, status string, usage billing.Usage, charge bill
 	}
 }
 
-func requestModel(body []byte) (string, error) {
-	var object struct {
-		Model string `json:"model"`
-	}
-	if err := json.Unmarshal(body, &object); err != nil || object.Model == "" || len(object.Model) > 128 {
-		return "", errInvalid
-	}
-	return object.Model, nil
-}
-
-func endpoint(base string) (string, error) {
-	base = strings.TrimRight(strings.TrimSpace(base), "/")
-	if base == "" {
-		return "", errors.New("no upstream")
-	}
-	raw := base + "/chat/completions"
-	if err := Loopback(raw); err != nil {
-		return "", err
-	}
-	return raw, nil
-}
-
 func endTx(ctx context.Context, tx pgx.Tx) {
 	if tx == nil {
 		return
@@ -616,40 +561,6 @@ func assertBilling(ctx context.Context, tx pgx.Tx) Response {
 		return fail(503, "WRITES_DISABLED", err.Error())
 	}
 	return fail(500, "INTERNAL", "服务暂不可用")
-}
-
-func scheduleOf(price billing.Price) newapibilling.Schedule {
-	return newapibilling.Schedule{
-		Model: price.Model, Mode: price.BillingMode,
-		Input: price.Input, Cached: price.CachedInput, Output: price.Output, Reasoning: price.Reasoning,
-		PerRequest: price.PerRequest, MaxRequest: price.MaxRequest,
-	}
-}
-
-func narrowUsage(usage billing.Usage) (newapibilling.Usage, error) {
-	conv := func(n uint64) (int, error) {
-		if n > math.MaxInt32 {
-			return 0, newapibilling.ErrOverflow
-		}
-		return int(n), nil
-	}
-	prompt, err := conv(usage.PromptTokens)
-	if err != nil {
-		return newapibilling.Usage{}, err
-	}
-	completion, err := conv(usage.CompletionTokens)
-	if err != nil {
-		return newapibilling.Usage{}, err
-	}
-	cached, err := conv(usage.CachedPromptTokens)
-	if err != nil {
-		return newapibilling.Usage{}, err
-	}
-	reasoning, err := conv(usage.ReasoningCompletionTokens)
-	if err != nil {
-		return newapibilling.Usage{}, err
-	}
-	return newapibilling.Usage{Prompt: prompt, Completion: completion, Cached: cached, Reasoning: reasoning}, nil
 }
 
 func newPublicID() (string, error) {

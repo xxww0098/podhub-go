@@ -23,10 +23,11 @@ func TestPatchAccountPasswordRaisesMustChange(t *testing.T) {
 	const actorID, memberUserID = int64(910301), int64(910302)
 	t.Cleanup(func() {
 		c := context.Background()
-		_, _ = pool.Exec(c, `DELETE FROM sc_source_members WHERE source_id = 'src_admin_patch_910301'`)
+		_, _ = pool.Exec(c, `DELETE FROM sc_factory_members WHERE factory_id = 'src_admin_patch_910301'`)
 		_, _ = pool.Exec(c, `DELETE FROM sc_sources WHERE source_id = 'src_admin_patch_910301'`)
+		_, _ = pool.Exec(c, `DELETE FROM sc_factories WHERE factory_id = 'src_admin_patch_910301'`)
 		_, _ = pool.Exec(c, `DELETE FROM audit_logs WHERE entity_id IN (
-			SELECT member_id::text FROM sc_source_members WHERE user_id = $1)`, memberUserID)
+			SELECT member_id::text FROM sc_factory_members WHERE user_id = $1)`, memberUserID)
 		_, _ = pool.Exec(c, `DELETE FROM account_users WHERE id = ANY($1)`, []int64{actorID, memberUserID})
 	})
 	supSeedLease(t, ctx, pool)
@@ -34,14 +35,17 @@ func TestPatchAccountPasswordRaisesMustChange(t *testing.T) {
 	// A supplier account: role must stay 'user' because 00360's
 	// ck_account_users_supplier_is_user refuses any other role.
 	seedAccountUser(t, ctx, pool, memberUserID, "a910302", "user", "/supplier", "supplier")
+	if _, err := pool.Exec(ctx, `INSERT INTO sc_factories (factory_id, name, created_at_ms, updated_at_ms) VALUES ('src_admin_patch_910301','补丁测试厂',1,1)`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO sc_sources (source_id, name, created_at_ms, updated_at_ms)
-		VALUES ('src_admin_patch_910301', '补丁测试厂', 1, 1)`); err != nil {
+		INSERT INTO sc_sources (source_id, name, factory_id, created_at_ms, updated_at_ms)
+		VALUES ('src_admin_patch_910301', '补丁测试厂', 'src_admin_patch_910301', 1, 1)`); err != nil {
 		t.Fatal(err)
 	}
 	var memberID string
 	if err := pool.QueryRow(ctx, `
-		INSERT INTO sc_source_members (source_id, user_id, created_by, created_at_ms)
+		INSERT INTO sc_factory_members (factory_id, user_id, created_by, created_at_ms)
 		VALUES ('src_admin_patch_910301', $1, $2, 1)
 		RETURNING member_id::text`, memberUserID, actorID).Scan(&memberID); err != nil {
 		t.Fatal(err)
@@ -50,14 +54,14 @@ func TestPatchAccountPasswordRaisesMustChange(t *testing.T) {
 	// the call proves the assertion below observes the write rather than a
 	// default.
 	if _, err := pool.Exec(ctx, `INSERT INTO account_sessions (token_hash, user_id, expires_at)
-		VALUES ('patch-test-token', $1, clock_timestamp() + interval '1 hour')`, memberUserID); err != nil {
+		VALUES (repeat('ab', 32), $1, clock_timestamp() + interval '1 hour')`, memberUserID); err != nil {
 		t.Fatal(err)
 	}
 
 	portal := Portal{Pool: pool, Begin: tenantx.BeginApp}
 	actor := contract.Actor{UserID: actorID, Role: "super_admin"}
 	password := "brand new passphrase"
-	got, initial, err := portal.PatchAccount(ctx, actor, memberID, domain.AccountPatch{Password: &password}, "$2a$12$hash")
+	got, initial, err := portal.PatchAccount(ctx, actor, memberID, domain.AccountPatch{Password: &password}, "$2a$12$hash", 4)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,44 +103,47 @@ func TestPatchAccountPasswordRaisesMustChange(t *testing.T) {
 	}
 }
 
-// TestDeleteAccountDisablesGrantsEverywhere pins doc §4.3's lifecycle rule and
-// the decision recorded for task-7: deleting a member revokes every active
-// source role the person still holds, on every source, because the account
-// itself is going away. A grant left active would keep paying out to somebody
-// whose membership no longer exists.
-func TestDeleteAccountDisablesGrantsEverywhere(t *testing.T) {
+// Removing one factory membership revokes its library grants without affecting other factories.
+func TestDeleteAccountDisablesFactoryGrants(t *testing.T) {
 	pool, ctx := supParityDB(t)
 	const actorID, memberUserID = int64(910311), int64(910312)
 	t.Cleanup(func() {
 		c := context.Background()
 		_, _ = pool.Exec(c, `DELETE FROM sc_source_fulfillers WHERE user_id = $1`, memberUserID)
-		_, _ = pool.Exec(c, `DELETE FROM sc_source_members WHERE source_id = ANY($1)`,
+		_, _ = pool.Exec(c, `DELETE FROM sc_factory_members WHERE factory_id = ANY($1)`,
 			[]string{"src_admin_del_910311", "src_admin_del_910311_other"})
 		_, _ = pool.Exec(c, `DELETE FROM sc_sources WHERE source_id = ANY($1)`,
-			[]string{"src_admin_del_910311", "src_admin_del_910311_other"})
+			[]string{"src_admin_del_910311", "src_admin_del_910311_other", "src_admin_del_910311_third"})
+		_, _ = pool.Exec(c, `DELETE FROM sc_factories WHERE factory_id = ANY($1)`, []string{"src_admin_del_910311", "src_admin_del_910311_other"})
 		_, _ = pool.Exec(c, `DELETE FROM account_users WHERE id = ANY($1)`, []int64{actorID, memberUserID})
 	})
 	supSeedLease(t, ctx, pool)
 	seedAccountUser(t, ctx, pool, actorID, "a910311", "super_admin", "/workspace", "platform")
 	seedAccountUser(t, ctx, pool, memberUserID, "a910312", "user", "/supplier", "supplier")
+	if _, err := pool.Exec(ctx, `INSERT INTO sc_factories (factory_id, name, created_at_ms, updated_at_ms) VALUES ('src_admin_del_910311','删除测试厂',1,1), ('src_admin_del_910311_other','删除测试厂二',1,1)`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO sc_sources (source_id, name, created_at_ms, updated_at_ms)
-		VALUES ('src_admin_del_910311', '删除测试厂', 1, 1),
-		       ('src_admin_del_910311_other', '删除测试厂二', 1, 1)`); err != nil {
+		INSERT INTO sc_sources (source_id, name, factory_id, created_at_ms, updated_at_ms)
+		VALUES ('src_admin_del_910311', '删除测试库', 'src_admin_del_910311', 1, 1),
+		       ('src_admin_del_910311_third', '同工厂第二库', 'src_admin_del_910311', 1, 1),
+		       ('src_admin_del_910311_other', '其他工厂的库', 'src_admin_del_910311_other', 1, 1)`); err != nil {
 		t.Fatal(err)
 	}
 	var memberID string
 	if err := pool.QueryRow(ctx, `
-		INSERT INTO sc_source_members (source_id, user_id, created_by, created_at_ms)
+		INSERT INTO sc_factory_members (factory_id, user_id, created_by, created_at_ms)
 		VALUES ('src_admin_del_910311', $1, $2, 1)
 		RETURNING member_id::text`, memberUserID, actorID).Scan(&memberID); err != nil {
 		t.Fatal(err)
 	}
-	// The doomed membership is on src_admin_del_910311; the grant is on the
-	// other source, which is exactly the case a source-scoped cleanup would miss.
+	if _, err := pool.Exec(ctx, `INSERT INTO sc_factory_members (factory_id, user_id, created_by, created_at_ms) VALUES ('src_admin_del_910311_other',$1,$2,1)`, memberUserID, actorID); err != nil {
+		t.Fatal(err)
+	}
+	// Both libraries under the removed factory must be revoked; the other factory remains active.
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO sc_source_fulfillers (source_id, user_id, created_by, created_at_ms)
-		VALUES ('src_admin_del_910311_other', $1, $2, 1)`, memberUserID, actorID); err != nil {
+		VALUES ('src_admin_del_910311', $1, $2, 1), ('src_admin_del_910311_third', $1, $2, 1), ('src_admin_del_910311_other', $1, $2, 1)`, memberUserID, actorID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -146,7 +153,7 @@ func TestDeleteAccountDisablesGrantsEverywhere(t *testing.T) {
 		t.Fatal(err)
 	}
 	var memberships int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM sc_source_members WHERE member_id = $1::uuid`, memberID).Scan(&memberships); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM sc_factory_members WHERE member_id = $1::uuid`, memberID).Scan(&memberships); err != nil {
 		t.Fatal(err)
 	}
 	if memberships != 0 {
@@ -156,12 +163,16 @@ func TestDeleteAccountDisablesGrantsEverywhere(t *testing.T) {
 	var revokedBy *int64
 	var revokedAt *int64
 	if err := pool.QueryRow(ctx, `
-		SELECT status, revoked_by, revoked_at_ms FROM sc_source_fulfillers WHERE user_id = $1`, memberUserID).
+		SELECT status, revoked_by, revoked_at_ms FROM sc_source_fulfillers WHERE user_id = $1 AND source_id='src_admin_del_910311_third'`, memberUserID).
 		Scan(&status, &revokedBy, &revokedAt); err != nil {
 		t.Fatal(err)
 	}
 	if status != "disabled" || revokedBy == nil || *revokedBy != actorID || revokedAt == nil || *revokedAt != 42 {
 		t.Fatalf("grant %q revokedBy %v revokedAt %v", status, revokedBy, revokedAt)
+	}
+	var activeOther, disabledOwn int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FILTER (WHERE source_id='src_admin_del_910311_other' AND status='active'), count(*) FILTER (WHERE source_id <> 'src_admin_del_910311_other' AND status='disabled') FROM sc_source_fulfillers WHERE user_id=$1`, memberUserID).Scan(&activeOther, &disabledOwn); err != nil || activeOther != 1 || disabledOwn != 2 {
+		t.Fatalf("other active %d own disabled %d: %v", activeOther, disabledOwn, err)
 	}
 }
 

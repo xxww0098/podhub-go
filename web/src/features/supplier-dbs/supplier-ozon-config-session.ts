@@ -10,6 +10,7 @@ import { commandErrorCode } from "@/lib/error-message"
 
 import {
   draftToOzonConfigValues,
+  draftToOzonConfigComplexValues,
   type PutSupplierOzonConfigBody,
   type SupplierOzonConfigData,
   type SupplierOzonConfigIO,
@@ -76,6 +77,7 @@ export class OzonConfigSession {
       ai_output: base?.ai_output ?? { title: true, description: true, tags: true },
       expected_revision: base?.revision ?? 0,
       values: draftToOzonConfigValues(draft, schema),
+      complex_values: draftToOzonConfigComplexValues(draft, schema),
     }
     try {
       const saved = await this.io.put(this.sourceId, this.productId, body)

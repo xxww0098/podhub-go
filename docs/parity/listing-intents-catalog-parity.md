@@ -26,10 +26,10 @@ HTTP 取消不是 `IntentTransition::CancelBeforeDispatch`。那十一条边仍�
 - `POST /api/listing/intents/release-unknown`：校验、锁活着的 workspace、按规格谓词放开。本 workspace 没有的 id 不 404。
 - `GET /api/listing/dead-letters`、`POST .../requeue`：死信谓词 `state = failed AND attempt >= max_attempts`。非法游标当成没有游标。
 - `GET /api/catalog/tree`：无 storeId 的命中 / 过期 / 损坏路径保持原字节。非空 storeId 先做可见性；缓存新鲜则同一棵树。未命中或过期时用该店 Seller 密钥回环 `POST /v1/description-category/tree`，成功后 gzip 写入 `ozon_catalog_tree_cache`（24 小时）。缺密钥 400，过期密钥 400，上游非 2xx 是 502 `类目树读取失败`。非回环基址不拨号，502 `Seller 服务暂时无法访问`。同一进程正在补拉时 503 `类目数据正在读取，请稍后重试`，`Retry-After: 3`。
-- `GET /api/catalog/schema`：新鲜缓存按 gzip 原文返回 fields（保留 golden 里的 `collection`），并附上由这些字段算出的 `nativeMaterial`。没有可用平台密钥时 `data: null`。有未禁用平台密钥且缓存未命中时，回环读取 attribute / values，成功写入缓存；全部密钥失败是 502 `平台类目读取失败，请检查平台类目密钥后重试`，并记 60 秒负缓存。
+- `GET /api/catalog/schema`：新鲜缓存从 `ozon_category_current` 返回 fields（保留 golden 里的 `collection`），并附上由这些字段算出的 `nativeMaterial`；已存 `schema_revision` 直接复用 `listing_schema_revisions` 的注册快照，读取不写库。没有可用平台密钥时 `data: null`。有未禁用平台密钥且缓存未命中或过期时，回环读取 attribute / values，成功写入当前行并注册快照；全部密钥失败是 502 `平台类目读取失败，请检查平台类目密钥后重试`，并记 60 秒负缓存。
 - `POST /api/listing/jobs/{id}/claim`、`POST /api/listing/jobs/claim-window`、`POST /api/listing/jobs/{id}/heartbeat`：浏览器执行租约，`DEFAULT_LEASE_SECS` 为 30。单条认领在配额函数返回 false 时回滚作业并 429。窗口认领配额满是 200 `data: []`。心跳影响行数不是 1 时 `{"data":false}`。非法 uuid 进 SQL，22P02 折成 500 `服务暂不可用`。这是执行租约，不走 `writer.Assert`。
 - `POST /api/listing/intents/{id}/probe`：停止条件仍是 409。通过后认领 `reconcile_claim_until`（2 分钟）再回环 `POST /v3/product/info/list`，正文 `{"offer_id":[...]}`，带 `Client-Id` / `Api-Key`。命中取 `sources[].sku` 大于 0 的第一个，`stamp_accept`。连续两次缺失 `stamp_release`。读失败 `stamp_retry`，`claim_until` 清空，状态保持 `unknown`。
-- `GET /api/catalog/fetch-config`：超级管理员。无行不插入，返回规格默认值。不选出 WB token 或 Api-Key 密文。
+- `GET /api/admin/catalog/fetch-config`：超级管理员。无行不插入，返回规格默认值。不选出 WB token 或 Api-Key 密文。
 - `GET /api/catalog/wb/subjects/{subject_id}`：坐标失败是同一句 400。空库 `catalog_unavailable`。不调用 WB。
 - `POST /api/listing/submit`：禁用标签仍是 400 `banned_tag`，门在鉴权之前。通过门但不是草稿体：400 `validation` `请求格式无效`，不写库、不入队。
 
@@ -79,4 +79,4 @@ Intent HTTP 视图统一使用 OpenAPI 已声明的 snake_case，包括列表的
 - axum 查询反序列化失败的正文是 `Failed to deserialize query string: …`，serde 原文未确认。未知意图查询参数和非法布尔返回 400 `请求格式无效`，不发明英文前缀。`limit` 非整数仍是已经上线的 400 `limit 无效`。
 - 成功 JSON 沿用现有 `jsonwire`（无 `X-Content-Type-Options`）。Rust `DomainError` 的错误响应带 nosniff。listing 标签门的 writer 本来就带 nosniff，这条没改。
 - 执行租约（jobs claim / heartbeat）与 `writer_leases` 的 `writer.Assert` 不是同一把锁。本端口没有把浏览器作业认领改成写租约。
-- `PUT /api/catalog/schema`、`PUT /api/catalog/tree`、`PUT/POST /api/catalog/fetch-config`、`wb-credential`、dictionary-search 不在当前 Go 路由表里。本次不新增（写租约、WB HTTP、或会改 golden 的挂载）。
+- `PUT /api/catalog/schema`、`PUT /api/catalog/tree`、`PUT/POST /api/admin/catalog/fetch-config`、`wb-credential`、dictionary-search 不在当前 Go 路由表里。本次不新增（写租约、WB HTTP、或会改 golden 的挂载）。

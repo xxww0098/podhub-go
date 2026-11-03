@@ -126,7 +126,7 @@ test("confirmed sign-out removes the staged proof without persisting account aut
   const originalFetch = globalThis.fetch
   globalThis.fetch = async () => new Response(JSON.stringify({ data: null }))
   t.after(() => { globalThis.fetch = originalFetch })
-  for (const signOut of [accountHttp.accountLogout, () => accountHttp.accountLogoutAccount(credential.uuid)]) {
+  for (const signOut of [accountHttp.accountLogout]) {
     const { storage, restore } = browser()
     const remove = installInvitationLink()
     try {

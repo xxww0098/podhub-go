@@ -3,7 +3,7 @@ import { AlertTriangle } from "lucide-react"
 import type { AccountOverview } from "@/bindings/commands"
 import { accountHttp } from "@/bindings/http-account"
 import { Button } from "@/components/ui/button"
-import { Empty, EmptyContent, EmptyMedia } from "@/components/ui/empty"
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Spinner } from "@/components/ui/spinner"
 import { LoginScreen } from "@/features/account/login-screen"
 import { LockedAccountScreen } from "@/app/locked-account-screen"
@@ -12,12 +12,10 @@ import {
   rememberAccountOverview,
 } from "@/features/account/account-overview-cache"
 import { PublicSite } from "@/features/site/public-site"
-import { SupplierApp } from "@/features/supplier/supplier-app"
-import { UNAUTHENTICATED_EVENT } from "@/api/client"
+import { SESSION_REFRESH_EVENT, UNAUTHENTICATED_EVENT } from "@/api/client"
 import { useAddress } from "@/hooks/use-address"
 import { replaceAddress } from "@/lib/address"
 import { resolveRoute, routeAudienceFor } from "@/lib/app-route"
-import type { PageKey } from "@/lib/public-pages"
 import { commandErrorCode, errorMessage } from "@/lib/error-message"
 import { clearLive, notifyLive } from "@/lib/notify"
 import { isSupplierPath } from "@/lib/supplier-surface"
@@ -31,6 +29,9 @@ import { useInvitationCredential } from "@/lib/invitation-link"
  */
 const AuthenticatedApp = lazy(async () => ({
   default: (await import("@/app/authenticated-app")).AuthenticatedApp,
+}))
+const FactoryApp = lazy(async () => ({
+  default: (await import("@/factory/factory-app")).FactoryApp,
 }))
 
 type AuthState =
@@ -149,9 +150,13 @@ export function SessionCheckFailed({
   return (
     <main className="flex min-h-svh items-center justify-center bg-background px-6">
       <Empty className="max-w-md flex-none">
+        <EmptyHeader>
         <EmptyMedia variant="icon">
           <AlertTriangle />
         </EmptyMedia>
+          <EmptyTitle>暂时无法进入工作台</EmptyTitle>
+          <EmptyDescription>登录状态尚未确认，请重新连接后重试。</EmptyDescription>
+        </EmptyHeader>
         <EmptyContent>
           <Button variant="outline" onClick={onRetry}>
             重试
@@ -164,25 +169,20 @@ export function SessionCheckFailed({
 
 /** A public page that still paints while the session probe is down. */
 function PublicSiteSessionDown({
-  page,
   message,
   onRetry,
 }: {
-  page: PageKey
   message: string
   onRetry: () => void
 }) {
   useSessionCheckNotice(message, onRetry)
-  return <PublicSite page={page} />
+  return <PublicSite />
 }
 
 export function App() {
   const invitationCredential = useInvitationCredential()
   const [auth, setAuth] = useState<AuthState>({ phase: "loading" })
   const [attempt, setAttempt] = useState(0)
-  // The account switcher's "添加账号" routes the signed-in operator through
-  // the login form again; Cloud stacks the fresh session on this browser.
-  const [addingAccount, setAddingAccount] = useState(false)
   // The address is the only navigation state: the resolver below turns
   // (address + standing) into the surface this render paints.
   const address = useAddress()
@@ -228,6 +228,16 @@ export function App() {
     window.addEventListener(UNAUTHENTICATED_EVENT, signedOut)
     return () => window.removeEventListener(UNAUTHENTICATED_EVENT, signedOut)
   }, [signedOut])
+  useEffect(() => {
+    function refreshSession() {
+      invalidateAllSessionCaches()
+      probingRef.current = true
+      setAuth({ phase: "loading" })
+      setAttempt((current) => current + 1)
+    }
+    window.addEventListener(SESSION_REFRESH_EVENT, refreshSession)
+    return () => window.removeEventListener(SESSION_REFRESH_EVENT, refreshSession)
+  }, [])
   const overviewChanged = useCallback((overview: AccountOverview) => {
     setAuth(publishAuthOverview(overview))
   }, [])
@@ -253,14 +263,13 @@ export function App() {
       setAuth({ phase: "loading" })
       setAttempt((current) => current + 1)
     }
-    // A dead Cloud must not take the marketing pages with it: they need no
+    // A dead Cloud must not take the product page with it: it needs no
     // session, so a public address still paints while the retry notice rides
     // the toast host. Only workbench and admin addresses get the retry wall.
     const route = resolveRoute(address, routeAudienceFor({ authenticated: false }))
     if (route.kind === "public") {
       return (
         <PublicSiteSessionDown
-          page={route.page}
           message={auth.message}
           onRetry={retry}
         />
@@ -276,7 +285,6 @@ export function App() {
    * the session — hand the whole page to the forced password change.
    */
   const lockAccount = () => {
-    setAddingAccount(false)
     setAuth({ phase: "locked" })
   }
 
@@ -305,7 +313,8 @@ export function App() {
     // gets the embedded 厂家登录卡 on the same address (ADR-0100 §E.20).
     if (isSupplierPath(address.pathname)) {
       return (
-        <SupplierApp
+        <Suspense fallback={<div className="flex min-h-svh items-center justify-center"><Spinner aria-label="正在打开工厂工作空间" /></div>}>
+        <FactoryApp
           onSignedIn={signIn}
           // This is the anonymous mount, i.e. the one that actually paints
           // the factory login card. A newly provisioned supplier account is
@@ -313,32 +322,18 @@ export function App() {
           // first sign-in lands here and must hand over to the password form.
           onPasswordChangeRequired={lockAccount}
         />
+        </Suspense>
       )
     }
     const route = resolveRoute(address, routeAudienceFor({ authenticated: false }))
     return route.kind === "public" ? (
-      <PublicSite page={route.page} />
+      <PublicSite />
     ) : (
       <LoginScreen onSignedIn={signIn} onPasswordChangeRequired={lockAccount} />
     )
   }
 
   const overview = auth.overview
-  const route = resolveRoute(
-    address,
-    routeAudienceFor({
-      authenticated: true,
-      role: overview.session.role,
-      accountMode: overview.account_mode,
-      isAgent: overview.is_agent,
-    }),
-  )
-
-  // The public pages stay readable while signed in; only a workbench or admin
-  // address gets the shell (and its gates).
-  if (route.kind === "public" && !invitationCredential) {
-    return <PublicSite page={route.page} signedIn />
-  }
 
   // `/supplier` is the factory surface's own address boundary, like `/admin`:
   // a signed-in caller paints the queue face (members) or the refusal gate —
@@ -346,7 +341,8 @@ export function App() {
   // queue through the site nav's 厂家登录 entry.
   if (isSupplierPath(address.pathname)) {
     return (
-      <SupplierApp
+      <Suspense fallback={<div className="flex min-h-svh items-center justify-center"><Spinner aria-label="正在打开工厂工作空间" /></div>}>
+      <FactoryApp
         overview={overview}
         onSignedOut={signedOut}
         // The supplier surface has no LoginScreen of its own, so it needs the
@@ -354,26 +350,10 @@ export function App() {
         // password that must be changed before the gate opens.
         onPasswordChangeRequired={lockAccount}
       />
+      </Suspense>
     )
   }
 
-  if (addingAccount) {
-    // A fresh login swaps `sid` to the new account — reload so nothing
-    // account-scoped stays mounted from the account we just left.
-    return (
-      <LoginScreen
-        onCancel={() => setAddingAccount(false)}
-        onSignedIn={() => window.location.assign("/")}
-        // The added account can be locked too, and its `accountLogin` swaps
-        // `sid` to it before the overview read is refused. Staying on this
-        // card would paint a "check your password" toast and leave a shell
-        // whose Cookie now names a different account; the previous session is
-        // not lost either way — the `sids` stack cookie still lists it, and
-        // the account switcher offers it once the new password is saved.
-        onPasswordChangeRequired={lockAccount}
-      />
-    )
-  }
   return (
     <Suspense
       fallback={(
@@ -386,7 +366,6 @@ export function App() {
         overview={overview}
         onOverviewChange={overviewChanged}
         onSignedOut={signedOut}
-        onAddAccount={() => setAddingAccount(true)}
       />
     </Suspense>
   )

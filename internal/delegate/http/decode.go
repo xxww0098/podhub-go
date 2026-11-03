@@ -143,8 +143,8 @@ func optCursor(raw *json.RawMessage) (string, bool) {
 	return strings.TrimSpace(value), true
 }
 
-func checksumRequested(r *http.Request, sha string) bool {
-	return strings.TrimSpace(r.Header.Get("x-podhub-store-checksum")) == sha
+func checksumRequested(r *http.Request) bool {
+	return strings.TrimSpace(r.Header.Get("x-podhub-store-checksum")) == "sha256"
 }
 
 func headerUTF8(r *http.Request, name string) bool {

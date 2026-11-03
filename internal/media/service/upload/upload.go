@@ -75,7 +75,7 @@ func Presign(req Request) (Response, error) {
 	if err != nil {
 		return Response{}, err
 	}
-	ref, ok := objectkey.ParseRef(key)
+	digest, ok := objectkey.DigestFromKey(key)
 	if !ok {
 		return Response{}, objectkey.ErrDigest
 	}
@@ -88,7 +88,7 @@ func Presign(req Request) (Response, error) {
 	target, err := receipt.Issue(req.Account, receipt.Subject{
 		Purpose: purpose, ActorID: req.ActorID, WorkspaceID: req.WorkspaceID,
 	}, receipt.Object{
-		Key: key, ContentType: contentType, ByteLength: req.ByteLength, SHA256: ref.Digest,
+		Key: key, ContentType: contentType, ByteLength: req.ByteLength, SHA256: digest,
 	}, req.Now, true, req.ExpiresAt)
 	if err != nil {
 		return Response{}, err

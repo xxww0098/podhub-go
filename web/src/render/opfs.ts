@@ -124,16 +124,18 @@ export async function putTemplate(bytes: RenderBytes): Promise<string> {
 
 const templateWrites = new Map<string, Promise<void>>()
 
-/** File a PSD whose digest is already known. Chunks, so the caller can upload the same File. */
+/** Store a locally picked PSD in bounded chunks under its known digest. */
 export function putKnownTemplate(digest: string, file: Blob): Promise<void> {
+  void requestPersistence()
   const pending = (async () => {
     await surviveQuota(() => writeBlob(["templates"], `${digest}.psd`, file))
     touch(`templates/${digest}.psd`, file.size)
   })()
   templateWrites.set(digest, pending)
-  void pending.finally(() => {
+  const settle = () => {
     if (templateWrites.get(digest) === pending) templateWrites.delete(digest)
-  })
+  }
+  void pending.then(settle, settle)
   return pending
 }
 

@@ -33,10 +33,7 @@ export const SELLER_CODE_ATTRIBUTE_ID = 9024
 export const MODEL_NAME_ATTRIBUTE_ID = 9048
 /** Live label `#主题标签`. The workbench column still says 搜索标签. */
 export const SEARCH_TAGS_ATTRIBUTE_ID = 23171
-/**
- * Ozon 的 `JSON富内容`（rich-content JSON）属性。富内容里嵌的是这一件商品自己的
- * 图片/视频，任何一份卡默认值都拼不出它，所以它由操作员逐行填写，并且是表格列。
- */
+/** Ozon 的 `JSON富内容` 属性，方案默认值编辑与工作台字段排除共用此 ID。 */
 export const RICH_CONTENT_ATTRIBUTE_ID = 11254
 /**
  * Ozon 的 `主题` 属性（字典 726，44 个选项、最多 5 项）。卡默认是批量回退，
@@ -129,10 +126,19 @@ export function displayGroupName(name: string) {
   return trimmed
 }
 
+export function displayComplexGroupName(group: CategorySchemaView["complex_groups"][number], fields: CategoryFieldView[]) {
+  const labels: Record<number, string> = { 8790: "PDF 附件", 21841: "商品视频", 21845: "视频封面" }
+  for (const key of group.field_keys) {
+    const attributeId = fields.find((field) => field.key === key)?.attribute_id
+    if (attributeId && labels[attributeId]) return labels[attributeId]
+  }
+  return displayGroupName(group.name)
+}
+
 export function fieldPlaceholder(field: CategoryFieldView) {
   if (field.key === "dimension_unit") return "例如：mm"
   if (field.key === "weight_unit") return "例如：g"
-  if (field.key === "currency_code") return "留空则使用店铺币种"
+  if (field.key === "currency_code") return "由店铺合同币种决定"
   if (field.key === "vat") return "例如：0.2"
   if (field.editor === "url") return "https://…"
   if (field.editor === "integer") return "输入整数"

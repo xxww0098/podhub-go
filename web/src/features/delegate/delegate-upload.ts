@@ -7,7 +7,7 @@ import { hashUploadBody } from "@/bindings/direct-upload"
 import { reportError } from "@/lib/diag-log"
 import { onSessionInvalidated } from "@/lib/session-cache"
 import { spaDeviceId } from "@/lib/spa-device-id"
-import { assetContentType } from "./delegate-model"
+import { assetContentType, assetFileError } from "./delegate-model"
 import { delegateHttp, type DelegateAssetView } from "./delegate-http"
 
 /** `billing.object-upload-usage.v1` 的 payload（服务端 fail-closed 白名单）。 */
@@ -100,6 +100,8 @@ function waitForRetry(ms: number, signal: AbortSignal): Promise<void> {
 
 /** Three retries total across grant/PUT/confirmation, and at most one 403 grant renewal. */
 export async function uploadDelegateAsset(deps: UploadAssetDeps, input: UploadAssetInput): Promise<DelegateAssetView> {
+  const invalid = assetFileError(input.file)
+  if (invalid) throw new Error(invalid)
   const controller = new AbortController()
   const abort = () => controller.abort()
   const unregister = onSessionInvalidated(abort)

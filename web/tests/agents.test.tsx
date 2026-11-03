@@ -2,10 +2,10 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { renderToStaticMarkup } from "react-dom/server"
 
-import type { AgentWorkbench } from "../src/bindings/commands"
+import type { AdminAgentView, AgentWorkbench } from "../src/bindings/commands"
 import { AgentCard, inviteLink, rebateLabel } from "../src/features/agents/agent-card"
 import { inviteCodeFromSearch } from "../src/features/account/login-screen"
-import { bpsFromPercent, centsFromYuan } from "../src/features/agents/agents-screen"
+import { bpsFromPercent, centsFromYuan, filterAgentRoster, paginateAgentRoster } from "../src/features/agents/agents-screen"
 
 const workbench: AgentWorkbench = {
   invite_code: "AB23CD45",
@@ -38,7 +38,7 @@ const workbench: AgentWorkbench = {
       id: 2,
       invitee_email: "b***@example.com",
       workspace_name: "另一工作空间",
-      product: "member_seats",
+      product: "subscription",
       order_amount_cents: 4500,
       rebate_bps: 1000,
       amount_cents: 0,
@@ -48,6 +48,32 @@ const workbench: AgentWorkbench = {
     },
   ],
 }
+
+test("roster filters combine status and payout without losing unknown values", () => {
+  const base: AdminAgentView = {
+    user_uuid: "a", name: "A", email: "a@example.com", invite_code: "CODE",
+    status: "active", created_at: "2026-09-04T00:00:00Z", payout_account: null,
+    wallet_balance_cents: 0, wallet_held_cents: 0, invitee_count: 0,
+    credited_count: 0, skipped_count: 0, credited_total_cents: 0,
+  }
+  const agents: AdminAgentView[] = [
+    base,
+    { ...base, user_uuid: "b", status: "disabled", payout_account: { channel: "alipay", account: "b", real_name: "B" } },
+    { ...base, user_uuid: "c", payout_account: { channel: "wechat", account: "c", real_name: "C" } },
+    { ...base, user_uuid: "d", status: "pending", payout_account: { channel: "bank", account: "d", real_name: "D" } },
+  ]
+  assert.deepEqual(filterAgentRoster(agents, "all", "all").map((agent) => agent.user_uuid), ["a", "b", "c", "d"])
+  assert.deepEqual(filterAgentRoster(agents, "active", "unset").map((agent) => agent.user_uuid), ["a"])
+  assert.deepEqual(filterAgentRoster(agents, "disabled", "alipay").map((agent) => agent.user_uuid), ["b"])
+  assert.deepEqual(filterAgentRoster(agents, "active", "alipay"), [])
+  assert.deepEqual(filterAgentRoster(agents, "other", "other").map((agent) => agent.user_uuid), ["d"])
+  const secondPage = paginateAgentRoster(agents, 2, 2)
+  assert.equal(secondPage.pageCount, 2)
+  assert.deepEqual(secondPage.agents.map((agent) => agent.user_uuid), ["c", "d"])
+  const afterFilter = paginateAgentRoster(filterAgentRoster(agents, "active", "unset"), 2, 2)
+  assert.equal(afterFilter.page, 1, "a smaller result set clamps the current page")
+  assert.deepEqual(afterFilter.agents.map((agent) => agent.user_uuid), ["a"])
+})
 
 test("an invite link points at /login with the code, and ?invite= prefills it upper-cased", () => {
   assert.equal(
@@ -84,7 +110,7 @@ test("the agent card shows the code, the link target, the rate and both commissi
   )
   assert.match(html, /AB23CD45/)
   assert.match(html, /10%/)
-  assert.match(html, /佣金余额/)
+  assert.match(html, /返点率/)
   assert.match(html, /a\*\*\*@example\.com/)
   assert.match(html, /已入账/)
   assert.match(html, /未计佣 · 代理已停用/)

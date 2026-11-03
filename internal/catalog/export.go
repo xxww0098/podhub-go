@@ -11,9 +11,12 @@ import (
 )
 
 type (
-	TreeNode = domain.TreeNode
-	TreeData = domain.TreeData
-	Host     = cataloghttp.Host
+	TreeNode    = domain.TreeNode
+	TreeData    = domain.TreeData
+	Host        = cataloghttp.Host
+	Fetcher     = service.Fetcher
+	FetchClaim  = service.FetchClaim
+	FetchResult = service.FetchResult
 )
 
 const TreeTTL = domain.TreeTTL
@@ -23,6 +26,5 @@ var (
 	Fresh       = domain.Fresh
 	LanguageKey = domain.LanguageKey
 	NextFixed   = service.NextFixed
-	TickFetch   = service.TickFetch
 	Mount       = cataloghttp.Mount
 )

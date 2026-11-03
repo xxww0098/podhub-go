@@ -1,6 +1,6 @@
 /**
  * The contract every marketplace adapter meets, and nothing marketplace
- * specific (docs/adr/0109-marketplace-catalog-boundaries.md). An adapter owns
+ * specific (docs/architecture-tree.md). An adapter owns
  * its own DTOs, field IDs, units and schema/language coordinate; this module
  * only knows "build and validate some frozen preview items". Ozon and Wildberries are the two real adapters that justify it.
  *

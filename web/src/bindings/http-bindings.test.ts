@@ -59,14 +59,35 @@ test("a category tree read waits out another request's live fill (503 + Retry-Af
         headers: { "Content-Type": "application/json", "Retry-After": "0" },
       })
     }
-    return new Response(JSON.stringify({ data: { language: "zh_hans", fetched_at_ms: 1, tree: [] } }), {
+    return new Response(JSON.stringify({
+      language: "zh_hans",
+      fetched_at_ms: 1,
+      items: [{
+        description_category_id: 17028, category_name: "爱好和创作",
+        type_id: 91000, type_name: "绘画", parent_id: null, disabled: false,
+      }],
+    }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     })
   }) as typeof globalThis.fetch
   try {
-    assert.deepEqual(await listingHttp.listingCardLoadCategoryTree({ language: "zh_hans" }), [])
+    const tree = await listingHttp.listingCardLoadCategoryTree({ language: "zh_hans" })
     assert.equal(calls, 2)
+    assert.deepEqual(tree.map((node) => [node.type_id, node.type_name, node.children.length]), [[91000, "绘画", 0]])
+  } finally {
+    globalThis.fetch = previous
+  }
+})
+
+test("an empty category cache is an empty tree, not an unreadable response", async () => {
+  const previous = globalThis.fetch
+  globalThis.fetch = (async () => new Response("null", {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  })) as typeof globalThis.fetch
+  try {
+    assert.deepEqual(await listingHttp.listingCardLoadCategoryTree({ language: "zh_hans" }), [])
   } finally {
     globalThis.fetch = previous
   }

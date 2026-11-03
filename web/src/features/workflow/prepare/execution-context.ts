@@ -75,7 +75,6 @@ export type AutomationExecutionScope = {
  * because it is already paid for.
  */
 export type RowBatch = {
-  modelRouting?: import("./ocr-model-routing").OcrModelRouting
   rows: Set<string>
   cancelled: Set<string>
   pinned: Set<string>
@@ -356,7 +355,8 @@ export function operationBlockerMessage(blocker: string): string {
     case "missing_delivery_contract": return "上传配置不可用，请联系管理员检查媒体存储配置"
     case "inconsistent_binding": return "源图或模板已变化，请重新切片并上传"
     case "missing_prompt": return "缺少识别提示词，请先配置提示词再识别"
-    case "missing_media_account": return "尚未配置媒体存储，请联系管理员配置后再上传"
+    case "missing_model": return "请先配置识别模型，或重新选择可用模型后再识别"
+    case "missing_media_account": return "请工作空间所有者在设置中创建存储桶后再上传"
     case "missing_render_evidence": return "缺少已提交的切片，请先完成切片再上传"
     case "upload_plan_missing": return "无法生成上传计划，请重新切片；仍失败请联系管理员"
     case "candidates_unsettled": return "仍有 AI 候选未确认，请逐项确认或忽略后再发送"

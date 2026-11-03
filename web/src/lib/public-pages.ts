@@ -1,6 +1,5 @@
 /**
- * The public site's address vocabulary: which pathnames are public pages and
- * which one is the way in.
+ * The public product page and the sign-in addresses.
  *
  * Pure and React-free. "Which addresses mean the workbench" is the route
  * resolver's ([app-route](./app-route.ts)) decision, which composes this table
@@ -8,22 +7,9 @@
  */
 import { isAdminPath } from "./admin-surface"
 
-export type PageKey = "product" | "catalog" | "pricing" | "help" | "privacy" | "terms"
-
-/** The public pages, plus the login screen an unauthorised address resolves to. */
-export type PublicPage = PageKey | "login"
-
-const PUBLIC_PAGES: Partial<Record<string, PageKey>> = {
-  "/catalog": "catalog",
-  "/pricing": "pricing",
-  "/help": "help",
-  "/privacy": "privacy",
-  "/terms": "terms",
-}
+export type PublicPage = "product" | "login"
 
 /**
- * One spelling of the public address table.
- *
  * `/` and every unmatched path are the product page: the marketing homepage is
  * what an unknown address paints (a soft landing is deliberate — there is no
  * 404 route). `/login` and `/register` are the way in, and `/admin…` resolves to
@@ -34,5 +20,5 @@ export function pageFromPath(pathname: string): PublicPage {
   const path = pathname.replace(/\/+$/, "") || "/"
   if (path === "/login" || path === "/register") return "login"
   if (isAdminPath(path)) return "login"
-  return PUBLIC_PAGES[path] ?? "product"
+  return "product"
 }

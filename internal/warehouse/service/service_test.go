@@ -55,7 +55,7 @@ func TestSyncNeverFallsBackToRetiredList(t *testing.T) {
 			if strings.Contains(string(body), `"status"`) || strings.Contains(string(body), `"provider_id"`) {
 				t.Fatalf("method filter %s", body)
 			}
-			return 200, []byte(`{"has_next":false,"result":[{"id":3,"name":"快递","warehouse_id":7,"status":"DISABLED","provider_id":4}]}`)
+			return 200, []byte(`{"has_next":false,"delivery_methods":[{"id":3,"name":"快递","warehouse_id":7,"status":"DISABLED","provider_id":4}]}`)
 		default:
 			t.Fatalf("unexpected path %s", path)
 			return 500, nil
@@ -190,6 +190,8 @@ func (d *memDB) PrepareGrant(context.Context, contract.GrantWrite) (contract.Pre
 	d.prepared++
 	return contract.PreparedGrant{}, contract.Unavailable()
 }
+
+func (d *memDB) RejectUnsentGrant(context.Context, int64, string) error { return nil }
 
 func (d *memDB) AuditRefused(context.Context, int64, int64, string, string) error {
 	d.audits++

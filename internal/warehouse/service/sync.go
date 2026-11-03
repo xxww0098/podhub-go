@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 
 	"github.com/google/uuid"
 
@@ -138,8 +139,11 @@ func (s Service) fetchWarehouses(ctx context.Context, orgID int64, clientID, api
 		}
 		all = append(all, parsed.Rows...)
 		next := parsed.Cursor
-		if !parsed.HasNext || next == "" || next == cursor {
+		if !parsed.HasNext {
 			return dedupeHouses(all), nil
+		}
+		if next == "" || next == cursor || len(parsed.Rows) == 0 {
+			return nil, contract.Ozon()
 		}
 		cursor = next
 	}
@@ -149,12 +153,15 @@ func (s Service) fetchWarehouses(ctx context.Context, orgID int64, clientID, api
 func (s Service) fetchMethods(ctx context.Context, orgID int64, clientID, apiKey string, warehouseIDs []int64) ([]contract.Method, error) {
 	var all []contract.Method
 	for _, id := range warehouseIDs {
-		offset := 0
+		cursor := ""
+		seen := map[string]bool{}
 		for page := 0; page < domain.PageLimit; page++ {
 			req := map[string]any{
 				"limit":  domain.MethodPageLimit,
-				"offset": offset,
-				"filter": map[string]any{"warehouse_id": id},
+				"filter": map[string]any{"warehouse_ids": []string{strconv.FormatInt(id, 10)}},
+			}
+			if cursor != "" {
+				req["cursor"] = cursor
 			}
 			body, _ := json.Marshal(req)
 			status, resp, err := s.post(ctx, orgID, domain.PathMethodList, body, clientID, apiKey)
@@ -171,11 +178,20 @@ func (s Service) fetchMethods(ctx context.Context, orgID int64, clientID, apiKey
 			if status < 200 || status >= 300 {
 				return nil, contract.Ozon()
 			}
+			for _, method := range parsed.Rows {
+				if method.WarehouseID != id {
+					return nil, contract.Ozon()
+				}
+			}
 			all = append(all, parsed.Rows...)
-			if !parsed.HasNext || len(parsed.Rows) == 0 {
+			if !parsed.HasNext {
 				break
 			}
-			offset += len(parsed.Rows)
+			if len(parsed.Rows) == 0 || parsed.Cursor == "" || seen[parsed.Cursor] {
+				return nil, contract.Ozon()
+			}
+			seen[parsed.Cursor] = true
+			cursor = parsed.Cursor
 			if page == domain.PageLimit-1 {
 				return nil, contract.Ozon()
 			}

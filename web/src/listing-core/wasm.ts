@@ -45,6 +45,7 @@ import type {
   SeedRowOutput,
   SettleRecognitionInput,
   ParsedOcrAnswer,
+  OcrAnswerInput,
   OcrRetryClass,
   StageRequest,
   SubmitDraftInput,
@@ -131,7 +132,7 @@ export interface ListingCore {
   /** Op 17. No schema. One settled completion → checked ru/tags/description.
    * Does not call a provider. A refusal throws `CORE_REFUSED` with its reason
    * code and retry class from the shared contract. */
-  parseOcrAnswer(completion: unknown): ParsedOcrAnswer
+  parseOcrAnswer(input: OcrAnswerInput): ParsedOcrAnswer
   /** Op 18. No schema: the current category material travels in the body, so
    * the workbench judges a grouping with the very rules Cloud refuses it with
    * (`listing_core::variants::validate_group`). A refusal is the returned
@@ -266,7 +267,7 @@ export function createListingCore(exports: WebAssembly.Exports): ListingCore {
     projectSubmitDraft: (input) => call(OP.projectSubmitDraft, 0, input),
     issueManifest: () => call(OP.issueManifest, 0, null),
     planStage: <T>(input: StageRequest) => call<T>(OP.planStage, 0, input),
-    parseOcrAnswer: (completion) => call(OP.parseOcrAnswer, 0, completion),
+    parseOcrAnswer: (input) => call(OP.parseOcrAnswer, 0, input),
     validateVariantGroup: (input) => call(OP.validateVariantGroup, 0, input),
   }
 }

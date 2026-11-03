@@ -21,6 +21,7 @@ type Account struct {
 
 // Person is one directory member or unaffiliated account.
 type Person struct {
+	AccountKind    string
 	UserID         int64
 	PublicID       string
 	Email          string
@@ -58,11 +59,4 @@ type Directory struct {
 	Workspaces   []Workspace
 	Unaffiliated []Person
 	UserCount    int
-}
-
-// SeatLoad is one organization plus the rows the planner needs.
-type SeatLoad struct {
-	State   SeatState
-	Members []MemberRow
-	Stores  []StoreRow
 }

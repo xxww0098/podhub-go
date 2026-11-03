@@ -1,14 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Copy, Eye, MailPlus, RefreshCw, Search, UserX, X } from "lucide-react"
+import { Building2, ChevronRight, Copy, Eye, MoreHorizontal, Pencil, Plus, RefreshCw, Search, ShieldAlert, ShieldCheck, UserX, X } from "lucide-react"
 
-import type { AccountOverview, CreateWorkspaceInvitationRequest, WorkspaceDirectoryView, WorkspaceInvitationView, WorkspaceMemberStatusView, WorkspaceMemberView } from "@/bindings/commands"
+import type { AccountOverview, WorkspaceDirectoryView, WorkspaceInvitationView, WorkspaceMemberStatusView, WorkspaceMemberView } from "@/bindings/commands"
 import { accountHttp } from "@/bindings/http-account"
-import { IdentityMark } from "@/components/identity-mark"
+import { subscriptionHttp } from "@/bindings/http-subscription"
 import { PlanMark, formatRole } from "@/components/workspace-display"
 import { WorkspaceMark } from "@/components/workspace-switcher"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { IconButton } from "@/components/ui/icon-button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import {
@@ -25,6 +35,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Spinner } from "@/components/ui/spinner"
+import { Tabs, TabsContent, TabsIndicator, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import {
   Table,
@@ -35,6 +46,8 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { useAccountOverview } from "@/features/account/account-overview-cache"
+import { CreateWorkspaceForm } from "@/features/workspace/no-workspace-screen"
+import { WorkspaceInviteDialog } from "./workspace-invite-dialog"
 import { invalidateStoreRoster } from "@/features/stores/store-roster-cache"
 import { invalidateWallet } from "@/features/usage/wallet-cache"
 import { invalidateUsageStats } from "@/features/usage/usage-cache"
@@ -43,9 +56,7 @@ import { formatDateTimeShort } from "@/lib/format"
 import { errorMessage } from "@/lib/error-message"
 import { clearLive, notifyCommandError, notifyLive, notifySuccess } from "@/lib/notify"
 import { cn } from "@/lib/utils"
-import { WorkspaceInviteDialog } from "./workspace-invite-dialog"
 
-export { invitationOutcome } from "./workspace-invite-dialog"
 
 type MemberStatus = WorkspaceMemberStatusView
 type MemberRole = "owner" | "manager" | "member"
@@ -53,7 +64,7 @@ type Member = Omit<WorkspaceMemberView, "role"> & { role: MemberRole }
 
 /**
  * 两种停用不是同一件事：`manual_disabled` 是有人按的，`quota_suspended` 是席位
- * 不够被系统挤下去的——运营据此决定是恢复权限还是加购席位。
+ * 不够被系统挤下去的——运营据此决定是恢复权限还是调整成员上限。
  */
 const STATUS_LABEL: Record<MemberStatus, string> = {
   active: "已启用",
@@ -105,18 +116,21 @@ function WorkspacePanel({ overview, onOverviewChange }: {
 }) {
   const activeWorkspace = overview?.active_workspace
   const entitlement = overview?.entitlement
-  const limits = entitlement?.limits
   const plan = activeWorkspace?.plan ?? entitlement?.plan
   const workspaceName = activeWorkspace?.name ?? "当前 Workspace"
   const role = activeWorkspace?.role
   const [directory, setDirectory] = useState<WorkspaceDirectoryView>()
   const [loading, setLoading] = useState(true)
   const [directoryError, setDirectoryError] = useState("")
+  const [memberCapacity, setMemberCapacity] = useState<{ used: number; limit: number }>()
+  const [capacityLoading, setCapacityLoading] = useState(true)
   const mounted = useRef(false)
   const directoryRequest = useRef(0)
+  const capacityRequest = useRef(0)
   const [query, setQuery] = useState("")
+  const [searchOpen, setSearchOpen] = useState(false)
   const [statusFilter, setStatusFilter] = useState<"all" | MemberStatus>("all")
-  const [inviteOpen, setInviteOpen] = useState(false)
+  const [directoryTab, setDirectoryTab] = useState<"members" | "invitations">("members")
   const [activeMember, setActiveMember] = useState<Member>()
   const [confirmRemove, setConfirmRemove] = useState<Member>()
   const [confirmRevoke, setConfirmRevoke] = useState<WorkspaceInvitationView>()
@@ -127,29 +141,18 @@ function WorkspacePanel({ overview, onOverviewChange }: {
   const [renaming, setRenaming] = useState(false)
   const [nameDraft, setNameDraft] = useState("")
   const [nameBusy, setNameBusy] = useState(false)
-  const seatsUsed = directory?.seats_used ?? limits?.seats_used ?? 0
-  const seatsLimit = limits?.seats ?? 0
+  const [createOpen, setCreateOpen] = useState(false)
+  const [inviteOpen, setInviteOpen] = useState(false)
   const workspacePermissions = directory?.permissions
   const directoryReady = !!directory && !loading && !directoryError
+  const canRevokeInvitation = directoryReady && !!workspacePermissions?.revoke_invitation
   const inviteRoles = workspacePermissions?.invite_roles ?? []
   const canInvite = directoryReady && inviteRoles.length > 0
-  const canRevokeInvitation = directoryReady && !!workspacePermissions?.revoke_invitation
+  const invitationFull = !!directory && directory.pending_used >= directory.pending_limit
+  const seatsFull = !!memberCapacity && memberCapacity.used >= memberCapacity.limit
   const canEditProfile = directoryReady && !!workspacePermissions?.edit_profile
   const canDissolve = directoryReady && !!workspacePermissions?.dissolve
   const canLeave = directoryReady && !!workspacePermissions?.leave
-  const inviteRefusal = !directoryReady
-    ? directoryError
-      ? "无法读取成员目录，请重试后再邀请。"
-      : "正在读取成员信息，请稍候。"
-    : !limits || !directory
-      ? "读取成员信息后可邀请。"
-      : !canInvite
-        ? "当前账号没有邀请成员权限。"
-      : seatsUsed >= seatsLimit
-        ? (seatsLimit <= 1 ? "当前工作空间仅限本人使用，加购成员名额后可邀请。" : "成员名额已满，移除成员或加购更多名额后可邀请。")
-        : directory.pending_used >= directory.pending_limit
-          ? "待接受的邀请已达上限，撤销旧邀请或等待对方处理后再邀请。"
-          : undefined
   const nameTrimmed = nameDraft.trim()
   const nameValid =
     nameTrimmed.length > 0 && nameTrimmed.length <= WORKSPACE_NAME_MAX && nameTrimmed !== workspaceName
@@ -173,19 +176,39 @@ function WorkspacePanel({ overview, onOverviewChange }: {
         type: "error",
         reason,
         title: message,
-        action: { label: "重试", onClick: () => void reloadDirectory() },
+        action: { label: "重试", onClick: () => { void reloadDirectory(); void reloadCapacity() } },
       })
     } finally {
       if (mounted.current && request === directoryRequest.current) setLoading(false)
     }
   }
 
+  async function reloadCapacity() {
+    if (!mounted.current || !activeWorkspace) return
+    const request = ++capacityRequest.current
+    setMemberCapacity(undefined)
+    setCapacityLoading(true)
+    try {
+      const { members } = await subscriptionHttp.view()
+      if (!mounted.current || request !== capacityRequest.current) return
+      if (Number.isSafeInteger(members?.used) && members.used >= 0 && Number.isSafeInteger(members.limit) && members.limit >= 0) {
+        setMemberCapacity(members)
+      }
+    } catch {
+      // The invitation endpoint checks current capacity; a missing projection only hides its count.
+    } finally {
+      if (mounted.current && request === capacityRequest.current) setCapacityLoading(false)
+    }
+  }
+
   useEffect(() => {
     mounted.current = true
     void reloadDirectory()
+    void reloadCapacity()
     return () => {
       mounted.current = false
       directoryRequest.current += 1
+      capacityRequest.current += 1
       clearLive(WORKSPACE_DIRECTORY_LIVE)
     }
     // The panel is remounted when the Workspace, account or role changes.
@@ -196,6 +219,7 @@ function WorkspacePanel({ overview, onOverviewChange }: {
     () => (directory?.members ?? []).map(projectMember),
     [directory?.members]
   )
+  const ownerEmail = members.find((member) => member.role === "owner")?.email
   const invitations = directory?.invitations ?? []
   const visibleMembers = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase()
@@ -256,13 +280,6 @@ function WorkspacePanel({ overview, onOverviewChange }: {
     }
   }
 
-  async function createInvitation(request: CreateWorkspaceInvitationRequest) {
-    if (!mounted.current || inviteRefusal || loading) throw new Error(inviteRefusal ?? "正在刷新工作空间，请稍后重试。")
-    const result = await accountHttp.accountCreateWorkspaceInvitation(request)
-    await reloadDirectory()
-    return result
-  }
-
   async function revokeInvitation(invitation: WorkspaceInvitationView) {
     if (!canRevokeInvitation || revoking) return false
     setRevoking(invitation.uuid)
@@ -295,6 +312,7 @@ function WorkspacePanel({ overview, onOverviewChange }: {
       // The seat is back and a suspended member may have been restored.
       invalidateStoreRoster()
       await reloadDirectory()
+      void reloadCapacity()
       // Membership changed on Cloud; refresh workspaces rather than projecting the
       // cached session.
       try {
@@ -340,27 +358,83 @@ function WorkspacePanel({ overview, onOverviewChange }: {
   }
 
   if (!activeWorkspace) {
+    const isMember = overview?.account_mode === "member"
     return (
-      <section className="flex flex-col gap-4 rounded-xl border border-border bg-card p-5" aria-labelledby="workspace-unavailable-title">
-        <h1 id="workspace-unavailable-title" className="text-lg font-semibold">{overview?.account_mode === "member" ? "工作空间访问受限" : "尚未选择工作空间"}</h1>
-        <p className="text-sm text-muted-foreground">{overview?.account_mode === "member"
-          ? "你的工作空间成员资格当前不可用，可能是被停用或超出成员名额。请联系工作空间所有者恢复访问；也可以离开工作空间，重新接受邀请。"
-          : "请在侧栏选择或创建工作空间。"}</p>
-        {overview?.account_mode === "member" ? (
-          <SuspendedWorkspaceExits
-            workspaces={overview?.unusable_workspaces ?? []}
-            onLeft={handleWorkspaceExit}
-          />
-        ) : null}
+      <section
+        className="flex min-h-80 w-full flex-col items-center justify-center rounded-xl border border-border bg-card p-8 text-center sm:p-12"
+        aria-labelledby="workspace-unavailable-title"
+      >
+        <Empty role="status" className="min-h-0 border-0 bg-transparent p-0">
+          <EmptyHeader className="max-w-md">
+            <EmptyMedia variant="icon">
+              {isMember ? (
+                <ShieldAlert className="size-6 text-destructive" />
+              ) : (
+                <Building2 className="size-6 text-primary" />
+              )}
+            </EmptyMedia>
+            <EmptyTitle>
+              <h1 id="workspace-unavailable-title" className="text-base font-semibold text-foreground">
+                {isMember ? "工作空间访问受限" : "尚未选择工作空间"}
+              </h1>
+            </EmptyTitle>
+            <EmptyDescription>
+              <p className="text-sm text-muted-foreground">
+                {isMember
+                  ? "你的工作空间成员资格当前不可用，可能是被停用或超出成员名额。请联系工作空间所有者恢复访问；也可以离开工作空间，重新接受邀请。"
+                  : "请在侧栏选择或创建工作空间以管理成员、邀请与空间资料。"}
+              </p>
+            </EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent className="mt-4 flex flex-wrap items-center justify-center gap-2">
+            {!isMember ? (
+              <Button onClick={() => setCreateOpen(true)} className="cursor-pointer">
+                <Plus data-icon="inline-start" />
+                创建工作空间
+              </Button>
+            ) : null}
+            {isMember ? (
+              <SuspendedWorkspaceExits
+                workspaces={overview?.unusable_workspaces ?? []}
+                onLeft={handleWorkspaceExit}
+              />
+            ) : null}
+          </EmptyContent>
+        </Empty>
+
+        <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>创建工作空间</DialogTitle>
+            </DialogHeader>
+            <CreateWorkspaceForm
+              inDialog
+              onCreated={(standing) => {
+                setCreateOpen(false)
+                if (overview && onOverviewChange) {
+                  onOverviewChange({
+                    ...overview,
+                    active_workspace: standing.active_workspace,
+                    workspaces: standing.workspaces,
+                    account_mode: standing.account_mode,
+                    owned_count: standing.owned_count,
+                    owned_limit: standing.owned_limit,
+                  })
+                }
+              }}
+              onCancel={() => setCreateOpen(false)}
+            />
+          </DialogContent>
+        </Dialog>
       </section>
     )
   }
 
   return (
-    <div className="flex w-full min-w-0 flex-col gap-4">
+    <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col gap-4 sm:pt-4">
       <h1 className="sr-only">工作空间</h1>
-      <header className="flex flex-col gap-4 rounded-xl border border-border p-4">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+      <header className="shrink-0 rounded-xl border border-border bg-card">
+        <div className="flex min-h-36 flex-wrap items-center gap-x-6 gap-y-3 px-4 py-5 sm:px-8">
           <WorkspaceMark
             name={workspaceName}
             workspaceId={activeWorkspace?.id}
@@ -369,7 +443,7 @@ function WorkspacePanel({ overview, onOverviewChange }: {
             editable={canEditProfile}
             disabled={avatarBusy}
             inputId="workspace-owner-avatar"
-            className="size-10 shrink-0"
+            className="size-20 shrink-0 rounded-full bg-brand text-primary-foreground"
             onPick={(image, signal) => replaceWorkspaceAvatar(image, signal)}
           />
           {canEditProfile && renaming ? (
@@ -401,176 +475,214 @@ function WorkspacePanel({ overview, onOverviewChange }: {
               </p>
             </div>
           ) : (
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+            <div className="flex min-w-40 flex-1 flex-wrap items-center gap-3">
+              <div className="min-w-0 flex-1 basis-full sm:basis-auto">
+                <p className="truncate text-2xl font-semibold leading-tight tracking-[-0.01em] text-foreground">{workspaceName}</p>
+                {ownerEmail ? (
+                  <p className="mt-1 truncate text-lg text-muted-foreground">所有者 · {ownerEmail}</p>
+                ) : null}
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <PlanMark plan={plan} />
+                  {role ? <Badge variant="outline">{formatRole(role)}</Badge> : null}
+                </div>
+              </div>
               {canEditProfile ? (
-                <button
-                  type="button"
-                  className="max-w-full truncate text-md font-semibold text-foreground hover:underline hover:underline-offset-4 focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring cursor-pointer"
-                  title="修改工作空间名称"
-                  onClick={startRename}
-                >
-                  {workspaceName}
-                </button>
-              ) : (
-                <span className="max-w-full truncate text-md font-semibold text-foreground">
-                  {workspaceName}
-                </span>
-              )}
-              <PlanMark plan={plan} />
-              {role ? (
-                <Badge variant="outline">{formatRole(role)}</Badge>
-              ) : null}
-              {canDissolve || canLeave ? (
-                <>
-                  <span aria-hidden className="hidden h-3 w-px bg-border md:block" />
-                  {canDissolve ? (
-                    <DissolveWorkspaceAction workspaceName={workspaceName} onDissolved={handleWorkspaceExit} />
-                  ) : (
-                    <LeaveWorkspaceAction workspaceName={workspaceName} workspaceId={activeWorkspace?.id} onLeft={handleWorkspaceExit} />
-                  )}
-                </>
+                <Button variant="outline" onClick={startRename}>
+                  <Pencil data-icon="inline-start" />
+                  修改名称
+                </Button>
               ) : null}
             </div>
           )}
-          {/* 席位是「邀请成员」的门槛，所以贴着按钮读。 */}
-          <div className="flex w-full items-center justify-between gap-3 sm:w-auto sm:justify-end">
-            {limits ? (
-              <span className="font-mono text-xs whitespace-nowrap tabular-nums text-muted-foreground">
-                {`成员 ${seatsUsed} / ${limits.seats}`}
-              </span>
-            ) : null}
-            {/* The refusal is the button's disabled reason (DESIGN §5), so it
-                rides a Tooltip instead of a second paragraph under the header. */}
-            <Tooltip>
-              <TooltipTrigger render={<span className="inline-flex" />}>
-                <Button disabled={loading || !!inviteRefusal} aria-label={inviteRefusal ? `邀请成员：${inviteRefusal}` : undefined} onClick={() => setInviteOpen(true)}>
-                  <MailPlus data-icon="inline-start" />邀请成员
-                </Button>
-              </TooltipTrigger>
-              {inviteRefusal ? <TooltipContent>{inviteRefusal}</TooltipContent> : null}
-            </Tooltip>
-          </div>
         </div>
-        <details className="text-sm">
-          <summary className="w-fit cursor-pointer text-muted-foreground focus-visible:outline-2 focus-visible:outline-ring">角色与权限</summary>
-          <dl className="mt-3 grid gap-3 sm:grid-cols-3">
-            <div className="rounded-lg border border-border p-3">
-              <dt className="text-sm font-semibold text-foreground">所有者</dt>
-              <dd className="mt-1.5 text-xs leading-relaxed text-muted-foreground">运营全部店铺；登记和更换密钥；决定指派人能否管理该店密钥；邀请与移除主管和运营；在主管和运营之间调整成员角色（成员详情内操作，即时生效）；修改工作空间资料、解散工作空间。</dd>
-            </div>
-            <div className="rounded-lg border border-border p-3">
-              <dt className="text-sm font-semibold text-foreground">主管</dt>
-              <dd className="mt-1.5 text-xs leading-relaxed text-muted-foreground">运营全部店铺、改派；改派会关掉该店「允许指派人管理密钥」。不能因角色管理密钥。</dd>
-            </div>
-            <div className="rounded-lg border border-border p-3">
-              <dt className="text-sm font-semibold text-foreground">运营</dt>
-              <dd className="mt-1.5 text-xs leading-relaxed text-muted-foreground">运营自己负责的店铺；不默认管理密钥；可查看成员、可自行退出。</dd>
-            </div>
-          </dl>
-        </details>
       </header>
 
       {directoryError ? (
-        <div className="flex items-center gap-3">
-          <Button variant="outline" size="sm" disabled={loading} onClick={() => void reloadDirectory()}>重新加载</Button>
+        <div className="flex items-center justify-center rounded-xl border border-border bg-card px-4 py-8">
+          <Button variant="outline" size="sm" disabled={loading} onClick={() => { void reloadDirectory(); void reloadCapacity() }}>重新加载</Button>
         </div>
       ) : (
       <section
         aria-label="成员与邀请"
-        className="flex flex-col"
+        className="flex min-h-0 flex-1 flex-col gap-4"
       >
-        <div className="mb-3 flex items-center gap-3">
-          <InputGroup className="min-w-0 flex-1 md:max-w-sm">
-            <InputGroupAddon>
-              <InputGroupText>
-                <Search />
-              </InputGroupText>
-            </InputGroupAddon>
-            <InputGroupInput
-              className="placeholder:text-muted-foreground"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="搜索姓名或邮箱"
-              aria-label="搜索成员"
-            />
-            {query ? (
-              <InputGroupAddon align="inline-end">
-                <button
-                  type="button"
-                  aria-label="清空搜索"
-                  className="cursor-pointer text-muted-foreground transition-colors hover:text-foreground inline-flex items-center"
-                  onClick={() => setQuery("")}
-                >
-                  <X className="size-3.5" />
-                </button>
-              </InputGroupAddon>
-            ) : null}
-          </InputGroup>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  className="md:ml-auto"
-                  variant="outline"
-                  size="icon-sm"
-                  aria-label="刷新"
-                  onClick={() => void reloadDirectory()}
-                  disabled={loading}
-                />
-              }
-            >
-              {loading ? <Spinner aria-hidden /> : <RefreshCw aria-hidden />}
-            </TooltipTrigger>
-            <TooltipContent>刷新</TooltipContent>
-          </Tooltip>
-        </div>
-        {statusFilter !== "all" || members.some((member) => member.status !== "active") ? (
-          <div className="flex flex-wrap items-center gap-1.5 pt-2" aria-label="按状态筛选">
-            {(["all", "active", "manual_disabled", "quota_suspended"] as const).map(
-              (status) => (
-                <Button
-                  key={status}
-                  variant={statusFilter === status ? "secondary" : "ghost"}
-                  size="sm"
-                  aria-pressed={statusFilter === status}
-                  onClick={() => setStatusFilter(status)}
-                >
-                  {statusTabLabel(status, members)}
-                </Button>
-              )
-            )}
+        <Tabs
+          className="min-h-0 flex-1"
+          value={directoryTab}
+          onValueChange={(value) => {
+            if (value === "members" || value === "invitations") setDirectoryTab(value)
+          }}
+        >
+          <div className="mb-2 border-b border-border">
+            <TabsList variant="line" aria-label="成员与邀请">
+              <TabsIndicator variant="line" className="bg-brand" />
+              <TabsTrigger value="members" variant="line" className="h-12 data-active:text-brand"><span className="px-3 text-lg">成员</span></TabsTrigger>
+              <TabsTrigger value="invitations" variant="line" className="h-12 data-active:text-brand"><span className="px-3 text-lg">邀请</span></TabsTrigger>
+            </TabsList>
           </div>
-        ) : null}
-
-        <MembersTable
-          members={visibleMembers}
-          loading={loading}
-          onOpen={setActiveMember}
-          onExit={directoryReady ? (member) => setConfirmRemove(member) : undefined}
-          removing={removing}
-        />
-
-        <h2 className="mt-4 border-t border-border pt-4 text-sm font-semibold">
-          {directory
-            ? `待接受的邀请 · ${directory.pending_used} / ${directory.pending_limit}`
-            : "待接受的邀请"}
-        </h2>
-        <InvitationsTable
-          invitations={invitations}
-          loading={loading}
-          onRevoke={canRevokeInvitation ? (invitation) => setConfirmRevoke(invitation) : undefined}
-          revoking={revoking}
-        />
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card">
+          <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 px-4 py-5 sm:px-6">
+            {directoryTab === "members" ? (
+            <>
+            <h2 className="mr-auto text-2xl font-semibold">成员列表</h2>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon-sm"
+              aria-label={searchOpen ? "关闭搜索" : "搜索成员"}
+              aria-expanded={searchOpen}
+              onClick={() => {
+                if (searchOpen) setQuery("")
+                setSearchOpen(!searchOpen)
+              }}
+            >
+              {searchOpen ? <X aria-hidden /> : <Search aria-hidden />}
+            </Button>
+            {searchOpen ? <InputGroup className="min-w-0 flex-1 basis-48 sm:max-w-xs">
+              <InputGroupAddon>
+                <InputGroupText>
+                  <Search />
+                </InputGroupText>
+              </InputGroupAddon>
+              <InputGroupInput
+                id="workspace-member-search"
+                autoFocus
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="搜索姓名或邮箱"
+                aria-label="搜索成员"
+                onKeyDown={(event) => {
+                  if (event.key === "Escape" && !event.nativeEvent.isComposing) {
+                    setQuery("")
+                    setSearchOpen(false)
+                  }
+                }}
+              />
+              {query ? (
+                <InputGroupAddon align="inline-end">
+                  <button
+                    type="button"
+                    aria-label="清空搜索"
+                    className="cursor-pointer text-muted-foreground transition-colors hover:text-foreground inline-flex items-center"
+                    onClick={() => setQuery("")}
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                </InputGroupAddon>
+              ) : null}
+            </InputGroup> : null}
+            </>
+            ) : (
+              <h2 className="min-w-0 flex-1 text-compact font-medium">
+                {directory ? `待接受的邀请 · ${directory.pending_used} / ${directory.pending_limit}` : "待接受的邀请"}
+              </h2>
+            )}
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon-sm"
+                    aria-label="刷新"
+                    onClick={() => { void reloadDirectory(); void reloadCapacity() }}
+                    disabled={loading || capacityLoading}
+                  />
+                }
+              >
+                {loading || capacityLoading ? <Spinner aria-hidden /> : <RefreshCw aria-hidden />}
+              </TooltipTrigger>
+              <TooltipContent>刷新</TooltipContent>
+            </Tooltip>
+            {memberCapacity ? (
+              <span className="whitespace-nowrap rounded-lg bg-muted px-2.5 py-1.5 text-compact tabular-nums text-muted-foreground">
+                {`成员 ${memberCapacity.used} / ${memberCapacity.limit}`}
+              </span>
+            ) : null}
+            {canInvite ? (
+              <Button type="button" disabled={capacityLoading || seatsFull || invitationFull}
+                title={seatsFull ? "成员名额已满" : invitationFull ? "待接受邀请已达上限" : undefined}
+                onClick={() => setInviteOpen(true)}>
+                <Plus aria-hidden />邀请成员
+              </Button>
+            ) : null}
+          </div>
+          <TabsContent value="members" className={directoryTab === "members" ? "flex min-h-0 flex-col" : undefined}>
+          {statusFilter !== "all" || members.some((member) => member.status !== "active") ? (
+            <div className="flex flex-wrap items-center gap-1.5 border-b border-border px-4 py-2" aria-label="按状态筛选">
+              {(["all", "active", "manual_disabled", "quota_suspended"] as const).map(
+                (status) => (
+                  <Button
+                    key={status}
+                    variant={statusFilter === status ? "secondary" : "ghost"}
+                    size="sm"
+                    aria-pressed={statusFilter === status}
+                    onClick={() => setStatusFilter(status)}
+                  >
+                    {statusTabLabel(status, members)}
+                  </Button>
+                )
+              )}
+            </div>
+          ) : null}
+          <div className="mx-4 mb-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border">
+          <MembersTable
+            members={visibleMembers}
+            loading={loading}
+            onOpen={setActiveMember}
+            onExit={directoryReady ? (member) => setConfirmRemove(member) : undefined}
+            removing={removing}
+          />
+          </div>
+          </TabsContent>
+          <TabsContent value="invitations" className={directoryTab === "invitations" ? "flex min-h-0 flex-col" : undefined}>
+          <InvitationsTable
+            invitations={invitations}
+            loading={loading}
+            onRevoke={canRevokeInvitation ? (invitation) => setConfirmRevoke(invitation) : undefined}
+            canRevoke={(invitation) => role === "owner" || invitation.role === "member"}
+            revoking={revoking}
+          />
+          </TabsContent>
+          </div>
+        </Tabs>
       </section>
       )}
 
-      <WorkspaceInviteDialog
-        open={inviteOpen}
-        onOpenChange={setInviteOpen}
-        onInvite={createInvitation}
-        inviteRoles={inviteRoles}
-      />
+      {inviteOpen ? <WorkspaceInviteDialog roles={inviteRoles} workspaceName={workspaceName}
+        onClose={() => setInviteOpen(false)} onCreated={() => { setDirectoryTab("invitations"); void reloadDirectory() }} /> : null}
+
+      <details className="group shrink-0 rounded-xl border border-border bg-card text-compact">
+          <summary className="flex w-full cursor-pointer list-none items-center gap-2 px-4 py-2.5 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
+            <ShieldCheck aria-hidden className="size-4" />
+            角色与权限
+            <ChevronRight aria-hidden className="ml-auto size-4 transition-transform group-open:rotate-90" />
+          </summary>
+          <dl className="grid gap-3 px-4 pb-4 md:grid-cols-3">
+            <div className="rounded-lg bg-muted/50 p-3">
+              <dt className="text-compact font-semibold text-foreground">所有者</dt>
+              <dd className="mt-1.5 text-meta leading-relaxed text-muted-foreground">运营全部店铺；登记和更换密钥；决定指派人能否管理该店密钥；邀请与移除主管和运营；在主管和运营之间调整成员角色（成员详情内操作，即时生效）；修改工作空间资料、解散工作空间。</dd>
+            </div>
+            <div className="rounded-lg bg-muted/50 p-3">
+              <dt className="text-compact font-semibold text-foreground">主管</dt>
+              <dd className="mt-1.5 text-meta leading-relaxed text-muted-foreground">运营全部店铺、改派。不能因角色管理密钥。</dd>
+            </div>
+            <div className="rounded-lg bg-muted/50 p-3">
+              <dt className="text-compact font-semibold text-foreground">运营</dt>
+              <dd className="mt-1.5 text-meta leading-relaxed text-muted-foreground">运营自己负责的店铺；不默认管理密钥；可查看成员、可自行退出。</dd>
+            </div>
+          </dl>
+          {canDissolve || canLeave ? (
+            <div className="px-4 pb-4">
+              {canDissolve ? (
+                <DissolveWorkspaceAction workspaceName={workspaceName} onDissolved={handleWorkspaceExit} />
+              ) : (
+                <LeaveWorkspaceAction workspaceName={workspaceName} workspaceId={activeWorkspace?.id} onLeft={handleWorkspaceExit} />
+              )}
+            </div>
+          ) : null}
+        </details>
+
       <MemberSheet
         key={activeMember?.id}
         member={activeMember}
@@ -712,7 +824,7 @@ export function DissolveWorkspaceAction({
     <>
       <button
         type="button"
-        className={cn(TEXT_ACTION, "text-destructive hover:text-destructive")}
+        className={cn(TEXT_ACTION, "max-md:min-h-11 text-destructive hover:text-destructive")}
         disabled={busy}
         onClick={() => {
           setTyped("")
@@ -729,7 +841,7 @@ export function DissolveWorkspaceAction({
           if (!next) setTyped("")
         }}
         title={`解散「${workspaceName}」？`}
-        description="解散后无法恢复。成员立即失去访问；店铺密钥会被清除；未用完的店铺位作废；创建者的钱包余额保留；待支付订单会取消。"
+        description="解散后无法恢复。成员立即失去访问；店铺密钥会被清除；未用完的店铺位作废；该工作空间钱包的余额不会转移或退款；待支付订单会取消。"
         confirmText="解散工作空间"
         cancelText="取消"
         variant="destructive"
@@ -875,84 +987,73 @@ export function MembersTable({
   removing?: number
 }) {
   return (
-    <Table className="min-w-3xl">
-      <TableHeader>
+    <Table variant="directory" className="table-fixed [&_th]:h-12" containerClassName="@container min-h-0 flex-1 overflow-auto">
+      <TableHeader className="sticky top-0 z-10 bg-card">
         <TableRow>
-          <TableHead className="text-muted-foreground">成员</TableHead>
-          <TableHead className="text-muted-foreground">角色</TableHead>
-          <TableHead className="text-muted-foreground">状态</TableHead>
-          <TableHead className="text-muted-foreground">加入时间</TableHead>
-          <TableHead className="w-32 text-right text-muted-foreground">操作</TableHead>
+          <TableHead className="w-auto @lg:w-[42%]"><span className="text-lg">成员</span></TableHead>
+          <TableHead className="hidden w-[25%] @lg:table-cell"><span className="text-lg">角色</span></TableHead>
+          <TableHead className="hidden w-[23%] sm:table-cell"><span className="text-lg">状态</span></TableHead>
+          <TableHead className="w-16 text-right"><span className="text-lg">操作</span></TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
         {members.length === 0 ? (
           <EmptyRow
             loading={loading}
+            colSpan={4}
             label={loading ? "正在读取成员目录…" : "没有符合当前条件的成员"}
             hint="试试清空搜索或切换状态。"
           />
         ) : (
           members.map((member) => (
             <TableRow key={member.id}>
-              <TableCell>
+              <TableCell className="min-w-0">
                 <button
                   type="button"
                   onClick={() => onOpen(member)}
-                  className="group flex cursor-pointer items-center gap-3 text-left focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                  className="group flex min-h-16 min-w-0 max-w-full cursor-pointer items-center gap-3 text-left focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
                 >
-                  <Avatar name={member.name} status={member.status} />
+                  <Avatar name={member.name} email={member.email} status={member.status} />
                   <span className="flex min-w-0 flex-col gap-0.5">
-                    <span className="font-medium group-hover:underline group-hover:underline-offset-4">
+                    <span className="truncate text-lg font-medium group-hover:underline group-hover:underline-offset-4">
                       {member.name}
                     </span>
-                    <span className="text-xs text-muted-foreground">{member.email}</span>
+                    <span className="truncate text-md text-muted-foreground">{member.email}</span>
+                    <span className="flex flex-wrap items-center gap-1.5">
+                      <Badge variant={member.role === "owner" ? "brand" : "outline"} className="@lg:hidden">{formatRole(member.role)}</Badge>
+                      <span className="truncate text-meta text-muted-foreground sm:hidden">{STATUS_LABEL[member.status]}</span>
+                    </span>
                   </span>
                 </button>
               </TableCell>
-              <TableCell>
-                <span className="text-muted-foreground">{formatRole(member.role)}</span>
+              <TableCell className="hidden @lg:table-cell">
+                <span className={cn("inline-flex h-8 items-center rounded-md px-3 text-md font-medium", member.role === "owner" ? "bg-brand-soft text-brand-ink" : "bg-secondary text-secondary-foreground")}>{formatRole(member.role)}</span>
               </TableCell>
-              <TableCell>
+              <TableCell className="hidden sm:table-cell">
                 {member.status === "active" ? (
-                  <span className="text-xs text-muted-foreground">{STATUS_LABEL.active}</span>
+                  <span className="inline-flex items-center gap-2 whitespace-nowrap text-md text-muted-foreground">
+                    <span aria-hidden className="size-2 rounded-full bg-st-good" />
+                    {STATUS_LABEL.active}
+                  </span>
                 ) : (
                   <MemberStatusBadge status={member.status} />
                 )}
               </TableCell>
-              <TableCell>
-                <span className="whitespace-nowrap text-xs text-muted-foreground">
-                  {formatDateTimeShort(member.joined_at_ms)}
-                </span>
-              </TableCell>
-              <TableCell className="text-right">
-                <div className="inline-flex items-center justify-end gap-1.5">
-                  <CopyEmailAction email={member.email} />
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon-sm"
-                          aria-label={`查看 ${member.name} 的详情`}
-                          onClick={() => onOpen(member)}
-                        />
-                      }
-                    >
-                      <Eye aria-hidden />
-                    </TooltipTrigger>
-                    <TooltipContent>查看详情</TooltipContent>
-                  </Tooltip>
-                  {onExit && member.permissions?.remove === true ? (
-                    <RowAction
-                      label={`将 ${member.email} 移出工作空间`}
-                      tooltip="移除成员"
-                      busy={removing === member.id}
-                      onClick={() => onExit(member)}
-                    />
-                  ) : null}
-                </div>
+              <TableCell className="w-px whitespace-nowrap text-right">
+                <DropdownMenu>
+                  <DropdownMenuTrigger render={<Button type="button" variant="ghost" size="icon" aria-label={`${member.name} 的操作`} />}>
+                    <MoreHorizontal aria-hidden />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => onOpen(member)}><Eye aria-hidden />查看详情</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => void copyText(member.email)}><Copy aria-hidden />复制邮箱</DropdownMenuItem>
+                    {canRemoveWorkspaceMember(member, !!onExit) ? (
+                      <DropdownMenuItem variant="destructive" disabled={removing === member.id} onClick={() => onExit?.(member)}>
+                        <UserX aria-hidden />移除成员
+                      </DropdownMenuItem>
+                    ) : null}
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </TableCell>
             </TableRow>
           ))
@@ -962,28 +1063,34 @@ export function MembersTable({
   )
 }
 
+export function canRemoveWorkspaceMember(member: Member, canManage: boolean) {
+  return canManage && member.permissions?.remove === true
+}
+
 /** 还没入座的邀请。撤销把它从对方的通知列表里拿掉，席位从未被占用。 */
 export function InvitationsTable({
   invitations,
   loading,
   onRevoke,
   revoking,
+  canRevoke,
 }: {
   invitations: WorkspaceInvitationView[]
   loading: boolean
   /** Omitted when the session's role may not manage the roster. */
   onRevoke?: (invitation: WorkspaceInvitationView) => void
   revoking?: string
+  canRevoke?: (invitation: WorkspaceInvitationView) => boolean
 }) {
   return (
-    <Table className="min-w-3xl">
-      <TableHeader>
+    <Table variant="directory" containerClassName="@container min-h-0 flex-1 overflow-auto">
+      <TableHeader className="sticky top-0 z-10 bg-card">
         <TableRow>
-          <TableHead className="text-muted-foreground">邮箱</TableHead>
-          <TableHead className="text-muted-foreground">角色</TableHead>
-          <TableHead className="text-muted-foreground">邀请人</TableHead>
-          <TableHead className="text-muted-foreground">有效期至</TableHead>
-          <TableHead className="w-32 text-right text-muted-foreground">操作</TableHead>
+          <TableHead>邮箱</TableHead>
+          <TableHead>角色</TableHead>
+          <TableHead className="hidden @2xl:table-cell">邀请人</TableHead>
+          <TableHead className="hidden @xl:table-cell">有效期至</TableHead>
+          <TableHead className="w-px text-right">操作</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -996,24 +1103,28 @@ export function InvitationsTable({
         ) : (
           invitations.map((invitation) => (
             <TableRow key={invitation.id}>
-              <TableCell className="font-medium">{invitation.email}</TableCell>
-              <TableCell>
-                <span className="text-muted-foreground">{formatRole(projectRole(invitation.role))}</span>
+              <TableCell className="w-full max-w-0 min-w-32">
+                <p className="truncate text-compact font-medium">{invitation.email}</p>
+                <p className="truncate text-meta text-muted-foreground @2xl:hidden">{invitation.invited_by_email}</p>
+                <p className="whitespace-nowrap font-mono text-meta tabular-nums text-muted-foreground @xl:hidden">{formatDateTimeShort(invitation.expires_at_ms)}</p>
               </TableCell>
               <TableCell>
-                <span className="text-xs text-muted-foreground">
+                <Badge variant="outline">{formatRole(projectRole(invitation.role))}</Badge>
+              </TableCell>
+              <TableCell className="hidden @2xl:table-cell">
+                <span className="text-meta text-muted-foreground">
                   {invitation.invited_by_email}
                 </span>
               </TableCell>
-              <TableCell>
-                <span className="whitespace-nowrap text-xs text-muted-foreground">
+              <TableCell className="hidden @xl:table-cell">
+                <span className="whitespace-nowrap font-mono text-meta tabular-nums text-muted-foreground">
                   {formatDateTimeShort(invitation.expires_at_ms)}
                 </span>
               </TableCell>
-              <TableCell className="text-right">
-                <div className="inline-flex items-center justify-end gap-1.5">
+              <TableCell className="w-px whitespace-nowrap text-right">
+                <div className="inline-flex items-center justify-end gap-0.5">
                   <CopyEmailAction email={invitation.email} />
-                  {onRevoke ? (
+                  {onRevoke && (!canRevoke || canRevoke(invitation)) ? (
                     <RowAction
                       label={`撤销 ${invitation.email} 的邀请`}
                       tooltip="撤销邀请"
@@ -1091,15 +1202,17 @@ function EmptyRow({
   loading = false,
   hint,
   compact = false,
+  colSpan = 5,
 }: {
   label: string
   loading?: boolean
   hint?: string
   compact?: boolean
+  colSpan?: number
 }) {
   return (
     <TableRow>
-      <TableCell colSpan={5}>
+      <TableCell colSpan={colSpan}>
         <div
           className={cn(
             "flex flex-col items-center justify-center gap-2 text-center",
@@ -1117,14 +1230,14 @@ function EmptyRow({
   )
 }
 
-function Avatar({ name, status }: { name: string; status: MemberStatus }) {
+function Avatar({ name, email, status }: { name: string; email: string; status: MemberStatus }) {
+  const colors = ["bg-blue-100 text-blue-700", "bg-violet-100 text-violet-700", "bg-emerald-100 text-emerald-700", "bg-orange-100 text-orange-700"]
+  const colorIndex = Array.from(email).reduce((sum, char) => sum + char.codePointAt(0)!, 0) % colors.length
   return (
     <div className="relative">
-      <IdentityMark
-        kind="user"
-        name={name}
-        className={cn("size-8", status === "manual_disabled" && "opacity-60 grayscale")}
-      />
+      <span aria-hidden className={cn("flex size-12 shrink-0 items-center justify-center rounded-full text-2xl font-medium", colors[colorIndex], status === "manual_disabled" && "opacity-60 grayscale")}>
+        {Array.from(email || name)[0]?.toLocaleUpperCase()}
+      </span>
       <span
         aria-hidden
         className={cn(
@@ -1179,7 +1292,7 @@ function MemberSheet({
   changingRole?: boolean
 }) {
   if (!member) return null
-  const removable = onExit !== undefined && member.permissions?.remove === true
+  const removable = canRemoveWorkspaceMember(member, onExit !== undefined)
   return (
     <MemberRoleSheet
       member={member}
@@ -1290,7 +1403,7 @@ function MemberRoleSheet({
       <DialogContent className="flex max-h-5/6 flex-col sm:max-w-md">
         <DialogHeader>
           <div className="flex items-center gap-3">
-            <Avatar name={member.name} status={member.status} />
+            <Avatar name={member.name} email={member.email} status={member.status} />
             <div className="min-w-0">
               <DialogTitle className="truncate text-base font-semibold">{member.name}</DialogTitle>
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -1328,15 +1441,14 @@ function MemberRoleSheet({
         </div>
         <DialogFooter className="sm:justify-between">
           <div className="flex flex-wrap items-center gap-2">
-            <Button
-              type="button"
+            <IconButton
+              icon={Copy}
+              label="复制邮箱"
               variant="outline"
-              size="sm"
+              size="icon-sm"
+              tooltipSide="top"
               onClick={() => void copyText(member.email)}
-            >
-              <Copy data-icon="inline-start" />
-              复制邮箱
-            </Button>
+            />
             {removable ? (
               <Button
                 type="button"

@@ -20,6 +20,7 @@ import (
 	automationrepo "github.com/xxww0098/podhub-go/internal/automation/repo"
 	automationsvc "github.com/xxww0098/podhub-go/internal/automation/service"
 	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
+	"github.com/xxww0098/podhub-go/tests/testkit"
 )
 
 func TestAutomationFlow(t *testing.T) {
@@ -45,6 +46,11 @@ func TestAutomationFlow(t *testing.T) {
 		Resolve: who.resolve,
 		Actions: automationsvc.New(automationrepo.New(pool, tenant.BeginApp), nil, nil),
 	})
+	spec, err := testkit.LoadOpenAPI()
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked := spec.Checked(r, func(err error) { t.Error(err) }, "/api/automation/")
 	api := func(method, path, body string) (int, []byte) {
 		t.Helper()
 		req := httptest.NewRequest(method, path, strings.NewReader(body))
@@ -52,7 +58,7 @@ func TestAutomationFlow(t *testing.T) {
 			req.Header.Set("Content-Type", "application/json")
 		}
 		rec := httptest.NewRecorder()
-		r.ServeHTTP(rec, req)
+		checked.ServeHTTP(rec, req)
 		raw, _ := io.ReadAll(rec.Body)
 		return rec.Code, raw
 	}
@@ -78,8 +84,8 @@ func TestAutomationFlow(t *testing.T) {
 		if _, ok := created.Data.Grant["token"]; ok {
 			t.Fatal("grant view leaked token")
 		}
-		if created.Data.Grant["tokenPrefix"] != token[:12] {
-			t.Fatalf("%v", created.Data.Grant["tokenPrefix"])
+		if created.Data.Grant["token_prefix"] != token[:12] {
+			t.Fatalf("%v", created.Data.Grant["token_prefix"])
 		}
 		grantID, _ := created.Data.Grant["id"].(string)
 		sum := sha256.Sum256([]byte(token))
@@ -130,7 +136,7 @@ func TestAutomationFlow(t *testing.T) {
 
 	var grantID, runtimeA, runtimeB string
 	t.Run("runtime register list heartbeat", func(t *testing.T) {
-		code, raw := api(http.MethodPost, "/api/automation/grants", `{"name":"auto-runtime","actions":["read","prepare"],"expiresInDays":1}`)
+		code, raw := api(http.MethodPost, "/api/automation/grants", `{"name":"auto-runtime","actions":["read","prepare"],"expires_in_days":1}`)
 		if code != 200 {
 			t.Fatalf("%d %s", code, raw)
 		}
@@ -138,7 +144,7 @@ func TestAutomationFlow(t *testing.T) {
 			Data struct {
 				Grant struct {
 					ID          string `json:"id"`
-					ExpiresAtMS *int64 `json:"expiresAtMs"`
+					ExpiresAtMS *int64 `json:"expires_at_ms"`
 				} `json:"grant"`
 			} `json:"data"`
 		}

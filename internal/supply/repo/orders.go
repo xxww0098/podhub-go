@@ -220,10 +220,10 @@ func confirm(ctx context.Context, tx pgx.Tx, orgID, userID int64, quoteID, key s
 	}
 	_, err = tx.Exec(ctx, `
 		INSERT INTO public.payment_orders
-		    (public_id, org_id, product, plan, member_seats, months,
+		    (public_id, org_id, product, plan, months,
 		     amount_cents, currency, provider, status,
 		     created_by_user_id, created_at, updated_at)
-		VALUES ($1, $2, 'platform_goods', NULL, NULL, 1, $3, 'CNY', 'manual', 'pending', $4,
+		VALUES ($1, $2, 'platform_goods', NULL, 1, $3, 'CNY', 'manual', 'pending', $4,
 		        clock_timestamp(), clock_timestamp())`, paymentID, orgID, quote.amount, userID)
 	if err == nil {
 		_, err = tx.Exec(ctx, `

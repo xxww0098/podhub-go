@@ -6,7 +6,6 @@ import type { SaveState } from "@/components/save-state-chip"
 import type { ListingRow } from "../model/listing-row"
 import { changedProductFields, mergeProductEdit, productEditBaseline, type ProductEditFields } from "../model/product-edit"
 import { projectListingRowLifecycle } from "../model/listing-row-lifecycle"
-import { readOcrModelChoice } from "../prepare/ocr-model-preference"
 import {
   NO_GUIDED_PREPARATION,
   NO_PREPARATION_ACTIVITY,
@@ -29,7 +28,6 @@ import {
  */
 export type ListingWorkbenchRuntime = {
   scope: number
-  modelRouting?: import("../prepare/ocr-model-routing").OcrModelRouting
   productBases: Record<string, WorkflowDraftView>
   dirtyProducts: Record<string, ProductEdit>
   removedProducts: ReadonlySet<string>
@@ -65,10 +63,8 @@ let scopeSequence = 0
 let editSequence = 0
 
 export function emptyListingWorkbench(): ListingWorkbenchRuntime {
-  const modelRouting = readOcrModelChoice()
   return {
     scope: ++scopeSequence,
-    ...(modelRouting ? { modelRouting } : {}),
     productBases: {},
     dirtyProducts: {},
     removedProducts: new Set(),
@@ -134,13 +130,7 @@ function visibleProducts(
       visible[id] = {
         ...base,
         ...merged,
-        // `mergeProductEdit` returns the mergeable fields only; the edit's own
-        // cleared set and hand-edited marks ride the view so a just-typed or
-        // just-cleared cell keeps its honest echo instead of the inherited
-        // card default.
-        draft: dirty[id].view.draft.cleared
-          ? { ...merged.draft, cleared: dirty[id].view.draft.cleared }
-          : merged.draft,
+        // Hand-edited marks echo immediately; values and clear markers merge per field above.
         hand_edited_keys:
           dirty[id].view.hand_edited_keys ?? base.hand_edited_keys,
       }
@@ -249,15 +239,15 @@ export function settleListingProductEdit(
   scope: number,
   readiness?: WorkflowReadinessReport,
   requestMediaEpoch?: number,
-): void {
+): boolean {
   const current = peekListingWorkbench()
   const id = saved.draft_id
-  if (current.scope !== scope || !current.productBases[id] || current.removedProducts.has(id)) return
+  if (current.scope !== scope || !current.productBases[id] || current.removedProducts.has(id)) return false
   // A response issued before an applied card-level invalidation is
   // dropped — the template change does not bump row view_revision, so view_revision cannot detect this staleness. The edit
   // stays dirty and flushes again; the invalidation's refetch owns the
   // authoritative baseline.
-  if (requestMediaEpoch !== undefined && requestMediaEpoch < current.mediaEpoch) return
+  if (requestMediaEpoch !== undefined && requestMediaEpoch < current.mediaEpoch) return false
   const dirtyProducts = { ...current.dirtyProducts }
   const pending = dirtyProducts[id]
   if (pending?.id === edit.id) delete dirtyProducts[id]
@@ -276,6 +266,7 @@ export function settleListingProductEdit(
       ? projectListingRowLifecycle(row, merged.productBases[id]!.lifecycle, saved.lifecycle.view_revision >= current.productBases[id]!.lifecycle.view_revision ? readiness : undefined)
       : row),
   })
+  return true
 }
 
 /** Snapshot membership and streamed rows share the HTTP edit-overlay owner. */

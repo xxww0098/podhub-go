@@ -2,6 +2,7 @@ package repo
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -33,15 +34,23 @@ FROM organizations o WHERE o.id = $1`
 
 func (s *Store) Roster(ctx context.Context, orgID, userID int64, role string) ([]contract.StoreHead, contract.RosterMeta, error) {
 	var meta contract.RosterMeta
-	if err := s.Pool.QueryRow(ctx, metaSQL, orgID).Scan(&meta.StoreLimit, &meta.StoresUsed, &meta.Suspended); err != nil {
+	tx, err := tenantx.BeginApp(ctx, s.Pool.Begin, orgID)
+	if err != nil {
+		return nil, meta, mapDB(err, true)
+	}
+	defer tx.Rollback(ctx)
+	if err := tx.QueryRow(ctx, metaSQL, orgID).Scan(&meta.StoreLimit, &meta.StoresUsed, &meta.Suspended); err != nil {
 		return nil, meta, mapDB(err, true)
 	}
 	var member *int64
-	_ = s.Pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		SELECT id FROM organization_members
 		WHERE org_id = $1 AND user_id = $2 AND status = 'active' AND NOT manual_disabled AND NOT quota_suspended`,
 		orgID, userID).Scan(&member)
-	rows, err := s.Pool.Query(ctx, rosterSQL, orgID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, meta, mapDB(err, true)
+	}
+	rows, err := tx.Query(ctx, rosterSQL, orgID)
 	if err != nil {
 		return nil, meta, mapDB(err, true)
 	}
@@ -62,7 +71,10 @@ func (s *Store) Roster(ctx context.Context, orgID, userID int64, role string) ([
 	if out == nil {
 		out = []contract.StoreHead{}
 	}
-	return out, meta, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, meta, mapDB(err, true)
+	}
+	return out, meta, mapDB(tx.Commit(ctx), true)
 }
 
 func (s *Store) Ledger(ctx context.Context, orgID int64, cap int) ([]contract.LedgerEntry, error) {
@@ -262,7 +274,7 @@ SET state = $3,
     error_message = $6,
     reconcile_after = CASE
         WHEN $3 = 'result_unknown'
-        THEN clock_timestamp() + ($7::text || ' seconds')::interval
+        THEN clock_timestamp() + make_interval(secs => $7::int)
         ELSE NULL
     END,
     updated_at = clock_timestamp()

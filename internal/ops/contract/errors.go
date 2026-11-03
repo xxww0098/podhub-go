@@ -37,8 +37,6 @@ const (
 	MsgKeyExpired         = "Seller 密钥已过期，请在卖家后台重新生成后登记"
 	MsgKeyMissing         = "Store 尚未登记密钥"
 	MsgKeyHostMissing     = "Seller 密钥托管未配置"
-	MsgNoWriteRole        = "当前角色不能对 Ozon 执行写操作"
-	MsgNoReconcileRole    = "当前角色不能执行店铺对账"
 	MsgNoStoreRead        = "当前角色不能读取店铺数据"
 	MsgRefreshBusy        = "经营指标正在刷新，请等待本轮完成后再试"
 	KindProductMutation   = "product_mutation"

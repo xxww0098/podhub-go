@@ -118,19 +118,19 @@ func (closedSeller) WritesDisabled() bool { return true }
 
 const stockBody = `{"operation_id":"00000000-0000-4000-8000-000000000001","store_id":"00000000-0000-4000-8000-0000000000a1","request":{"kind":"stock","items":[{"product_id":41,"offer_id":"ART-41","sku":90041,"warehouse_id":7,"stock":5}]}}`
 
-func TestOpsWeakRolesStopBeforeAdmit(t *testing.T) {
+func TestOpsInvalidRolesStopBeforeAdmit(t *testing.T) {
 	var admits, calls int
 	screen := &service.Screen{Stores: tallyAdmit{n: &admits}, Seller: tallySeller{n: &calls}, Ledger: ledgerCount{n: new(int)}}
-	for _, role := range []string{"viewer", "reviewer"} {
+	for _, role := range []string{"viewer", "reviewer", "admin", "operator", "super_admin", "unknown"} {
 		admits, calls = 0, 0
 		rec := serve(role, screen, http.MethodPost, "/api/ops/products/mutate", stockBody)
-		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), contract.MsgNoWriteRole) || admits != 0 || calls != 0 {
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), access.MsgBadWorkspaceRole) || admits != 0 || calls != 0 {
 			t.Fatalf("%s %d admits %d calls %d %s", role, rec.Code, admits, calls, rec.Body.String())
 		}
 	}
 	admits, calls = 0, 0
 	rec := serve("viewer", screen, http.MethodPost, "/api/ops/console/reconcile", "")
-	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), contract.MsgNoReconcileRole) || admits != 0 || calls != 0 {
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), access.MsgBadWorkspaceRole) || admits != 0 || calls != 0 {
 		t.Fatalf("reconcile %d admits %d %s", rec.Code, admits, rec.Body.String())
 	}
 }
@@ -138,7 +138,7 @@ func TestOpsWeakRolesStopBeforeAdmit(t *testing.T) {
 func TestOpsParsedRolesCanRead(t *testing.T) {
 	var admits, calls int
 	screen := &service.Screen{Stores: tallyAdmit{n: &admits}, Seller: tallySeller{n: &calls}}
-	for _, role := range []string{"member", "reviewer", "viewer", "owner", "manager"} {
+	for _, role := range []string{"member", "owner", "manager"} {
 		admits, calls = 0, 0
 		rec := serve(role, screen, http.MethodPost, "/api/ops/shipping/list", `{"store_id":"00000000-0000-4000-8000-0000000000a1"}`)
 		if rec.Code != http.StatusOK || admits != 1 || calls != 1 || !strings.Contains(rec.Body.String(), `"postings":[]`) {
@@ -160,12 +160,12 @@ func TestOpsInvisibleStoreDoesNotCallOzon(t *testing.T) {
 	}
 }
 
-func TestOpsEmptyPromotionsSkipAuth(t *testing.T) {
+func TestOpsPromotionsAlwaysRequireAuth(t *testing.T) {
 	r := chi.NewRouter()
 	Mount(r, Deps{})
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/ops/products/promotions", strings.NewReader(`{"store_id":"x","product_ids":[0,-3]}`)))
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"actions":[]`) || !strings.Contains(rec.Body.String(), `"offers":[]`) {
+	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), `"code":"auth_required"`) {
 		t.Fatalf("%d %s", rec.Code, rec.Body.String())
 	}
 	rec = httptest.NewRecorder()

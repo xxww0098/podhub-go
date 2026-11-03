@@ -1,6 +1,7 @@
 import { createErrorFeedback, errorTransportContext, reportFeedback, type ErrorFeedback } from "@/lib/error-feedback"
 import { listingMediaSummary } from "@/lib/error-report-environment"
 import { refusalPair } from "@/lib/listing-refusal"
+import { listingRowFailureStage } from "@/lib/listing-log"
 import type { ListingRow } from "./model/listing-row"
 import { peekListingWorkbench } from "./workbench/listing-workbench-store"
 
@@ -24,6 +25,7 @@ export function batchErrorFeedback(
         reportFeedback(feedback, {
           ...errorTransportContext(reason),
           ...context,
+          stage: context.stage ? listingRowFailureStage(context.stage, pair?.refusal ?? feedback.code) : undefined,
           rowId: row.draftId,
           ...(pair ? { refusalReason: pair.refusal } : {}),
           ...(media ? { media } : {}),

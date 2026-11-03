@@ -12,7 +12,8 @@ import (
 	"github.com/xxww0098/podhub-go/internal/platform/writer"
 )
 
-// ProcureRepo stores procurement attempts. These tables are not RLS-scoped.
+// ProcureRepo stores procurement attempts. Its tables are tenant-scoped, so
+// the admin console uses a staff session to read them across organizations.
 type ProcureRepo struct {
 	Pool *pgxpool.Pool
 }
@@ -48,7 +49,7 @@ func (r ProcureRepo) write(ctx context.Context, fn func(pgx.Tx) error) error {
 	if r.Pool == nil {
 		return domain.Fail(500, "INTERNAL", "服务暂不可用")
 	}
-	tx, err := BeginAdmin(ctx, r.Pool)
+	tx, err := BeginStaff(ctx, r.Pool)
 	if err != nil {
 		return mapAdmin(err, "INTERNAL")
 	}
@@ -68,7 +69,7 @@ func (r ProcureRepo) List(ctx context.Context) ([]domain.WorkItem, error) {
 	if r.Pool == nil {
 		return nil, domain.Fail(500, "INTERNAL", "服务暂不可用")
 	}
-	tx, err := BeginAdmin(ctx, r.Pool)
+	tx, err := BeginStaff(ctx, r.Pool)
 	if err != nil {
 		return nil, mapAdmin(err, "INTERNAL")
 	}

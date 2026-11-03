@@ -125,3 +125,30 @@ fn an_undecodable_layer_channel_refuses_the_template() {
     );
     assert!(!error.remediation.contains("重试"), "{}", error.remediation);
 }
+
+#[test]
+fn complete_rle_rows_are_admitted() {
+    let bytes = one_layer_psd(1, &[0, 3, 0, 2, 1, 10, 20, 255, 30]);
+    ParsedTemplate::parse(&bytes, &ProductResourcePolicy::default()).unwrap();
+}
+
+#[test]
+fn incomplete_rle_rows_refuse_the_template() {
+    let payloads: &[&[u8]] = &[
+        &[0, 2, 0, 3, 0, 10, 1, 20, 30], // short first row
+        &[0, 0, 0, 3, 1, 20, 30],        // empty first row
+        &[0, 1, 0, 3, 255, 1, 20, 30],   // repeat packet without a value
+        &[0, 2, 0, 3, 1, 10, 1, 20, 30], // incomplete literal packet
+        &[0, 3, 0, 3, 1, 10],            // declared row extends past its channel
+    ];
+    for payload in payloads {
+        let bytes = one_layer_psd(1, payload);
+        let error = ParsedTemplate::parse(&bytes, &ProductResourcePolicy::default())
+            .err()
+            .expect("a damaged RLE channel must not render successfully");
+        assert_eq!(error.code, RenderErrorCode::CorruptDocument, "{error}");
+        assert_eq!(error.phase, CHANNEL_DECODE);
+        assert!(error.detail.contains("channel 0"), "{error}");
+        assert!(!error.retryable);
+    }
+}

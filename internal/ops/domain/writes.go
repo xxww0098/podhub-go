@@ -3,7 +3,6 @@ package domain
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 )
 
 // ProductKey is ozon.product-mutation:{store}:{operation}.
@@ -11,10 +10,9 @@ func ProductKey(storeUUID, operationID string) string {
 	return "ozon.product-mutation:" + storeUUID + ":" + operationID
 }
 
-// ChatKey hashes chat_id, a NUL, and the trimmed text.
-func ChatKey(storeUUID, chatID, text string) string {
-	sum := sha256.Sum256(append(append([]byte(chatID), 0), []byte(text)...))
-	return "ozon.chat-send:" + storeUUID + ":" + hex.EncodeToString(sum[:])
+// ChatKey identifies one user action; retries keep the same operation ID.
+func ChatKey(storeUUID, operationID string) string {
+	return "ozon.chat-send:" + storeUUID + ":" + operationID
 }
 
 // RequestHash is sha256:{hex} of store, NUL, and the stored request JSON.
@@ -69,9 +67,4 @@ func OpsError(message, code string) []byte {
 		return []byte(`{"error":"","code":"internal"}`)
 	}
 	return raw
-}
-
-// ReplayView unwraps a settled 200 body. Unreadable receipts are not success.
-func ReplayView(body []byte, dest any) error {
-	return json.Unmarshal(body, dest)
 }

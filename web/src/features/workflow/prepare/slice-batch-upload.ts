@@ -4,6 +4,7 @@ import { request as apiRequest } from "@/api/client"
 import { route } from "@/api/routes"
 import { elapsedMs } from "@/lib/diag-log"
 import { acquireComplete } from "../media/direct-media-budget"
+import { matchesUploadBatch } from "../media/direct-media-cache"
 import {
   acceptConfirmedUpload, completeGrantedMedia, invalidPresign, requirePresign,
 } from "../media/direct-media-transfer"
@@ -57,7 +58,7 @@ export async function presignSliceBatch(items: readonly DeliverMediaObjectReques
         extension: item.extension.toLowerCase(),
         byte_length: item.byteLength,
       })),
-    }, {}, CONTROL_TIMEOUT_MS), first.retry)
+    }, {}, CONTROL_TIMEOUT_MS, undefined, { responseBody: "json" }), first.retry)
     batchShape(chunk.length, data?.objects?.length ?? 0)
     for (let index = 0; index < chunk.length; index += 1) {
       grants.push(requirePresign(data.objects[index], chunk[index]!, chunk[index]!.digest.toLowerCase(), chunk[index]!.extension.toLowerCase()))
@@ -91,6 +92,8 @@ interface BatchOutcomeError { status?: number, code?: string, error?: string, re
 async function confirmChunk(items: readonly { request: DeliverMediaObjectRequest, delivered: DeliveredMediaObject }[],
   startedAt: number): Promise<(DeliveredMediaObject | undefined)[]> {
   const first = items[0]!
+  const batch = first.request.uploadBatch
+  const sameBatch = batch && items.every(item => matchesUploadBatch(batch, item.delivered.objectKey))
   const data = await retryWhenBusy(async () => {
     noteUploadGate("本机已核对，排队确认")
     try {
@@ -99,7 +102,7 @@ async function confirmChunk(items: readonly { request: DeliverMediaObjectRequest
       try {
         return await apiRequest<{ objects: Array<{ object?: unknown, error?: BatchOutcomeError }> }>("POST", route("mediaObjectsCompleteBatch"), {
         workspace_uuid: first.request.workspaceUuid,
-        ...(first.request.uploadBatch ? { upload_batch: first.request.uploadBatch } : {}),
+        ...(sameBatch ? { upload_batch: batch } : {}),
         objects: items.map(({ request, delivered }) => ({
           digest: request.digest.toLowerCase(),
           extension: request.extension.toLowerCase(),
@@ -109,7 +112,7 @@ async function confirmChunk(items: readonly { request: DeliverMediaObjectRequest
           byte_length: delivered.timing?.bytes ?? request.byteLength,
           storage_revision: delivered.storageRevision,
         })),
-        }, {}, COMPLETE_TIMEOUT_MS)
+        }, {}, COMPLETE_TIMEOUT_MS, undefined, { responseBody: "json" })
       } finally {
         release()
       }

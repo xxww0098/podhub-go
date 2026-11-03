@@ -73,8 +73,8 @@ export function AgentWalletCard({
       aria-label="佣金余额"
       className="overflow-hidden rounded-xl border border-border bg-card"
     >
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-4 py-3">
-        <div className="flex min-w-0 flex-col gap-0.5">
+      <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
           <p className="text-sm font-medium">佣金余额</p>
           <p className="text-xs text-muted-foreground">
             {workbench.status === "disabled"
@@ -82,7 +82,7 @@ export function AgentWalletCard({
               : "首笔合格订单的返点进入这里，可提现或转入钱包。"}
           </p>
         </div>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex flex-wrap items-center gap-2">
           <Button
             type="button"
             size="sm"
@@ -412,7 +412,7 @@ function TransferDialog({
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex flex-col gap-0.5 bg-card px-4 py-3">
+    <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5 bg-card px-3 py-2">
       <dt className="text-xs text-muted-foreground">{label}</dt>
       <dd className="font-mono text-sm tabular-nums">{value}</dd>
     </div>

@@ -6,7 +6,7 @@ import { retryWhenBusy } from "@/api/busy-retry"
 import { hashUploadBody, putDirectUpload, type DirectUploadGrant } from "@/bindings/direct-upload"
 import { hashFile } from "@/bindings/sha256-stream"
 import {
-  clearSession, readSession, uploadParts, type MultipartPlan, type PartEtag, type UploadProgress,
+  clearSession, uploadParts, type MultipartPlan, type PartEtag, type UploadProgress,
 } from "@/bindings/multipart-upload"
 import { validateVideoResolution } from "@/lib/video-duration"
 
@@ -155,6 +155,7 @@ export type SupplierDbConfirm = (
   sourceId: string, uploadTicket: string, signal?: AbortSignal, parts?: PartEtag[],
 ) => Promise<SupplierDbUploadResult>
 export type SupplierDbUploadProgress = UploadProgress
+export type SupplierDbAbort = (sourceId: string, uploadTicket: string) => void
 export type SupplierDbUploadInput = {
   kind: SupplierDbUploadKind; file: File; lane?: SupplierDbUploadKind
   onProgress?: (progress: SupplierDbUploadProgress) => void; signal?: AbortSignal
@@ -178,20 +179,20 @@ function actualObjectMissing(reason: unknown): boolean {
   return reason instanceof Error && "code" in reason && reason.code === "cloud_upload_object_missing"
 }
 const confirmUpload: SupplierDbConfirm = (sourceId, uploadTicket, signal, parts) =>
-  retryWhenBusy(() => request("POST", route("adminSupplierDbsBySourceIdUploadsConfirm", { source_id: sourceId }),
-    { uploadTicket, ...(parts ? { parts } : {}) }, {}, parts ? 60_000 : 65 * 60 * 1000,
-    undefined, { callerSignal: signal, reportOwner: "caller" }),
+  retryWhenBusy(() => request<{ key: string; public_url: string }>("POST", route("adminSupplierDbsBySourceIdUploadsConfirm", { source_id: sourceId }),
+    { upload_ticket: uploadTicket, ...(parts ? { parts: parts.map((part) => ({ part_number: part.partNumber, etag: part.etag })) } : {}) }, {}, parts ? 60_000 : 65 * 60 * 1000,
+    undefined, { callerSignal: signal, reportOwner: "caller" }).then((data) => ({ key: data.key, publicUrl: data.public_url })),
   { cancelled: () => signal?.aborted === true })
 
 function abortSupplierMultipart(sourceId: string, uploadTicket: string): void {
   void request("POST", route("adminSupplierDbsBySourceIdUploadsAbort", { source_id: sourceId }),
-    { uploadTicket }, {}, 30_000, undefined, { reportOwner: "caller" }).catch(() => {})
+    { upload_ticket: uploadTicket }, {}, 30_000, undefined, { reportOwner: "caller" }).catch(() => {})
 }
 
 /** A retry keeps the original intent and confirms it FIRST. Only actual-object-missing permits PUT. */
 export async function supplierDbUploadFile(
   presign: SupplierDbPresign, sourceId: string, input: SupplierDbUploadInput,
-  options: { confirm?: SupplierDbConfirm; attempts?: SupplierUploadAttempts } = {},
+  options: { confirm?: SupplierDbConfirm; abort?: SupplierDbAbort; attempts?: SupplierUploadAttempts } = {},
 ): Promise<SupplierDbUploadResult> {
   const confirm = options.confirm ?? confirmUpload
   const attempts = options.attempts
@@ -226,14 +227,13 @@ export async function supplierDbUploadFile(
         })
         : await hashUploadBody(input.file, input.signal)
       checkCancelled(input.signal)
-      const session = largePsd ? readSession(sha256) : null
       const result = await retryWhenBusy(() => presign(sourceId, { kind: input.kind, filename: input.file.name,
-        contentType: uploadContentType(input.kind, input.file), bytes: input.file.size, sha256,
-        ...(session ? { resumeTicket: session.ticket } : {}) }), { cancelled: () => input.signal?.aborted === true })
-      checkCancelled(input.signal)
+        contentType: uploadContentType(input.kind, input.file), bytes: input.file.size, sha256 }),
+      { cancelled: () => input.signal?.aborted === true })
       if (!result.ok) throw result.reason instanceof Error ? result.reason : new Error(result.issues[0]?.message ?? "无法创建上传")
       target = result.value
       attempts?.set(input.file, { sourceId, kind: input.kind, target, sha256 })
+      checkCancelled(input.signal)
     }
     if (target.alreadyPresent) {
       const ready = await confirm(sourceId, target.uploadTicket, input.signal)
@@ -241,25 +241,15 @@ export async function supplierDbUploadFile(
       return ready
     }
     if (target.multipart) {
-      try {
-        const parts = await uploadParts(input.file, target.multipart, {
-          signal: input.signal,
-          sha256: sha256 || undefined,
-          onProgress: input.onProgress,
-        })
-        const ready = await confirm(sourceId, target.uploadTicket, input.signal, parts)
-        attempts?.delete(input.file)
-        if (sha256) clearSession(sha256)
-        return ready
-      } catch (reason) {
-        const gone = (reason as { code?: string }).code === "psd_part_gone"
-        if (gone || input.signal?.aborted) {
-          abortSupplierMultipart(sourceId, target.uploadTicket)
-          attempts?.delete(input.file)
-          if (sha256) clearSession(sha256)
-        }
-        throw reason
-      }
+      const parts = await uploadParts(input.file, target.multipart, {
+        signal: input.signal,
+        sha256: sha256 || undefined,
+        onProgress: input.onProgress,
+      })
+      const ready = await confirm(sourceId, target.uploadTicket, input.signal, parts)
+      attempts?.delete(input.file)
+      if (sha256) clearSession(sha256)
+      return ready
     }
     if (!target.upload) throw new Error("文件上传授权无效，请重新选择文件")
     let putFailure: unknown
@@ -277,7 +267,16 @@ export async function supplierDbUploadFile(
       if (putFailure && actualObjectMissing(reason)) throw putFailure
       throw reason
     }
-  } catch (reason) { checkCancelled(input.signal); throw reason }
+  } catch (reason) {
+    if (target?.multipart && ((reason as { code?: string }).code === "psd_part_gone" || input.signal?.aborted)) {
+      const abort = options.abort ?? abortSupplierMultipart
+      abort(sourceId, target.uploadTicket)
+      attempts?.delete(input.file)
+      if (sha256) clearSession(sha256)
+    }
+    checkCancelled(input.signal)
+    throw reason
+  }
 }
 
 // ---------- hook ----------
@@ -303,7 +302,7 @@ export type SupplierDbUploader = {
  */
 export function useSupplierDbUpload(
   sourceId: string,
-  options?: { presign?: SupplierDbPresign; confirm?: SupplierDbConfirm },
+  options?: { presign?: SupplierDbPresign; confirm?: SupplierDbConfirm; abort?: SupplierDbAbort },
 ): SupplierDbUploader {
   const presign = useMemo<SupplierDbPresign>(
     () =>
@@ -348,7 +347,7 @@ export function useSupplierDbUpload(
         return await supplierDbUploadFile(presign, sourceId, {
           ...input,
           signal: controller.signal,
-        }, { confirm: options?.confirm, attempts: attempts.current })
+        }, { confirm: options?.confirm, abort: options?.abort, attempts: attempts.current })
       } finally {
         upstream?.removeEventListener("abort", onAbort)
         controllers.current.delete(controller)
@@ -360,7 +359,7 @@ export function useSupplierDbUpload(
         }
       }
     },
-    [presign, sourceId, options?.confirm],
+    [presign, sourceId, options?.confirm, options?.abort],
   )
 
   const busyFor = useCallback(

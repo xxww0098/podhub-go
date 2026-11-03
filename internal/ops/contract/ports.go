@@ -80,31 +80,31 @@ type LedgerEntry struct {
 
 // MetricRow is one console_store_metrics projection.
 type MetricRow struct {
-	StoreID    string
-	Ordered    *float64
-	Previous   *float64
-	DaySeries  []float64
-	ThroughDay string
-	LastSyncMS *int64
-	LastError  string
-	RetryAtMS  *int64
+	StoreID    string    `json:"store_id"`
+	Ordered    *float64  `json:"ordered_units_30d,omitempty"`
+	Previous   *float64  `json:"previous_ordered_units_30d,omitempty"`
+	DaySeries  []float64 `json:"day_series_14d,omitempty"`
+	ThroughDay string    `json:"through_day,omitempty"`
+	LastSyncMS *int64    `json:"last_sync_at_ms,omitempty"`
+	LastError  string    `json:"last_error,omitempty"`
+	RetryAtMS  *int64    `json:"retry_at_ms,omitempty"`
 }
 
 // ProductRow is one store_product_sync projection. Nil counts mean never synced.
 type ProductRow struct {
-	StoreID               string
-	CountTotal            *int64
-	CountOnSale           *int64
-	CountHidden           *int64
-	CountModerationFailed *int64
-	CountZeroStock        *int64
-	CountArchived         *int64
-	LastFullSync          *int64
-	Pass                  string
-	Hold                  string
-	HoldUntilMS           *int64
-	HoldReason            string
-	PricedAtMS            *int64
+	StoreID               string `json:"store_id"`
+	CountTotal            *int64 `json:"count_total,omitempty"`
+	CountOnSale           *int64 `json:"count_on_sale,omitempty"`
+	CountHidden           *int64 `json:"count_hidden,omitempty"`
+	CountModerationFailed *int64 `json:"count_moderation_failed,omitempty"`
+	CountZeroStock        *int64 `json:"count_zero_stock,omitempty"`
+	CountArchived         *int64 `json:"count_archived,omitempty"`
+	LastFullSync          *int64 `json:"last_full_sync_at_ms,omitempty"`
+	Pass                  string `json:"pass,omitempty"`
+	Hold                  string `json:"hold,omitempty"`
+	HoldUntilMS           *int64 `json:"hold_until_ms,omitempty"`
+	HoldReason            string `json:"hold_reason,omitempty"`
+	PricedAtMS            *int64 `json:"priced_at_ms_max,omitempty"`
 }
 
 // RosterMeta is the org-level half of the overview. The loader SQL was not

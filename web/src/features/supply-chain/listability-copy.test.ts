@@ -8,6 +8,7 @@ import {
   LISTABILITY_EXPLAIN,
   SUPPLIER_NOT_LISTABLE_CODE,
   listabilityClass,
+  listabilityExplanation,
   listabilityFromRefusal,
   listabilitySkippedNotice,
   type ListabilityClass,
@@ -86,4 +87,11 @@ test("两类卖家文案固定，批量跳过报数一行交代", () => {
   assert.deepEqual({ ...LISTABILITY_BADGE }, badges)
   assert.equal(listabilitySkippedNotice(1), "已跳过 1 件暂不可上架的商品")
   assert.equal(listabilitySkippedNotice(3), "已跳过 3 件暂不可上架的商品")
+})
+
+test("配置受阻说明指出平台待处理项，停售和未知原因保留回退", () => {
+  assert.equal(listabilityExplanation("config_needs_reconfiguration"), "商品的 Ozon 上架配置需平台重新配置")
+  assert.equal(listabilityExplanation("catalog_expired"), "商品类目信息已过期，需平台更新后再上架")
+  assert.equal(listabilityExplanation("product_archived"), LISTABILITY_EXPLAIN.delisted)
+  assert.equal(listabilityExplanation(), LISTABILITY_EXPLAIN.platform_pending)
 })

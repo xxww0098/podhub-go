@@ -7,7 +7,9 @@ import { ScreenCatalog } from "@/app/screen-catalog"
 import type { AccountOverview } from "@/bindings/commands"
 import { replaceAddress } from "@/lib/address"
 import { ObservationProductsTable } from "@/features/platform-observation/observation-products-table"
-import { observedProduct, observedStore, STORE_A, STORE_B, WORKSPACE_A, WORKSPACE_B } from "@/features/platform-observation/observation-fixtures"
+import { observedConsole, observedOverview, observedProduct, observedScopes, observedStore, STORE_A, STORE_B, WORKSPACE_A, WORKSPACE_B } from "@/features/platform-observation/observation-fixtures"
+import { AdminConsoleScreen } from "@/features/platform-observation/admin-console-screen"
+import { ObservationScopeProvider } from "@/features/platform-observation/observation-scope-provider"
 import type { ObservationProducts } from "@/features/platform-observation/observation-types"
 import "../src/index.css"
 
@@ -43,7 +45,7 @@ async function mounted(action: (root: Root) => Promise<void>) {
   finally { flushSync(() => root.unmount()); await frame() }
 }
 const readonlyItems = () => [observedProduct(), observedProduct(WORKSPACE_B, STORE_B)].map((item) => ({
-  ...item, product: { ...item.product, imageUrl: null },
+  ...item, product: { ...item.product, image_url: null },
 }))
 
 async function expandedRowIsLocalOnly() {
@@ -77,16 +79,10 @@ async function switchingScopeFencesPaginationAndDetail() {
     const url = new URL(String(input), window.location.origin)
     const method = init?.method ?? "GET"
     if (method !== "GET") { writes.push(url.pathname); throw new Error("No POST is authorized") }
-    if (url.pathname === "/api/admin/ops/scopes") return json({
-      workspaces: [
-        { id: WORKSPACE_A, name: "甲空间", ownerUuid: WORKSPACE_A, ownerName: "甲所有者" },
-        { id: WORKSPACE_B, name: "乙空间", ownerUuid: WORKSPACE_B, ownerName: "乙所有者" },
-      ],
-      stores: [a, b].map((item) => ({ storeId: item.product.store_id, storeName: "同名店", workspaceId: item.workspace_id, workspaceName: item.workspace_name, ownerUuid: item.owner_uuid, ownerName: item.owner_name })),
-    })
+    if (url.pathname === "/api/admin/ops/scopes") return json(observedScopes())
     const isA = url.searchParams.get("workspaceId") === WORKSPACE_A
     if (url.pathname === "/api/admin/stores/products/overview") return json({
-      totals: { total: 1, onSale: 1 }, coverage: { read: 1, total: 1 }, syncDisabled: true,
+      ...observedOverview(), totals: { ...observedOverview().totals, total: 1, on_sale: 1 }, coverage: { read: 1, total: 1 },
       stores: [observedStore(isA ? STORE_A : STORE_B)],
     })
     if (url.pathname === "/api/admin/stores/products") {
@@ -94,7 +90,7 @@ async function switchingScopeFencesPaginationAndDetail() {
         oldPageRequested = true
         return json(await oldPage.promise)
       }
-      return json(isA ? { items: [a], nextCursor: "a-page-2" } : { items: [b] })
+      return json(isA ? { items: [a], next_cursor: "a-page-2" } : { items: [b] })
     }
     unexpected.push(url.pathname)
     throw new Error("Unexpected route")
@@ -113,7 +109,7 @@ async function switchingScopeFencesPaginationAndDetail() {
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!
     setter.call(input, "scope-a")
     input.dispatchEvent(new Event("input", { bubbles: true }))
-    const more = [...fixture.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "加载更多")!
+    const more = fixture.querySelector<HTMLButtonElement>('button[aria-label="下一页"]')!
     flushSync(() => more.click())
     await waitFor(() => oldPageRequested, "pagination was not requested")
     flushSync(() => replaceAddress({ search: "?screen=admin-products&workspaceId=" + WORKSPACE_B }))
@@ -124,9 +120,167 @@ async function switchingScopeFencesPaginationAndDetail() {
     oldPage.resolve({ items: [{ ...a, product: { ...a.product, product_id: 102, name: "迟到旧商品" } }], next_cursor: "old-page-3" })
     await frame(); await frame()
     check(!fixture.querySelector("table")?.textContent?.includes("迟到旧商品"), "old page contaminated the new scope")
-    check(![...fixture.querySelectorAll("button")].some((button) => button.textContent === "加载更多"), "old cursor was restored")
+    check(fixture.querySelector<HTMLButtonElement>('button[aria-label="下一页"]')?.disabled, "old cursor was restored")
     render("admin")
-    check(!fixture.querySelector('section[aria-label="平台店铺商品"]') && !fixture.querySelector("table"), "downgrade left the observation pane mounted")
+    check(!fixture.querySelector('section[aria-label="全部 Ozon 商品"]') && !fixture.querySelector("table"), "downgrade left the observation pane mounted")
+  })
+}
+
+async function pageSizeAndSelectionReset() {
+  const first = readonlyItems()[0]!
+  const blank = { ...first, product: { ...first.product, product_id: 102, offer_id: "", name: "无货号商品" } }
+  const second = { ...first, product: { ...first.product, product_id: 103, offer_id: "SECOND", name: "第二页商品" } }
+  const requests: string[] = []
+  window.fetch = async (input, init) => {
+    const url = new URL(String(input), window.location.origin)
+    if ((init?.method ?? "GET") !== "GET") { writes.push(url.pathname); throw new Error("Observation cannot write") }
+    if (url.pathname === "/api/admin/ops/scopes") return json(observedScopes())
+    if (url.pathname === "/api/admin/stores/products/overview") return json(observedOverview())
+    if (url.pathname === "/api/admin/stores/products") {
+      requests.push(url.search)
+      return json(url.searchParams.has("cursor") ? { items: [second] } : { items: [first, blank], next_cursor: "page-2" })
+    }
+    unexpected.push(url.pathname)
+    throw new Error("Unexpected route")
+  }
+  await mounted(async (root) => {
+    const overview = { session: { role: "super_admin" }, active_workspace: { id: 77 }, account_mode: "owner" } as unknown as AccountOverview
+    flushSync(() => replaceAddress("/admin?screen=admin-products&workspaceId=" + WORKSPACE_A))
+    flushSync(() => root.render(<ScreenCatalog screen="admin-products" visited={["admin-products"]} overview={overview} onOverviewChange={() => {}} onSignedOut={() => {}} onNavigate={() => {}} onRefreshOverview={async () => {}} />))
+    await waitFor(() => Boolean(fixture.querySelector('[aria-label="选择 无货号商品"]')), "first page never appeared")
+    flushSync(() => fixture.querySelector<HTMLButtonElement>('[aria-label="选择 无货号商品"]')!.click())
+    const copy = () => [...fixture.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("复制选中货号"))
+    check(copy()?.disabled, "blank offer id enabled copy")
+    flushSync(() => fixture.querySelector<HTMLButtonElement>('[aria-label="选择本页全部商品"]')!.click())
+    check(copy() && !copy()!.disabled, "select all did not include a copyable offer")
+    flushSync(() => fixture.querySelector<HTMLButtonElement>('button[aria-label="下一页"]')!.click())
+    await waitFor(() => fixture.textContent!.includes("第二页商品"), "next cursor page never appeared")
+    check(!copy(), "page change retained old selection")
+    check(requests.some((request) => new URLSearchParams(request).get("cursor") === "page-2"), "next cursor was not sent")
+    flushSync(() => fixture.querySelector<HTMLButtonElement>('button[aria-label="上一页"]')!.click())
+    await waitFor(() => Boolean(fixture.querySelector('[aria-label="选择 无货号商品"]')), "previous page never returned")
+    flushSync(() => fixture.querySelector<HTMLButtonElement>('[aria-label="选择 SAME-OFFER"]')!.click())
+    const size = fixture.querySelector<HTMLButtonElement>('[aria-label="每页商品数量"]')!
+    flushSync(() => size.click())
+    await waitFor(() => [...document.querySelectorAll('[role="option"]')].some((node) => node.textContent?.trim() === "20 条/页"), "page size options did not open")
+    const twenty = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((node) => node.textContent?.trim() === "20 条/页")!
+    flushSync(() => twenty.click())
+    await waitFor(() => requests.some((request) => new URLSearchParams(request).get("limit") === "20"), "new page size was not sent")
+    check(!copy(), "page-size change retained old selection")
+    const latest = new URLSearchParams(requests.at(-1)!)
+    check(latest.get("limit") === "20" && !latest.has("cursor"), "page size did not reset cursor")
+    const input = fixture.querySelector<HTMLInputElement>('input[aria-label="搜索商品名称、货号或 SKU"]')!
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!
+    setter.call(input, "match")
+    input.dispatchEvent(new Event("input", { bubbles: true }))
+    await waitFor(() => requests.some((request) => new URLSearchParams(request).get("q") === "match"), "filter query was not sent")
+    const filtered = new URLSearchParams(requests.at(-1)!)
+    check(filtered.get("limit") === "10" && !filtered.has("cursor"), "filter change did not reset page size and cursor")
+  })
+}
+
+function metric(label: string): string | undefined {
+  return [...fixture.querySelectorAll('dl[aria-label="核心指标"] dt')].find((node) => node.textContent === label)?.nextElementSibling?.firstChild?.firstChild?.textContent ?? undefined
+}
+
+async function dashboardReadsFailIndependently() {
+  for (const failedSource of ["console", "products"] as const) {
+    let failed = true
+    const calls = { console: 0, products: 0 }
+    window.fetch = async (input, init) => {
+      const url = new URL(String(input), window.location.origin)
+      if ((init?.method ?? "GET") !== "GET") { writes.push(url.pathname); throw new Error("Observation cannot write") }
+      if (url.pathname === "/api/admin/ops/scopes") return json(observedScopes())
+      const source = url.pathname === "/api/admin/ops/console/snapshot" ? "console"
+        : url.pathname === "/api/admin/stores/products/overview" ? "products" : null
+      if (!source) { unexpected.push(url.pathname); throw new Error("Unexpected dashboard route") }
+      calls[source]++
+      if (failed && source === failedSource) return new Response(JSON.stringify({ error: { code: "snapshot_unavailable", message: "合成读取失败" } }), { status: 503, headers: { "Content-Type": "application/json" } })
+      return json(source === "console" ? observedConsole() : observedOverview())
+    }
+    await mounted(async (root) => {
+      flushSync(() => replaceAddress({ search: "?screen=admin-console" }))
+      flushSync(() => root.render(<ObservationScopeProvider enabled><AdminConsoleScreen onOpenProducts={() => {}} /></ObservationScopeProvider>))
+      const retryLabel = failedSource === "console" ? "重试经营快照" : "重试商品快照"
+      const retry = () => [...fixture.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === retryLabel)
+      await waitFor(() => Boolean(retry()), retryLabel + " is missing")
+      check(metric(failedSource === "console" ? "30 日出单" : "在售商品") === "—", "missing snapshot was presented as zero")
+      check(metric(failedSource === "console" ? "在售商品" : "30 日出单") === (failedSource === "console" ? "170" : "115"), "one failed read blanked the independent snapshot")
+      const otherCalls = calls[failedSource === "console" ? "products" : "console"]
+      failed = false
+      flushSync(() => retry()!.click())
+      await waitFor(() => metric("30 日出单") === "115" && metric("在售商品") === "170", "independent retry never recovered")
+      check(calls[failedSource === "console" ? "products" : "console"] === otherCalls, "retry re-read an unrelated source")
+      check(!fixture.textContent!.includes("NaN"), "dashboard displayed an invalid number")
+    })
+  }
+}
+
+async function dashboardControlsAndBounds() {
+  window.fetch = async (input, init) => {
+    const url = new URL(String(input), window.location.origin)
+    if ((init?.method ?? "GET") !== "GET") { writes.push(url.pathname); throw new Error("Observation cannot write") }
+    if (url.pathname === "/api/admin/ops/scopes") return json(observedScopes())
+    if (url.pathname === "/api/admin/ops/console/snapshot") return json(observedConsole())
+    if (url.pathname === "/api/admin/stores/products/overview") return json(observedOverview())
+    unexpected.push(url.pathname)
+    throw new Error("Unexpected dashboard route")
+  }
+  await mounted(async (root) => {
+    let navigated = 0
+    flushSync(() => replaceAddress({ search: "?screen=admin-console" }))
+    flushSync(() => root.render(<ObservationScopeProvider enabled><AdminConsoleScreen onOpenProducts={() => { navigated++ }} /></ObservationScopeProvider>))
+    await waitFor(() => metric("30 日出单") === "115" && metric("在售商品") === "170", "dashboard metrics never appeared")
+    const chart = fixture.querySelector<HTMLElement>('[role="img"][aria-label*="出单与上架提交走势"]')
+    check(chart, "daily trend is missing")
+    await waitFor(() => [...chart.querySelectorAll<SVGPathElement>('path[stroke-width="2"]')].some((path) => path.getBBox().height > 5), "trend contains no drawn data line")
+    check(!fixture.querySelector('[aria-label="账本结果结构"]'), "detailed ledger should start folded")
+    const ledger = [...fixture.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent!.includes("条记录 · 查看趋势与结果"))!
+    flushSync(() => ledger.click())
+    await waitFor(() => Boolean(fixture.querySelector('[aria-label="账本结果结构"]')), "ledger disclosure did not open")
+    check(fixture.textContent!.includes("73.1%"), "exact ledger rate was lost")
+    flushSync(() => ledger.click())
+    flushSync(() => [...fixture.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "全部 Ozon 商品")!.click())
+    check(navigated === 1, "product navigation did not work")
+    check(document.documentElement.scrollWidth <= window.innerWidth + 1, "dashboard overflows the viewport horizontally")
+    const metricFont = Number.parseFloat(getComputedStyle(fixture.querySelector('dl[aria-label="核心指标"] dd > span')!).fontSize)
+    check(metricFont >= 20 && metricFont <= 30, "metric typography is outside the compact scale")
+    check(fixture.querySelector("[data-slot=page-toolbar]")!.getBoundingClientRect().height <= 140, "scope toolbar consumes too much height")
+  })
+}
+
+async function dashboardScopeFencesBothSources() {
+  const oldOverview = deferred<ReturnType<typeof observedOverview>>()
+  let oldOverviewRequested = false
+  window.fetch = async (input, init) => {
+    const url = new URL(String(input), window.location.origin)
+    if ((init?.method ?? "GET") !== "GET") { writes.push(url.pathname); throw new Error("Observation cannot write") }
+    if (url.pathname === "/api/admin/ops/scopes") return json(observedScopes())
+    const isA = url.searchParams.get("workspaceId") === WORKSPACE_A
+    const id = isA ? STORE_A : STORE_B
+    if (url.pathname === "/api/admin/ops/console/snapshot") {
+      const snapshot = observedConsole()
+      return json({ ...snapshot, roster: { ...snapshot.roster, stores: snapshot.roster.stores.filter((store) => store.id === id) }, metrics: snapshot.metrics.filter((row) => row.store_id === id) })
+    }
+    if (url.pathname === "/api/admin/stores/products/overview") {
+      if (isA) { oldOverviewRequested = true; return json(await oldOverview.promise) }
+      const overview = observedOverview()
+      return json({ ...overview, totals: { ...overview.totals, on_sale: 60 }, stores: overview.stores.filter((store) => store.store_id === id), coverage: { read: 1, total: 1 } })
+    }
+    unexpected.push(url.pathname)
+    throw new Error("Unexpected dashboard route")
+  }
+  await mounted(async (root) => {
+    flushSync(() => replaceAddress({ search: "?screen=admin-console&workspaceId=" + WORKSPACE_A }))
+    flushSync(() => root.render(<ObservationScopeProvider enabled><AdminConsoleScreen onOpenProducts={() => {}} /></ObservationScopeProvider>))
+    await waitFor(() => metric("30 日出单") === "42" && oldOverviewRequested, "first dashboard scope never loaded")
+    flushSync(() => replaceAddress({ search: "?screen=admin-console&workspaceId=" + WORKSPACE_B }))
+    check(metric("30 日出单") === "—" && metric("在售商品") === "—", "scope change retained previous dashboard metrics")
+    await waitFor(() => metric("30 日出单") === "73" && metric("在售商品") === "60", "new dashboard scope never loaded")
+    oldOverview.resolve(observedOverview())
+    await frame(); await frame()
+    check(metric("在售商品") === "60", "late overview contaminated a different workspace")
+    check(!fixture.textContent!.includes("同名店 · 甲空间"), "ranking retained another workspace")
   })
 }
 
@@ -140,6 +294,10 @@ run.onclick = async () => {
     for (const [name, test] of [
       ["readonly expansion has zero requests/POSTs", expandedRowIsLocalOnly],
       ["scope clears rows/details/filters/cursor and fences old page", switchingScopeFencesPaginationAndDetail],
+      ["product paging and selection reset on scope and filters", pageSizeAndSelectionReset],
+      ["dashboard keeps each snapshot and retries only the failed source", dashboardReadsFailIndependently],
+      ["dashboard chart, ledger, navigation and viewport bounds", dashboardControlsAndBounds],
+      ["dashboard scope clears both sources and fences late overview", dashboardScopeFencesBothSources],
     ] as const) {
       try { await test(); lines.push("PASS " + name) }
       catch (reason) { lines.push("FAIL " + name + ": " + String(reason)) }
@@ -158,6 +316,10 @@ const preview = new URLSearchParams(window.location.search).get("preview")
 if (preview) {
   run.hidden = true
   results.textContent = "合成数据，只读展示预览"
-  const { previewObservation } = await import("./platform-observation.preview")
-  previewObservation(preview, fixture)
+  try {
+    const { previewObservation } = await import("./platform-observation.preview")
+    previewObservation(preview, fixture)
+  } catch (reason) {
+    results.textContent = "FAIL preview: " + String(reason)
+  }
 } else if (new URLSearchParams(window.location.search).get("autorun") === "1") run.click()

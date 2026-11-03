@@ -12,13 +12,19 @@ import (
 )
 
 func (s *Service) waiting(ctx context.Context, email, ip string) (bool, error) {
-	q := s.q(ctx)
-	emailH, ipH := pairKey(email, ip)
-	if wait, err := waitingRow(ctx, q, emailH[:], ipH[:]); err != nil || wait {
-		return wait, err
-	}
-	zeros := ipScope()
-	return waitingRow(ctx, q, zeros[:], ipH[:])
+	var wait bool
+	err := s.withQueries(ctx, func(q *sqlc.Queries) error {
+		emailH, ipH := pairKey(email, ip)
+		var err error
+		wait, err = waitingRow(ctx, q, emailH[:], ipH[:])
+		if err != nil || wait {
+			return err
+		}
+		zeros := ipScope()
+		wait, err = waitingRow(ctx, q, zeros[:], ipH[:])
+		return err
+	})
+	return wait, err
 }
 
 func waitingRow(ctx context.Context, q *sqlc.Queries, emailH, ipH []byte) (bool, error) {
@@ -30,12 +36,17 @@ func waitingRow(ctx context.Context, q *sqlc.Queries, emailH, ipH []byte) (bool,
 }
 
 func (s *Service) recordFailure(ctx context.Context, email, ip string) {
-	q := s.q(ctx)
-	emailH, ipH := pairKey(email, ip)
-	_ = q.BumpLoginAttempt(ctx, sqlc.BumpLoginAttemptParams{EmailHash: emailH[:], IpHash: ipH[:], Column3: pairFree})
-	zeros := ipScope()
-	_ = q.BumpLoginAttempt(ctx, sqlc.BumpLoginAttemptParams{EmailHash: zeros[:], IpHash: ipH[:], Column3: ipFree})
-	_ = q.PruneLoginAttempts(ctx, pruneBatch)
+	_ = s.withQueries(ctx, func(q *sqlc.Queries) error {
+		emailH, ipH := pairKey(email, ip)
+		if err := q.BumpLoginAttempt(ctx, sqlc.BumpLoginAttemptParams{EmailHash: emailH[:], IpHash: ipH[:], Column3: pairFree}); err != nil {
+			return err
+		}
+		zeros := ipScope()
+		if err := q.BumpLoginAttempt(ctx, sqlc.BumpLoginAttemptParams{EmailHash: zeros[:], IpHash: ipH[:], Column3: ipFree}); err != nil {
+			return err
+		}
+		return q.PruneLoginAttempts(ctx, pruneBatch)
+	})
 }
 
 func (s *Service) clearFailure(ctx context.Context, q *sqlc.Queries, email, ip string) error {
@@ -52,9 +63,8 @@ func (s *Service) Login(r *http.Request) Result {
 	}
 	defer s.releasePassword()
 	var body struct {
-		Email    string  `json:"email"`
-		Password string  `json:"password"`
-		TotpCode *string `json:"totpCode"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
 	}
 	if err := strictJSON(r, &body); err != nil {
 		return authResult(http.StatusBadRequest, msgBadJSON, "VALIDATION")
@@ -71,7 +81,7 @@ func (s *Service) Login(r *http.Request) Result {
 		s.recordFailure(r.Context(), email, ip)
 		return authResult(http.StatusUnauthorized, msgBadLogin, "AUTH_INVALID")
 	}
-	user, err := s.q(r.Context()).FindUserByEmail(r.Context(), email)
+	user, err := s.findUserByEmail(r.Context(), email)
 	if errors.Is(err, pgx.ErrNoRows) {
 		performDummyVerify(body.Password)
 		s.recordFailure(r.Context(), email, ip)
@@ -85,29 +95,22 @@ func (s *Service) Login(r *http.Request) Result {
 		return authResult(http.StatusUnauthorized, msgBadLogin, "AUTH_INVALID")
 	}
 	if user.Disabled {
-		_ = s.clearFailure(r.Context(), s.q(r.Context()), email, ip)
+		_ = s.withQueries(r.Context(), func(q *sqlc.Queries) error {
+			return s.clearFailure(r.Context(), q, email, ip)
+		})
 		return authResult(http.StatusUnauthorized, msgDisabled, "AUTH_INVALID")
 	}
-	if RoleFromStored(user.Role).IsSuperAdmin() {
-		confirmed, err := s.q(r.Context()).TotpConfirmed(r.Context(), user.ID)
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return dbResult(err)
-		}
-		if err == nil && confirmed {
-			return authResult(http.StatusUnauthorized, msgTotp, "TOTP_REQUIRED")
-		}
-	}
-	token, err := s.sessionToken(r, user.PasswordHash)
-	if err != nil {
-		return dbResult(err)
-	}
-	cred := SessionCredentials(r.Header)
-	live, err := s.liveStack(r.Context(), cred)
+	token, err := s.sessionToken(r, user.PasswordHash, user.SessionRevision)
 	if err != nil {
 		return dbResult(err)
 	}
 	var orgID int64
-	err = s.inTx(r.Context(), func(q *sqlc.Queries) (bool, error) {
+	err = s.inTx(r.Context(), func(tx pgx.Tx, q *sqlc.Queries) (bool, error) {
+		role, err := assertLoginCredential(r.Context(), q, user.ID, user.PasswordHash, user.Email, user.SessionRevision)
+		if err != nil {
+			return false, err
+		}
+		user.Role = role
 		if err := s.issue(r.Context(), q, user.ID, user.Role, token, "POST", "/api/auth/login", "session_issued", `{"summary":"签发会话"}`, 0); err != nil {
 			return false, err
 		}
@@ -124,21 +127,54 @@ func (s *Service) Login(r *http.Request) Result {
 		return true, nil
 	})
 	if err != nil {
-		return dbResult(err)
+		return loginCredentialResult(err)
 	}
-	stack := MergedStack(live, user.ID, token)
 	res := Result{
 		Status:  http.StatusOK,
 		Body:    loginBody(token, user.PublicID, user.Role, user.Email, user.Name, user.SupplierID, user.Target),
-		Cookies: SessionCookies(token, stack),
+		Cookies: SessionCookies(token),
 	}
 	_ = orgID
 	return res
 }
 
-func (s *Service) sessionToken(r *http.Request, passwordHash string) (string, error) {
+// Hold the same account lock as password reset and disable until the session
+// commits, so a credential checked before either write cannot survive it.
+func assertLoginCredential(ctx context.Context, q *sqlc.Queries, userID int64, passwordHash, email string, revision int64) (string, error) {
+	current, err := q.AssertPassword(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", errDrift
+	}
+	if err != nil {
+		return "", err
+	}
+	if current.Disabled {
+		return "", errDisabled
+	}
+	if current.PasswordHash != passwordHash || current.SessionRevision != revision || !strings.EqualFold(current.Email, email) {
+		return "", errDrift
+	}
+	return current.Role, nil
+}
+
+func loginCredentialResult(err error) Result {
+	switch {
+	case errors.Is(err, errDrift):
+		return authResult(http.StatusUnauthorized, msgCredentialDrift, "AUTH_INVALID")
+	case errors.Is(err, errDisabled):
+		return authResult(http.StatusUnauthorized, msgDisabled, "AUTH_INVALID")
+	default:
+		return dbResult(err)
+	}
+}
+
+func (s *Service) sessionToken(r *http.Request, passwordHash string, revision int64) (string, error) {
 	if key := strings.TrimSpace(r.Header.Get("Idempotency-Key")); key != "" {
-		return DeriveSessionToken(passwordHash, key), nil
+		return DeriveSessionToken(sessionSeed(passwordHash, revision), key), nil
 	}
 	return randomToken()
+}
+
+func sessionSeed(passwordHash string, revision int64) string {
+	return passwordHash + "\x00" + itoa(revision)
 }

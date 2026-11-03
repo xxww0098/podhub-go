@@ -6,6 +6,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
 )
 
 // SettleListingJob runs after a listing submit worker returns nil.
@@ -46,7 +48,7 @@ func jobState(ctx context.Context, pool *pgxpool.Pool, orgID int64, jobID string
 		return "", nil, err
 	}
 	defer tx.Rollback(ctx)
-	if err := SetOrg(ctx, tx, orgID); err != nil {
+	if err := tenantx.EnterApp(ctx, tx, orgID); err != nil {
 		return "", nil, err
 	}
 	var state string
@@ -78,7 +80,7 @@ func stampTaskID(ctx context.Context, pool *pgxpool.Pool, orgID int64, jobID str
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if err := SetOrg(ctx, tx, orgID); err != nil {
+	if err := tenantx.EnterApp(ctx, tx, orgID); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
@@ -133,7 +135,7 @@ func releaseListingHold(ctx context.Context, pool *pgxpool.Pool, orgID int64, jo
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if err := SetOrg(ctx, tx, orgID); err != nil {
+	if err := tenantx.EnterApp(ctx, tx, orgID); err != nil {
 		return err
 	}
 	var id int64
@@ -150,6 +152,6 @@ func releaseListingHold(ctx context.Context, pool *pgxpool.Pool, orgID int64, jo
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	_, err = releaseOne(ctx, pool, id)
+	_, err = releaseOne(ctx, pool, orgID, id)
 	return err
 }

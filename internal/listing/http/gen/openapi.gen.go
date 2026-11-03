@@ -477,15 +477,12 @@ func (e ListingSubmissionReceiptStatus) Valid() bool {
 
 // Defines values for OcrRecoveryAttemptKind.
 const (
-	ContractRetry OcrRecoveryAttemptKind = "contract_retry"
-	Original      OcrRecoveryAttemptKind = "original"
+	Original OcrRecoveryAttemptKind = "original"
 )
 
 // Valid indicates whether the value is a known member of the OcrRecoveryAttemptKind enum.
 func (e OcrRecoveryAttemptKind) Valid() bool {
 	switch e {
-	case ContractRetry:
-		return true
 	case Original:
 		return true
 	default:

@@ -99,14 +99,14 @@ func TestSupplierCatalogRowLifecycle(t *testing.T) {
 		t.Fatalf("a stale revision was accepted; optimistic concurrency is gone")
 	}
 
-	// Publishing must be refused while the staff-owned gates are unmet.
+	// A source maintenance grant does not grant publication authority.
 	_, err = repo.SetPublished(ctx, manager, source, created.ProductID, true, now+3)
 	if err == nil {
 		t.Fatalf("a manager published a row with unmet readiness gates")
 	}
 	f, ok := contract.AsFault(err)
-	if !ok || f.Status != 400 || len(f.Missing) == 0 {
-		t.Fatalf("publish refusal should be a 400 listing the missing keys, got %v", err)
+	if !ok || f.Status != 403 {
+		t.Fatalf("publish refusal should require a super administrator, got %v", err)
 	}
 
 	// Archive is the delete, and it is soft: the row disappears from the list

@@ -33,7 +33,6 @@ type rosterStore struct {
 	NeedsReentry          bool            `json:"needs_reentry"`
 	CanManage             bool            `json:"can_manage"`
 	CanEditCredential     bool            `json:"can_edit_credential"`
-	AssigneeKeyManage     bool            `json:"assignee_key_manage"`
 	SecretStatus          string          `json:"secret_status"`
 	UpdatedAtMS           int64           `json:"updated_at_ms"`
 	CredentialRevision    *int64          `json:"credential_revision"`
@@ -92,8 +91,8 @@ type consoleProducts struct {
 	CountArchived         *int64  `json:"count_archived,omitempty"`
 	LastFullSyncAtMS      *int64  `json:"last_full_sync_at_ms,omitempty"`
 	PricedAtMSMax         *int64  `json:"priced_at_ms_max,omitempty"`
-	Pass                  *bool   `json:"pass,omitempty"`
-	Hold                  *bool   `json:"hold,omitempty"`
+	Pass                  *string `json:"pass,omitempty"`
+	Hold                  *string `json:"hold,omitempty"`
 	HoldUntilMS           *int64  `json:"hold_until_ms,omitempty"`
 	HoldReason            *string `json:"hold_reason,omitempty"`
 }
@@ -154,10 +153,10 @@ series AS (
    'settled',coalesce(s.n,0), 'exceptions',coalesce(e.n,0)) ORDER BY d.day) AS value
    FROM days d LEFT JOIN intake i ON i.day=d.day LEFT JOIN settlements s ON s.day=d.day LEFT JOIN exceptions e ON e.day=d.day
 )
-SELECT jsonb_build_object('total', total, 'createdIn7Days', created7, 'settledIn7Days', settled7,
- 'inFlight', active, 'provenSuccessRate', 100.0*proven_count/nullif(proven_count+failed,0),
- 'medianSettlementMinutes', median_minutes, 'needsAction', needs_action,
- 'oldestActionHours', CASE WHEN oldest_action IS NULL THEN NULL ELSE greatest(0, extract(epoch FROM now_at-oldest_action)/3600) END,
+SELECT jsonb_build_object('total', total, 'created_in7_days', created7, 'settled_in7_days', settled7,
+ 'in_flight', active, 'proven_success_rate', 100.0*proven_count/nullif(proven_count+failed,0),
+ 'median_settlement_minutes', median_minutes, 'needs_action', needs_action,
+ 'oldest_action_hours', CASE WHEN oldest_action IS NULL THEN NULL ELSE greatest(0, extract(epoch FROM now_at-oldest_action)/3600) END,
  'series', series.value, 'outcomes', jsonb_build_object('settled', proven_count, 'active', active,
   'unknown', unknown, 'failed', failed, 'attested', attested)) AS value
   FROM summary CROSS JOIN series CROSS JOIN clock`
@@ -214,7 +213,7 @@ func (r *Observe) Snapshot(ctx context.Context, actor corecontract.Actor, scope 
 		Metrics       []consoleMetric   `json:"metrics"`
 		Products      []consoleProducts `json:"products"`
 		Ledger        json.RawMessage   `json:"ledger"`
-		GeneratedAtMS int64             `json:"generatedAtMs"`
+		GeneratedAtMS int64             `json:"generated_at_ms"`
 	}{roster, metrics, products, ledger, generated})
 	return body, err
 }
@@ -254,8 +253,8 @@ func loadMetrics(ctx context.Context, tx pgx.Tx, ids []string) ([]consoleMetric,
 
 type syncRow struct {
 	StoreID         string
-	Pass            *bool
-	Hold            *bool
+	Pass            *string
+	Hold            *string
 	HoldUntil       *int64
 	HoldReason      *string
 	LastFull        *int64

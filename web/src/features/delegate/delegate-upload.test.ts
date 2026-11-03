@@ -32,6 +32,17 @@ function deps(overrides: Partial<UploadAssetDeps> = {}): UploadAssetDeps {
   }, finalize: async () => asset(), report: async () => {}, wait: async () => {}, ...overrides }
 }
 
+test("a user PSD is refused before hashing, presign or upload", async () => {
+  let requests = 0
+  const file = new File([FILE_BYTES], "user.PSD", { type: "application/octet-stream" })
+  file.slice = () => { throw new Error("PSD bytes must not be read for an upload") }
+  await assert.rejects(uploadDelegateAsset(deps({
+    presign: async () => { requests++; return target() },
+    putObject: async () => { requests++ },
+  }), { binding_id: "binding-1", file }), /委托图片仅支持 jpg\/png\/webp/)
+  assert.equal(requests, 0)
+})
+
 // No full-file ArrayBuffer allocation: hashUploadBody may only read bounded slices.
 test("hash uses bounded Blob slices and anonymous PUT receives the original File", async () => {
   const file = testFile()

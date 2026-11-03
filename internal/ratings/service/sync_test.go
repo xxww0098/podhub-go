@@ -120,13 +120,13 @@ func TestVisibility(t *testing.T) {
 	if _, err := svc.List(context.Background(), 1, 2, "11111111-1111-1111-1111-111111111111"); err != nil {
 		t.Fatal(err)
 	}
-	viewer := &fakeStore{gate: domain.Gate{MemberID: 4, Role: "viewer"}}
-	svc = New(viewer)
+	member := &fakeStore{gate: domain.Gate{MemberID: 4, Role: "member"}}
+	svc = New(member)
 	if _, err := svc.List(context.Background(), 1, 2, "11111111-1111-1111-1111-111111111111"); !isNotFound(err) {
 		t.Fatal(err)
 	}
 	assigned := int64(4)
-	viewer.gate.Assignee = &assigned
+	member.gate.Assignee = &assigned
 	if _, err := svc.List(context.Background(), 1, 2, "11111111-1111-1111-1111-111111111111"); err != nil {
 		t.Fatal(err)
 	}
@@ -135,8 +135,8 @@ func TestVisibility(t *testing.T) {
 	if _, err := svc.List(context.Background(), 1, 2, "11111111-1111-1111-1111-111111111111"); err != contract.ErrForbidden {
 		t.Fatal(err)
 	}
-	if access.StoreVisible("viewer", nil, 4) {
-		t.Fatal("viewer sees an unassigned store")
+	if access.StoreVisible("member", nil, 4) {
+		t.Fatal("member sees an unassigned store")
 	}
 }
 

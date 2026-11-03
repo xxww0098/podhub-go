@@ -1,53 +1,27 @@
-# DESIGN — public-site（Studio Canon）
+# 公开站设计约束
 
-Scope: `src/features/site/public-site.{tsx,css}` — the anonymous marketing pages
-(product / catalog / pricing / help / privacy / terms). The signed-in workbench
-keeps the LEDGER world from `src/index.css`; the two worlds do not share tokens.
+适用于 `src/features/site/` 的产品介绍单页。登录后的业务工作区遵循 [AGENTS.md](../AGENTS.md)，使用 `src/index.css` 的主题；公开站样式限定在 `.public-site`。
 
-## World
+## 实现入口
 
-The high-end B2B SaaS canon, played straight (Linear / Stripe / Vercel class —
-the user-pinned direction, standing preference recorded in PRODUCT.md). White
-ground, cool slate neutrals, hairline borders, soft ambient depth, one brand
-blue lifted from the mark (`#033fa7` → screen `#0b57d9`). Ink carries every
-primary action; blue carries links, focus, selection and verified ticks only.
-Corners round (8–18px); nothing is dashed, stamped, or perforated.
+- [public-site.tsx](src/features/site/public-site.tsx)：产品页、商品示例图片、选品 / 导图 / 提交流程。
+- [public-site-shell.tsx](src/features/site/public-site-shell.tsx)：导航、页脚与共享区块。
 
-## Tokens (scoped under `.public-site`)
+[main.tsx](src/main.tsx) 导入 `public-site.css` 与 `public-site-responsive.css`。登录界面的独立样式放在 `src/features/account/login-screen.css`，不依赖官网覆盖层。
 
-- `--paper/--card/--sheet #ffffff` grounds · `--muted #f4f5f7` recessed band
-- `--ink #0b0e14` text and primary fills · `--muted-foreground #59616e` · `--faint #767f8d` small mono labels
-- `--line #e7e9ee` hairlines · `--line-strong #d6dae1` rails and input borders
-- `--accent #0b57d9` links/focus/ticks · `--accent-ink #0a4ab5` accent text · `--accent-soft/-line` tinted fills
-- `--ok #14804a` + `--ok-soft` the single success pill (`.receipt-status`)
-- `--shadow-card` hairline-level lift · `--shadow-pop` the hero receipt only
-- `--mono` for codes, spec keys, counters, tabular numbers — never for prose
+## 视觉规则
 
-## Grammar
+- 固定浅色：白底、冷灰分隔线，首屏文案与原商品照片分栏；不随工作区深色主题切换，不添加遮挡商品的浮层。
+- 主操作、链接、焦点与选中态用品牌蓝。
+- 正文使用 Inter Variable 与系统中文回退；等宽字体只用于代码、标识及数据。公开站字体与工作区的系统字体分别管理。
+- 桌面内容容器占视口约 90%，不设旧版 1280px 上限；窄屏图片保持比例，操作可换行，触控目标至少 44px。保留跳转主内容、可见焦点与减少动画支持。
+- 导航使用页内锚点，不显示版本号；商品图片是静态示例，不伪装成可浏览的商品目录。
+- `.public-site a { color: inherit }` 的优先级高于按钮文字工具类，填色按钮须明确前景色，避免浅底浅字。
 
-- **Receipt**: `.receipt` = the hero artifact — the product's own listing
-  receipt (mono ID, route FROM→TO, verified items, four-station lifecycle rail
-  with the last station `.on`). One authored motion: the three ticks pop in
-  sequence, then the status pill lands (expo ease-out, reduced-motion safe).
-- **Hairline sheets**: proof strip, plan cards, tiles, catalog cards are white
-  sheets on `--line` borders with `--shadow-card`; dividers are 1px hairlines.
-  The capabilities section breathes on a full-bleed `--muted` band
-  (`box-shadow 0 0 0 100vmax` + clip-path).
-- **One dark panel per page**: `.cta` (ink + accent radial glow, white button),
-  one `.featured` plan card, one dark `.tile`, one dark `.routes` card — never
-  more than one dark element per band.
-- **Ticks**: drawn accent circle + `✓` for verified items (hero notes, receipt
-  items, plan features, Cloud manifest).
-- **Chips**: pill radii for facet filters, the legal date, plan price notes —
-  pressed state = ink fill.
+## 内容与验收边界
 
-## Constraints
+官网只保留产品介绍，登录与工厂登录分别通向 `/login` 和 `/supplier`。已删除的目录、定价、帮助、隐私及条款地址使用未匹配路径规则：未登录显示产品页，已登录进入工作台并检查工作空间资格。
 
-- Light only; no `prefers-color-scheme: dark` (pinned by test).
-- Display type stays the project's Inter Variable at 740–800 for Latin +
-  PingFang SC for CJK (established project font — documented exception to the
-  overused-font detector warning); mono earns its place on codes and data only.
-- `.public-site a { color: inherit }` outranks the buttonVariants text utility
-  (0,1,1 > 0,1,0): ink-filled actions must declare `color` explicitly.
-- Copy, page routing, and the login gate are product truth — redesign touched
-  presentation only.
+首页预览、商品图和流程说明不能证明平台发布成功；能力结论以 [技术验证清单](../docs/precision-listing-verification.md) 为准。
+
+[public-site.test.tsx](src/features/site/public-site.test.tsx) 固定登录入口与主要文案约束；[app-route.test.ts](src/lib/app-route.test.ts) 固定单页路由与登录权限边界。在 `web/` 可运行 `bun run test src/features/site/public-site.test.tsx src/lib/app-route.test.ts`。这些静态断言不能代替响应式浏览器检查或真实授权、写入及回读。

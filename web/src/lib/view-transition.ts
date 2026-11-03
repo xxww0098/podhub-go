@@ -34,6 +34,8 @@ export function runViewTransition(mutate: () => void): void {
       void ready.then(() => {
         if (typeof document === "undefined") return
         fadeSnapshots()
+      }).catch(() => {
+        // Skipping snapshots does not cancel the DOM update; never replay it here.
       })
     }
   } catch {

@@ -20,8 +20,8 @@ import (
 	"github.com/xxww0098/podhub-go/internal/platform/config"
 	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
 	queuecontract "github.com/xxww0098/podhub-go/internal/queue/contract"
-	"github.com/xxww0098/podhub-go/internal/seller"
-	sellerrepo "github.com/xxww0098/podhub-go/internal/seller/repo"
+	seller "github.com/xxww0098/podhub-go/internal/seller/ozon"
+	sellerrepo "github.com/xxww0098/podhub-go/internal/seller/ozon/repo"
 )
 
 // Expectations below are transcribed from src/listing/kernel/submission at
@@ -44,7 +44,7 @@ func TestSubmitSellerColumns(t *testing.T) {
 		fx := seed(t, ctx, pool, orgID, storePK, storeID, "offer-ok")
 		lease := runningJob(t, ctx, pool, fx, userID, false)
 		eg := egress(t, posts.URL, false)
-		if _, err := submit.RunAttempt(ctx, pool, eg.Port(), attempt(fx, lease, false)); err != nil {
+		if _, err := listingSubmit().RunAttempt(ctx, pool, eg.Port(), attempt(fx, lease, false)); err != nil {
 			t.Fatal(err)
 		}
 		assertRow(t, ctx, pool, fx, rowWant{
@@ -72,7 +72,7 @@ func TestSubmitSellerColumns(t *testing.T) {
 			_, _ = w.Write([]byte(`{"code":3}`))
 		})
 		fx := seed(t, ctx, pool, orgID, storePK, storeID, "offer-reject")
-		if _, err := submit.RunAttempt(ctx, pool, egress(t, posts.URL, false).Port(), attempt(fx, queuecontract.Lease{}, false)); err != nil {
+		if _, err := listingSubmit().RunAttempt(ctx, pool, egress(t, posts.URL, false).Port(), attempt(fx, queuecontract.Lease{}, false)); err != nil {
 			t.Fatal(err)
 		}
 		assertRow(t, ctx, pool, fx, rowWant{
@@ -91,7 +91,7 @@ func TestSubmitSellerColumns(t *testing.T) {
 			_, _ = w.Write([]byte(`{"code":8}`))
 		})
 		fx := seed(t, ctx, pool, orgID, storePK, storeID, "offer-limited")
-		if _, err := submit.RunAttempt(ctx, pool, egress(t, posts.URL, false).Port(), attempt(fx, queuecontract.Lease{}, false)); err != nil {
+		if _, err := listingSubmit().RunAttempt(ctx, pool, egress(t, posts.URL, false).Port(), attempt(fx, queuecontract.Lease{}, false)); err != nil {
 			t.Fatal(err)
 		}
 		assertRow(t, ctx, pool, fx, rowWant{
@@ -107,7 +107,7 @@ func TestSubmitSellerColumns(t *testing.T) {
 			_, _ = w.Write([]byte(`{"code":7}`))
 		})
 		fx := seed(t, ctx, pool, orgID, storePK, storeID, "offer-perm")
-		if _, err := submit.RunAttempt(ctx, pool, egress(t, posts.URL, false).Port(), attempt(fx, queuecontract.Lease{}, false)); err != nil {
+		if _, err := listingSubmit().RunAttempt(ctx, pool, egress(t, posts.URL, false).Port(), attempt(fx, queuecontract.Lease{}, false)); err != nil {
 			t.Fatal(err)
 		}
 		assertRow(t, ctx, pool, fx, rowWant{
@@ -130,7 +130,7 @@ func TestSubmitSellerColumns(t *testing.T) {
 			conn.Close()
 		})
 		fx := seed(t, ctx, pool, orgID, storePK, storeID, "offer-lost")
-		if _, err := submit.RunAttempt(ctx, pool, egress(t, posts.URL, false).Port(), attempt(fx, queuecontract.Lease{}, false)); err != nil {
+		if _, err := listingSubmit().RunAttempt(ctx, pool, egress(t, posts.URL, false).Port(), attempt(fx, queuecontract.Lease{}, false)); err != nil {
 			t.Fatal(err)
 		}
 		assertRow(t, ctx, pool, fx, rowWant{
@@ -150,7 +150,7 @@ func TestSubmitSellerColumns(t *testing.T) {
 		fx := seed(t, ctx, pool, orgID, storePK, storeID, "offer-timeout")
 		eg := egress(t, posts.URL, false)
 		eg.SetTimeout(40 * time.Millisecond)
-		if _, err := submit.RunAttempt(ctx, pool, eg.Port(), attempt(fx, queuecontract.Lease{}, false)); err != nil {
+		if _, err := listingSubmit().RunAttempt(ctx, pool, eg.Port(), attempt(fx, queuecontract.Lease{}, false)); err != nil {
 			t.Fatal(err)
 		}
 		assertRow(t, ctx, pool, fx, rowWant{
@@ -169,7 +169,7 @@ func TestSubmitSellerColumns(t *testing.T) {
 		})
 		fx := seed(t, ctx, pool, orgID, storePK, storeID, "offer-crash")
 		eg := egress(t, posts.URL, false)
-		_, err := submit.RunAttempt(ctx, pool, eg.Port(), attempt(fx, queuecontract.Lease{}, true))
+		_, err := listingSubmit().RunAttempt(ctx, pool, eg.Port(), attempt(fx, queuecontract.Lease{}, true))
 		if !submit.Crashed(err) {
 			t.Fatal(err)
 		}
@@ -177,7 +177,7 @@ func TestSubmitSellerColumns(t *testing.T) {
 			intent: "submitting", write: "dispatching", occ: "held", listing: "submitting",
 		})
 		lease := runningJob(t, ctx, pool, fx, userID, false)
-		if err := submit.Work(ctx, pool, queuecontract.Claimed{
+		if err := listingSubmit().Work(ctx, pool, queuecontract.Claimed{
 			ID: lease.ID, OrgID: orgID, Kind: "listing.submit", SubmitterUserID: userID,
 			Attempt: 1, MaxAttempts: 8, Epoch: lease.Epoch, Owner: lease.Owner,
 			Payload: jobPayload(fx, false),
@@ -204,7 +204,7 @@ func TestSubmitSellerColumns(t *testing.T) {
 		})
 		fx := seed(t, ctx, pool, orgID, storePK, storeID, "offer-kill")
 		eg := egress(t, posts.URL, true)
-		if _, err := submit.RunAttempt(ctx, pool, eg.Port(), attempt(fx, queuecontract.Lease{}, false)); err != nil {
+		if _, err := listingSubmit().RunAttempt(ctx, pool, eg.Port(), attempt(fx, queuecontract.Lease{}, false)); err != nil {
 			t.Fatal(err)
 		}
 		assertRow(t, ctx, pool, fx, rowWant{

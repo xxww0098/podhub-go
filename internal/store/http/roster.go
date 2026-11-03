@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/xxww0098/podhub-go/internal/platform/httpx/jsonwire"
 	"github.com/xxww0098/podhub-go/internal/store/contract"
 	"github.com/xxww0098/podhub-go/internal/store/domain"
 )
@@ -53,7 +53,6 @@ type createStoreBody struct {
 type updateStoreBody struct {
 	Name      *string         `json:"name"`
 	ClientID  json.RawMessage `json:"client_id"`
-	KeyManage *bool           `json:"assignee_key_manage"`
 	TagUUIDs  *[]string       `json:"tag_uuids"`
 	GroupUUID *string         `json:"group_uuid"`
 	Revision  int64           `json:"revision"`
@@ -101,7 +100,7 @@ func (h handler) listStores(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = actor
-	writeJSON(w, http.StatusOK, toRosterData(roster, loaded, domain.NowMS()))
+	jsonwire.Write(w, http.StatusOK, toRosterData(roster, loaded, domain.NowMS()))
 }
 
 // createStore is POST PathRoster.
@@ -115,25 +114,20 @@ func (h handler) createStore(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, contract.Validation(contract.MsgInvalidJSON))
 		return
 	}
-	name, api := domain.NormalizeStoreName(body.Name)
-	if api != nil {
-		writeAPIError(w, api)
-		return
-	}
 	clientID, api := domain.NormalizeClientID(body.ClientID)
 	if api != nil {
 		writeAPIError(w, api)
 		return
 	}
 	row, changes, loaded, api := h.Roster.CreateStore(r.Context(), p.OrgID, p.UserID, domain.CreateStoreInput{
-		Name: name, ClientID: clientID, AssigneeMembershipID: body.AssigneeMembershipID,
+		Name: body.Name, ClientID: clientID, AssigneeMembershipID: body.AssigneeMembershipID,
 	})
 	if api != nil {
 		writeAPIError(w, api)
 		return
 	}
 	_ = actor
-	writeJSON(w, http.StatusOK, storeData{
+	jsonwire.Write(w, http.StatusOK, storeData{
 		Store:        toStoreView(row, loaded, domain.NowMS()),
 		QuotaChanges: toQuotaChanges(changes),
 	})
@@ -165,7 +159,6 @@ func (h handler) updateStore(w http.ResponseWriter, r *http.Request) {
 		Name:        body.Name,
 		ClientID:    clientID,
 		ClientIDSet: clientIDSet,
-		KeyManage:   body.KeyManage,
 		TagUUIDs:    body.TagUUIDs,
 		GroupUUID:   body.GroupUUID,
 		Revision:    body.Revision,
@@ -176,7 +169,7 @@ func (h handler) updateStore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = actor
-	writeJSON(w, http.StatusOK, storeData{Store: toStoreView(row, loaded, domain.NowMS())})
+	jsonwire.Write(w, http.StatusOK, storeData{Store: toStoreView(row, loaded, domain.NowMS())})
 }
 
 // deleteStore is DELETE PathStore.
@@ -200,7 +193,7 @@ func (h handler) deleteStore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = actor
-	writeJSON(w, http.StatusOK, deleteStoreData{
+	jsonwire.Write(w, http.StatusOK, deleteStoreData{
 		UUID: uuid, Deleted: true, Revision: revision, QuotaChanges: toQuotaChanges(changes),
 	})
 }
@@ -226,7 +219,7 @@ func (h handler) setAssignee(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = actor
-	writeJSON(w, http.StatusOK, storeData{Store: toStoreView(row, loaded, domain.NowMS())})
+	jsonwire.Write(w, http.StatusOK, storeData{Store: toStoreView(row, loaded, domain.NowMS())})
 }
 
 // consumeTombstone is POST PathTombstone.
@@ -244,7 +237,7 @@ func (h handler) consumeTombstone(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, api)
 		return
 	}
-	writeJSON(w, http.StatusOK, tombstoneData{
+	jsonwire.Write(w, http.StatusOK, tombstoneData{
 		StoreUUID: result.StoreUUID, ConsumedAtMS: result.ConsumedAtMS,
 	})
 }
@@ -265,7 +258,7 @@ func (h handler) createGroup(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, api)
 		return
 	}
-	writeJSON(w, http.StatusOK, groupData{
+	jsonwire.Write(w, http.StatusOK, groupData{
 		Group: tagViewWire{UUID: view.UUID, Name: view.Name, StoreCount: view.StoreCount},
 	})
 }
@@ -286,7 +279,7 @@ func (h handler) renameGroup(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, api)
 		return
 	}
-	writeJSON(w, http.StatusOK, groupData{
+	jsonwire.Write(w, http.StatusOK, groupData{
 		Group: tagViewWire{UUID: view.UUID, Name: view.Name, StoreCount: view.StoreCount},
 	})
 }
@@ -302,7 +295,7 @@ func (h handler) deleteGroup(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, api)
 		return
 	}
-	writeJSON(w, http.StatusOK, tagDeleteData{UUID: uuid, Deleted: true})
+	jsonwire.Write(w, http.StatusOK, tagDeleteData{UUID: uuid, Deleted: true})
 }
 
 type groupData struct {
@@ -343,8 +336,8 @@ func readStrict(r *http.Request, out any) bool {
 	if !jsonContent(r.Header.Get("Content-Type")) {
 		return false
 	}
-	raw, err := io.ReadAll(io.LimitReader(r.Body, 8192))
-	if err != nil {
+	raw, err := io.ReadAll(io.LimitReader(r.Body, 8193))
+	if err != nil || len(raw) > 8192 {
 		return false
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
@@ -352,7 +345,7 @@ func readStrict(r *http.Request, out any) bool {
 	if err := dec.Decode(out); err != nil {
 		return false
 	}
-	return !dec.More()
+	return dec.Decode(new(any)) == io.EOF
 }
 
 // optionalString splits an absent member from an explicit null: an absent
@@ -386,11 +379,5 @@ func writeAPIError(w http.ResponseWriter, api *contract.APIError) {
 	for key, value := range api.Extra {
 		body[key] = value
 	}
-	writeJSON(w, api.Status, body)
-}
-
-// isAPI reports whether err is already a refusal this package can render.
-func isAPI(err error) bool {
-	var api *contract.APIError
-	return errors.As(err, &api)
+	jsonwire.Write(w, api.Status, body)
 }

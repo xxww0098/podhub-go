@@ -2,7 +2,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { renderToStaticMarkup } from "react-dom/server"
-import { SupplierDbDetailView } from "./supplier-db-table"
+import { SupplierProductsView } from "./supplier-db-table"
 import { propsPatch } from "./supplier-prop-editors"
 import { createSupplierDbsStore, type SupplierDbsClient } from "./supplier-dbs-store"
 import { TREE, db, row, propDef, clientWithDetail, storeWithDetail } from "./supplier-editing-fixtures"
@@ -175,20 +175,19 @@ test("归档行：archived 置真，行从默认表格的 visibleRows 出局", a
   assert.equal(archived.ok, true)
   assert.equal(state.rows.find((item) => item.productId === "p1")?.archived, true)
   const html = renderToStaticMarkup(
-    <SupplierDbDetailView
+    <SupplierProductsView
       store={store}
-      detail={{
+      dbs={[db()]}
+      details={[{
         db: state.db,
         propDefs: state.propDefs,
         rows: state.rows,
-      }}
-      onExit={() => {}}
-      onEditDb={() => {}}
-      onOpenAccounts={() => {}}
+      }]}
+      onManageFactories={() => {}}
       loadCategoryTree={async () => TREE}
     />,
   )
-  assert.match(html, /共 1 条/, "归档行不进商品表")
+  assert.match(html, /共 1 款商品，1 个规格/, "归档行不进商品表")
   assert.doesNotMatch(html, /data-supplier-db-open="p1"/)
   assert.match(html, /data-supplier-db-open="p2"/)
 })

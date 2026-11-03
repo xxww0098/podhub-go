@@ -77,12 +77,12 @@ test("workspace screen fails closed until the Cloud directory is loaded", () => 
   assert.match(html, /演示 Workspace/)
   assert.doesNotMatch(html, /更换工作空间头像/)
   assert.doesNotMatch(html, /修改名称/)
-  assert.match(html, /aria-label="邀请成员：正在读取成员信息，请稍候。"/)
-  // Members are the gate on inviting, so they sit against that button — and are
-  // the only quota here. The rest is read on 用量.
-  assert.match(html, /成员 3 \/ 8/)
-  assert.match(html, /待接受的邀请/)
-  assert.match(html, /搜索姓名或邮箱/)
+  assert.doesNotMatch(html, /aria-label="邀请成员/)
+  // The subscription capacity is fetched for the active Workspace; stale
+  // overview limits must not be presented while that read is pending.
+  assert.doesNotMatch(html, /成员 3 \/ 8/)
+  assert.match(html, /role="tab"[^>]*>(?:(?!<\/button>)[\s\S])*邀请(?:(?!<\/button>)[\s\S])*<\/button>/)
+  assert.match(html, /aria-label="搜索成员"/)
   assert.doesNotMatch(html, /上行流量/)
   assert.doesNotMatch(html, /充值余额|累计消费金额|去充值/)
   assert.doesNotMatch(html, /AI Token/)
@@ -111,7 +111,7 @@ test("workspace screen keeps member actions fail-closed before the Cloud directo
   assert.doesNotMatch(html, /更换工作空间头像/)
   assert.doesNotMatch(html, />解散工作空间<\/button>/)
   assert.doesNotMatch(html, /离开工作空间/)
-  assert.match(html, /aria-label="邀请成员：正在读取成员信息，请稍候。"/)
+  assert.doesNotMatch(html, /aria-label="邀请成员/)
 })
 
 test("workspace screen offers dissolve only to the owner", () => {
@@ -126,10 +126,10 @@ test("workspace screen keeps identity management fail-closed before the Cloud di
 
   assert.match(html, /演示 Workspace/)
   assert.match(html, /所有者/)
-  assert.match(html, /邀请成员/)
+  assert.doesNotMatch(html, /aria-label="邀请成员/)
   assert.doesNotMatch(html, /修改名称/)
   assert.doesNotMatch(html, />解散工作空间<\/button>/)
-  assert.match(html, /aria-label="邀请成员：正在读取成员信息，请稍候。"/)
+  assert.doesNotMatch(html, /aria-label="邀请成员/)
   // The other Workspace is reachable from the sidebar switcher, not from this page.
   assert.doesNotMatch(html, /合作方 Ultra/)
   assert.doesNotMatch(html, /role="radiogroup"/)
@@ -145,7 +145,7 @@ const standing: WorkspaceStandingView = {
   owned_limit: overview.owned_limit,
 }
 
-test("workspace trigger names the workspace and plan; the account trigger owns personal identity", () => {
+test("compact triggers keep accessible workspace plan and personal identity separate", () => {
   const html = renderToStaticMarkup(
     <SidebarProvider>
       <WorkspaceMenu
@@ -158,20 +158,38 @@ test("workspace trigger names the workspace and plan; the account trigger owns p
   )
 
   assert.match(html, /aria-label="工作空间 演示 Workspace，专业版"/)
-  assert.match(html, /data-plan="pro"/)
+  assert.match(html, /data-plan="pro"[^>]*>专业版<\/span>/)
   assert.doesNotMatch(html, /seller@example.invalid/)
-  const account = renderToStaticMarkup(<SidebarProvider><AccountMenu overview={overview} standing={standing} onSignedOut={() => {}} /></SidebarProvider>)
-  assert.match(account, /aria-label="账户 Seller，owner"/)
-  assert.match(account, /seller@example.invalid/)
+  const account = renderToStaticMarkup(<SidebarProvider><AccountMenu overview={overview} onSignedOut={() => {}} /></SidebarProvider>)
+  assert.match(account, /aria-label="账户 seller@example.invalid，owner"/)
+  assert.match(account, />Seller</)
   assert.doesNotMatch(account, /演示 Workspace|data-plan=/)
   assert.doesNotMatch(html, /data-slot="owner-crown"/)
-  assert.match(
-    readFileSync(new URL("../src/components/workspace-switcher.tsx", import.meta.url), "utf8"),
-    /flex-col justify-center/,
-  )
   assert.doesNotMatch(html, /成员席位/)
   assert.doesNotMatch(html, /PodHub/)
   assert.doesNotMatch(html, /供应商/)
+})
+
+test("workspace trigger shows the workspace avatar and keeps the name accessible", () => {
+  for (const [name, avatar_url, mark] of [
+    ["Akoya AI", undefined, /lucide-users-round/],
+    ["😀 AI", undefined, /lucide-users-round/],
+    ["Akoya AI", "https://assets.example.invalid/workspace.png", /<img[^>]*src="https:\/\/assets\.example\.invalid\/workspace\.png"/],
+  ] as const) {
+    const html = renderToStaticMarkup(
+      <SidebarProvider>
+        <WorkspaceMenu
+          overview={{ ...overview, active_workspace: { ...overview.active_workspace!, name, avatar_url } }}
+          onOpenSpace={() => {}}
+        />
+      </SidebarProvider>,
+    )
+    assert.match(html, mark)
+    assert.match(html, /shell-workspace-avatar/)
+    assert.ok(html.includes(`aria-label="工作空间 ${name}，专业版"`))
+    if (avatar_url) assert.match(html, /<img/)
+    else assert.doesNotMatch(html, /<img/)
+  }
 })
 
 test("workspace and account dropdowns keep their actions separate", () => {
@@ -184,38 +202,40 @@ test("workspace and account dropdowns keep their actions separate", () => {
      settings sheet owns platform administration. 店铺 stays — a Workspace
      destination belongs to the Workspace menu — but folded into the actions
      group, no dedicated section. */
-  assert.doesNotMatch(menu, /用量|平台/)
+  assert.doesNotMatch(menu, /用量|平台|邀请成员/)
   assert.match(menu, /onOpenSpace\("stores"\)/)
 
   const order = [
-    menu.indexOf("<WorkspaceMark"),
     menu.indexOf("SCREEN_LABELS.stores"),
     menu.indexOf("升级"),
     menu.indexOf("兑换码"),
-    menu.indexOf("邀请成员"),
-    menu.indexOf("可切换的 Workspace"),
+    menu.indexOf("所有空间"),
+    menu.indexOf("<WorkspaceMark"),
     menu.indexOf("创建工作空间"),
   ]
   assert.ok(order.every((index) => index >= 0), "every region is present")
   assert.deepEqual([...order].sort((left, right) => left - right), order)
-  assert.doesNotMatch(menu, /添加账号|退出登录|其他已登录账号|kind="user"/)
+  assert.doesNotMatch(menu, /退出登录|kind="user"/)
   const account = source.slice(source.indexOf("export function AccountMenu"), source.indexOf("export function createWorkspaceRefusal"))
-  assert.match(account, /<StackedAccountItems/)
-  assert.match(account, /添加账号/)
+  /* One browser, one account: the footer menu is the account card plus the two
+     actions that do not need a second identity. */
+  assert.doesNotMatch(account, /<StackedAccountItems|添加账号|onSwitchAccount|onLogoutAccount/)
+  assert.doesNotMatch(account, /创建工作空间/)
   assert.match(account, /退出登录/)
-  /* 邀请成员 loads the directory when opened and hands the same dialog the
-     团队协作区 pane uses; the row itself only renders for owner/manager. */
-  assert.match(source, /accountGetWorkspaceDirectory\(\)/)
-  assert.match(source, /canInvite/)
-  assert.match(source, /<WorkspaceInviteDialog/)
-  assert.match(menu, /className="sr-only"/)
+  assert.match(account, /title=\{accountName\}/)
+  assert.doesNotMatch(menu, /邀请成员/)
+  /* Two cards: this space's own actions, then the all-spaces switcher. */
+  assert.match(menu, /className=\{CARD\}/)
+  assert.match(menu, /所有空间/)
   /* When Cloud refuses the create, the entry is one muted note, not a dead
      item plus an orphaned paragraph. */
   assert.match(menu, /role="note"/)
   assert.doesNotMatch(menu, /disabled=\{refusal/)
-  assert.match(source, /w-64/)
+  assert.match(source, /w-60/)
   assert.match(menu, /className=\{SHELL\}/)
-  assert.match(menu, /DropdownMenuSeparator/)
+  /* The open trigger already shows the current space, so the menu does not
+     repeat that identity or the divider under it. */
+  assert.doesNotMatch(menu, /DropdownMenuSeparator/)
   /* The merged menu owns the account row: sign-out. Settings lives on the
      footer gear — duplicating it inside the menu is the website habit this
      console dropped. */
@@ -239,20 +259,16 @@ test("each workspace row carries a hover tooltip with plan and member count", ()
   assert.match(source, /workspace\.member_count\} 名成员/)
 })
 
-test("each stacked account row carries the per-account … submenu (创建工作空间 / 登出)", () => {
-  // Notion's account card: the row's "…" holds the account-level actions —
-  // create under that account (加入只能走邀请，见创建弹窗指引), and signing
-  // that account out — so the bare LogOut icon is gone in favour of the flyout.
+test("the account menu offers one account's actions, not a session stack", () => {
+  // Multi-account stacking is gone: no switcher rows, no per-account "…", no
+  // add-account entry and no pending-create handoff across a switch.
   const source = readFileSync(new URL("../src/components/workspace-switcher.tsx", import.meta.url), "utf8")
 
-  assert.match(source, /function AccountActionsSubmenu/)
-  assert.match(source, /DropdownMenuSubTrigger/)
+  assert.doesNotMatch(source, /AccountActionsSubmenu|DropdownMenuSubTrigger|StackedAccountItems/)
+  assert.doesNotMatch(source, /markPendingWorkspaceCreate|readPendingWorkspaceCreate|PENDING_WORKSPACE_CREATE/)
+  assert.doesNotMatch(source, /添加账号|退出该账号|其他已登录账号/)
   assert.match(source, /创建工作空间/)
-  assert.match(source, /退出该账号/)
-  /* The non-active handoff survives the account switch's reload: the menu
-     re-opens the create dialog for the account it was picked on. */
-  assert.match(source, /markPendingWorkspaceCreate\(account\.uuid\)/)
-  assert.match(source, /readPendingWorkspaceCreate\(\)/)
+  assert.match(source, /退出登录/)
 })
 
 test("each plan grade has its own corner-mark tone", () => {

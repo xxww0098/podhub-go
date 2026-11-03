@@ -1,6 +1,7 @@
 /bin/
 /coverage.out
 .env
+/.env.local
 *.exe
 
 # Code generators installed by `make codegen-tools` (SQLC/OAPI_CODEGEN_BIN).
@@ -8,6 +9,16 @@
 
 # macOS Finder metadata.
 .DS_Store
+
+# Local design, review, and tool cache artifacts.
+/.claude/
+/.cloudflare/
+/.impeccable/
+/web/.impeccable/
+/docs/design-drafts/
+/docs/design-references/
+/design-qa.md
+
 # Rust build output. The single workspace root is rust/; cargo puts every
 # profile under one target dir, plus the two side dirs the WASM scripts use.
 /rust/target/

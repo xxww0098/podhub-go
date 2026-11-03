@@ -13,7 +13,6 @@ import (
 
 const (
 	maxScalarName  = 255
-	maxBriefBytes  = 4096
 	maxFixedTags   = 30
 	maxTagChars    = 30
 	maxVideoURL    = 2048
@@ -69,9 +68,8 @@ func PromptName(raw string) (string, error) { return x1contract.PromptName(raw) 
 // PromptFile requires Path::extension to be the case-sensitive string md or txt.
 func PromptFile(raw string) (string, error) { return x1contract.PromptFile(raw) }
 
-// CanonicalBrief stores six trimmed lines joined by LF.
-// The byte cap is measured after BOM removal and trim, before the join.
-func CanonicalBrief(raw string) (string, error) { return x1contract.CanonicalBrief(raw) }
+// CanonicalProfile stores confirmed product facts as JSON.
+func CanonicalProfile(raw string) (string, error) { return x1contract.CanonicalProfile(raw) }
 
 // FixedTags checks the 1–30 Russian hashtag list.
 func FixedTags(tags []string) error { return x1contract.FixedTags(tags) }

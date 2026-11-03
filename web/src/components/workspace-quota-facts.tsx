@@ -19,10 +19,11 @@ import { cn } from "@/lib/utils"
 
 /**
  * Single-line wallet badge in the top header. Everything the relay bills — AI
- * calls and 识图 alike — is settled against the Workspace creator's shared prepaid balance, so the
- * readout names the money that is left. The header outlives every screen; it
- * reads the same wallet snapshot 用量 and redeem publish into, so a later
- * credit is not stuck behind the next 60s beat.
+ * calls and 识图 alike — is settled against the active Workspace's own prepaid
+ * balance, so the readout names the money that is left. The header outlives
+ * every screen; it reads the same wallet snapshot 用量 and redeem publish into,
+ * so a later credit is not stuck behind the next 60s beat. Until the first
+ * read lands (or when it fails) the entry stays and reads `—`.
  */
 export function HeaderWalletBalance({
   workspaceId,
@@ -47,7 +48,6 @@ export function HeaderWalletBalance({
     },
   })
 
-  if (!wallet) return null
   return (
     <WalletBalanceBadge
       wallet={wallet}
@@ -67,13 +67,41 @@ export function WalletBalanceBadge({
   defaultOpen,
   className,
 }: {
-  wallet: WalletView
+  wallet: WalletView | null
   stats?: UsageStatsView | null
   onOpenUsage?: () => void
   open?: boolean
   defaultOpen?: boolean
   className?: string
 }) {
+  const buttonClass = cn(
+    "group/token flex h-8 items-center gap-2 rounded-lg border border-border/70 bg-card/70 px-2.5 text-xs transition-colors hover:border-border-strong hover:bg-card focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring cursor-pointer select-none",
+    !onOpenUsage && "cursor-default pointer-events-none",
+    className,
+  )
+  const glyph = (
+    <span className="flex items-center gap-1.5 text-meta font-semibold tracking-[0.09em] text-faint-foreground uppercase">
+      <Wallet
+        className="size-3.5 text-muted-foreground transition-colors group-hover/token:text-foreground"
+        aria-hidden
+      />
+    </span>
+  )
+  if (!wallet) {
+    return (
+      <button
+        type="button"
+        onClick={onOpenUsage}
+        onMouseEnter={() => preloadScreen("usage")}
+        onFocus={() => preloadScreen("usage")}
+        aria-label="钱包余额 —"
+        className={buttonClass}
+      >
+        {glyph}
+        <span className="font-mono text-meta font-medium text-muted-foreground tabular-nums">—</span>
+      </button>
+    )
+  }
   const quota = computeWalletBalance(wallet)
   // 消费口径与 wallet.spent_microfen 同源：charged 是结算真正扣走的钱，
   // 名义 total 在发生封顶减免时会高估消费，不再是"已花费"的读数来源。
@@ -91,20 +119,11 @@ export function WalletBalanceBadge({
             onMouseEnter={() => preloadScreen("usage")}
             onFocus={() => preloadScreen("usage")}
             aria-label={`钱包余额 ${quota.available} CNY`}
-            className={cn(
-              "group/token flex h-8 items-center gap-2 rounded-lg border border-border/70 bg-card/70 px-2.5 text-xs transition-colors hover:border-border-strong hover:bg-card focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring cursor-pointer select-none",
-              !onOpenUsage && "cursor-default pointer-events-none",
-              className,
-            )}
+            className={buttonClass}
           />
         }
       >
-        <span className="flex items-center gap-1.5 text-meta font-semibold tracking-[0.09em] text-faint-foreground uppercase">
-          <Wallet
-            className="size-3.5 text-muted-foreground transition-colors group-hover/token:text-foreground"
-            aria-hidden
-          />
-        </span>
+        {glyph}
         <span className="font-mono text-meta font-medium text-foreground tabular-nums">
           {quota.available}
         </span>

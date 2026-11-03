@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/xxww0098/podhub-go/internal/admin/domain"
+	access "github.com/xxww0098/podhub-go/internal/identity/contract"
 )
 
 type wireFamily int
@@ -29,7 +30,8 @@ func adminBRoute(rt Route) bool {
 	switch rt.Path {
 	case "/api/admin/plans", "/api/admin/orders",
 		"/api/admin/orders/{public_id}/confirm", "/api/admin/orders/{public_id}/cancel",
-		"/api/admin/redeem-codes",
+		"/api/admin/redeem-codes", "/api/admin/redeem-codes/{id}",
+		"/api/admin/subscription-coupons", "/api/admin/subscription-coupons/{code}",
 		"/api/admin/payment/config",
 		"/api/admin/workspaces/{uuid}/wallet", "/api/admin/workspaces/{uuid}/wallet/topups",
 		"/api/admin/workspaces/{uuid}/wallet/topups/{topup_id}/revoke",
@@ -79,26 +81,8 @@ func (h handler) serveAdminB(w http.ResponseWriter, r *http.Request, rt Route) {
 	if !ok {
 		return
 	}
-	if !domain.SuperAdmin(session.PlatformRole) {
+	if !access.IsSuperAdmin(session.PlatformRole) {
 		h.writeFamily(w, fam, http.StatusForbidden, "需要超级管理员权限")
-		return
-	}
-	token := rawToken(r)
-	standing, err := h.AdminB.Standing(r.Context(), session.UserID, domain.SessionHash(token))
-	if err != nil {
-		h.writeFault(w, fam, err)
-		return
-	}
-	if standing.Missing {
-		h.writeFamily(w, fam, http.StatusInternalServerError, msgUnavailable)
-		return
-	}
-	if !standing.Enrolled {
-		h.writeFamily(w, fam, http.StatusForbidden, "请先绑定验证器")
-		return
-	}
-	if !standing.Elevated {
-		h.writeFamily(w, fam, http.StatusForbidden, "管理操作需要重新验证")
 		return
 	}
 	publicID, err := h.AdminB.PublicID(r.Context(), session.UserID)
@@ -121,6 +105,12 @@ func (h handler) serveAdminB(w http.ResponseWriter, r *http.Request, rt Route) {
 		run(h.AdminB.CancelOrder(r.Context(), actor, chi.URLParam(r, "public_id")))
 	case "GET /api/admin/redeem-codes":
 		run(h.AdminB.ListRedeem(r.Context(), actor))
+	case "GET /api/admin/subscription-coupons":
+		run(h.AdminB.ListCoupons(r.Context(), actor))
+	case "POST /api/admin/subscription-coupons":
+		h.createCoupon(w, r, actor)
+	case "PUT /api/admin/subscription-coupons/{code}":
+		h.setCouponEnabled(w, r, actor)
 	case "POST /api/admin/redeem-codes":
 		spec, ok := decodeRedeem(w, r)
 		if ok {
@@ -339,20 +329,6 @@ func writeCloud(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_, _ = w.Write(bytes.TrimRight(buf.Bytes(), "\n"))
-}
-
-func rawToken(r *http.Request) string {
-	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
-		token := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
-		if token != "" {
-			return token
-		}
-	}
-	cookie, err := r.Cookie("sid")
-	if err == nil {
-		return cookie.Value
-	}
-	return ""
 }
 
 func pathSegment(raw string) string {

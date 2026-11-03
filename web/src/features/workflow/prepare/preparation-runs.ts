@@ -26,8 +26,6 @@ import {
 
 type PreparationRunInput = {
   ready: boolean
-  /** Undefined only in tests that never touch a supplier verb; the screen always has one. */
-  cardId?: string
   supplierProductId?: string
   psdTemplateAssetId: string
   psdAsset: PickedPsdAsset | undefined
@@ -56,7 +54,6 @@ export function preparationRuns(
   }: PreparationBatch,
   {
     ready,
-    cardId,
     supplierProductId,
     psdTemplateAssetId,
     psdAsset,
@@ -112,7 +109,7 @@ export function preparationRuns(
     if (assetId) {
       // A held asset handle survives cache eviction; verify/recover once per
       // batch before rendering rather than trusting that handle's presence.
-      const managed = await renderOpfs.workflowRestoreTemplatePsd(assetId, supplierProductId, cardId)
+      const managed = await renderOpfs.workflowRestoreTemplatePsd(assetId, supplierProductId)
       if (!templateCurrent()) return false
       template = managed.asset
       setPsdAsset(managed.asset)

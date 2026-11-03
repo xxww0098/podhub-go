@@ -108,6 +108,9 @@ func replayTopup(ctx context.Context, pool *pgxpool.Pool, id int64, publicID str
 		if tag.RowsAffected() != 1 {
 			return nil
 		}
+		if err := SettleFirstOrderCommission(ctx, tx, id, 0, "POST", "/api/billing/replay"); err != nil {
+			return err
+		}
 		_, err = TopupTx(ctx, tx, orgID, publicID, id, amount)
 		return err
 	})

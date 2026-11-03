@@ -59,7 +59,9 @@ func (r *Repo) Gate(ctx context.Context, orgID, userID int64, storeID string) (d
 		  LEFT JOIN organization_members m
 		    ON m.org_id = s.org_id AND m.user_id = $3
 		   AND m.status = 'active' AND NOT m.manual_disabled AND NOT m.quota_suspended
+		   AND EXISTS (SELECT 1 FROM account_users u WHERE u.id = m.user_id AND u.disabled_at IS NULL)
 		 WHERE s.org_id = $1 AND s.uuid = $2::uuid AND s.deleted_at_ms IS NULL
+		   AND EXISTS (SELECT 1 FROM organizations o WHERE o.id = s.org_id AND o.dissolved_at IS NULL)
 		 LIMIT 1`, orgID, storeID, userID).Scan(&g.Assignee, &member, &role)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return contract.ErrNotFound

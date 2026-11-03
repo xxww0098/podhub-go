@@ -19,9 +19,9 @@ import (
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
 	"github.com/xxww0098/podhub-go/internal/listing/submit"
 	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
-	queue "github.com/xxww0098/podhub-go/internal/platform/jobsched"
 	"github.com/xxww0098/podhub-go/internal/platform/seal"
-	sellerdomain "github.com/xxww0098/podhub-go/internal/seller/domain"
+	queue "github.com/xxww0098/podhub-go/internal/queue/contract"
+	sellerdomain "github.com/xxww0098/podhub-go/internal/seller/ozon/domain"
 )
 
 const (
@@ -315,7 +315,7 @@ func TestBrowserGrantAndReport(t *testing.T) {
 		h := shop.handler(orgA, userA, "reviewer", false)
 		rec := callJSON(h, http.MethodPost, "/api/listing/browser/grant", shop.body("offer-revr", "op-revr", shop.row(t, ctx)))
 		assertNoKey(t, rec, http.StatusForbidden, "forbidden")
-		if !strings.Contains(rec.Body.String(), "当前角色无权执行此操作") {
+		if !strings.Contains(rec.Body.String(), "工作空间角色无效") {
 			t.Fatal(rec.Body.String())
 		}
 		if shop.opens.Load() != 0 || shop.budgetCount(t, ctx) != 0 || shop.intentCount(t, ctx) != 0 {
@@ -350,7 +350,7 @@ func TestBrowserGrantAndReport(t *testing.T) {
 		}
 		lease := runningJob(t, ctx, pool, seed, userA, false)
 		tr := &tallyTransport{}
-		err := submit.Work(ctx, pool, queue.Claimed{
+		err := listingSubmit().Work(ctx, pool, queue.Claimed{
 			ID: lease.ID, OrgID: orgA, Kind: "listing.submit", SubmitterUserID: userA,
 			Attempt: 1, MaxAttempts: 8, Epoch: lease.Epoch, Owner: lease.Owner,
 			Payload: jobPayload(seed, false),
@@ -400,8 +400,7 @@ func (s *grantShop) handler(org, user int64, role string, disabled bool) http.Ha
 	opens := s.opens
 	kek := seal.DeriveKEK("browser-direct-fixture-kek")
 	ring := seal.Ring{Primary: kek}
-	srv := &httpapi.Server{
-		Pool: s.pool,
+	srv := &httpapi.Server{Pool: s.pool,
 		Access: access.FixedResolver{Principal: &access.Principal{
 			UserID: user, OrgID: org, WorkspaceRole: role,
 		}},
@@ -587,12 +586,12 @@ func seedPaidGrantWorkspace(t *testing.T, ctx context.Context, pool *pgxpool.Poo
  VALUES($1,$2,'owner','active','Grant owner',1,clock_timestamp(),clock_timestamp()) ON CONFLICT(org_id,user_id) DO NOTHING`, org, user); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO subscriptions(org_id,status,plan_key,term_start,term_end,billing_anchor,extra_stores,updated_at)
+	if _, err := pool.Exec(ctx, `INSERT INTO subscriptions(org_id,status,plan_key,term_start,term_end,billing_anchor,stores,updated_at)
  VALUES($1,'active','lite',clock_timestamp()-interval '1 day',clock_timestamp()+interval '1 month',clock_timestamp()-interval '1 day',100,clock_timestamp()) ON CONFLICT(org_id) DO NOTHING`, org); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO subscription_periods(org_id,starts_at,ends_at,plan_key,plan_stores,plan_members,plan_monthly_cents,store_monthly_cents,member_monthly_cents,extra_stores,extra_members)
- SELECT org_id,term_start,term_end,'lite',5,1,10000,2000,3000,100,0 FROM subscriptions WHERE org_id=$1 AND NOT EXISTS(SELECT 1 FROM subscription_periods WHERE org_id=$1)`, org); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO subscription_periods(org_id,starts_at,ends_at,plan_key,stores,store_monthly_cents)
+ SELECT org_id,term_start,term_end,'lite',100,2000 FROM subscriptions WHERE org_id=$1 AND NOT EXISTS(SELECT 1 FROM subscription_periods WHERE org_id=$1)`, org); err != nil {
 		t.Fatal(err)
 	}
 

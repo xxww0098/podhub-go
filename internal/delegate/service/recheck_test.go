@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/xxww0098/podhub-go/internal/delegate/contract"
@@ -23,6 +24,21 @@ func TestFinalizeRecheckSession(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 	if err := recheckSession(context.Background(), actor); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOrdersSearchLength(t *testing.T) {
+	s := Seller{DB: gateDB{}}
+	for _, search := range []string{strings.Repeat("字", 121), "a\x00b", string([]byte{0xff})} {
+		_, _, _, err := s.Orders(context.Background(), Actor{}, "", "", search, "", nil)
+		var api *contract.APIError
+		if !asFault(err, &api) || api.Code != "validation" {
+			t.Fatalf("expected validation error, got %v", err)
+		}
+	}
+	_, _, _, err := s.Orders(context.Background(), Actor{}, "", "", strings.Repeat("字", 120), "", nil)
+	if err != nil {
 		t.Fatal(err)
 	}
 }
@@ -63,6 +79,9 @@ func (gateDB) VisibleStoreUUIDs(context.Context, int64, int64, bool) ([]string, 
 	return nil, nil
 }
 func (gateDB) AdmitStore(context.Context, int64, int64, bool, string, int64) (contract.SealedCredential, error) {
+	return contract.SealedCredential{}, nil
+}
+func (gateDB) PostingCredential(context.Context, int64, contract.SyncTarget, int64) (contract.SealedCredential, error) {
 	return contract.SealedCredential{}, nil
 }
 func (gateDB) ListBindings(context.Context, int64, string) ([]contract.Binding, error) {

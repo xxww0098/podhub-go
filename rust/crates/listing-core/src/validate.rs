@@ -83,6 +83,24 @@ pub fn normalize_and_validate_with(
     draft: &ListingDraftRecord,
     materials: &DictionaryMaterials,
 ) -> ValidationOutcome {
+    let (normalized_values, issues) = validate_fields_with(draft, materials);
+    if !issues.is_empty() {
+        return ValidationOutcome::Rejected { issues };
+    }
+    match build_snapshot(draft, &draft.schema_snapshot, &normalized_values, materials) {
+        Ok(snapshot) => ValidationOutcome::Accepted {
+            normalized_values,
+            snapshot,
+        },
+        Err(issues) => ValidationOutcome::Rejected { issues },
+    }
+}
+
+/// Field rules are shared with supplier defaults, which cannot build a product yet.
+pub fn validate_fields_with(
+    draft: &ListingDraftRecord,
+    materials: &DictionaryMaterials,
+) -> (BTreeMap<String, String>, Vec<FieldIssue>) {
     let schema = &draft.schema_snapshot;
     let mut issues = Vec::new();
     let mut normalized_values = BTreeMap::new();
@@ -299,18 +317,8 @@ pub fn normalize_and_validate_with(
                 .cmp(&right.field_key)
                 .then(left.code.cmp(&right.code))
         });
-        return ValidationOutcome::Rejected { issues };
     }
-
-    match build_snapshot(draft, schema, &normalized_values, materials) {
-        Ok(snapshot) => ValidationOutcome::Accepted {
-            normalized_values,
-            snapshot,
-        },
-        Err(build_issues) => ValidationOutcome::Rejected {
-            issues: build_issues,
-        },
-    }
+    (normalized_values, issues)
 }
 
 #[cfg(test)]

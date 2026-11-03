@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,7 +15,6 @@ import (
 	"github.com/xxww0098/podhub-go/internal/ai"
 	billingrepo "github.com/xxww0098/podhub-go/internal/billing/repo"
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
-	"github.com/xxww0098/podhub-go/internal/platform/llm"
 	"github.com/xxww0098/podhub-go/tests/testkit"
 )
 
@@ -45,16 +45,27 @@ func TestAIResponsesMatchOpenAPI(t *testing.T) {
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"cmpl_spec","model":"parity-model","choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":10,"completion_tokens":2}}`))
+		raw, _ := io.ReadAll(r.Body)
+		if bytes.Contains(raw, []byte(`"content":"fail"`)) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"type":"invalid_request_error","message":"bad request"}}`))
+			return
+		}
+		switch r.URL.Path {
+		case "/v1/messages":
+			_, _ = w.Write([]byte(`{"id":"msg_spec","type":"message","usage":{"input_tokens":10,"output_tokens":2}}`))
+		case "/responses":
+			_, _ = w.Write([]byte(`{"id":"resp_spec","object":"response","usage":{"input_tokens":10,"output_tokens":2}}`))
+		default:
+			_, _ = w.Write([]byte(`{"id":"cmpl_spec","model":"parity-model","choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":10,"completion_tokens":2}}`))
+		}
 	}))
 	defer upstream.Close()
-	limits := ai.Limits{}
 	router := func(p *access.Principal) http.Handler {
 		r := chi.NewRouter()
 		ai.Register(r, ai.HTTPDeps{
 			Deps: ai.Deps{
-				Pool: pool, BaseURL: upstream.URL, Limits: &limits, Converter: llm.Default(),
-				Upstream: ai.HTTPUpstream{Client: upstream.Client()},
+				Pool: pool, Text: serverText(upstream), Wallet: aiWalletPort(),
 			},
 			Access: access.FixedResolver{Principal: p},
 		})
@@ -76,6 +87,7 @@ func TestAIResponsesMatchOpenAPI(t *testing.T) {
 		key     string
 		body    string
 		status  int
+		claim   bool
 	}
 	run := func(t *testing.T, c call) *httptest.ResponseRecorder {
 		t.Helper()
@@ -83,6 +95,11 @@ func TestAIResponsesMatchOpenAPI(t *testing.T) {
 		req.RemoteAddr = "198.51.100.10:443"
 		if c.key != "" {
 			req.Header.Set("Idempotency-Key", c.key)
+		}
+		if c.claim {
+			req.Header.Set("X-Listing-Job-Id", "c1000000-0000-4000-8000-000000000001")
+			req.Header.Set("X-Listing-Lease-Owner", "browser-test")
+			req.Header.Set("X-Listing-Lease-Epoch", "1")
 		}
 		if c.body != "" {
 			req.Header.Set("Content-Type", "application/json")
@@ -106,13 +123,20 @@ func TestAIResponsesMatchOpenAPI(t *testing.T) {
 		{name: "chat replays", handler: owner, method: "POST", path: "/api/ai/chat/completions", key: "spec-chat-1", body: chatBody, status: 200},
 		{name: "chat without key", handler: owner, method: "POST", path: "/api/ai/chat/completions", body: chatBody, status: 400},
 		{name: "chat unknown model", handler: owner, method: "POST", path: "/api/ai/chat/completions", key: "spec-chat-2", body: `{"model":"no-such-model","messages":[]}`, status: 503},
-		{name: "chat stream refused upstream", handler: owner, method: "POST", path: "/api/ai/chat/completions", key: "spec-chat-3", body: `{"model":"parity-model","stream":true,"messages":[{"role":"user","content":"hi"}]}`, status: 502},
+		{name: "chat stream refused", handler: owner, method: "POST", path: "/api/ai/chat/completions", key: "spec-chat-3", body: `{"model":"parity-model","stream":true,"messages":[{"role":"user","content":"hi"}]}`, status: 400},
+		{name: "anthropic settles", handler: owner, method: "POST", path: "/api/ai/v1/messages", key: "spec-msg-1", body: `{"model":"parity-model","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`, status: 200},
+		{name: "anthropic replays", handler: owner, method: "POST", path: "/api/ai/v1/messages", key: "spec-msg-1", body: `{"model":"parity-model","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`, status: 200},
+		{name: "anthropic key reused by chat", handler: owner, method: "POST", path: "/api/ai/chat/completions", key: "spec-msg-1", body: chatBody, status: 409},
+		{name: "responses settles", handler: owner, method: "POST", path: "/api/ai/responses", key: "spec-resp-1", body: `{"model":"parity-model","input":"hi"}`, status: 200},
+		{name: "responses replays", handler: owner, method: "POST", path: "/api/ai/responses", key: "spec-resp-1", body: `{"model":"parity-model","input":"hi"}`, status: 200},
+		{name: "chat upstream failure", handler: owner, method: "POST", path: "/api/ai/chat/completions", key: "spec-chat-fail", body: `{"model":"parity-model","messages":[{"role":"user","content":"fail"}]}`, status: 502},
 		{name: "chat empty wallet", handler: poor, method: "POST", path: "/api/ai/chat/completions", key: "spec-chat-4", body: chatBody, status: 402},
 		{name: "chat signed out", handler: anonymous, method: "POST", path: "/api/ai/chat/completions", key: "spec-chat-5", body: chatBody, status: 401},
 		{name: "chat without workspace", handler: noOrg, method: "POST", path: "/api/ai/chat/completions", key: "spec-chat-6", body: chatBody, status: 403},
 		{name: "ocr post refused", handler: owner, method: "POST", path: "/api/ai/ocr/completions", body: `{}`, status: 400},
 		{name: "ocr get without key", handler: owner, method: "GET", path: "/api/ai/ocr/completions", status: 400},
-		{name: "ocr get unknown key", handler: owner, method: "GET", path: "/api/ai/ocr/completions", key: "spec-ocr-missing", status: 404},
+		{name: "ocr get without claim", handler: owner, method: "GET", path: "/api/ai/ocr/completions", key: "spec-ocr-missing", status: 400},
+		{name: "ocr get unknown key", handler: owner, method: "GET", path: "/api/ai/ocr/completions", key: "spec-ocr-missing", claim: true, status: 404},
 		{name: "wallet", handler: owner, method: "GET", path: "/api/ai/wallet", status: 200},
 		{name: "wallet signed out", handler: anonymous, method: "GET", path: "/api/ai/wallet", status: 401},
 		{name: "usage", handler: owner, method: "GET", path: "/api/ai/usage", status: 200},
@@ -135,7 +159,7 @@ func TestAIResponsesMatchOpenAPI(t *testing.T) {
 		}
 	})
 
-	t.Run("ocr stored result", func(t *testing.T) {
+	t.Run("ocr unbound stored result is not readable", func(t *testing.T) {
 		if _, err := pool.Exec(ctx, `
 			INSERT INTO ai_requests
 			    (public_id, org_id, user_id, idempotency_key, operation, model, upstream_account_id,
@@ -149,7 +173,7 @@ func TestAIResponsesMatchOpenAPI(t *testing.T) {
 			        1, 0, 1, 0, 'chat_completions', '{"text":"ok"}')`, org, user, priceID); err != nil {
 			t.Fatal(err)
 		}
-		run(t, call{name: "ocr get", handler: owner, method: "GET", path: "/api/ai/ocr/completions", key: "spec-ocr-1", status: 200})
+		run(t, call{name: "ocr get", handler: owner, method: "GET", path: "/api/ai/ocr/completions", key: "spec-ocr-1", claim: true, status: 404})
 	})
 
 	t.Run("export busy", func(t *testing.T) {

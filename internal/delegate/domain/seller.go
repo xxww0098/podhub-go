@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/xxww0098/podhub-go/internal/delegate/contract"
+	access "github.com/xxww0098/podhub-go/internal/identity/contract"
 )
 
 const (
@@ -57,8 +58,6 @@ func AssetExtension(fileName string) (string, bool) {
 		return "png", true
 	case "webp":
 		return "webp", true
-	case "psd":
-		return "psd", true
 	default:
 		return "", false
 	}
@@ -70,10 +69,16 @@ func MimeMatchesExtension(mime, extension string) bool {
 	if mime == "" || len(mime) > 128 {
 		return false
 	}
-	if extension == "psd" {
-		return true
+	switch extension {
+	case "jpg":
+		return mime == "image/jpeg"
+	case "png":
+		return mime == "image/png"
+	case "webp":
+		return mime == "image/webp"
+	default:
+		return false
 	}
-	return strings.HasPrefix(mime, "image/")
 }
 
 // ValidateFile is assets_policy::validate_file.
@@ -87,7 +92,7 @@ func ValidateFile(sha, mime, fileName string, bytes int64) (ext, normalized stri
 	}
 	ext, ok := AssetExtension(fileName)
 	if !ok {
-		return "", "", contract.Validation("只支持 jpg/png/webp/psd 原图文件")
+		return "", "", contract.Validation("只支持 jpg/png/webp 委托图片")
 	}
 	if !MimeMatchesExtension(mime, ext) {
 		return "", "", contract.Validation("文件类型与内容不符")
@@ -230,29 +235,16 @@ func PageLimit(n *int64) int64 {
 	return ClampLimit(*n, MaxPageLimit)
 }
 
-// NormalizeUUID is Uuid::parse_str + to_string. Failure is the caller's 404.
-func NormalizeUUID(raw string) (string, bool) {
-	id, err := uuid.Parse(strings.TrimSpace(raw))
-	if err != nil {
-		return "", false
-	}
-	return id.String(), true
-}
-
-// CanManage is owner or manager. admin is stored as manager. Empty and unknown fail.
+// CanManage distinguishes managers from members and rejects invalid roles.
 func CanManage(role string) (manage bool, err error) {
-	switch strings.ToLower(strings.TrimSpace(role)) {
-	case "":
+	if strings.TrimSpace(role) == "" {
 		return false, contract.Forbidden(contract.MsgNoWorkspace)
-	case "owner":
-		return true, nil
-	case "manager", "admin":
-		return true, nil
-	case "member", "reviewer", "viewer":
-		return false, nil
-	default:
-		return false, contract.Forbidden("工作空间角色无效")
 	}
+	parsed, ok := access.ParseWorkspace(role)
+	if !ok {
+		return false, contract.Forbidden(access.MsgBadWorkspaceRole)
+	}
+	return parsed.CanManage(), nil
 }
 
 // FulfillerWarning is the advisory when the factory has no active fulfiller.
@@ -266,28 +258,6 @@ func FulfillerWarning(activeFulfillers int64) *string {
 	}
 	msg := "该厂家暂无可用履约账号，派发包将无法创建，请联系平台处理"
 	return &msg
-}
-
-// Cursor is created_at_ms:order_id. The order id is the first cut's remainder.
-func EncodeCursor(createdAtMS int64, orderID string) string {
-	return strconv.FormatInt(createdAtMS, 10) + ":" + orderID
-}
-
-// DecodeCursor rejects a missing colon, a non-integer prefix, or a bad uuid.
-func DecodeCursor(raw string) (int64, string, bool) {
-	msRaw, id, ok := strings.Cut(raw, ":")
-	if !ok || msRaw == "" || id == "" {
-		return 0, "", false
-	}
-	ms, err := strconv.ParseInt(msRaw, 10, 64)
-	if err != nil {
-		return 0, "", false
-	}
-	parsed, ok := NormalizeUUID(id)
-	if !ok {
-		return 0, "", false
-	}
-	return ms, parsed, true
 }
 
 // ProjectSnapshot keeps status, substatus, in_process_at, shipment_date.
@@ -712,8 +682,3 @@ func SellerReadMessage(operation, path string, status int, kind string) string {
 		return "Ozon " + operation + "失败（HTTP 0）"
 	}
 }
-
-const readRateLimit = "Ozon 读取频率已达上限，请稍后重试"
-
-// RateLimitMessage is the 429 sentence.
-func RateLimitMessage() string { return readRateLimit }

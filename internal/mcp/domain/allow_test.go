@@ -41,3 +41,39 @@ func TestBearer(t *testing.T) {
 		}
 	}
 }
+
+func TestOriginTuple(t *testing.T) {
+	for _, tc := range []struct {
+		allowed, origin string
+		want            int
+	}{
+		{"https://app.example:443", "https://APP.example", 0},
+		{"https://app.example", "https://app.example:443", 0},
+		{"https://app.example", "https://app.example:8443", 403},
+		{"http://localhost:80", "http://localhost", 0},
+		{"http://localhost", "http://localhost:8080", 403},
+		{"http://localhost:8080", "http://localhost:8080", 0},
+		{"https://[::1]", "https://[::1]:443", 0},
+		{"https://app.example", "https://app.example:", 400},
+		{"https://app.example", "https://app.example:65536", 400},
+		{"https://app.example", "https://app.example/path", 400},
+		{"https://app.example", "https://user@app.example", 400},
+		{"https://app.example", "https://app.example?", 400},
+		{"https://app.example", "https://app.example#", 400},
+		{"https://user@app.example", "https://app.example", 403},
+		{"https://app.example/path", "https://app.example", 403},
+		{"https://app.example?query=value", "https://app.example", 403},
+		{"https://app.example#fragment", "https://app.example", 403},
+		{"https://app.example:", "https://app.example", 403},
+		{"https://app.example:65536", "https://app.example", 403},
+	} {
+		t.Run(tc.allowed+" -> "+tc.origin, func(t *testing.T) {
+			if code, body := (Allow{Origins: []string{tc.allowed}}).CheckOrigin(tc.origin); code != tc.want {
+				t.Fatalf("CheckOrigin = %d %q, want %d", code, body, tc.want)
+			}
+		})
+	}
+	if code, body := (Allow{Hosts: []string{"app.example"}}).CheckHost("app.example:8443"); code != 0 {
+		t.Fatalf("Host without a configured port should retain its independent wildcard: %d %s", code, body)
+	}
+}

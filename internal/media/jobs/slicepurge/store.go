@@ -8,12 +8,15 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	media "github.com/xxww0098/podhub-go/internal/media/contract"
+	"github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
 )
 
 // Claim is one running receipt.
 type Claim struct {
 	Fingerprint string
 	RunDay      time.Time
+	BoundaryAt  time.Time
 	Token       string
 	Epoch       int64
 }
@@ -22,6 +25,11 @@ type Claim struct {
 type PG struct {
 	pool  *pgxpool.Pool
 	claim Claim
+}
+
+// Boundary returns the cutoff stored with the claimed receipt.
+func (p *PG) Boundary() time.Time {
+	return p.claim.BoundaryAt.UTC()
 }
 
 // claimSQL takes the run for the current Shanghai date. There is no window:
@@ -34,47 +42,51 @@ type PG struct {
 const claimSQL = `
 WITH observed AS MATERIALIZED (SELECT COALESCE($3::timestamptz, clock_timestamp()) AS at),
 day AS MATERIALIZED (
-    SELECT at, (at AT TIME ZONE 'Asia/Shanghai')::date AS d FROM observed
+    SELECT at, CASE WHEN $4::boolean THEN ((at - interval '4 hours') AT TIME ZONE 'Asia/Shanghai')::date ELSE (at AT TIME ZONE 'Asia/Shanghai')::date END AS d FROM observed
 ), span AS MATERIALIZED (
-    SELECT at, d, (d + time '04:00') AT TIME ZONE 'Asia/Shanghai' AS boundary FROM day
+    SELECT at, d, (d::timestamp + make_interval(mins => $5::integer)) AT TIME ZONE 'Asia/Shanghai' AS boundary FROM day
 ), claimed AS (
  INSERT INTO public.transit_clear_runs AS r
    (bucket_identity, run_day, status, lease_token, lease_epoch, lease_until,
-    started_at, next_attempt_at, updated_at)
- SELECT $1, d, 'running', $2::uuid, 1, at + interval '90 seconds', at, at, at
-   FROM span WHERE at >= boundary
+    started_at, next_attempt_at, updated_at, boundary_at)
+ SELECT $1, d, 'running', $2::uuid, 1, at + interval '90 seconds', at, at, at, boundary
+   FROM span WHERE at >= boundary AND ($4::boolean OR boundary >= COALESCE($6::timestamptz, '-infinity'::timestamptz))
  ON CONFLICT (bucket_identity, run_day) DO UPDATE SET
    status = 'running', lease_token = EXCLUDED.lease_token, lease_epoch = r.lease_epoch + 1,
-   lease_until = EXCLUDED.lease_until, updated_at = clock_timestamp()
- WHERE r.status <> 'completed' AND r.api_calls < 1000000
+   lease_until = EXCLUDED.lease_until, boundary_at = EXCLUDED.boundary_at,
+   started_at = GREATEST(r.started_at, EXCLUDED.boundary_at), completed_at = NULL, updated_at = clock_timestamp()
+ WHERE (r.status <> 'completed' OR (r.boundary_at <> EXCLUDED.boundary_at AND r.boundary_at < COALESCE($6::timestamptz, '-infinity'::timestamptz)))
+   AND r.api_calls < 1000000
    AND (r.lease_until IS NULL OR r.lease_until <= clock_timestamp())
    AND r.next_attempt_at <= clock_timestamp()
- RETURNING bucket_identity, run_day, lease_token::text, lease_epoch, lease_until
+ RETURNING bucket_identity, run_day, lease_token::text, lease_epoch, lease_until, boundary_at
 )
-SELECT bucket_identity, run_day, lease_token, lease_epoch FROM claimed
+SELECT bucket_identity, run_day, lease_token, lease_epoch, boundary_at FROM claimed
 WHERE lease_until > (SELECT at FROM observed)
 `
 
 const liveSQL = `bucket_identity = $1 AND run_day = $2 AND lease_token = $3::uuid
     AND lease_epoch = $4 AND status = 'running' AND lease_until > clock_timestamp()`
 
-// TryClaim takes today's receipt once the 04:00 Shanghai boundary has passed.
-// Before the boundary, or after a completed run, it returns nil.
-func TryClaim(ctx context.Context, pool *pgxpool.Pool, fingerprint string) (*PG, error) {
-	return claimAt(ctx, pool, fingerprint, nil)
+// TryClaimScheduled reads and locks the workspace policy before taking the run.
+func TryClaimScheduled(ctx context.Context, pool *pgxpool.Pool, fingerprint string, orgID int64, storageID string) (*PG, error) {
+	return claimAt(ctx, pool, fingerprint, nil, false, orgID, storageID)
 }
 
-// TryClaimAt is TryClaim at an explicit instant. Production uses TryClaim,
-// which lets the database clock decide. The instant is what the claim SQL
-// compares with that Shanghai date's 04:00; LastClearBoundary is the previous
-// gate and is not this predicate.
+// TryClaimManual uses the latest boundary only to satisfy the receipt schema;
+// its unique fingerprint allows a clear at any time of day.
+func TryClaimManual(ctx context.Context, pool *pgxpool.Pool, fingerprint string) (*PG, error) {
+	return claimAt(ctx, pool, fingerprint, nil, true, 0, "")
+}
+
+// TryClaimAt checks the default 04:00 schedule at an explicit test instant.
 func TryClaimAt(ctx context.Context, pool *pgxpool.Pool, fingerprint string, now time.Time) (*PG, error) {
 	utc := now.UTC()
-	return claimAt(ctx, pool, fingerprint, &utc)
+	return claimAt(ctx, pool, fingerprint, &utc, false, 0, "")
 }
 
-func claimAt(ctx context.Context, pool *pgxpool.Pool, fingerprint string, now *time.Time) (*PG, error) {
-	tx, err := pool.Begin(ctx)
+func claimAt(ctx context.Context, pool *pgxpool.Pool, fingerprint string, now *time.Time, manual bool, orgID int64, storageID string) (*PG, error) {
+	tx, err := tenantx.BeginWorker(ctx, pool.Begin)
 	if err != nil {
 		return nil, err
 	}
@@ -85,9 +97,24 @@ func claimAt(ctx context.Context, pool *pgxpool.Pool, fingerprint string, now *t
 	if _, err := tx.Exec(ctx, "SET LOCAL lock_timeout = '500ms'"); err != nil {
 		return nil, err
 	}
+	minute := int32(media.ClearHour*60 + media.ClearMinute)
+	var configuredAt *time.Time
+	if storageID != "" {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('workspace-slice-storage:'||$1::bigint::text,0))`, orgID); err != nil {
+			return nil, err
+		}
+		var selected *int32
+		if err := tx.QueryRow(ctx, `SELECT clear_at_minute,clear_configured_at FROM public.workspace_slice_storage WHERE id=$1::uuid FOR UPDATE`, storageID).Scan(&selected, &configuredAt); err != nil {
+			return nil, err
+		}
+		if selected == nil {
+			return nil, tx.Commit(ctx)
+		}
+		minute = *selected
+	}
 	token := uuid.NewString()
 	var claim Claim
-	err = tx.QueryRow(ctx, claimSQL, fingerprint, token, now).Scan(&claim.Fingerprint, &claim.RunDay, &claim.Token, &claim.Epoch)
+	err = tx.QueryRow(ctx, claimSQL, fingerprint, token, now, manual, minute, configuredAt).Scan(&claim.Fingerprint, &claim.RunDay, &claim.Token, &claim.Epoch, &claim.BoundaryAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if err := tx.Commit(ctx); err != nil {
 			return nil, err
@@ -191,7 +218,7 @@ func (p *PG) exec(ctx context.Context, sql string, args ...any) (bool, error) {
 }
 
 func (p *PG) begin(ctx context.Context) (pgx.Tx, error) {
-	tx, err := p.pool.Begin(ctx)
+	tx, err := tenantx.BeginWorker(ctx, p.pool.Begin)
 	if err != nil {
 		return nil, err
 	}

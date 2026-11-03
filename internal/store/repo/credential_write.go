@@ -32,6 +32,10 @@ type credentialWriter struct {
 // RegisterCredential is POST /api/workspaces/stores/{uuid}/credential's write
 // phase. The probe already ran; this only decides and persists.
 func (w credentialWriter) RegisterCredential(ctx context.Context, tx pgx.Tx, orgID int64, actor domain.Actor, uuid, clientID, apiKey string, expectedStoreRevision int64, expectedCredentialRevision *int64, expiresAtMS *int64) (domain.RegisterOutcome, *contract.APIError) {
+	actor, api := lockCredentialActor(ctx, tx, orgID, actor)
+	if api != nil {
+		return domain.RegisterOutcome{}, api
+	}
 	store, api := loadStoreCiphertext(ctx, tx, orgID, uuid)
 	if api != nil {
 		return domain.RegisterOutcome{}, api
@@ -82,12 +86,11 @@ func (w credentialWriter) RegisterCredential(ctx context.Context, tx pgx.Tx, org
 			return domain.RegisterOutcome{}, asAPIError(err, contract.MsgUnavailable)
 		}
 	}
-	// Registering proves the key, so the operator's own row is a verification
-	// of the generation that was just written.
-	if api := upsertVerification(ctx, tx, store.UUID, actor.UserID, outcome.CredentialRevision, true, "", nowMS); api != nil {
+	if api := applyCredentialIdentity(ctx, tx, store.StoreID, expectedStoreRevision, outcome.CredentialRevision, outcome.Revision, clientID); api != nil {
 		return domain.RegisterOutcome{}, api
 	}
-	if api := applyCredentialIdentity(ctx, tx, store.StoreID, expectedStoreRevision, outcome.CredentialRevision, outcome.Revision, clientID); api != nil {
+	// The verification guard must see the newly current generation inside this transaction.
+	if api := upsertVerification(ctx, tx, store.UUID, actor.UserID, outcome.CredentialRevision, true, "", nowMS); api != nil {
 		return domain.RegisterOutcome{}, api
 	}
 	return outcome, nil
@@ -96,6 +99,10 @@ func (w credentialWriter) RegisterCredential(ctx context.Context, tx pgx.Tx, org
 // DeleteCredential is DELETE /api/workspaces/stores/{uuid}/credential's write
 // phase: purge the ciphertext and advance the generation.
 func (w credentialWriter) DeleteCredential(ctx context.Context, tx pgx.Tx, orgID int64, actor domain.Actor, uuid string, expectedStoreRevision, expectedCredentialRevision int64) (int64, *contract.APIError) {
+	actor, api := lockCredentialActor(ctx, tx, orgID, actor)
+	if api != nil {
+		return 0, api
+	}
 	store, api := loadStoreCiphertext(ctx, tx, orgID, uuid)
 	if api != nil {
 		return 0, api
@@ -122,6 +129,10 @@ func (w credentialWriter) DeleteCredential(ctx context.Context, tx pgx.Tx, orgID
 // VerifyCredential records one probe's answer against the generation it
 // probed. A rotation in between answers "test again", not a stale result.
 func (w credentialWriter) VerifyCredential(ctx context.Context, tx pgx.Tx, orgID int64, actor domain.Actor, uuid string, credentialRevision int64, verified bool, failureCode string, expiresAtMS *int64) (domain.VerificationSummary, *contract.APIError) {
+	actor, api := lockCredentialActor(ctx, tx, orgID, actor)
+	if api != nil {
+		return domain.VerificationSummary{}, api
+	}
 	store, api := loadStoreCiphertext(ctx, tx, orgID, uuid)
 	if api != nil {
 		return domain.VerificationSummary{}, api
@@ -151,19 +162,25 @@ func (w credentialWriter) VerifyCredential(ctx context.Context, tx pgx.Tx, orgID
 	return loadVerificationSummary(ctx, tx, orgID, store.StoreID, credentialRevision)
 }
 
-// OpenCurrentCredential opens the store's current generation for a probe. It
-// runs in its own tenant transaction; the caller already authorized the store.
-func (r Repo) OpenCurrentCredential(ctx context.Context, orgID int64, uuid string) (domain.OpenedCredential, *contract.APIError) {
+// OpenCurrentCredential authorizes the current actor before opening the store's key for a probe.
+func (r Repo) OpenCurrentCredential(ctx context.Context, orgID int64, actor domain.Actor, uuid string) (domain.OpenedCredential, *contract.APIError) {
 	if len(r.ring.Primary) != 32 {
 		return domain.OpenedCredential{}, contract.MsgKeyCrypto()
 	}
 	var out domain.OpenedCredential
 	var api *contract.APIError
 	err := r.withOrg(ctx, orgID, func(tx pgx.Tx) error {
+		actor, apiErr := lockCredentialActor(ctx, tx, orgID, actor)
+		if apiErr != nil {
+			return apiErr
+		}
 		store, apiErr := loadStoreCiphertext(ctx, tx, orgID, uuid)
 		if apiErr != nil {
 			api = apiErr
 			return nil
+		}
+		if apiErr := domain.EnsureCanTestKey(actor, store.asRow()); apiErr != nil {
+			return apiErr
 		}
 		if store.ManualDisabled {
 			api = contract.Forbidden(contract.MsgStoreDisabled)
@@ -240,8 +257,7 @@ func (r Repo) MarkLeased(ctx context.Context, orgID, storeID, credentialRevision
 	}
 }
 
-// Export opens every generation the actor may manage inside one tenant
-// transaction. Plaintext leaves the process only through this response.
+// Export opens the workspace's credentials after checking the current role.
 func (r Repo) Export(ctx context.Context, orgID int64, actor domain.Actor) ([]domain.ExportedCredential, *contract.APIError) {
 	if len(r.ring.Primary) != 32 {
 		return nil, contract.MsgKeyCrypto()
@@ -249,15 +265,19 @@ func (r Repo) Export(ctx context.Context, orgID int64, actor domain.Actor) ([]do
 	var out []domain.ExportedCredential
 	var api *contract.APIError
 	err := r.withOrg(ctx, orgID, func(tx pgx.Tx) error {
+		actor, apiErr := lockCredentialActor(ctx, tx, orgID, actor)
+		if apiErr != nil {
+			return apiErr
+		}
+		if !actor.CanManageAll() {
+			return contract.Forbidden(contract.MsgNoKeyPermission)
+		}
 		rows, apiErr := exportRows(ctx, tx, orgID)
 		if apiErr != nil {
 			api = apiErr
 			return nil
 		}
 		for _, row := range rows {
-			if !actor.MayManageKey(row.AssigneeKeyManage, row.AssigneeMembership) {
-				continue
-			}
 			binding := credentialBinding{
 				OrgID: orgID, StoreID: row.StoreID, CredentialRevision: row.CredentialRevision,
 			}
@@ -280,6 +300,14 @@ func (r Repo) Export(ctx context.Context, orgID int64, actor domain.Actor) ([]do
 		return nil, api
 	}
 	return out, nil
+}
+
+// Match roster writes' lock order so membership revocation cannot race credential custody.
+func lockCredentialActor(ctx context.Context, tx pgx.Tx, orgID int64, actor domain.Actor) (domain.Actor, *contract.APIError) {
+	if api := lockWorkspaceRow(ctx, tx, orgID); api != nil {
+		return domain.Actor{}, api
+	}
+	return reloadActorTx(ctx, tx, orgID, actor)
 }
 
 // CredentialGrants lists the stores the refresh loops should spend a Seller

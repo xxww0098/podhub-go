@@ -1,13 +1,13 @@
+import type { ImageSetMediaEdit } from "../image-sets/image-set-state"
 import type { BrandRepairCapability } from "../submit/use-repair-publish"
 import { useMemo, useState } from "react"
-import { LoaderCircle, RefreshCw } from "lucide-react"
+import { LoaderCircle, RefreshCw, Settings } from "lucide-react"
+import { StoreIcon } from "@/components/store-icon"
 import type {
   CategorySchemaView,
   FieldValueOrigin,
   OzonStoreView,
   QueueHaltReason,
-  SkuImportCandidate,
-  SkuImportPreview,
   WorkflowCategoryDraft,
   WorkflowDraftValue,
   WorkflowDraftView,
@@ -15,6 +15,7 @@ import type {
 } from "@/bindings/commands"
 import type { SaveState } from "@/components/save-state-chip"
 import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import { sendBatchEligible, workbenchScopes } from "../batch-actions"
 import { listedStockTargets, openListedStockOrExplain } from "../listed-stock-dialog"
 import type { ListingRow } from "../model/listing-row"
@@ -50,13 +51,15 @@ import { WorkbenchGrid } from "./workbench-grid"
 import { useWorkbenchLiveStatus } from "./workbench-live-status"
 import { ReconcileFilterBar } from "./reconcile-filter-bar"
 import {
-  filterReconcileRows,
   reconcileCounts,
   type ReconcileFilter,
 } from "./reconcile-filter"
 import { WorkbenchRibbon } from "./workbench-ribbon"
+import { WorkflowStageTabs } from "./workflow-stage-tabs"
+import { workflowStageViewScope, type WorkflowView } from "./workflow-stage-view"
 
 export type FieldWorkbenchProps = {
+  initialView?: WorkflowView
   schema: CategorySchemaView
   supplierBound?: boolean
   rows: ListingRow[]
@@ -95,6 +98,7 @@ export type FieldWorkbenchProps = {
     value: string,
   ) => void
   /** Write one draft value on one row — the 主题 picker's durable half. */
+  onEditMedia?: (draftId: string, edit: ImageSetMediaEdit) => Promise<boolean>
   onEditField: (
     draftId: string,
     fieldKey: string,
@@ -129,8 +133,6 @@ export type FieldWorkbenchProps = {
   onRemoveComplexItem?: (complexId: number, itemIndex: number) => void
   aiAllowedFieldKeys?: string[]
   aiProtectedFieldKeys?: string[]
-  onPreviewSkuImport?: (sku: string) => Promise<SkuImportPreview>
-  onApplySkuImport?: (candidates: SkuImportCandidate[], sourceSku: number) => void
   onFetchCategorySchema?: () => Promise<void>
   onCancelQueue: () => void
   onResumeQueue: () => void
@@ -155,6 +157,7 @@ export type FieldWorkbenchProps = {
  * live in their own modules; here the card's props become their scopes.
  */
 export function FieldWorkbench({
+  initialView = "all",
   schema,
   supplierBound = false,
   rows,
@@ -183,6 +186,7 @@ export function FieldWorkbench({
   onRemoveRows,
   onEditCell,
   onEditField,
+  onEditMedia,
   onRetryRowSave,
   onFlushRows,
   onRunAiRows,
@@ -206,8 +210,6 @@ export function FieldWorkbench({
   onRemoveComplexItem,
   aiAllowedFieldKeys,
   aiProtectedFieldKeys,
-  onPreviewSkuImport,
-  onApplySkuImport,
   onFetchCategorySchema = async () => undefined,
   onCancelQueue,
   onResumeQueue,
@@ -219,11 +221,29 @@ export function FieldWorkbench({
   onEvenSplitQuotas,
 }: FieldWorkbenchProps) {
   const dialogs = useWorkbenchDialogs()
+  const [workflowView, setWorkflowView] = useState<WorkflowView>(initialView)
   const [reconcileFilter, setReconcileFilter] = useState<ReconcileFilter>("all")
-  const shownRows = useMemo(
-    () => filterReconcileRows(rows, productDrafts, reconcileFilter),
-    [productDrafts, reconcileFilter, rows],
+  const view = useMemo(
+    () => workflowStageViewScope(rows, productDrafts, workflowView, reconcileFilter, selectedRowIds),
+    [productDrafts, reconcileFilter, rows, selectedRowIds, workflowView],
   )
+  const shownRows = view.rows
+  const visibleIds = new Set(shownRows.map((row) => row.id))
+  const visibleSelectionChange = (ids: string[]) => onSelectionChange(ids.filter((id) => visibleIds.has(id)))
+  const visibleAction = (action: (ids: string[]) => void) => (ids: string[]) => {
+    const wanted = new Set(ids)
+    const targets = shownRows.filter((row) => wanted.has(row.id)).map((row) => row.id)
+    if (targets.length) action(targets)
+  }
+  function changeView(next: WorkflowView) {
+    setWorkflowView(next)
+    setReconcileFilter("all")
+    onSelectionChange([])
+  }
+  function changeReconcile(next: ReconcileFilter) {
+    setReconcileFilter(next)
+    onSelectionChange([])
+  }
   const probeCounts = useMemo(
     () => reconcileCounts(rows, productDrafts),
     [productDrafts, rows],
@@ -249,10 +269,12 @@ export function FieldWorkbench({
     onResumeQueue,
     onOpenStores,
     onEditCard,
-    onRetryAi: onRunAiRows,
-    onRetryRender: onRunRenderRows,
-    onRetryDeliver: onRunDeliverRows,
-  })
+    onRetryAi: visibleAction(onRunAiRows),
+    onRetryRender: visibleAction(onRunRenderRows),
+    onRetryDeliver: visibleAction(onRunDeliverRows),
+  }).map((card) => card.action?.rowIds?.some((id) => !visibleIds.has(id))
+    ? { ...card, action: { ...card.action, label: "到全部总览处理", onClick: () => changeView("all") } }
+    : card)
   // Row creation and the next preparation step wait for the current step.
   const preparing = guidedPreparation.active || preparationRunning(activity)
   const { tableScrollRef, rowWindow, onTableScroll } = useWorkbenchRowWindow(shownRows.length)
@@ -277,7 +299,6 @@ export function FieldWorkbench({
       theme: workbenchColumnField(schema, "theme"),
       price: workbenchColumnField(schema, "price"),
       oldPrice: workbenchColumnField(schema, "old_price"),
-      richContent: workbenchColumnField(schema, "rich_content"),
       model: workbenchColumnField(schema, "model"),
     }),
     [schema],
@@ -285,7 +306,7 @@ export function FieldWorkbench({
 
   const themeField = columnFields.theme
 
-  /** 卡默认字段的四个 tableInput 值：没打过的行走这一份，格子里只作占位提示。 */
+  /** 卡默认字段的三个 tableInput 值：没打过的行走这一份，格子里只作占位提示。 */
   const cardPrice = valueAsText(cardDraft.values.price)
   const cardOldPrice = valueAsText(cardDraft.values.old_price)
   const cardTheme = themeField
@@ -294,38 +315,36 @@ export function FieldWorkbench({
         .filter(Boolean)
         .join("、")
     : ""
-  const richContentField = columnFields.richContent
-  const cardRichContent = richContentField
-    ? valueAsText(cardDraft.values[richContentField.key]).trim()
-    : ""
 
   // Which rows a verb would act on is decided by `batch-actions.ts`, the same
   // module the screen's handlers filter with. A second copy of these predicates
   // here is how a button ends up counting rows the verb then skips.
   const scopes = useMemo(
-    () => workbenchScopes(rows, productDrafts, selectedRowIds, activity, queueRunning, queuePaused),
-    [activity, productDrafts, queuePaused, queueRunning, rows, selectedRowIds],
+    () => workbenchScopes(shownRows, productDrafts, view.selectedRowIds, activity, queueRunning, queuePaused),
+    [activity, productDrafts, queuePaused, queueRunning, shownRows, view.selectedRowIds],
   )
 
   const selectionScopes = useMemo(
-    () => batchSelectionScopes(rows, productDrafts, activity),
-    [activity, productDrafts, rows],
+    () => batchSelectionScopes(shownRows, productDrafts, activity),
+    [activity, productDrafts, shownRows],
   )
   const grid = useWorkbenchGridKeyboard({
     rows: shownRows,
     productDrafts,
-    selectedRowIds,
+    selectedRowIds: view.selectedRowIds,
+    scopeKey: `${workflowView}:${reconcileFilter}`,
     fields: columnFields,
     tableScrollRef,
-    onSelectionChange,
+    onSelectionChange: visibleSelectionChange,
     onEditCell,
     onEditField,
+    onEditMedia,
     onRetryRowSave,
-    onRunAiRows,
-    onRunRenderRows,
-    onRunDeliverRows,
+    onRunAiRows: visibleAction(onRunAiRows),
+    onRunRenderRows: visibleAction(onRunRenderRows),
+    onRunDeliverRows: visibleAction(onRunDeliverRows),
     onCancelRowIntent,
-    onRepairRows: brandRepairAvailable ? onRepairRows : undefined,
+    onRepairRows: brandRepairAvailable && onRepairRows ? visibleAction(onRepairRows) : undefined,
     openProse: dialogs.setProseEdit,
     openTheme: dialogs.setThemeEdit,
     reviewCandidates: dialogs.setReviewRow,
@@ -342,29 +361,38 @@ export function FieldWorkbench({
   // Same gate as the 修复标签并发送 bar; rows receive a boolean, so their memo holds.
   const repairLocked = !brandRepairAvailable || !onRepairRows || busy || repairing || preparing || queueLocked
   const brandRepairable = useMemo(
-    () => repairLocked ? new Set<string>() : brandRepairRowIds(rows.filter((row) =>
+    () => repairLocked ? new Set<string>() : brandRepairRowIds(shownRows.filter((row) =>
       (!canRepairRow || canRepairRow(row, productDrafts[row.draftId]?.lifecycle.revision ?? -1))
       && brandRepairIssueCurrent(productDrafts[row.draftId]?.lifecycle, row.draftId, productDrafts[row.draftId]?.target_store_id)), productDrafts, activity),
-    [repairLocked, rows, productDrafts, activity, canRepairRow],
+    [repairLocked, shownRows, productDrafts, activity, canRepairRow],
   )
   const repairTargets = scopes.repairTargets.filter((row) => brandRepairable.has(row.id))
   const stockEligible = listedStockTargets(
-    rows,
+    shownRows,
     productDrafts,
-    selectedRowIds,
+    view.selectedRowIds,
     targetStoreId,
   )
 
   return (
-    <div className="relative flex flex-1 flex-col w-full min-w-0 max-w-full gap-2 min-h-0">
+    <div className="relative flex min-h-0 w-full min-w-0 max-w-full flex-1 flex-col gap-1 [&_[aria-label=批量上架数据表格矩阵]]:rounded-md">
+      <h1 className="sr-only">精铺工作台</h1>
       {dragging ? (
-        <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center rounded-xl border-2 border-dashed border-brand bg-brand-soft/90 text-md font-medium text-brand-ink">
+        <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center rounded-md border-2 border-dashed border-brand bg-brand-soft/90 text-md font-medium text-brand-ink">
           松开导入，每张图建一行
         </div>
       ) : null}
 
+      <WorkflowStageTabs value={workflowView} counts={view.counts} total={rows.length} onChange={changeView} actions={
+        <div className="flex max-w-full shrink-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+          {(queueRunning || queuePaused || preparing) ? <span role="status" aria-label="全方案运行状态">{queueRunning ? "发送队列进行中" : queuePaused ? "已暂停" : "准备中"}</span> : null}
+          <span className="flex min-w-0 items-center gap-1.5"><StoreIcon aria-hidden className="size-3.5 shrink-0" /><span className="max-w-24 truncate" title={storeLabel}>{storeLabel || "未绑定店铺"}</span></span>
+          <IconButton icon={Settings} label="方案设置" variant="outline" size="icon-sm" disabled={busy || queueDispatching} onClick={onEditCard} />
+        </div>
+      }>
       <WorkbenchRibbon
-        rows={rows}
+        rows={shownRows}
+        totalRowCount={rows.length}
         scopes={scopes}
         selectionScopes={selectionScopes}
         stores={boundStores}
@@ -381,7 +409,7 @@ export function FieldWorkbench({
         queueStopRequested={queueStopRequested}
         storeConfigured={storeConfigured}
         storeLabel={storeLabel}
-        onSelectionChange={onSelectionChange}
+        onSelectionChange={visibleSelectionChange}
         onImportImages={onImportImages}
         onOpenDefaults={() => dialogs.setDefaultsOpen(true)}
         onOpenModel={
@@ -389,11 +417,11 @@ export function FieldWorkbench({
         }
         onQuotaChange={onQuotaChange}
         onEvenSplitQuotas={onEvenSplitQuotas}
-        onPrepareRows={onPrepareRows}
+        onPrepareRows={visibleAction(onPrepareRows)}
         onStopPreparation={onStopPreparation}
-        onRunAiRows={onRunAiRows}
-        onRunRenderRows={onRunRenderRows}
-        onRunDeliverRows={onRunDeliverRows}
+        onRunAiRows={visibleAction(onRunAiRows)}
+        onRunRenderRows={visibleAction(onRunRenderRows)}
+        onRunDeliverRows={visibleAction(onRunDeliverRows)}
         onPauseQueue={onPauseQueue}
         onConfirmDelete={dialogs.setPendingDeleteIds}
         onConfirmClear={dialogs.setPendingClearIds}
@@ -401,49 +429,44 @@ export function FieldWorkbench({
         onOpenStock={() => openListedStockOrExplain(stockEligible, selectedMode, dialogs.setStockTargets)}
       />
 
+      <div className="flex min-w-0 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 empty:hidden" data-slot="workbench-review-controls">
       {brandRepairAvailable && (repairTargets.length > 0 || repairing) ? (
-        <div className="flex shrink-0 flex-wrap items-center gap-2 px-1">
           <Button
             type="button"
             variant="outline"
             size="sm"
             disabled={busy || repairing || preparing || queueLocked || !repairTargets.length}
-            onClick={() => onRepairRows?.(repairTargets.map((row) => row.id))}
+            onClick={() => onRepairRows && visibleAction(onRepairRows)(repairTargets.map((row) => row.id))}
             aria-label={`修复标签并发送 ${repairTargets.length}`}
             aria-busy={repairing}
           >
             {repairing ? <LoaderCircle aria-hidden className="animate-spin" /> : <RefreshCw aria-hidden />}
             <span>{repairing ? "修复中…" : `修复标签并发送 ${repairTargets.length}`}</span>
           </Button>
-          <p className="text-sm text-foreground">
-            清空违规搜索标签并发送到 Ozon，复用识别结果和已上传图片。后台卡片会按新内容更新。
-          </p>
-        </div>
       ) : null}
 
-      <ReconcileFilterBar value={reconcileFilter} counts={probeCounts} onChange={setReconcileFilter} />
+      {workflowView === "all" || workflowView === "receipts" ? <ReconcileFilterBar value={reconcileFilter} counts={probeCounts} onChange={changeReconcile} /> : null}
 
       <UnknownReleaseStrip
+        compact
         available={releaseAvailable}
         facts={releaseFacts}
         rowIds={releaseTargets.map((row) => row.id)}
         releasing={releasingUnknown}
         disabled={busy || preparing || queueLocked}
-        onRelease={onReleaseUnknownRows}
-        onInspect={onInspectUnknownRows}
+        onRelease={visibleAction(onReleaseUnknownRows)}
+        onInspect={onInspectUnknownRows ? visibleAction(onInspectUnknownRows) : undefined}
       />
+      </div>
 
-      {shownRows.length === 0 && rows.length > 0 ? (
-        <p className="px-1 text-sm text-muted-foreground">没有符合筛选的行</p>
-      ) : (
       <WorkbenchGrid
         rows={shownRows}
         productDrafts={productDrafts}
         rowSaveStates={rowSaveStates}
-        selectedRowIds={selectedRowIds}
+        selectedRowIds={view.selectedRowIds}
         pickedCount={scopes.picked.length}
         fields={columnFields}
-        fallbacks={{ cardPrice, cardOldPrice, cardTheme, cardRichContent }}
+        fallbacks={{ cardPrice, cardOldPrice, cardTheme }}
         stores={boundStores}
         brandRepairable={brandRepairable}
         preparing={preparing}
@@ -452,17 +475,21 @@ export function FieldWorkbench({
         rowWindow={rowWindow}
         tableScrollRef={tableScrollRef}
         onTableScroll={onTableScroll}
-        onSelectionChange={onSelectionChange}
+        onSelectionChange={visibleSelectionChange}
         onImportImages={onImportImages}
+        emptyContent={rows.length > 0 ? <div role="status" className="flex min-h-40 flex-1 flex-col items-center justify-center gap-3 rounded-md border border-dashed border-border px-4 py-8 text-center">
+          <p className="text-sm font-medium">当前视图没有商品</p>
+          <Button size="sm" variant="outline" onClick={() => changeView("all")}>查看全部总览</Button>
+        </div> : undefined}
       />
-      )}
+      </WorkflowStageTabs>
 
       <WorkbenchDialogs
         state={dialogs}
         schema={schema}
         targetStoreId={targetStoreId}
-        rows={rows}
-        selectedRowIds={selectedRowIds}
+        rows={shownRows}
+        selectedRowIds={view.selectedRowIds}
         productDrafts={productDrafts}
         fields={columnFields}
         stores={boundStores}
@@ -478,14 +505,12 @@ export function FieldWorkbench({
         onFlushRows={onFlushRows}
         onEditCell={onEditCell}
         onEditField={onEditField}
-        onClearRows={onClearRows}
-        onRemoveRows={onRemoveRows}
-        onSendRows={onSendRows}
+        onClearRows={visibleAction(onClearRows)}
+        onRemoveRows={visibleAction(onRemoveRows)}
+        onSendRows={visibleAction(onSendRows)}
         onUpdateCardDefault={onUpdateCardDefault}
         onAddComplexItem={onAddComplexItem}
         onRemoveComplexItem={onRemoveComplexItem}
-        onPreviewSkuImport={onPreviewSkuImport}
-        onApplySkuImport={onApplySkuImport}
         onFetchCategorySchema={onFetchCategorySchema}
       />
     </div>

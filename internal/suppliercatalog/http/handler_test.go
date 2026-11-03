@@ -91,7 +91,7 @@ func newRouter(t *testing.T, actions *stubActions, sess Session) http.Handler {
 // table only proves a path EXISTS, not that it reaches the right handler. This
 // table is what catches a copy-pasted handler on the wrong verb.
 func TestSupplierCatalogRoutesMatchActions(t *testing.T) {
-	user := &Principal{UserID: 7}
+	user := &Principal{UserID: 7, PlatformRole: "super_admin"}
 	cases := []struct {
 		method, path string
 		want         string
@@ -133,7 +133,7 @@ func TestSupplierCatalogRoutesMatchActions(t *testing.T) {
 // /unpublish wired to the same handler literal as /publish.
 func TestSupplierCatalogUnpublishSendsFalse(t *testing.T) {
 	actions := &stubActions{}
-	r := newRouter(t, actions, stubSession{p: &Principal{UserID: 1}})
+	r := newRouter(t, actions, stubSession{p: &Principal{UserID: 1, PlatformRole: "super_admin"}})
 	req := httptest.NewRequest(http.MethodPost, "/api/supplier-catalog/sources/s/rows/p/unpublish", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
@@ -187,7 +187,7 @@ func TestSupplierCatalogRefusalsAreJSON(t *testing.T) {
 // publish button needs the list of unmet gates, not just "not ready".
 func TestSupplierCatalogMissingKeysEnvelope(t *testing.T) {
 	actions := &stubActions{err: contract.ValidationMissing("未满足上架条件", []string{"prompt", "ozonConfig"})}
-	r := newRouter(t, actions, stubSession{p: &Principal{UserID: 1}})
+	r := newRouter(t, actions, stubSession{p: &Principal{UserID: 1, PlatformRole: "super_admin"}})
 	req := httptest.NewRequest(http.MethodPost, "/api/supplier-catalog/sources/s/rows/p/publish", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)

@@ -5,6 +5,7 @@ import { peekCardSession } from "../card/card-session"
 import { associationStoreConflicts, parseStoreIds, sendStoreAssignments } from "../store-quota"
 import { associatedImportedRow } from "../workbench/workbench-model"
 import type { ListingRow } from "../model/listing-row"
+import { rowPublishFenced } from "../model/listing-row-lifecycle"
 import { composeBlockedBySignedOut } from "../product-instances"
 import {
   rowPreparing,
@@ -133,9 +134,7 @@ export function publishPreflight(
   const rows = workbench.rows.filter((row) => wanted.has(row.draftId))
   const fenced = rows.find((row) => {
     const lifecycle = workbench.productDrafts[row.draftId]?.lifecycle
-    return row.publishUnconfirmed === true || ["queued", "submitting", "accepted", "outcome_unknown", "operator_attested"].includes(row.stage ?? "")
-      || ["queued", "submitting", "accepted", "outcome_unknown", "operator_attested"].includes(lifecycle?.stage ?? "")
-      || row.readiness?.blockers.some((code) => code === "outcome_unknown" || code === "operator_attested")
+    return rowPublishFenced(row, lifecycle)
   })
   if (fenced) return { ok: false, focusRowId: fenced.id,
     message: `图片 ${fenced.imageName} 已有在途、受理或未确认的发送；请核对原店铺 Intent，不要重复发送。` }

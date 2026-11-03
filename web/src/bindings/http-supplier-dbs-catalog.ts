@@ -1,5 +1,5 @@
 /**
- * Seller 平台货源 catalog HTTP — the 货盘 read (docs/supplier-dbs.md §5/§7).
+ * Seller 平台商品库 catalog HTTP — the 货盘 read (docs/supplier-dbs.md §5/§7).
  *
  * GET /api/supplier-dbs/catalog returns the upgraded catalog payload in one
  * read: listed databases + listed rows + seller_visible prop defs. The seller
@@ -34,13 +34,7 @@ export type {
 
 // ---------- seller view (gallery) ----------
 
-export type SellerSupplierDbData = {
-  sourceId: string
-  name: string
-  /** `''` or an ISO-3166-1 alpha-2 code. */
-  country: string
-  icon: string
-}
+export type SellerSupplierDbData = components["schemas"]["SupplierSourceCard"]
 
 export type SellerSupplierDbRowData = {
   /**

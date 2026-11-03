@@ -9,20 +9,19 @@ import (
 )
 
 const (
-	toolActivation = "generateActivationCodes"
-	toolQuota      = "generateQuotaCards"
-	toolListCodes  = "listRedeemCodes"
+	toolQuota     = "generateQuotaCards"
+	toolListCodes = "listRedeemCodes"
 
-	// stepUpRequired is the grant-path refusal. A grant has no TOTP step-up,
-	// so it cannot mint codes. The sentence does not depend on whether a code exists.
-	stepUpRequired = "管理操作需要超级管理员会话并完成二次验证"
-	msgUnavailable = "服务暂不可用"
+	// adminSessionRequired is the grant-path refusal. A grant carries no
+	// admin session, so it cannot mint codes. The sentence does not depend
+	// on whether a code exists.
+	adminSessionRequired = "管理操作需要超级管理员会话"
+	msgUnavailable       = "服务暂不可用"
 )
 
 // CodeAdmin is the existing admin issuer. Implementations must reuse the
-// admin redeem service, including its audit row and its step-up gate.
+// admin redeem service, including its audit row.
 type CodeAdmin interface {
-	CreateActivation(ctx context.Context, caller domain.Caller, raw json.RawMessage) (json.RawMessage, error)
 	CreateQuota(ctx context.Context, caller domain.Caller, raw json.RawMessage) (json.RawMessage, error)
 	ListCodes(ctx context.Context, caller domain.Caller, raw json.RawMessage) (json.RawMessage, error)
 }
@@ -42,7 +41,7 @@ func (e *CodeError) Error() string {
 
 func adminTool(name string) bool {
 	switch name {
-	case toolActivation, toolQuota, toolListCodes:
+	case toolQuota, toolListCodes:
 		return true
 	default:
 		return false
@@ -65,7 +64,7 @@ func decodeToolCall(params json.RawMessage) (string, json.RawMessage, bool) {
 
 func (s *Service) adminTool(ctx context.Context, id json.RawMessage, name string, args json.RawMessage, session bool, caller domain.Caller) []byte {
 	if !session {
-		return toolRefusal(id, domain.NewHost("forbidden", stepUpRequired))
+		return toolRefusal(id, domain.NewHost("forbidden", adminSessionRequired))
 	}
 	if s == nil || s.codes == nil {
 		return toolRefusal(id, domain.NewHost("internal", msgUnavailable))
@@ -75,8 +74,6 @@ func (s *Service) adminTool(ctx context.Context, id json.RawMessage, name string
 		err error
 	)
 	switch name {
-	case toolActivation:
-		raw, err = s.codes.CreateActivation(ctx, caller, args)
 	case toolQuota:
 		raw, err = s.codes.CreateQuota(ctx, caller, args)
 	default:
@@ -109,27 +106,20 @@ func asCode(err error, dest **CodeError) bool {
 	return true
 }
 
-const codeInputSchema = `{"type":"object","properties":{"member_seats":{"type":"integer","description":"历史字段，钱包额度卡传 0；成员席位批次已停用"},"tier":{"type":"string","description":"历史字段，钱包额度卡请省略"},"ocr_credits":{"type":"integer","description":"必须为 0，识别额度已停止发放"},"wallet_cents":{"type":"integer","description":"额度卡面额，单位分"},"quantity":{"type":"integer","description":"数量，1-500"},"duration_days":{"type":"integer","description":"钱包额度卡入库时固定为 1"},"expires_at":{"type":"string","description":"兑换截止时间，RFC3339。省略则从当前时间起 30 天"},"note":{"type":"string","description":"备注，最多 200 字"},"product":{"type":"string","description":"钱包额度卡为 wallet_credits，可省略；成员席位批次已停用"}},"required":["member_seats","quantity","duration_days"],"additionalProperties":false}`
+const codeInputSchema = `{"type":"object","properties":{"wallet_cents":{"type":"integer","description":"额度卡面额，单位分，100-1000000"},"quantity":{"type":"integer","description":"数量，1-500"},"expires_at":{"type":"string","description":"兑换截止时间，RFC3339。省略则从当前时间起 30 天"},"note":{"type":"string","description":"备注，最多 200 字"}},"required":["wallet_cents","quantity"],"additionalProperties":false}`
 
 func adminToolDefinitions() []map[string]any {
 	return []map[string]any{
 		{
-			"name":         toolActivation,
-			"description":  "成员席位批次兑换码已停用，此工具不再发放激活码。订阅请在账单页面购买，钱包额度请使用 generateQuotaCards。",
-			"inputSchema":  json.RawMessage(codeInputSchema),
-			"outputSchema": json.RawMessage(`{"type":"object"}`),
-			"annotations":  map[string]any{"readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false},
-		},
-		{
 			"name":         toolQuota,
-			"description":  "生成额度卡（钱包额度兑换码）。仅超级管理员在完成验证器绑定和二次验证后可调用。数量、面额、有效期与管理端创建接口相同。明文码只出现在本次结果里。",
+			"description":  "生成额度卡（钱包额度兑换码）。仅超级管理员可调用。数量、面额、有效期与管理端创建接口相同。明文码只出现在本次结果里。",
 			"inputSchema":  json.RawMessage(codeInputSchema),
 			"outputSchema": json.RawMessage(`{"type":"object"}`),
 			"annotations":  map[string]any{"readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false},
 		},
 		{
 			"name":         toolListCodes,
-			"description":  "查询激活码与额度卡列表。结果只有掩码和批次，不含明文码。仅超级管理员在完成二次验证后可调用。",
+			"description":  "查询额度卡列表。结果只有掩码和批次，不含明文码。仅超级管理员可调用。",
 			"inputSchema":  json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
 			"outputSchema": json.RawMessage(`{"type":"object"}`),
 			"annotations":  map[string]any{"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false},

@@ -118,27 +118,26 @@ test("the locked set is the columns themselves, resolved by attribute id", () =>
   assert.equal(owned.get("attribute_23171"), "由 AI 识图逐图构建（表格列「搜索标签」）")
   assert.equal(owned.get("images360"), "由 PSD 切片与公网交付构建（表格列「360° 图片」）")
   assert.equal(owned.get("attribute_4191"), "由 AI 识图逐图构建（表格列「简介」）")
-  // JSON富内容 / 主题 are not in this set: they are tableInput columns whose
-  // card default stays editable (see the next test).
+  // 主题 remains a tableInput; historical rich content is not a visible column.
+  assert.equal(WORKBENCH_COLUMNS.some((column) => column.id === "rich_content"), false)
   assert.equal(owned.has("attribute_11254"), false)
   assert.equal(owned.has("attribute_7109"), false)
 })
 
 test("a per-row input column writes its field without taking it from the defaults", () => {
-  // 销售价 / 划线价 / 主题 / JSON富内容 are typed on the row while the card
+  // 销售价 / 划线价 / 主题 are typed on the row while the card
   // 默认字段 keeps the batch value untouched rows inherit; Rust's hand-edited
   // diff is what makes the typed value win at send. Owning the key here would
   // lock that batch value away.
-  for (const id of ["price", "old_price", "theme", "rich_content"] as const) {
+  for (const id of ["price", "old_price", "theme"] as const) {
     assert.equal(workbenchColumn(id).tableInput, true, `${id} is a tableInput column`)
   }
   assert.equal(workbenchColumnField(schema, "price")?.key, "price")
   assert.equal(workbenchColumnField(schema, "old_price")?.key, "old_price")
   assert.equal(workbenchColumnField(schema, "theme")?.key, "attribute_7109")
-  assert.equal(workbenchColumnField(schema, "rich_content")?.key, "attribute_11254")
 
   const owned = tableOwnedFields(schema)
-  for (const key of ["price", "old_price", "attribute_7109", "attribute_11254"]) {
+  for (const key of ["price", "old_price", "attribute_7109"]) {
     assert.equal(owned.has(key), false, `${key} stays editable in 默认字段`)
     assert.equal(productInstanceDefaultExclusions(schema).includes(key), false)
   }
@@ -163,8 +162,7 @@ test("AI permission never turns a required card default into instance-owned stat
   assert.equal(excluded.includes("name"), true)
   assert.equal(excluded.includes("attribute_4191"), true)
   assert.equal(excluded.includes("attribute_23171"), true)
-  // 主题 / JSON富内容 are tableInput columns now: AI permission cannot take
-  // their card default away either.
+  // AI permission cannot take existing card defaults away.
   assert.equal(excluded.includes("attribute_11254"), false)
   assert.equal(excluded.includes("attribute_7109"), false)
   assert.equal(

@@ -38,8 +38,10 @@ func (c RouteClass) String() string {
 }
 
 const (
-	chatCompletionsPath = "/api/ai/chat/completions"
-	ocrCompletionsPath  = "/api/ai/ocr/completions"
+	chatCompletionsPath   = "/api/ai/chat/completions"
+	anthropicMessagesPath = "/api/ai/v1/messages"
+	responsesPath         = "/api/ai/responses"
+	ocrCompletionsPath    = "/api/ai/ocr/completions"
 )
 
 // Classify maps a path and method to a route class.
@@ -60,7 +62,7 @@ func Classify(path, method string) RouteClass {
 		return ClassMediaUpload
 	case path == ocrCompletionsPath:
 		return ClassOCR
-	case path == chatCompletionsPath:
+	case path == chatCompletionsPath || path == anthropicMessagesPath || path == responsesPath:
 		return ClassAI
 	case isControlPlane(path):
 		return ClassControl
@@ -88,12 +90,6 @@ func isControlPlane(path string) bool {
 func isPSDUpload(path, method string) bool {
 	if method != http.MethodPost {
 		return false
-	}
-	if path == "/api/listing/templates" {
-		return true
-	}
-	if stringsHasPrefix(path, "/api/listing/templates/") && (stringsHasSuffix(path, "/confirm") || stringsContains(path, "/multipart/")) {
-		return true
 	}
 	return stringsHasPrefix(path, "/api/admin/supplier-dbs/") &&
 		(stringsHasSuffix(path, "/uploads") || stringsHasSuffix(path, "/uploads/confirm") || stringsHasSuffix(path, "/uploads/abort"))

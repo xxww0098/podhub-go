@@ -51,7 +51,7 @@ make wasm
 bash scripts/check-wasm-dist.sh
 cd web
 bun install --frozen-lockfile
-bun test --preload ./tests/network-guard.preload.ts ./tests/render-wasm.test.ts ./tests/render-worker.test.ts ./src/render
+bun test --preload ./tests/network-guard.preload.ts ./src/render
 bun run build
 ```
 

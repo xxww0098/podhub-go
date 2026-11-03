@@ -16,7 +16,10 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/xxww0098/podhub-go/internal/platform/db"
 )
 
 // DefaultLogRetention is 14 days. CLOUD_LOG_RETENTION_DAYS was not read.
@@ -45,11 +48,19 @@ func PruneErrorLogs(ctx context.Context, pool *pgxpool.Pool, olderThan time.Dura
 		return 0, err
 	}
 	span := strconv.FormatInt(seconds, 10)
-	logs, err := pool.Exec(ctx, clientLogPruneSQL, span)
+	var logs int64
+	err = db.InTx(ctx, pool, db.Maintenance(), func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, clientLogPruneSQL, span)
+		if err != nil {
+			return err
+		}
+		logs = tag.RowsAffected()
+		return nil
+	})
 	if err != nil {
 		return inbox, err
 	}
-	return inbox + logs.RowsAffected(), nil
+	return inbox + logs, nil
 }
 
 func pruneInbox(ctx context.Context, pool *pgxpool.Pool, seconds int64) (int64, error) {

@@ -80,17 +80,17 @@ func TestReadOnlySurface(t *testing.T) {
 	expect(t, memberH, http.MethodGet, "/api/billing/usage-stats?from=2026-08-01", http.StatusBadRequest, `{"error":"from 与 to 必须同时提供","code":"VALIDATION"}`)
 
 	expect(t, ownerH, http.MethodGet, "/api/listing/jobs/"+jobA, http.StatusOK,
-		`{"data":{"id":"11111111-1111-4111-8111-111111111111","kind":"ai.recognize","aggregateType":"listing_row","aggregateId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","inputRevision":3,"state":"succeeded","attempt":1,"idempotencyKey":"prep-a","payload":{"a":"x&y","b":1},"updatedAtMs":1787333400000}}`)
-	expect(t, ownerH, http.MethodGet, "/api/listing/jobs/"+jobC, http.StatusNotFound, `{"error":"准备作业不存在","code":"not_found"}`)
-	expect(t, ownerH, http.MethodGet, "/api/listing/jobs/not-a-uuid", http.StatusBadRequest, `{"error":"作业编号无效","code":"validation"}`)
-	expect(t, viewerH, http.MethodGet, "/api/listing/jobs/"+jobA, http.StatusForbidden, `{"error":"当前角色无权执行此操作","code":"forbidden"}`)
+		`{"data":{"id":"11111111-1111-4111-8111-111111111111","kind":"ai.recognize","aggregate_type":"listing_row","aggregate_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","input_revision":3,"state":"succeeded","attempt":1,"idempotency_key":"prep-a","payload":{"a":"x&y","b":1},"updated_at_ms":1787333400000}}`)
+	expect(t, ownerH, http.MethodGet, "/api/listing/jobs/"+jobC, http.StatusNotFound, `{"error":"商品行或任务不存在","code":"not_found"}`)
+	expect(t, ownerH, http.MethodGet, "/api/listing/jobs/not-a-uuid", http.StatusBadRequest, `{"error":"任务编号无效","code":"validation"}`)
+	expect(t, viewerH, http.MethodGet, "/api/listing/jobs/"+jobA, http.StatusForbidden, `{"error":"工作空间角色无效","code":"forbidden"}`)
 
 	expect(t, memberH, http.MethodGet, "/api/listing/jobs?limit=1", http.StatusOK,
-		`{"data":{"items":[{"id":"11111111-1111-4111-8111-111111111111","kind":"ai.recognize","aggregateType":"listing_row","aggregateId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","inputRevision":3,"state":"succeeded","attempt":1,"idempotencyKey":"prep-a","payload":{"a":"x&y","b":1},"updatedAtMs":1787333400000}],"nextCursor":"1787333400000000:11111111-1111-4111-8111-111111111111"}}`)
+		`{"data":{"items":[{"id":"11111111-1111-4111-8111-111111111111","kind":"ai.recognize","aggregate_type":"listing_row","aggregate_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","input_revision":3,"state":"succeeded","attempt":1,"idempotency_key":"prep-a","payload":{"a":"x&y","b":1},"updated_at_ms":1787333400000}],"nextCursor":"1787333400000000:11111111-1111-4111-8111-111111111111"}}`)
 	expect(t, memberH, http.MethodGet, "/api/listing/jobs?limit=1&cursor=1787333400000000:11111111-1111-4111-8111-111111111111", http.StatusOK,
-		`{"data":{"items":[{"id":"22222222-2222-4222-8222-222222222222","kind":"ai.recognize","aggregateType":"listing_row","aggregateId":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","inputRevision":3,"state":"succeeded","attempt":1,"idempotencyKey":"prep-b","payload":{"executor":"worker"},"updatedAtMs":1787333340000}]}}`)
+		`{"data":{"items":[{"id":"22222222-2222-4222-8222-222222222222","kind":"ai.recognize","aggregate_type":"listing_row","aggregate_id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","input_revision":3,"state":"succeeded","attempt":1,"idempotency_key":"prep-b","payload":{"executor":"worker"},"updated_at_ms":1787333340000}]}}`)
 	expect(t, memberH, http.MethodGet, "/api/listing/jobs?cardId="+card, http.StatusOK,
-		`{"data":{"items":[{"id":"11111111-1111-4111-8111-111111111111","kind":"ai.recognize","aggregateType":"listing_row","aggregateId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","inputRevision":3,"state":"succeeded","attempt":1,"idempotencyKey":"prep-a","payload":{"a":"x&y","b":1},"updatedAtMs":1787333400000}]}}`)
+		`{"data":{"items":[{"id":"11111111-1111-4111-8111-111111111111","kind":"ai.recognize","aggregate_type":"listing_row","aggregate_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","input_revision":3,"state":"succeeded","attempt":1,"idempotency_key":"prep-a","payload":{"a":"x&y","b":1},"updated_at_ms":1787333400000}]}}`)
 	expect(t, memberH, http.MethodGet, "/api/listing/jobs?cardId=nope", http.StatusBadRequest, `{"error":"cardId 无效","code":"validation"}`)
 	expect(t, memberH, http.MethodGet, "/api/listing/jobs?limit=abc", http.StatusBadRequest, `{"error":"limit 无效","code":"validation"}`)
 
@@ -101,8 +101,7 @@ func TestReadOnlySurface(t *testing.T) {
 
 func handlerFor(pool *pgxpool.Pool, p access.Principal, now func() time.Time) http.Handler {
 	router := chi.NewRouter()
-	srv := &httpapi.Server{
-		Pool:   pool,
+	srv := &httpapi.Server{Pool: pool,
 		Access: access.FixedResolver{Principal: &p},
 		Now:    now,
 	}
@@ -257,9 +256,9 @@ func migratedPool(t *testing.T, ctx context.Context) *pgxpool.Pool {
 	}
 	t.Cleanup(pool.Close)
 	if drop != nil {
-		// The template was migrated by db.Migrate, allow-missing included.
-		// A file copy of that database is the same catalog. Migrating again
-		// would only re-read goose_db_version.
+		// The template was migrated by db.Migrate. A file copy of that
+		// database is the same catalog. Migrating again would only re-read
+		// goose_db_version.
 		return pool
 	}
 	if err := db.Migrate(ctx, pool); err != nil {

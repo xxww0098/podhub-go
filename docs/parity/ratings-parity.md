@@ -47,7 +47,7 @@
 
 ## 与既有行为
 
-读路径是新路由，不改既有接口的响应。`ck_notifications_kind` 多一个 kind，旧 kind 仍能插入。指纹比较去掉这个 kind 后与原来的定义相同。没有改 `OZON_WRITE_KILL_SWITCH` 和 `CLOUD_MEDIA_GC_DELETE` 的解析。没有连接生产 Ozon，也没有删桶。
+读路径是新路由，不改既有接口的响应。`ck_notifications_kind` 多一个 kind，旧 kind 仍能插入。压缩前的指纹比较去掉这个 kind 后与原来的定义相同。没有改 `OZON_WRITE_KILL_SWITCH` 和 `CLOUD_MEDIA_GC_DELETE` 的解析。没有连接生产 Ozon，也没有删桶。
 
 River 只负责到点调用。快照、历史和通知在事务里写完，不看 `river_job_state`。
 
@@ -60,4 +60,4 @@ River 只负责到点调用。快照、历史和通知在事务里写完，不�
 5. 一次响应里消失的评级键：快照先留着，不自动删除。
 6. 第一次见到某个键会写一条历史，当作从「没有上一行」变成当前值。这不是一次变差，所以不提醒。
 7. ST1 尚未合并。当前出站是 `seller.Egress.Call` 打 `POST /v1/seller/info`。ST1 的刷新函数落地后应改接那一处。
-8. `oapi-codegen` 是否取代 utoipa 仍未决定。这两条读路由是 chi 手写，没有加 OpenAPI 生成物。
+8. 这两条读路由最初由 chi 手写挂载；生成链已由 [决策 D2](../decisions.md) 确认，当前契约以 `api/openapi.yaml` 为准。

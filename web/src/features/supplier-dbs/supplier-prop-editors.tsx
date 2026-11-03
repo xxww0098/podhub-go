@@ -1,27 +1,24 @@
 /**
- * 单元格编辑器 — 表格单元格与行页面属性区共用同一套（docs §6.3 / §6.4
- * 「点击值即改，与表格同一套编辑器」）。
+ * 属性与类目编辑器 — 文本、数字和多行文本常显输入框，选项使用下拉框。
  *
- * 提交契约：`onCommit` 返回 `Promise<boolean>` —— true 落定关闭，false
- * （服务端拒绝 / CAS 冲突）保持编辑态并把 `aria-invalid` 打到单元格上；
+ * 提交契约：`onCommit` 返回 `Promise<boolean>` —— true 落定，false
+ * （服务端拒绝 / CAS 冲突）保留草稿并标记 `aria-invalid`；
  * 错误文案一律走 `notifyCommandError`，不落 DOM（无 role="alert"）。
  *
- * 键盘：单击选中（focus）→ 双击 / Enter 进编辑；Tab / Shift-Tab 在单元格间
- * 横移（`focusAdjacentCell` 走 `[data-cell-display]` 的 DOM 序，行尾换到
- * 下一行首格）；Esc 逐层退出（编辑 → 选中 → 弹层由 Base UI 自带）。
+ * 键盘：输入框失焦 / Enter 保存，Esc 还原；表单内 Tab / Shift-Tab 正常移焦。
  *
  * `SelectOptionsPanel` / `MultiSelectOptionsPanel` / `CategoryPickerPanel` /
  * `AdjustPricePanel` 是不带 Portal 的内联体，node 测试（无 Portal 渲染）
  * 与浏览器共用同一份 DOM 形状。
  */
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Check, Plus, RefreshCw, Search, X } from "lucide-react"
+import { Check, ChevronDown, Plus, RefreshCw, Search, X } from "lucide-react"
 
 import type { CategoryTreeNodeView } from "@/bindings/commands"
 import type { SupplierDbPropOption } from "@/bindings/http-supplier-dbs"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Input } from "@/components/ui/input"
 import {
   Popover,
@@ -30,7 +27,7 @@ import {
 } from "@/components/ui/popover"
 import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
-import { notifyError } from "@/lib/notify"
+import { notifyCommandError, notifyError } from "@/lib/notify"
 import { cn } from "@/lib/utils"
 
 import {
@@ -155,7 +152,7 @@ export function focusAdjacentCell(from: HTMLElement, delta: 1 | -1): void {
 
 /** Cell-level Tab handler shared by displays and popover triggers. */
 export function cellNavKeyDown(event: React.KeyboardEvent<HTMLElement>): void {
-  if (event.key !== "Tab") return
+  if (event.key !== "Tab" || !event.currentTarget.closest("table")) return
   event.preventDefault()
   focusAdjacentCell(event.currentTarget, event.shiftKey ? -1 : 1)
 }
@@ -224,20 +221,18 @@ export function categoryShortLabel(
   return `类目 ${descriptionCategoryId} / 类型 ${typeId ?? "—"}`
 }
 
-function EmptyCell() {
-  return <span className="text-faint-foreground">—</span>
-}
-
 // ---------- 失焦提交的基础输入（行页面各分区也用它们） ----------
 
 /**
  * 失焦提交的共享状态机：`edit` 记脏，`revert` 还原（Esc），`commit` 提交
- * （Enter/blur）——失败回滚为已落盘值；宿主只管接键盘与外观。
+ * （Enter/blur）——失败保留输入并标记错误，失焦可重试。
  */
 function useCommitDraft(value: string, onCommit: (next: string) => Promise<boolean>) {
   const [draft, setDraft] = useState(value)
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [invalid, setInvalid] = useState(false)
+  const pending = useRef(false)
   const committed = useRef(value)
 
   useEffect(() => {
@@ -248,27 +243,35 @@ function useCommitDraft(value: string, onCommit: (next: string) => Promise<boole
   const edit = (next: string) => {
     setDraft(next)
     setDirty(true)
+    setInvalid(false)
   }
 
   const revert = () => {
     setDraft(committed.current)
     setDirty(false)
+    setInvalid(false)
   }
 
   const commit = async () => {
+    if (pending.current) return
     if (draft === committed.current) {
       setDirty(false)
+      setInvalid(false)
       return
     }
+    pending.current = true
     setSaving(true)
-    const ok = await onCommit(draft)
-    setSaving(false)
-    if (ok) committed.current = draft
-    else setDraft(committed.current)
-    setDirty(false)
+    try {
+      const ok = await onCommit(draft)
+      setInvalid(!ok)
+      if (ok) { committed.current = draft; setDirty(false) }
+    } catch (reason) {
+      setInvalid(true)
+      notifyCommandError(reason, "保存失败，输入已保留")
+    } finally { pending.current = false; setSaving(false) }
   }
 
-  return { draft, saving, edit, revert, commit }
+  return { draft, saving, invalid, edit, revert, commit }
 }
 
 /**
@@ -290,7 +293,7 @@ export function CommitInput({
   ariaLabel?: string
   mono?: boolean
 }) {
-  const { draft, saving, edit, revert, commit } = useCommitDraft(value, onCommit)
+  const { draft, saving, invalid, edit, revert, commit } = useCommitDraft(value, onCommit)
 
   return (
     <Input
@@ -300,10 +303,12 @@ export function CommitInput({
       inputMode={inputMode}
       disabled={saving}
       aria-busy={saving || undefined}
+      aria-invalid={invalid || undefined}
       className={cn("h-8", mono && "font-mono tabular-nums")}
       onChange={(event) => edit(event.target.value)}
       onBlur={() => void commit()}
       onKeyDown={(event) => {
+        if (event.nativeEvent.isComposing) return
         if (event.key === "Enter") {
           event.preventDefault()
           event.currentTarget.blur()
@@ -332,7 +337,7 @@ export function CommitTextarea({
   rows?: number
   className?: string
 }) {
-  const { draft, saving, edit, revert, commit } = useCommitDraft(value, onCommit)
+  const { draft, saving, invalid, edit, revert, commit } = useCommitDraft(value, onCommit)
 
   return (
     <Textarea
@@ -343,6 +348,7 @@ export function CommitTextarea({
       className={className}
       disabled={saving}
       aria-busy={saving || undefined}
+      aria-invalid={invalid || undefined}
       onChange={(event) => edit(event.target.value)}
       onBlur={() => void commit()}
       onKeyDown={(event) => {
@@ -364,305 +370,109 @@ const CELL_DISPLAY_CLASS =
   "aria-disabled:pointer-events-none aria-disabled:opacity-50 " +
   "aria-invalid:ring-2 aria-invalid:ring-destructive/40"
 
-/**
- * The selected-cell affordance: 单击选中（focus）、双击 / Enter 进编辑、
- * Tab 横移、Esc 退选中。`aria-invalid` marks the cell after a refused write.
- */
-function CellDisplay({
-  children,
-  label,
-  invalid,
-  disabled,
-  onEdit,
-  className,
-  ref,
-}: {
-  children: React.ReactNode
-  label: string
-  invalid?: boolean
-  disabled?: boolean
-  /** Double-click / Enter — popover editors pass the popover trigger instead. */
-  onEdit?: () => void
-  className?: string
-  ref?: React.Ref<HTMLDivElement>
-}) {
-  return (
-    <div
-      ref={ref}
-      role="button"
-      tabIndex={disabled ? -1 : 0}
-      data-cell-display=""
-      aria-label={label}
-      aria-invalid={invalid || undefined}
-      aria-disabled={disabled || undefined}
-      className={cn(CELL_DISPLAY_CLASS, className)}
-      onClick={(event) => event.currentTarget.focus()}
-      onDoubleClick={() => {
-        if (!disabled) onEdit?.()
-      }}
-      onKeyDown={(event) => {
-        if (disabled) return
-        if (event.key === "Enter" && onEdit) {
-          event.preventDefault()
-          onEdit()
-        } else if (event.key === "Escape") {
-          event.currentTarget.blur()
-        } else {
-          cellNavKeyDown(event)
-        }
-      }}
-    >
-      {children}
-    </div>
-  )
-}
-
 // ---------- 文本 / 多行文本 ----------
 
 export function TextCellEditor({
-  value,
-  onCommit,
-  ariaLabel,
-  placeholder,
-  mono,
-  disabled,
+  value, onCommit, ariaLabel, placeholder, mono, inputMode, disabled,
 }: {
   value: string
   onCommit: (next: string) => Promise<boolean>
   ariaLabel: string
   placeholder?: string
   mono?: boolean
+  inputMode?: "decimal" | "text"
   disabled?: boolean
 }) {
-  const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(value)
+  const [dirty, setDirty] = useState(false)
   const [invalid, setInvalid] = useState(false)
   const [saving, setSaving] = useState(false)
-  const displayRef = useRef<HTMLDivElement>(null)
   const committed = useRef(value)
-  /** Tab 先提交再移焦 —— blur 会尾随触发第二次 commit，在写途中直接吞掉。 */
   const inFlight = useRef(false)
-
   useEffect(() => {
     committed.current = value
-    if (!editing) setDraft(value)
-  }, [value, editing])
+    if (!dirty) setDraft(value)
+  }, [value, dirty])
 
-  const close = (refocus: boolean) => {
-    setEditing(false)
-    if (refocus) {
-      requestAnimationFrame(() => displayRef.current?.focus())
-    }
-  }
-
-  const commit = async (refocus: boolean) => {
+  const commit = async () => {
     if (inFlight.current) return
-    if (draft === committed.current) {
-      close(refocus)
-      return
-    }
+    if (draft === committed.current) { setDirty(false); return }
     inFlight.current = true
     setSaving(true)
-    const ok = await onCommit(draft)
-    inFlight.current = false
-    setSaving(false)
-    if (ok) {
-      committed.current = draft
-      setInvalid(false)
-      close(refocus)
-    } else {
-      // 失败保持编辑态 + aria-invalid；通知由调用方 notifyCommandError 负责。
+    try {
+      const ok = await onCommit(draft)
+      setInvalid(!ok)
+      if (ok) { committed.current = draft; setDirty(false) }
+    } catch (reason) {
       setInvalid(true)
-    }
+      notifyCommandError(reason, "保存属性失败")
+    } finally { inFlight.current = false; setSaving(false) }
   }
 
-  if (!editing) {
-    return (
-      <CellDisplay
-        ref={displayRef}
-        label={ariaLabel}
-        invalid={invalid}
-        disabled={disabled}
-        onEdit={() => setEditing(true)}
-      >
-        {value.trim() ? (
-          <span
-            className={cn(
-              "block min-w-0 truncate",
-              mono && "font-mono tabular-nums",
-            )}
-          >
-            {value}
-          </span>
-        ) : (
-          <EmptyCell />
-        )}
-      </CellDisplay>
-    )
-  }
-  return (
-    <Input
-      data-cell-editor="text"
-      aria-label={ariaLabel}
-      aria-invalid={invalid || undefined}
-      autoFocus
-      value={draft}
-      disabled={saving}
-      placeholder={placeholder}
-      className={cn(
-        "h-7 min-w-28 px-1.5 text-compact",
-        mono && "font-mono tabular-nums",
-      )}
-      onChange={(event) => {
-        setDraft(event.target.value)
-        setInvalid(false)
-      }}
-      onBlur={() => void commit(false)}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") {
-          event.preventDefault()
-          void commit(true)
-        } else if (event.key === "Escape") {
-          event.preventDefault()
-          setDraft(committed.current)
-          close(true)
-        } else if (event.key === "Tab") {
-          event.preventDefault()
-          void commit(false)
-          focusAdjacentCell(event.currentTarget, event.shiftKey ? -1 : 1)
-        }
-      }}
-    />
-  )
+  return <Input
+    data-cell-editor="text" aria-label={ariaLabel} aria-invalid={invalid || undefined}
+    aria-busy={saving || undefined} value={draft} disabled={disabled || saving}
+    placeholder={placeholder ?? "请输入"} inputMode={inputMode}
+    className={mono ? "font-mono tabular-nums" : undefined}
+    onChange={event => { setDraft(event.target.value); setDirty(true); setInvalid(false) }}
+    onBlur={() => void commit()}
+    onKeyDown={event => {
+      if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.blur() }
+      else if (event.key === "Escape") {
+        event.preventDefault(); event.stopPropagation()
+        setDraft(committed.current); setDirty(false); setInvalid(false)
+      }
+    }}
+  />
 }
 
-/** 多行文本：单元格显摘要，编辑在弹层里展开（docs §6.3）。 */
-export function LongTextCellEditor({
-  value,
-  onCommit,
-  ariaLabel,
-  placeholder,
-  disabled,
-}: {
+/** 多行属性直接展开；保存失败保留草稿，Esc 还原。 */
+export function LongTextCellEditor({ value, onCommit, ariaLabel, placeholder, disabled }: {
   value: string
   onCommit: (next: string) => Promise<boolean>
   ariaLabel: string
   placeholder?: string
   disabled?: boolean
 }) {
-  const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState(value)
+  const [dirty, setDirty] = useState(false)
   const [invalid, setInvalid] = useState(false)
   const [saving, setSaving] = useState(false)
   const committed = useRef(value)
-  /** Esc inside the textarea = revert-and-close, not commit-on-close. */
-  const cancelled = useRef(false)
-
+  const inFlight = useRef(false)
   useEffect(() => {
     committed.current = value
-    if (!open) setDraft(value)
-  }, [value, open])
+    if (!dirty) setDraft(value)
+  }, [value, dirty])
 
   const commit = async () => {
-    if (draft === committed.current) return true
+    if (inFlight.current) return
+    if (draft === committed.current) { setDirty(false); return }
+    inFlight.current = true
     setSaving(true)
-    const ok = await onCommit(draft)
-    setSaving(false)
-    if (ok) {
-      committed.current = draft
-      setInvalid(false)
-    } else {
+    try {
+      const ok = await onCommit(draft)
+      setInvalid(!ok)
+      if (ok) { committed.current = draft; setDirty(false) }
+    } catch (reason) {
       setInvalid(true)
-    }
-    return ok
+      notifyCommandError(reason, "保存属性失败")
+    } finally { inFlight.current = false; setSaving(false) }
   }
 
-  return (
-    <Popover
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next)
-        if (!next && !cancelled.current) void commit()
-        cancelled.current = false
-      }}
-    >
-      <PopoverTrigger
-        render={
-          <button
-            type="button"
-            data-cell-display=""
-            data-cell-editor="long_text"
-            aria-label={ariaLabel}
-            aria-invalid={invalid || undefined}
-            disabled={disabled}
-            className={cn(CELL_DISPLAY_CLASS, "text-left")}
-            onKeyDown={cellNavKeyDown}
-          />
-        }
-      >
-        {value.trim() ? (
-          <span className="block min-w-0 truncate">{value}</span>
-        ) : (
-          <EmptyCell />
-        )}
-      </PopoverTrigger>
-      <PopoverContent className="w-80 p-2">
-        <Textarea
-          data-cell-editor-input="long_text"
-          aria-label={ariaLabel}
-          aria-invalid={invalid || undefined}
-          autoFocus
-          rows={5}
-          value={draft}
-          disabled={saving}
-          placeholder={placeholder}
-          className="text-compact"
-          onChange={(event) => {
-            setDraft(event.target.value)
-            setInvalid(false)
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              event.preventDefault()
-              cancelled.current = true
-              setDraft(committed.current)
-              setOpen(false)
-            }
-          }}
-        />
-        <div className="mt-2 flex items-center justify-end gap-2">
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            className="h-7 cursor-pointer"
-            onClick={() => {
-              cancelled.current = true
-              setDraft(committed.current)
-              setOpen(false)
-            }}
-          >
-            取消
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="brand"
-            className="h-7 cursor-pointer"
-            disabled={saving}
-            onClick={() =>
-              void commit().then((ok) => {
-                if (ok) setOpen(false)
-              })
-            }
-          >
-            {saving ? <Spinner data-icon="inline-start" /> : null}
-            保存
-          </Button>
-        </div>
-      </PopoverContent>
-    </Popover>
-  )
+  return <Textarea
+    data-cell-editor="long_text" aria-label={ariaLabel} aria-invalid={invalid || undefined}
+    aria-busy={saving || undefined} rows={3} value={draft} disabled={disabled || saving}
+    placeholder={placeholder ?? "请输入"}
+    onChange={event => { setDraft(event.target.value); setDirty(true); setInvalid(false) }}
+    onBlur={() => void commit()}
+    onKeyDown={event => {
+      if (event.key === "Escape") {
+        event.preventDefault(); event.stopPropagation()
+        setDraft(committed.current); setDirty(false); setInvalid(false)
+      }
+    }}
+  />
 }
 
 // ---------- 数字 / 金额（分） ----------
@@ -683,6 +493,8 @@ export function NumberCellEditor({
       ariaLabel={ariaLabel}
       value={value == null ? "" : String(value)}
       mono
+      inputMode="decimal"
+      placeholder="请输入数字"
       disabled={disabled}
       onCommit={async (draft) => {
         const trimmed = draft.trim()
@@ -700,49 +512,37 @@ export function NumberCellEditor({
 
 // ---------- 勾选 ----------
 
-/** 勾选 = 就地即写，无编辑态。 */
-export function CheckboxCellEditor({
-  checked,
-  onCommit,
-  ariaLabel,
-  disabled,
-}: {
-  checked: boolean
-  onCommit: (next: boolean) => Promise<boolean>
+/** 布尔属性使用下拉框，未填与 false 分开保存。 */
+export function BooleanPropEditor({ checked, onCommit, ariaLabel, disabled }: {
+  checked: boolean | undefined
+  onCommit: (next: boolean | undefined) => Promise<boolean>
   ariaLabel: string
   disabled?: boolean
 }) {
   const [invalid, setInvalid] = useState(false)
   const [saving, setSaving] = useState(false)
-  return (
-    <span
-      data-cell-display=""
-      role="button"
-      tabIndex={disabled ? -1 : 0}
-      aria-label={ariaLabel}
-      aria-disabled={disabled || undefined}
-      className={cn(CELL_DISPLAY_CLASS, "w-fit")}
-      onKeyDown={(event) => {
-        if (event.key === "Escape") event.currentTarget.blur()
-        else cellNavKeyDown(event)
-      }}
-    >
-      <Checkbox
-        data-cell-editor="checkbox"
-        checked={checked}
-        aria-label={ariaLabel}
-        aria-invalid={invalid || undefined}
-        disabled={disabled || saving}
-        onCheckedChange={(next) => {
-          setSaving(true)
-          void onCommit(next === true).then((ok) => {
-            setSaving(false)
-            setInvalid(!ok)
-          })
-        }}
-      />
-    </span>
-  )
+  const inFlight = useRef(false)
+  const commit = async (next: string) => {
+    if (inFlight.current) return
+    inFlight.current = true
+    setSaving(true)
+    try { setInvalid(!await onCommit(next === "unset" ? undefined : next === "yes")) }
+    catch (reason) { setInvalid(true); notifyCommandError(reason, "保存属性失败") }
+    finally { inFlight.current = false; setSaving(false) }
+  }
+  return <Select value={checked == null ? null : checked ? "yes" : "no"}
+    disabled={disabled || saving} onValueChange={next => { if (next) void commit(next) }}>
+    <SelectTrigger aria-label={ariaLabel} aria-invalid={invalid || undefined}
+      aria-busy={saving || undefined} className="w-full">
+      <SelectValue placeholder="请选择">{() => checked == null ? "请选择" : checked ? "是" : "否"}</SelectValue>
+      {saving ? <Spinner /> : null}
+    </SelectTrigger>
+    <SelectContent>
+      <SelectItem value="unset">未填写</SelectItem>
+      <SelectItem value="yes">是</SelectItem>
+      <SelectItem value="no">否</SelectItem>
+    </SelectContent>
+  </Select>
 }
 
 // ---------- 单选 / 多选 ----------
@@ -973,27 +773,26 @@ export function SelectCellEditor({
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         render={
-          <button
+          <Button
             type="button"
-            data-cell-display=""
+            variant="outline"
             data-cell-editor="select"
+            role="combobox"
+            aria-haspopup="dialog"
             aria-label={ariaLabel}
             aria-invalid={invalid || undefined}
             disabled={disabled}
-            className={CELL_DISPLAY_CLASS}
+            className="h-9 w-full justify-between"
             onKeyDown={cellNavKeyDown}
           />
         }
       >
-        {selected ? (
-          <Badge variant="outline">{selected.label}</Badge>
-        ) : value != null && value !== "" ? (
-          <Badge variant="outline">{String(value)}</Badge>
-        ) : (
-          <EmptyCell />
-        )}
+        <span className={cn("min-w-0 flex-1 truncate text-left font-normal", !value && "text-muted-foreground")}>
+          {selected?.label ?? (value || "请选择")}
+        </span>
+        <ChevronDown aria-hidden className="size-4 shrink-0 text-muted-foreground" />
       </PopoverTrigger>
-      <PopoverContent className="w-64 p-2">
+      <PopoverContent aria-label={`${ariaLabel}选项`} className="w-64 p-2">
         <SelectOptionsPanel
           options={options}
           value={value}
@@ -1109,20 +908,22 @@ export function MultiSelectCellEditor({
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         render={
-          <button
+          <Button
             type="button"
-            data-cell-display=""
+            variant="outline"
             data-cell-editor="multi_select"
+            role="combobox"
+            aria-haspopup="dialog"
             aria-label={ariaLabel}
             aria-invalid={invalid || undefined}
             disabled={disabled}
-            className={CELL_DISPLAY_CLASS}
+            className="h-auto min-h-9 w-full justify-between"
             onKeyDown={cellNavKeyDown}
           />
         }
       >
         {values.length ? (
-          <span className="flex max-w-56 flex-wrap gap-1">
+          <span className="flex min-w-0 flex-1 flex-wrap gap-1">
             {values.map((item) => (
               <Badge key={item} variant="outline">
                 {options.find((option) => option.value === item)?.label ?? item}
@@ -1130,10 +931,11 @@ export function MultiSelectCellEditor({
             ))}
           </span>
         ) : (
-          <EmptyCell />
+          <span className="text-left font-normal text-muted-foreground">请选择，可多选</span>
         )}
+        <ChevronDown aria-hidden className="size-4 shrink-0 text-muted-foreground" />
       </PopoverTrigger>
-      <PopoverContent className="w-72 p-2">
+      <PopoverContent aria-label={`${ariaLabel}选项`} className="w-72 p-2">
         <MultiSelectOptionsPanel
           options={options}
           values={values}
@@ -1434,7 +1236,7 @@ export function CategoryCellEditor({
         {label ? (
           <span className="block min-w-0 truncate text-compact">{label}</span>
         ) : (
-          <EmptyCell />
+          <span className="text-muted-foreground">请选择类目</span>
         )}
       </PopoverTrigger>
       <PopoverContent className="w-[26rem] p-2">

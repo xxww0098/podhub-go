@@ -12,6 +12,7 @@ import (
 	corerepo "github.com/xxww0098/podhub-go/internal/admin/core/repo"
 	userscontract "github.com/xxww0098/podhub-go/internal/admin/users/contract"
 	"github.com/xxww0098/podhub-go/internal/admin/users/domain"
+	"github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
 )
 
 const accountProjection = `
@@ -19,7 +20,8 @@ SELECT u.id, u.public_id, u.email, u.role, p.name, u.plan,
        u.disabled_at IS NOT NULL AS disabled,
        to_char(u.created_at AT TIME ZONE 'UTC',
                'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
-       o.id AS org_id, o.plan AS org_plan, o.seat_limit,
+       o.id AS org_id, o.plan AS org_plan,
+       CASE WHEN o.id IS NOT NULL THEN COALESCE(o.member_seat_limit_override, $2::bigint) END AS seat_limit,
        COALESCE(seats.used, 0) AS seats_used,
        COALESCE(tokens.used, 0) AS ai_tokens_used,
        COALESCE(pl.ai_tokens_monthly, 0) AS ai_tokens_monthly,
@@ -27,7 +29,7 @@ SELECT u.id, u.public_id, u.email, u.role, p.name, u.plan,
 FROM account_users u
 JOIN account_profiles p ON p.user_id = u.id
 LEFT JOIN LATERAL (
-    SELECT t.id, t.plan, t.seat_limit
+    SELECT t.id, t.plan, t.member_seat_limit_override
     FROM organization_members om
     JOIN organizations t ON t.id = om.org_id
     WHERE om.user_id = u.id
@@ -78,7 +80,7 @@ func scanAccount(row pgx.Row) (userscontract.Account, error) {
 }
 
 func (s *Users) LoadByPublicID(ctx context.Context, tx pgx.Tx, publicID string) (userscontract.Account, error) {
-	row := tx.QueryRow(ctx, accountProjection+` WHERE u.public_id = $1 LIMIT 1`, publicID)
+	row := tx.QueryRow(ctx, accountProjection+` WHERE u.public_id = $1 LIMIT 1`, publicID, int64(userscontract.MemberCap))
 	a, err := scanAccount(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return userscontract.Account{}, contract.Validation("用户不存在")
@@ -88,7 +90,7 @@ func (s *Users) LoadByPublicID(ctx context.Context, tx pgx.Tx, publicID string) 
 
 // ReadAccount loads one public id outside a writer gate.
 func (s *Users) ReadAccount(ctx context.Context, publicID string) (userscontract.Account, *contract.Fault) {
-	tx, err := s.pool.Begin(ctx)
+	tx, err := corerepo.BeginStaff(ctx, s.pool)
 	if err != nil {
 		return userscontract.Account{}, corerepo.DBFault(err)
 	}
@@ -105,7 +107,7 @@ func (s *Users) ReadAccount(ctx context.Context, publicID string) (userscontract
 }
 
 func (s *Users) LoadByID(ctx context.Context, tx pgx.Tx, id int64) (userscontract.Account, error) {
-	row := tx.QueryRow(ctx, accountProjection+` WHERE u.id = $1 LIMIT 1`, id)
+	row := tx.QueryRow(ctx, accountProjection+` WHERE u.id = $1 LIMIT 1`, id, int64(userscontract.MemberCap))
 	a, err := scanAccount(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return userscontract.Account{}, contract.NotFound("用户不存在")
@@ -137,7 +139,7 @@ SELECT id FROM account_users
 // then writes accounts_listed. Audit failure is returned after the directory
 // commit.
 func (s *Users) ListDirectory(ctx context.Context, actor corecontract.Actor) (userscontract.Directory, *contract.Fault) {
-	tx, err := s.pool.Begin(ctx)
+	tx, err := corerepo.BeginStaff(ctx, s.pool)
 	if err != nil {
 		return userscontract.Directory{}, corerepo.DBFault(err)
 	}
@@ -146,7 +148,7 @@ func (s *Users) ListDirectory(ctx context.Context, actor corecontract.Actor) (us
 	wsRows, err := tx.Query(ctx, `
 SELECT o.id,
        lower(o.uuid::text) AS uuid,
-       o.name, o.plan, o.seat_limit,
+       o.name, o.plan, COALESCE(o.member_seat_limit_override, $1::bigint) AS seat_limit,
        o.owner_user_id,
        u.public_id AS owner_uuid,
        to_char(o.created_at AT TIME ZONE 'UTC',
@@ -173,7 +175,7 @@ LEFT JOIN LATERAL (
       AND r.metric IN ('ai.input_tokens', 'ai.output_tokens')
 ) tokens ON true
 WHERE o.dissolved_at IS NULL
-ORDER BY o.id ASC`)
+ORDER BY o.id ASC`, int64(userscontract.MemberCap))
 	if err != nil {
 		return userscontract.Directory{}, corerepo.DBFault(err)
 	}
@@ -195,7 +197,7 @@ ORDER BY o.id ASC`)
 	memRows, err := tx.Query(ctx, `
 SELECT m.org_id, m.user_id, m.role AS membership_role,
        m.manual_disabled, m.quota_suspended,
-       u.public_id, u.email, u.role, p.name,
+       u.public_id, u.email, u.role, p.name, u.account_kind,
        u.disabled_at IS NOT NULL AS disabled,
        to_char(u.created_at AT TIME ZONE 'UTC',
                'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
@@ -214,7 +216,7 @@ ORDER BY m.org_id ASC, m.join_order ASC, m.id ASC`)
 	for memRows.Next() {
 		var orgID int64
 		var p userscontract.Person
-		if err := memRows.Scan(&orgID, &p.UserID, &p.MembershipRole, &p.Manual, &p.Quota, &p.PublicID, &p.Email, &p.Role, &p.Name, &p.Disabled, &p.CreatedAt, &p.LastLogin); err != nil {
+		if err := memRows.Scan(&orgID, &p.UserID, &p.MembershipRole, &p.Manual, &p.Quota, &p.PublicID, &p.Email, &p.Role, &p.Name, &p.AccountKind, &p.Disabled, &p.CreatedAt, &p.LastLogin); err != nil {
 			memRows.Close()
 			return userscontract.Directory{}, corerepo.DBFault(err)
 		}
@@ -229,7 +231,7 @@ ORDER BY m.org_id ASC, m.join_order ASC, m.id ASC`)
 	memRows.Close()
 
 	unRows, err := tx.Query(ctx, `
-SELECT u.id, u.public_id, u.email, u.role, p.name,
+SELECT u.id, u.public_id, u.email, u.role, p.name, u.account_kind,
        u.disabled_at IS NOT NULL AS disabled,
        to_char(u.created_at AT TIME ZONE 'UTC',
                'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
@@ -248,7 +250,7 @@ ORDER BY u.id ASC`)
 	var unaffiliated []userscontract.Person
 	for unRows.Next() {
 		var p userscontract.Person
-		if err := unRows.Scan(&p.UserID, &p.PublicID, &p.Email, &p.Role, &p.Name, &p.Disabled, &p.CreatedAt, &p.LastLogin); err != nil {
+		if err := unRows.Scan(&p.UserID, &p.PublicID, &p.Email, &p.Role, &p.Name, &p.AccountKind, &p.Disabled, &p.CreatedAt, &p.LastLogin); err != nil {
 			unRows.Close()
 			return userscontract.Directory{}, corerepo.DBFault(err)
 		}
@@ -261,27 +263,20 @@ ORDER BY u.id ASC`)
 	}
 	unRows.Close()
 
-	wallets := map[int64][2]int64{}
 	for i := range spaces {
-		owner := spaces[i].OwnerID
-		bal, ok := wallets[owner]
-		if !ok {
-			if _, err := tx.Exec(ctx, `SELECT set_config('app.current_wallet_user_id', $1, true)`, fmt.Sprint(owner)); err != nil {
-				return userscontract.Directory{}, corerepo.DBFault(err)
-			}
-			var balance, held int64
-			err := tx.QueryRow(ctx, `SELECT balance_microfen, held_microfen FROM user_wallets WHERE user_id = $1`, owner).Scan(&balance, &held)
-			if errors.Is(err, pgx.ErrNoRows) {
-				balance, held = 0, 0
-			} else if err != nil {
-				return userscontract.Directory{}, corerepo.DBFault(err)
-			}
-			if held > balance {
-				bal = [2]int64{0, held}
-			} else {
-				bal = [2]int64{balance - held, held}
-			}
-			wallets[owner] = bal
+		if err := tenantx.EnterApp(ctx, tx, spaces[i].ID); err != nil {
+			return userscontract.Directory{}, corerepo.DBFault(err)
+		}
+		var balance, held int64
+		err := tx.QueryRow(ctx, `SELECT balance_microfen, held_microfen FROM workspace_wallets WHERE org_id = $1`, spaces[i].ID).Scan(&balance, &held)
+		if errors.Is(err, pgx.ErrNoRows) {
+			balance, held = 0, 0
+		} else if err != nil {
+			return userscontract.Directory{}, corerepo.DBFault(err)
+		}
+		bal := [2]int64{0, held}
+		if held <= balance {
+			bal = [2]int64{balance - held, held}
 		}
 		spaces[i].Available = bal[0]
 		spaces[i].Held = bal[1]
@@ -393,9 +388,9 @@ LIMIT 1`, userID).Scan(&orgID)
 		}
 		if err := tx.QueryRow(ctx, `
 INSERT INTO organizations
-       (owner_user_id, name, plan, seat_limit, psd_upload_enabled, uuid,
+       (owner_user_id, name, plan, uuid,
         created_at, updated_at)
-VALUES ($1, $2, 'lite', 1, false, gen_random_uuid(),
+VALUES ($1, $2, 'lite', gen_random_uuid(),
         clock_timestamp(), clock_timestamp())
 RETURNING id`, userID, domain.WorkspaceName(display, email)).Scan(&orgID); err != nil {
 			return 0, err

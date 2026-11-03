@@ -1,6 +1,7 @@
 package rules
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,20 +11,24 @@ import (
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
 	listing "github.com/xxww0098/podhub-go/internal/listing/core/contract"
-	"github.com/xxww0098/podhub-go/internal/listing/rules/contract"
+	"github.com/xxww0098/podhub-go/internal/platform/db"
 	"github.com/xxww0098/podhub-go/internal/platform/httpx/jsonwire"
 )
 
 // BannedHost is the super-admin write API. Reads stay on the generated routes.
+// InsertAudit writes one audit row; internal/app passes the sqlc call. A nil
+// function logs an error instead of writing.
 type BannedHost struct {
-	Pool   *pgxpool.Pool
-	Engine listing.Engine
-	Access access.Resolver
+	Pool        *pgxpool.Pool
+	Engine      listing.Engine
+	Access      access.Resolver
+	InsertAudit func(ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, entityID, method, path, action, message string) error
 }
 
 // MountBannedWrites registers POST, PUT and DELETE. GET is already generated.
@@ -86,22 +91,25 @@ type tagWire struct {
 }
 
 func (h BannedHost) list(r *http.Request) ([]tagWire, error) {
-	rows, err := h.Pool.Query(r.Context(), `
+	out := []tagWire{}
+	err := db.InTx(r.Context(), h.Pool, db.AppRole(), func(tx pgx.Tx) error {
+		rows, err := tx.Query(r.Context(), `
 		SELECT id, term, match_mode, note, created_by, created_at::text, enabled
 		FROM public.banned_tags ORDER BY id`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []tagWire{}
-	for rows.Next() {
-		var item tagWire
-		if err := rows.Scan(&item.ID, &item.Term, &item.MatchMode, &item.Note, &item.CreatedBy, &item.CreatedAt, &item.Enabled); err != nil {
-			return nil, err
+		if err != nil {
+			return err
 		}
-		out = append(out, item)
-	}
-	return out, rows.Err()
+		defer rows.Close()
+		for rows.Next() {
+			var item tagWire
+			if err := rows.Scan(&item.ID, &item.Term, &item.MatchMode, &item.Note, &item.CreatedBy, &item.CreatedAt, &item.Enabled); err != nil {
+				return err
+			}
+			out = append(out, item)
+		}
+		return rows.Err()
+	})
+	return out, err
 }
 
 func (h BannedHost) writeList(w http.ResponseWriter, r *http.Request) {
@@ -139,9 +147,11 @@ func (h BannedHost) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var id int64
-	err = h.Pool.QueryRow(r.Context(), `
+	err = db.InTx(r.Context(), h.Pool, db.AppRole(), func(tx pgx.Tx) error {
+		return tx.QueryRow(r.Context(), `
 		INSERT INTO public.banned_tags (term, match_mode, note, created_by, enabled)
 		VALUES ($1, $2, $3, $4, $5) RETURNING id`, term, mode, note, publicID, enabled).Scan(&id)
+	})
 	if err != nil {
 		if duplicate(err) {
 			writeAdmin(w, http.StatusConflict, "这个受限词已经存在", "CONFLICT")
@@ -176,9 +186,14 @@ func (h BannedHost) update(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	tag, err := h.Pool.Exec(r.Context(), `
+	var tag pgconn.CommandTag
+	err = db.InTx(r.Context(), h.Pool, db.AppRole(), func(tx pgx.Tx) error {
+		var err error
+		tag, err = tx.Exec(r.Context(), `
 		UPDATE public.banned_tags SET term = $2, match_mode = $3, note = $4, enabled = $5 WHERE id = $1`,
-		id, term, mode, note, enabled)
+			id, term, mode, note, enabled)
+		return err
+	})
 	if err != nil {
 		if duplicate(err) {
 			writeAdmin(w, http.StatusConflict, "这个受限词已经存在", "CONFLICT")
@@ -208,7 +223,12 @@ func (h BannedHost) remove(w http.ResponseWriter, r *http.Request) {
 		writeAdmin(w, http.StatusBadRequest, "请求格式无效", "VALIDATION")
 		return
 	}
-	tag, err := h.Pool.Exec(r.Context(), `DELETE FROM public.banned_tags WHERE id = $1`, id)
+	var tag pgconn.CommandTag
+	err = db.InTx(r.Context(), h.Pool, db.AppRole(), func(tx pgx.Tx) error {
+		var err error
+		tag, err = tx.Exec(r.Context(), `DELETE FROM public.banned_tags WHERE id = $1`, id)
+		return err
+	})
 	if err != nil {
 		writeAdmin(w, http.StatusInternalServerError, access.MsgUnavailable, "INTERNAL")
 		return
@@ -303,11 +323,17 @@ func (h BannedHost) fields(w http.ResponseWriter, r *http.Request, fields map[st
 
 func (h BannedHost) publicID(r *http.Request, userID int64) (string, error) {
 	var id string
-	err := h.Pool.QueryRow(r.Context(), `SELECT public_id FROM public.account_users WHERE id = $1`, userID).Scan(&id)
+	err := db.InTx(r.Context(), h.Pool, db.AppRole(), func(tx pgx.Tx) error {
+		return tx.QueryRow(r.Context(), `SELECT public_id FROM public.account_users WHERE id = $1`, userID).Scan(&id)
+	})
 	return id, err
 }
 
 func (h BannedHost) audit(r *http.Request, actor access.Principal, method, path, action string, id int64, message map[string]any) {
+	if h.InsertAudit == nil {
+		slog.Error("banned tag audit", "action", action, "err", errors.New("banned tag audit insert is not wired"))
+		return
+	}
 	raw, err := jsonwire.Marshal(message)
 	if err != nil {
 		slog.Warn("banned tag audit", "err", err)
@@ -317,7 +343,7 @@ func (h BannedHost) audit(r *http.Request, actor access.Principal, method, path,
 	if org < 0 {
 		org = 0
 	}
-	err = contract.InsertAuditFn(r.Context(), h.Pool, org, actor.UserID, itoa(id), method, path, action, string(raw))
+	err = h.InsertAudit(r.Context(), h.Pool, org, actor.UserID, itoa(id), method, path, action, string(raw))
 	if err != nil {
 		slog.Warn("banned tag audit", "action", action, "err", err)
 	}

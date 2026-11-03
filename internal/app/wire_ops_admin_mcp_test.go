@@ -14,7 +14,7 @@ import (
 	opshttp "github.com/xxww0098/podhub-go/internal/ops/http"
 	opssvc "github.com/xxww0098/podhub-go/internal/ops/service"
 	"github.com/xxww0098/podhub-go/internal/platform/config"
-	"github.com/xxww0098/podhub-go/internal/seller"
+	seller "github.com/xxww0098/podhub-go/internal/seller/ozon"
 )
 
 func TestOpsWriteKillSwitchSendsNothing(t *testing.T) {
@@ -43,7 +43,7 @@ func TestOpsWriteKillSwitchSendsNothing(t *testing.T) {
 			t.Fatalf("%d %s", rec.Code, rec.Body.String())
 		}
 		send := httptest.NewRecorder()
-		r.ServeHTTP(send, httptest.NewRequest(http.MethodPost, "/api/ops/message-center/send", strings.NewReader(`{"store_id":"00000000-0000-4000-8000-0000000000a1","chat_id":"c","text":"hi"}`)))
+		r.ServeHTTP(send, httptest.NewRequest(http.MethodPost, "/api/ops/message-center/send", strings.NewReader(`{"operation_id":"00000000-0000-4000-8000-000000000001","store_id":"00000000-0000-4000-8000-0000000000a1","chat_id":"c","text":"hi"}`)))
 		if send.Code != http.StatusServiceUnavailable || hits != 0 || eg.WritePosts() != 0 || began != 0 {
 			t.Fatalf("send %d hits %d posts %d began %d %s", send.Code, hits, eg.WritePosts(), began, send.Body.String())
 		}
@@ -65,6 +65,34 @@ func TestOpsWriteKillSwitchSendsNothing(t *testing.T) {
 			t.Fatalf("hits %d posts %d", hits, eg.WritePosts())
 		}
 	})
+}
+
+func TestOpsReadPortRejectsMutationsBeforeDispatch(t *testing.T) {
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		if r.Method != http.MethodPost || r.URL.Path != "/v3/product/list" {
+			t.Fatal("read escaped the expected method and path")
+		}
+		_, _ = w.Write([]byte(`{"result":{"items":[]}}`))
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("CLOUD_SELLER_BASE_URL", srv.URL+"/")
+	t.Setenv("OZON_WRITE_KILL_SWITCH", "1")
+	eg := seller.New(config.Load())
+	p := sellerPort{egress: eg}
+	secret := contract.Secret{ClientID: "fixture-client", APIKey: "fixture-key"}
+	for _, lane := range []contract.Lane{contract.LaneRead, contract.LaneInteractiveRead} {
+		if status, _, err := p.Call(context.Background(), lane, http.MethodPost, "/v3/product/list", []byte(`{}`), secret); err != nil || status != 200 {
+			t.Fatalf("read lane status=%d err=%v", status, err)
+		}
+		if _, _, err := p.Call(context.Background(), lane, http.MethodPost, "/v2/products/stocks", []byte(`{}`), secret); err != contract.ErrUnreachable {
+			t.Fatal("read lane accepted a mutation")
+		}
+	}
+	if hits != 2 || eg.ReadPosts() != 2 || eg.WritePosts() != 0 {
+		t.Fatal("refused read was dispatched")
+	}
 }
 
 type gateAdmit struct{}

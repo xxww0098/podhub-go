@@ -99,12 +99,15 @@ export function configureListingLogTransport(next: Partial<Transport>): void {
   transport = { ...transport, ...next }
 }
 
-/** OCR contract failures are recognition, even when another job kind was in hand. */
+/** Recognition refusals stay on AI even when a combined preparation finishes with media. */
 export function listingRowFailureStage(kind: string, code: string | undefined): string {
   if (
     code === "OCR_CONTRACT_VIOLATION"
     || code === "cloud_ocr_contract_violation"
     || code === "workflow_ai_result_unusable"
+    || code === "missing_model"
+    || code === "missing_prompt"
+    || code === "content_not_ready"
   ) return "ai"
   return kind
 }

@@ -51,11 +51,17 @@ type grantWire struct {
 	ID           string   `json:"id"`
 	Name         string   `json:"name"`
 	Actions      []string `json:"actions"`
-	TokenPrefix  string   `json:"tokenPrefix"`
-	CreatedAtMS  int64    `json:"createdAtMs"`
-	ExpiresAtMS  *int64   `json:"expiresAtMs,omitempty"`
-	LastUsedAtMS *int64   `json:"lastUsedAtMs,omitempty"`
-	RevokedAtMS  *int64   `json:"revokedAtMs,omitempty"`
+	TokenPrefix  string   `json:"token_prefix"`
+	CreatedAtMS  int64    `json:"created_at_ms"`
+	ExpiresAtMS  *int64   `json:"expires_at_ms,omitempty"`
+	LastUsedAtMS *int64   `json:"last_used_at_ms,omitempty"`
+	RevokedAtMS  *int64   `json:"revoked_at_ms,omitempty"`
+}
+
+type scopedGrantWire struct {
+	grantWire
+	ScopeKind string   `json:"scope_kind"`
+	SourceIDs []string `json:"source_ids"`
 }
 
 type createGrantData struct {

@@ -316,7 +316,7 @@ test("a row with no durable Product Instance is failed before any Cloud call", a
   )
 
   assert.equal(failures.length, 1)
-  assert.match(scene.row(target.id).errorFeedback?.errorId ?? "", /^[0-9]{20}$/)
+  assert.match(scene.row(target.id).errorFeedback?.errorId ?? "", /^[0-9A-F][0-9A-HJKMNP-TV-Z]{12}$/)
   assert.deepEqual(routes(calls), [], "an unbound row must never reach Cloud")
   assert.equal(scene.row("row-1").status, "failed")
   assert.match(scene.row("row-1").log, /找不到该图片对应的商品/)

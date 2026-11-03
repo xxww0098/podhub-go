@@ -21,7 +21,7 @@ import { record } from "./ai-job-test-support"
 import { prepareOcrImage, OCR_MAX_IMAGE_BYTES } from "./ocr-upload"
 
 test("the paid OCR body carries only a private prepared-image ticket", () => {
-  assert.deepEqual(analyzeImageBody("private-ticket"), { uploadTicket: "private-ticket" })
+  assert.deepEqual(analyzeImageBody("private-ticket"), { upload_ticket: "private-ticket" })
 })
 
 test("an oversized OCR raster is refused before grant or purchase", () => {
@@ -84,7 +84,7 @@ test("PNG recognition labels passthrough PNG and converted JPEG using the prepar
       await withStubbedDevice(() => runRows({ row_ids: [ROW.id], expected_revisions: [] }, "recognize"),
         { getSource: async () => png }, { prepareAiImage: async () => prepared })
       const request = stub.calls.find(call => call.url.endsWith("/ocr/completions"))
-      assert.deepEqual(request?.body, { uploadTicket: "private-ocr-ticket" })
+      assert.deepEqual(request?.body, { upload_ticket: "private-ocr-ticket" })
       assert.equal(stub.uploads[0]!.image.content_type, mimeType)
       assert.deepEqual(stub.uploads[0]!.body, prepared)
     } finally {
@@ -139,7 +139,7 @@ test("a source changed during preprocessing fails the claimed job without a purc
     assert.deepEqual(windowJobIds(stub.calls), ["changed-ai", "changed-ai", "changed-ai"], "each bounded attempt re-claims the Job")
     assert.equal(stub.calls.some(call => call.url.endsWith("/ocr/completions")), false)
     assert.deepEqual(stub.calls.find(call => call.url.endsWith("/ai/fail"))?.body, {
-      job_id: "changed-ai", lease: { owner: "tab-changed-ai", epoch: 1 },
+      job_id: "changed-ai", lease: { owner: "tab-changed-ai", epoch: 1 }, error_code: "workflow_source_changed",
     })
   } finally { stub.restore() }
 })

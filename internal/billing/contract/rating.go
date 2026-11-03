@@ -46,27 +46,6 @@ const (
 	halfUp         = 500_000
 )
 
-// OutputTokenCeiling is max_request × 1_000_000 ÷ max(output, reasoning).
-// A non-positive rate means the hold does not bound a token count.
-func OutputTokenCeiling(maxRequest, outputRate, reasoningRate int64) (uint64, bool) {
-	rate := outputRate
-	if reasoningRate > rate {
-		rate = reasoningRate
-	}
-	if rate <= 0 {
-		return 0, false
-	}
-	if maxRequest < 0 {
-		maxRequest = 0
-	}
-	tokens := new(big.Int).Mul(new(big.Int).SetUint64(uint64(maxRequest)), big.NewInt(million))
-	tokens.Div(tokens, new(big.Int).SetInt64(rate))
-	if !tokens.IsUint64() {
-		return math.MaxUint64, true
-	}
-	return tokens.Uint64(), true
-}
-
 // ChargeUsage prices one usage against this schedule.
 // Token mode rounds half-up once on the weighted sum, then gives the leftover
 // microfen to the lanes with the largest fractional part. Ties keep the order
@@ -82,6 +61,26 @@ func (p Price) ChargeUsage(usage Usage) (Charge, error) {
 		return Charge{}, fmt.Errorf("invalid billing price")
 	}
 	return newPriceTable(p).charge(usage)
+}
+
+// QuotePrepay is the wallet hold for one request. It reserves the published
+// per-request ceiling: MaxRequest in token mode and PerRequest in per-request
+// mode. Settlement charges the reported usage up to that ceiling and absorbs
+// the remainder.
+func (p Price) QuotePrepay() (int64, error) {
+	if p.MaxRequest <= 0 || p.Input < 0 || p.CachedInput < 0 || p.Output < 0 || p.Reasoning < 0 || p.PerRequest < 0 {
+		return 0, fmt.Errorf("invalid billing price")
+	}
+	if p.BillingMode == ModePerRequest && p.PerRequest > 0 {
+		if p.PerRequest > p.MaxRequest {
+			return 0, fmt.Errorf("invalid billing price")
+		}
+		return p.PerRequest, nil
+	}
+	if p.BillingMode != ModeToken || p.PerRequest != 0 {
+		return 0, fmt.Errorf("invalid billing price")
+	}
+	return p.MaxRequest, nil
 }
 
 type priceTable struct {
@@ -111,7 +110,7 @@ func (t priceTable) charge(usage Usage) (Charge, error) {
 	}
 	total := new(big.Int).Add(sum, big.NewInt(halfUp))
 	total.Div(total, big.NewInt(million))
-	if !total.IsUint64() {
+	if !total.IsInt64() {
 		return Charge{}, fmt.Errorf("token charge overflow")
 	}
 	parts := [4]uint64{}
@@ -126,7 +125,7 @@ func (t priceTable) charge(usage Usage) (Charge, error) {
 		}
 		parts[i] = quo.Uint64()
 		fracs[i] = rem.Uint64()
-		if partSum > math.MaxUint64-parts[i] {
+		if parts[i] > math.MaxInt64 || partSum > math.MaxUint64-parts[i] {
 			return Charge{}, fmt.Errorf("token charge overflow")
 		}
 		partSum += parts[i]

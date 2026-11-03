@@ -1,23 +1,5 @@
 import { useEffect, type ReactNode } from "react"
 import { buttonVariants } from "@/components/ui/button"
-import { productVersionLabel } from "@/lib/product-version"
-import type { PageKey } from "@/lib/public-pages"
-
-const PAGE_TITLES: Record<PageKey, string> = {
-  product: "PodHub | 浏览器 Ozon 上架工作室",
-  catalog: "商品目录 | PodHub",
-  pricing: "定价 | PodHub",
-  help: "帮助中心 | PodHub",
-  privacy: "隐私声明 | PodHub",
-  terms: "使用条款 | PodHub",
-}
-
-const nav: Array<[PageKey, string, string]> = [
-  ["product", "产品", "/"],
-  ["catalog", "商品目录", "/catalog/"],
-  ["pricing", "定价", "/pricing/"],
-  ["help", "帮助", "/help/"],
-]
 
 function BrandMark() {
   return (
@@ -37,126 +19,48 @@ function BrandMark() {
 }
 
 function Brand() {
-  const version = productVersionLabel()
   return (
-    <a className="brand" href="/" aria-label="PodHub home">
+    <a className="brand" href="/" aria-label="PodHub 首页">
       <BrandMark />
       <strong>PodHub</strong>
-      {version ? <span className="brand-version">{version}</span> : null}
     </a>
   )
 }
 
-export function Shell({
-  page,
-  signedIn,
-  children,
-}: {
-  page: PageKey
-  signedIn: boolean
-  children: ReactNode
-}) {
-  const accessHref = signedIn ? "/" : "/login"
-  const accessLabel = signedIn ? "进入工作台" : "登录"
-
+export function Shell({ children }: { children: ReactNode }) {
   useEffect(() => {
-    document.title = PAGE_TITLES[page]
-  }, [page])
+    document.title = "PodHub | 浏览器 Ozon 上架工作室"
+  }, [])
 
   return (
-    <div className="public-site" data-page={page}>
-      <a className="skip" href="#main-content">
-        跳到主要内容
-      </a>
+    <div className="public-site">
+      <a className="skip" href="#main-content">跳到主要内容</a>
       <header className="header">
         <div className="wrap header-in">
           <Brand />
-          <nav aria-label="Primary">
-            {nav.map(([key, label, href]) => (
-              <a key={key} href={href} aria-current={page === key ? "page" : undefined}>
-                {label}
-              </a>
-            ))}
+          <nav aria-label="产品页导航">
+            <a href="#products">产品展示</a>
+            <a href="#workflow">使用流程</a>
           </nav>
-          <div className="flex items-center gap-2">
-            {/* 厂家登录 (ADR-0100)：厂家排单面的入口。入口恒显——
-                已登录卖家也会经它分流到 `/supplier`，面内再按成员身份分诊。 */}
-            <a
-              className={`${buttonVariants({ variant: "outline", size: "sm" })} nav-supplier`}
-              href="/supplier"
-            >
+          <div className="header-actions">
+            {/* 已登录卖家也经此入口进入工厂面，再按成员身份分诊。 */}
+            <a className={`${buttonVariants({ variant: "outline", size: "sm" })} site-secondary`} href="/supplier">
               工厂登录
             </a>
-            <a className={`${buttonVariants({ size: "sm" })} nav-login`} href={accessHref}>
-              {accessLabel}
+            <a className={`${buttonVariants({ size: "sm" })} site-primary`} href="/login">
+              登录
             </a>
           </div>
         </div>
       </header>
-      <main id="main-content">{children}</main>
+      <main id="main-content" tabIndex={-1}>{children}</main>
       <footer className="site-footer">
-        <div className="wrap footer-main">
-          <div>
-            <Brand />
-            <p>给 Ozon 按需印刷团队用的上架工作室。介绍页和工作台在同一个网站。</p>
-          </div>
-          <div className="footer-links">
-            <div>
-              <strong>产品</strong>
-              <a href="/catalog/">商品目录</a>
-              <a href="/pricing/">定价</a>
-              <a href={accessHref}>{accessLabel}</a>
-            </div>
-            <div>
-              <strong>支持</strong>
-              <a href="/help/">帮助中心</a>
-              <a href="mailto:support@ozon-pod.app">邮件支持</a>
-            </div>
-            <div>
-              <strong>法律</strong>
-              <a href="/privacy/">隐私</a>
-              <a href="/terms/">条款</a>
-            </div>
-          </div>
-        </div>
-        <div className="wrap footer-base">
+        <div className="wrap footer-inner">
+          <Brand />
           <span>© 2026 PodHub</span>
-          <span>登录后进入上架工作台。</span>
+          <a href="mailto:support@ozon-pod.app">邮件支持</a>
         </div>
       </footer>
     </div>
-  )
-}
-
-export function Intro({ title, body }: { title: string; body: string }) {
-  return (
-    <section className="wrap intro">
-      <h1>{title}</h1>
-      <p>{body}</p>
-    </section>
-  )
-}
-
-export function CTA({
-  title,
-  body,
-  label,
-  href,
-}: {
-  title: string
-  body: string
-  label: string
-  href: string
-}) {
-  return (
-    <section className="wrap cta">
-      <div>
-        <h2>{title}</h2>
-        <p>{body}</p>
-      </div>
-      <a className={`${buttonVariants({ size: "lg" })} nav-login`} href={href}>
-        {label}
-      </a>
-    </section>
   )
 }

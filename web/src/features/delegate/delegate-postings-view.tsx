@@ -6,9 +6,11 @@
  * 行）；`ready` 确认即建单（可随单备注）；`needs_setup` 走补齐流。列表读是
  * 纯读——建单只发生在 POST /orders。
  */
+import type { ReactNode } from "react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import {
   AlertTriangle,
+  Eye,
   Package,
   RefreshCw,
 } from "lucide-react"
@@ -32,6 +34,7 @@ import { DelegateOrderDetailDialog } from "./delegate-order-detail"
 import { PageToolbar } from "@/components/page-toolbar"
 import { StateChip } from "@/components/state-chip"
 import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import {
   Empty,
@@ -53,6 +56,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { errorMessage } from "@/lib/error-message"
 import { clearLive, notifyCommandError, notifyLive, notifySuccess } from "@/lib/notify"
 import { cn } from "@/lib/utils"
 import { useVisiblePolling } from "@/lib/visible-polling"
@@ -64,7 +68,22 @@ const POLL_INTERVAL_MS = 60_000
 
 export type PostingRowState = "idle" | "loading" | "ready" | "empty" | "error"
 
+function notifyPostingsFailure(reason: unknown, retry: () => void) {
+  const title = "读取未履约订单失败"
+  const detail = errorMessage(reason, title)
+  notifyLive({
+    id: POSTINGS_LIVE,
+    type: "error",
+    reason,
+    title,
+    description: detail === title ? undefined : detail,
+    action: { label: "重试", onClick: retry },
+  })
+}
+
 export type DelegatePostingsViewProps = {
+  scopeControls?: ReactNode
+  viewTabs?: ReactNode
   storeId: string
   /** 屏级缓存的厂家候选（建单/绑定编辑共用）。 */
   sources: DelegateSource[]
@@ -75,6 +94,8 @@ export type DelegatePostingsViewProps = {
 }
 
 export function DelegatePostingsView({
+  scopeControls,
+  viewTabs,
   storeId,
   sources,
   refreshKey,
@@ -119,17 +140,7 @@ export function DelegatePostingsView({
         if (sequence !== requestSequence.current) return
         if (options.quiet) return
         setLoad("error")
-        notifyLive({
-          id: POSTINGS_LIVE,
-          type: "error",
-          reason,
-          title: "读取未履约订单失败",
-          action: {
-            label: "重试",
-            onClick: () => void loadPostings(cursor),
-          },
-        })
-        notifyCommandError(reason, "读取未履约订单失败")
+        notifyPostingsFailure(reason, () => void loadPostings(cursor))
       } finally {
         if (inFlight.current === sequence) inFlight.current = null
       }
@@ -156,8 +167,10 @@ export function DelegatePostingsView({
     intervalMs: POLL_INTERVAL_MS,
     restartKey: `${storeId}:${cursors.at(-1) ?? ""}`,
     onPoll: (trigger) => {
+      // 首读由上面的 effect 负责；这里只做前台心跳。
+      if (trigger === "mount") return
       void loadPostings(cursors.at(-1) ?? "", {
-        quiet: trigger !== "mount",
+        quiet: true,
         keepPage: cursors.length > 1,
       })
     },
@@ -183,6 +196,7 @@ export function DelegatePostingsView({
         limit: PAGE_SIZE,
       })
       if (sequence !== requestSequence.current) return
+      clearLive(POSTINGS_LIVE)
       if (advancing && data.postings.length === 0) {
         setPageData({ ...pageData, has_next: false, cursor: "" })
       } else {
@@ -192,7 +206,7 @@ export function DelegatePostingsView({
       setLoad(data.postings.length === 0 && !advancing ? "empty" : "ready")
     } catch (reason) {
       if (sequence !== requestSequence.current) return
-      notifyCommandError(reason, "读取未履约订单失败")
+      notifyPostingsFailure(reason, () => void goTo(nextCursors))
       setLoad(postings.length === 0 ? "error" : "ready")
     } finally {
       if (inFlight.current === sequence) inFlight.current = null
@@ -202,25 +216,24 @@ export function DelegatePostingsView({
   if (!storeId) return null
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3">
+    <div className="flex min-h-0 flex-1 flex-col gap-2">
       <PageToolbar
-        primary={
-          <span className="text-compact text-muted-foreground">
-            出单即入库：未挂委托的行可「委托」，已挂的显示委托态。
-          </span>
-        }
         secondary={
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={load === "loading"}
-            onClick={() => void loadPostings(cursors.at(-1) ?? "")}
-          >
-            <RefreshCw className={cn(load === "loading" && "animate-spin")} />
-            刷新
-          </Button>
+          <>
+            {scopeControls}
+            <IconButton
+              icon={RefreshCw}
+              label="刷新"
+              size="icon-sm"
+              variant="outline"
+              disabled={load === "loading"}
+              className={cn(load === "loading" && "[&_svg]:animate-spin")}
+              onClick={() => void loadPostings(cursors.at(-1) ?? "")}
+            />
+          </>
         }
       />
+      {viewTabs}
       {load === "error" && postings.length === 0 && page === 1 ? (
         <Empty className="min-h-48">
           <EmptyMedia variant="icon">
@@ -255,7 +268,7 @@ export function DelegatePostingsView({
         </Empty>
       ) : (
         <div
-          className="overflow-hidden rounded-xl border border-border bg-card"
+          className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card"
           aria-busy={load === "loading"}
         >
           <DelegatePostingsTable
@@ -317,8 +330,8 @@ export function DelegatePostingsTable({
   onSetup: (posting: DelegatePosting) => void
 }) {
   return (
-    <Table containerClassName="max-w-full">
-      <TableHeader>
+    <Table containerClassName="min-h-0 max-w-full flex-1 overflow-auto">
+      <TableHeader className="sticky top-0 z-10 bg-card">
         <TableRow>
           <TableHead className="w-52">单号</TableHead>
           <TableHead className="w-28">状态</TableHead>
@@ -386,7 +399,9 @@ function DelegatePostingRow({
         <DelegateStateCell posting={posting} />
       </TableCell>
       <TableCell onClick={(event) => event.stopPropagation()}>
-        {action.kind === "delegate" ? (
+        {action.kind === "view-order" && posting.order_id ? (
+          <IconButton icon={Eye} label={`查看委托单 ${posting.posting_number}`} tip="查看委托单" size="icon-sm" variant="outline" onClick={() => { if (posting.order_id) onOpenOrder(posting.order_id) }} />
+        ) : action.kind === "delegate" ? (
           <Button size="xs" variant="brand" aria-label={`委托 ${posting.posting_number}`} onClick={() => onDelegate(posting)}>
             委托
           </Button>
@@ -444,9 +459,11 @@ function DelegateStateCell({ posting }: { posting: DelegatePosting }) {
         <Tooltip>
           <TooltipTrigger
             render={
-              <span className="w-fit cursor-help" aria-label="全部行已绑定且原图已核验" />
+              <span className="w-fit cursor-help rounded-full focus-visible:outline-2 focus-visible:outline-ring" tabIndex={0} />
             }
-          />
+          >
+            <StateChip status="ready" tone="good" label="可委托" />
+          </TooltipTrigger>
           <TooltipContent>全部行已绑定且原图已核验</TooltipContent>
         </Tooltip>
       )
@@ -455,9 +472,11 @@ function DelegateStateCell({ posting }: { posting: DelegatePosting }) {
         <Tooltip>
           <TooltipTrigger
             render={
-              <span className="w-fit cursor-help" aria-label="有行未绑定或原图未核验" />
+              <span className="w-fit cursor-help rounded-full focus-visible:outline-2 focus-visible:outline-ring" tabIndex={0} />
             }
-          />
+          >
+            <StateChip status="needs_setup" tone="attest" label="待完善" />
+          </TooltipTrigger>
           <TooltipContent>有行未绑定或原图未核验</TooltipContent>
         </Tooltip>
       )

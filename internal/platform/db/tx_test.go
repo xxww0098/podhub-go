@@ -27,11 +27,9 @@ func TestInTxRejectsUnsetIDsBeforeBegin(t *testing.T) {
 	}{
 		{"app zero", App(0), tenantx.ErrOrgUnset},
 		{"app negative", App(-1), tenantx.ErrOrgUnset},
-		{"wallet org", WalletUser(0, 7), tenantx.ErrOrgUnset},
 		{"supplier org", SupplierUser(-3, 7), tenantx.ErrOrgUnset},
 		{"observer zero", Observer(0), tenantx.ErrUserUnset},
 		{"observer negative", Observer(-1), tenantx.ErrUserUnset},
-		{"wallet user", WalletUser(7, 0), tenantx.ErrUserUnset},
 		{"supplier user", SupplierUser(7, -1), tenantx.ErrUserUnset},
 		{"grant empty", AutomationGrant(""), tenantx.ErrGrantUnset},
 		{"grant blank", AutomationGrant("  "), tenantx.ErrGrantUnset},
@@ -107,18 +105,6 @@ func TestSessionMatchesExistingPath(t *testing.T) {
 			},
 			sess: Observer(userID),
 			want: snap{user: tenantx.RoleApp, observer: strPtr(strconv.FormatInt(userID, 10))},
-		},
-		{
-			name: "wallet",
-			old: func(ctx context.Context, begin txBegin) (pgx.Tx, error) {
-				return oldWallet(ctx, begin, orgID, userID)
-			},
-			sess: WalletUser(orgID, userID),
-			want: snap{
-				user:   tenantx.RoleApp,
-				org:    strPtr(strconv.FormatInt(orgID, 10)),
-				wallet: strPtr(strconv.FormatInt(userID, 10)),
-			},
 		},
 		{
 			name: "supplier",
@@ -411,26 +397,6 @@ func oldObserver(ctx context.Context, begin txBegin, userID int64) (pgx.Tx, erro
 	return tx, nil
 }
 
-// oldWallet is billing withWallet's two statements, without the later role reset.
-func oldWallet(ctx context.Context, begin txBegin, orgID, userID int64) (pgx.Tx, error) {
-	tx, err := begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	_, err = tx.Exec(ctx,
-		`SELECT set_config('app.current_org_id', $1, true), set_config('app.current_wallet_user_id', $2, true)`,
-		strconv.FormatInt(orgID, 10), strconv.FormatInt(userID, 10))
-	if err != nil {
-		_ = tx.Rollback(ctx)
-		return nil, err
-	}
-	if _, err := tx.Exec(ctx, `SELECT set_config('role', $1, true)`, tenantx.RoleApp); err != nil {
-		_ = tx.Rollback(ctx)
-		return nil, err
-	}
-	return tx, nil
-}
-
 // oldSupplier is supplier withTx when both ids are set: BeginApp, then the supplier GUC.
 func oldSupplier(ctx context.Context, begin txBegin, orgID, userID int64) (pgx.Tx, error) {
 	tx, err := tenantx.BeginApp(ctx, begin, orgID)
@@ -479,7 +445,6 @@ type snap struct {
 	org      *string
 	staff    *string
 	observer *string
-	wallet   *string
 	supplier *string
 	grant    *string
 }
@@ -489,7 +454,6 @@ func (s snap) equal(o snap) bool {
 		sameStr(s.org, o.org) &&
 		sameStr(s.staff, o.staff) &&
 		sameStr(s.observer, o.observer) &&
-		sameStr(s.wallet, o.wallet) &&
 		sameStr(s.supplier, o.supplier) &&
 		sameStr(s.grant, o.grant)
 }
@@ -502,8 +466,8 @@ func sameStr(a, b *string) bool {
 }
 
 func (s snap) String() string {
-	return fmt.Sprintf("user=%s org=%s staff=%s observer=%s wallet=%s supplier=%s grant=%s",
-		s.user, showStr(s.org), showStr(s.staff), showStr(s.observer), showStr(s.wallet), showStr(s.supplier), showStr(s.grant))
+	return fmt.Sprintf("user=%s org=%s staff=%s observer=%s supplier=%s grant=%s",
+		s.user, showStr(s.org), showStr(s.staff), showStr(s.observer), showStr(s.supplier), showStr(s.grant))
 }
 
 func showStr(p *string) string {
@@ -520,10 +484,9 @@ func readSnap(ctx context.Context, tx pgx.Tx) (snap, error) {
 		       current_setting('app.current_org_id', true),
 		       current_setting('app.staff_access', true),
 		       current_setting('app.platform_observer_id', true),
-		       current_setting('app.current_wallet_user_id', true),
 		       current_setting('app.current_supplier_user_id', true),
 		       current_setting('app.automation_grant_id', true)`).Scan(
-		&s.user, &s.org, &s.staff, &s.observer, &s.wallet, &s.supplier, &s.grant)
+		&s.user, &s.org, &s.staff, &s.observer, &s.supplier, &s.grant)
 	return s, err
 }
 

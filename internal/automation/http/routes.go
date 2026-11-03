@@ -8,6 +8,7 @@ type Guard string
 const (
 	// GuardWorkspace is a workspace session (org_id required).
 	GuardWorkspace Guard = "workspace"
+	GuardAccount   Guard = "account"
 )
 
 // Route is one mounted operation.
@@ -23,6 +24,9 @@ type Route struct {
 // Routes is the route table for this file.
 func Routes() []Route {
 	return []Route{
+		{Method: "GET", Path: "/api/me/catalog-automation/grants", OperationID: "catalog_automation_grants_list", Guard: GuardAccount},
+		{Method: "POST", Path: "/api/me/catalog-automation/grants", OperationID: "catalog_automation_grant_create", Guard: GuardAccount},
+		{Method: "POST", Path: "/api/me/catalog-automation/grants/{id}/revoke", OperationID: "catalog_automation_grant_revoke", Guard: GuardAccount},
 		{Method: "GET", Path: "/api/automation/asset-sets", OperationID: "automation_asset_sets_list", RustOperationID: "automation_asset_sets_list", Guard: GuardWorkspace, Source: ""},
 		{Method: "POST", Path: "/api/automation/asset-sets", OperationID: "automation_asset_set_create", RustOperationID: "automation_asset_set_create", Guard: GuardWorkspace, Source: "src/automation/api/asset_sets.rs"},
 		{Method: "POST", Path: "/api/automation/commands/claim", OperationID: "automation_commands_claim", RustOperationID: "automation_commands_claim", Guard: GuardWorkspace, Source: ""},

@@ -31,8 +31,8 @@ function store(overrides: Partial<OzonStoreView> = {}): OzonStoreView {
     needs_reentry: true,
     can_manage: true,
     can_edit_credential: true,
-    permissions: { manage_store: true, edit_name: true, manage_key_grants: true, manage_tags: true, test_key: true, manage_key: true, delete_store: true },
-    assignee_key_manage: true,
+    permissions: { manage_store: true, edit_name: true, manage_tags: true, test_key: true, manage_key: true, delete_store: true },
+
     ...overrides,
   }
 }
@@ -113,7 +113,7 @@ test("missing Seller credentials SSR exposes an enabled Stores button", () => {
   assert.match(html, /role="status"/)
   assert.match(html, /Workspace 店铺密钥未配置/)
   assert.match(html, />打开店铺</)
-  assert.match(html, /重新拉取/)
+  assert.match(html, /aria-label="重新拉取类目"/)
   assert.doesNotMatch(html, /先刷新类目/)
   assert.doesNotMatch(html, /选择一级类目/)
   const buttonAt = html.indexOf(">打开店铺<")
@@ -126,7 +126,7 @@ test("missing Seller credentials SSR exposes an enabled Stores button", () => {
 })
 
 
-test("缺少提示词时提交摘要列出提示词缺失", () => {
+test("缺少商品事实时提交摘要列出商品事实缺失", () => {
   const issues = bindFormIssues({
     idPrefix: "compose",
     name: "数字油画 · 40×50cm",

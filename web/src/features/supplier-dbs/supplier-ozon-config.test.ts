@@ -16,6 +16,7 @@ import { textValue } from "@/features/workflow/workflow-draft"
 import {
   draftFromOzonConfigValues,
   draftToOzonConfigValues,
+  draftToOzonConfigComplexValues,
   seedSupplierRowDefaults,
   supplierOzonConfigIO,
   type PutSupplierOzonConfigBody,
@@ -79,7 +80,7 @@ function schema(): CategorySchemaView {
 const COORD = { description_category_id: 11, type_id: 101 }
 
 function savedConfig(over: Partial<SupplierOzonConfigData> = {}): SupplierOzonConfigData {
-  return {
+  return { complex_values: [],
     product_id: "p1",
     description_category_id: 11,
     type_id: 101,
@@ -140,6 +141,7 @@ test("io.put: 同一 ozon-config 路由整配置写回并带 expectedRevision CA
     return { config: savedConfig() }
   }) as typeof api.put
   const body: PutSupplierOzonConfigBody = {
+    complex_values: [],
     description_category_id: 11,
     type_id: 101,
     language: "zh_hans",
@@ -181,14 +183,12 @@ test("draftFromOzonConfigValues: fixed/attribute/complex 投成草稿，消失�
         { kind: "text", value: "白色" },
         { kind: "text", value: "米色" },
       ],
-      "attribute:7787:4": [
-        { kind: "options", options: [{ option_id: 9, value: "圣诞" }] },
-      ],
       "attribute:99999:0": [{ kind: "text", value: "已消失" }],
       junk: [{ kind: "text", value: "x" }],
       "fixed:notafield": [{ kind: "text", value: "y" }],
     },
     view,
+    [{complex_id:4,items:[{item_id:"11111111-1111-4111-8111-111111111111",values:{"attribute:7787:4":[{kind:"options",options:[{option_id:9,value:"圣诞"}]}]}}]}],
   )
   assert.deepEqual(draft.values.currency_code, { kind: "text", value: "RUB" })
   assert.deepEqual(draft.values.width, { kind: "integer", value: 300 })
@@ -201,6 +201,7 @@ test("draftFromOzonConfigValues: fixed/attribute/complex 投成草稿，消失�
       complex_id: 4,
       items: [
         {
+          item_id:"11111111-1111-4111-8111-111111111111",
           values: {
             attribute_7787: {
               kind: "multi_select",
@@ -279,13 +280,14 @@ test("draftToOzonConfigValues: 坐标键与行字段不写，fixed 按声明 kin
   assert.deepEqual(out["attribute:8578:0"], [
     { kind: "options", options: [{ option_id: 42, value: "XL" }] },
   ])
-  assert.deepEqual(out["attribute:7787:4"], [
+  assert.equal(out["attribute:7787:4"],undefined)
+  assert.deepEqual(draftToOzonConfigComplexValues(draft,view)[0]?.items[0]?.values["attribute:7787:4"], [
     { kind: "options", options: [{ option_id: 9, value: "圣诞" }] },
   ])
   assert.equal(out["attribute:4191:0"], undefined, "空值即不写键")
   assert.equal(
     Object.keys(out).length,
-    5,
+    4,
     "坐标键与行内生成字段不进 values",
   )
 })
@@ -355,8 +357,8 @@ test("numeric attribute editors persist typed values without truncating invalid 
   )
 })
 
-test("draftToOzonConfigValues: 复杂组多条目没有 wire 槽位，直接拒绝不写", () => {
-  const unrepresentable: WorkflowCategoryDraft = {
+test("complex groups preserve every item, its stable ID and order across config round trips", () => {
+  const draft: WorkflowCategoryDraft = {
     values: {},
     complex_values: [
       {
@@ -382,11 +384,12 @@ test("draftToOzonConfigValues: 复杂组多条目没有 wire 槽位，直接拒�
       },
     ],
   }
-  assert.throws(
-    () => draftToOzonConfigValues(unrepresentable, schema()),
-    /复杂组 4 的多条目/,
-    "末项覆盖会让前一项的值无声丢失 —— 宁可抛错不写",
-  )
+  draft.complex_values[0]!.items[0]!.item_id="11111111-1111-4111-8111-111111111111"
+  draft.complex_values[0]!.items[1]!.item_id="ci_233dcabfbac64c558e36b13b7d872aae"
+  const groups=draftToOzonConfigComplexValues(draft,schema())
+  assert.deepEqual(draftToOzonConfigValues(draft,schema()),{})
+  const restored=draftFromOzonConfigValues({},schema(),groups)
+  assert.deepEqual(restored.complex_values,draft.complex_values)
 })
 
 // ---------- 起稿与往返 ----------

@@ -30,7 +30,7 @@ import { ProductStockReading } from "./product-read-cells"
 
 import type { StoreProductRow } from "./products-api"
 import { dispatchChunks, reportOutcome, useOperationIds } from "./products-dispatch"
-import { actionBlockReason, parseStockInput } from "./products-mutation"
+import { actionBlockReason, parseStockInput, stockSku } from "./products-mutation"
 
 export function ProductStockCell({
   row,
@@ -94,14 +94,14 @@ function StockEditor({
     let cancelled = false
     setLoading(true)
     void opsHttp
-      .productsListWarehouses({ store_id: row.store_id, skus: [row.sku ?? 0] })
+      .productsListWarehouses({ store_id: row.store_id, skus: [stockSku(row.sku)] })
       .then((next) => {
         if (cancelled) return
         setWarehouses(next.warehouses)
         setStocks(next.stocks)
         const id = String(next.warehouses[0]?.warehouse_id ?? "")
         setWarehouseId(id)
-        setStockInput(String(currentStockPresent(next.stocks, row.sku ?? 0, id) ?? 0))
+        setStockInput(String(currentStockPresent(next.stocks, stockSku(row.sku), id) ?? 0))
       })
       .catch((reason) => {
         if (!cancelled) notifyCommandError(reason, "无法读取 Ozon 仓库，请稍后重试。")
@@ -119,7 +119,7 @@ function StockEditor({
     let request: ProductMutationRequest
     try {
       request = buildStockMutation(
-        [{ productId: row.product_id, offerId: row.offer_id, sku: row.sku ?? 0 }],
+        [{ productId: row.product_id, offerId: row.offer_id, sku: stockSku(row.sku) }],
         Number(warehouseId),
         stock,
       )
@@ -165,7 +165,7 @@ function StockEditor({
             onValueChange={(value) => {
               if (!value) return
               setWarehouseId(value)
-              setStockInput(String(currentStockPresent(stocks, row.sku ?? 0, value) ?? 0))
+              setStockInput(String(currentStockPresent(stocks, stockSku(row.sku), value) ?? 0))
             }}
           >
             <SelectTrigger aria-label={`${row.offer_id} 的仓库`}>

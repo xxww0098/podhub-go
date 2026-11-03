@@ -20,21 +20,12 @@ import (
 	admindomain "github.com/xxww0098/podhub-go/internal/admin/domain"
 	adminhttp "github.com/xxww0098/podhub-go/internal/admin/http"
 	httpapi "github.com/xxww0098/podhub-go/internal/app/api"
-	"github.com/xxww0098/podhub-go/internal/identity"
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
-	core "github.com/xxww0098/podhub-go/internal/listing/core/contract"
-	_ "github.com/xxww0098/podhub-go/internal/listing/core/service/engine"
+	core "github.com/xxww0098/podhub-go/internal/listing/core/service/engine"
 	platform "github.com/xxww0098/podhub-go/internal/listing/rules"
 )
 
-const adminBrief = "Товар: керамическая кружка 330 мл с принтом; это НЕ термокружка и НЕ стакан.\n" +
-	"Тема: только принт. Неясно → «Абстрактный принт».\n" +
-	"Заголовок: `Кружка керамическая 330 мл с принтом \"<тема>\"`\n" +
-	"Не пиши: чашка, стакан, термокружка.\n" +
-	"Описание: Керамическая кружка 330 мл с принтом: <видимый принт>. Основные цвета: <цвет1> и <цвет2>.\n" +
-	"Не выдумывай: вес, высоту, упаковку.\n"
-
-const adminIntegrationKey = "integration-adminb-key-32chars-min"
+const adminBrief = `{"product_type_ru":"Кружка","facts_ru":"керамическая 330 мл с принтом"}`
 
 func TestAdminBCatalogAndMedia(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -42,7 +33,6 @@ func TestAdminBCatalogAndMedia(t *testing.T) {
 	pool := migratedPool(t, ctx)
 	seedMatchingLease(t, ctx, pool, "admin", "adminb test")
 	platform.InvalidateBannedTags()
-	t.Setenv("CLOUD_INTEGRATION_CONFIG_KEY", adminIntegrationKey)
 
 	userID, orgID := insertWorkspace(t, ctx, pool, "adminb@pod.example", "AdminB")
 	if _, err := pool.Exec(ctx, `UPDATE organizations SET uuid = $2 WHERE id = $1`, orgID, "11111111-1111-4111-8111-111111111111"); err != nil {
@@ -66,15 +56,13 @@ func TestAdminBCatalogAndMedia(t *testing.T) {
 		}
 	}
 
-	eng, err := core.OpenEmbedded(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = eng.Close(context.Background()) })
+	eng := tagsEngine(t)
 	now := time.Date(2026, 8, 21, 17, 30, 0, 0, time.UTC)
-	h := mountAdminB(pool, access.FixedResolver{Principal: &access.Principal{
+	resolver := access.FixedResolver{Principal: &access.Principal{
 		UserID: userID, OrgID: orgID, PlatformRole: "super_admin",
-	}}, eng, func() time.Time { return now })
+	}}
+	clock := func() time.Time { return now }
+	h := mountAdminB(pool, resolver, eng, clock, nil)
 
 	rec := adminCall(h, http.MethodGet, "/api/admin/listing/packages/official?category_id=cat-admin-1", "", nil)
 	if rec.Code != http.StatusOK || rec.Body.String() != `{"data":{}}` {
@@ -237,7 +225,9 @@ func TestAdminBCatalogAndMedia(t *testing.T) {
 	adminWant(t, rec, http.StatusNotFound, "视频不存在或已删除")
 
 	rec = adminCall(h, http.MethodGet, "/api/admin/listing/packages/official?category_id=cat-admin-1", "", cookie(strings.Repeat("a", 43)))
-	adminWant(t, rec, http.StatusInternalServerError, "服务暂不可用")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"category_id":"cat-admin-1"`) {
+		t.Fatalf("official package %d %s", rec.Code, rec.Body.String())
+	}
 
 	origin := newAdminOrigin()
 	origin.put("podhub-persist", "media/notes/a.txt", []byte("note"), "text/plain", "")
@@ -245,9 +235,9 @@ func TestAdminBCatalogAndMedia(t *testing.T) {
 	srv := httptest.NewServer(origin)
 	t.Cleanup(srv.Close)
 
-	rec = adminCall(h, http.MethodGet, "/api/admin/media/storage?accountId=persist", "", nil)
+	rec = adminCall(h, http.MethodGet, "/api/admin/media/storage", "", nil)
 	adminWant(t, rec, http.StatusServiceUnavailable, "平台尚未配置媒体存储")
-	sealAdminConfig(t, ctx, pool, adminIntegrationKey, srv.URL, "adminb@pod.example")
+	h = mountAdminB(pool, resolver, eng, clock, adminMediaAccounts(srv.URL))
 
 	rec = adminCall(h, http.MethodGet, "/api/admin/media/storage?accountId=persist", "", nil)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"workspaceName":"AdminB"`) || !strings.Contains(rec.Body.String(), `"objects":2`) {
@@ -326,64 +316,53 @@ func TestAdminBCatalogAndMedia(t *testing.T) {
 		t.Fatal(rec.Header())
 	}
 
-	sealAdminConfig(t, ctx, pool, adminIntegrationKey, "https://example.com", "adminb@pod.example")
+	// A non-loopback endpoint is refused before any request: it is neither the
+	// configured R2 API origin nor a loopback test origin.
+	h = mountAdminB(pool, resolver, eng, clock, adminMediaAccounts("https://example.com"))
 	rec = adminCall(h, http.MethodGet, "/api/admin/media/storage?accountId=persist", "", nil)
-	adminWant(t, rec, http.StatusServiceUnavailable, "refusing non-loopback media host")
+	adminWant(t, rec, http.StatusServiceUnavailable, "refusing unconfigured R2 origin")
 }
 
-func TestAdminBStandingOrder(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
-	pool := migratedPool(t, ctx)
-	superID, _ := insertWorkspace(t, ctx, pool, "super-adminb@pod.example", "Super")
-	userID, _ := insertWorkspace(t, ctx, pool, "user-adminb@pod.example", "User")
-	if _, err := pool.Exec(ctx, `UPDATE account_users SET role = 'super_admin' WHERE id = $1`, superID); err != nil {
-		t.Fatal(err)
-	}
-	h := mountAdminB(pool, identity.New(pool), nil, nil)
-	superToken := strings.Repeat("s", 43)
-	userToken := strings.Repeat("u", 43)
-	insertSession(t, ctx, pool, superID, superToken)
-	insertSession(t, ctx, pool, userID, userToken)
-
-	rec := adminCall(h, http.MethodGet, "/api/admin/listing/packages/official?category_id=cat", "", cookie(superToken))
-	adminWant(t, rec, http.StatusForbidden, "请先绑定验证器")
-
-	insertTotp(t, ctx, pool, superID, false)
-	rec = adminCall(h, http.MethodGet, "/api/admin/listing/packages/official?category_id=cat", "", cookie(superToken))
-	adminWant(t, rec, http.StatusForbidden, "请先绑定验证器")
-
-	if _, err := pool.Exec(ctx, `UPDATE account_admin_totp SET confirmed_at = clock_timestamp() WHERE user_id = $1`, superID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `UPDATE account_sessions SET admin_step_up_until = clock_timestamp() - interval '1 minute' WHERE user_id = $1`, superID); err != nil {
-		t.Fatal(err)
-	}
-	rec = adminCall(h, http.MethodGet, "/api/admin/listing/packages/official?category_id=cat", "", cookie(superToken))
-	adminWant(t, rec, http.StatusForbidden, "管理操作需要重新验证")
-
-	insertTotp(t, ctx, pool, userID, true)
-	if _, err := pool.Exec(ctx, `UPDATE account_sessions SET admin_step_up_until = clock_timestamp() + interval '15 minute' WHERE user_id = $1`, userID); err != nil {
-		t.Fatal(err)
-	}
-	rec = adminCall(h, http.MethodGet, "/api/admin/listing/packages/official?category_id=cat", "", cookie(userToken))
-	adminWant(t, rec, http.StatusForbidden, "需要超级管理员权限")
-
-	if _, err := pool.Exec(ctx, `UPDATE account_sessions SET admin_step_up_until = clock_timestamp() + interval '15 minute' WHERE user_id = $1`, superID); err != nil {
-		t.Fatal(err)
-	}
-	rec = adminCall(h, http.MethodGet, "/api/admin/listing/packages/official?category_id=cat", "", cookie(superToken))
-	if rec.Code != http.StatusOK || rec.Body.String() != `{"data":{}}` {
-		t.Fatalf("step-up %d %s", rec.Code, rec.Body.String())
-	}
-}
-
-func mountAdminB(pool *pgxpool.Pool, resolver access.Resolver, eng core.Engine, now func() time.Time) http.Handler {
+func mountAdminB(pool *pgxpool.Pool, resolver access.Resolver, eng *core.Engine, now func() time.Time, accounts []admindomain.CloudAccount) http.Handler {
 	r := chi.NewRouter()
-	adminhttp.Mount(r, adminhttp.Deps{Ported: httpapi.AdminPorted(&httpapi.Server{
-		Pool: pool, Access: resolver, Engine: eng, Now: now,
-	})})
+	var resolve adminhttp.Resolve
+	if resolver != nil {
+		resolve = func(req *http.Request) (*adminhttp.Session, *adminhttp.Refusal, error) {
+			p, refusal, err := resolver.Resolve(req)
+			if err != nil || refusal != nil || p == nil {
+				if refusal == nil {
+					return nil, nil, err
+				}
+				return nil, &adminhttp.Refusal{Status: refusal.Status, Message: refusal.Message}, nil
+			}
+			return &adminhttp.Session{UserID: p.UserID, OrgID: p.OrgID, WorkspaceRole: p.WorkspaceRole, PlatformRole: p.PlatformRole, Email: p.Email, PublicID: p.PublicID, TokenHash: p.TokenHash}, nil, nil
+		}
+	}
+	adminhttp.Mount(r, adminhttp.Deps{Ported: httpapi.AdminPorted(&httpapi.Server{Pool: pool, Access: resolver, Engine: eng, Now: now}, accounts), Resolve: resolve})
 	return r
+}
+
+func TestAdminMediaAuditProductionRole(t *testing.T) {
+	f := newIdentityRuntimeFixture(t)
+	var orgID int64
+	if err := f.fixture.QueryRow(f.ctx, `SELECT id FROM organizations WHERE owner_user_id=96311`).Scan(&orgID); err != nil {
+		t.Fatal(err)
+	}
+	origin := newAdminOrigin()
+	origin.put("podhub-persist", "media/notes/role.txt", []byte("note"), "text/plain", "")
+	server := httptest.NewServer(origin)
+	t.Cleanup(server.Close)
+	resolver := access.FixedResolver{Principal: &access.Principal{UserID: 96311, OrgID: orgID, PlatformRole: "super_admin"}}
+	h := mountAdminB(f.runtime, resolver, nil, time.Now, adminMediaAccounts(server.URL))
+	rec := adminCall(h, http.MethodGet, "/api/admin/media/storage?accountId=persist", "", nil)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"objects":1`) {
+		t.Fatalf("normal-role media statistics: %d %s", rec.Code, rec.Body.String())
+	}
+	var audits int
+	if err := f.fixture.QueryRow(f.ctx, `SELECT count(*) FROM audit_logs WHERE user_id=96311 AND action='media_storage_scanned' AND entity_id='persist'`).Scan(&audits); err != nil || audits != 1 {
+		t.Fatalf("persisted media read audit: rows=%d err=%v", audits, err)
+	}
+	f.assertClean(t)
 }
 
 func adminCall(h http.Handler, method, path, body string, header http.Header) *httptest.ResponseRecorder {
@@ -424,77 +403,17 @@ func cookie(token string) http.Header {
 	return http.Header{"Cookie": []string{"sid=" + token}}
 }
 
-func insertSession(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID int64, token string) {
-	t.Helper()
-	sum := sha256.Sum256([]byte(token))
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO account_sessions (token_hash, user_id, expires_at)
-		VALUES ($1, $2, clock_timestamp() + interval '1 day')`, hex.EncodeToString(sum[:]), userID); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func insertTotp(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID int64, confirmed bool) {
-	t.Helper()
-	var at any
-	if confirmed {
-		at = time.Now().UTC()
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO account_admin_totp (user_id, secret_nonce, secret_ciphertext, confirmed_at)
-		VALUES ($1, $2, $3, $4)`, userID, []byte("0123456789ab"), []byte("0123456789abcdef0"), at); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func sealAdminConfig(t *testing.T, ctx context.Context, pool *pgxpool.Pool, secret, endpoint, by string) {
-	t.Helper()
-	provider := "legacy_s3"
-	plain, err := json.Marshal(map[string]any{
-		"schemaVersion": 1,
-		"storageBuckets": []map[string]any{
-			{
-				"id": "persist", "role": "assets", "provider": provider, "endpoint": endpoint, "region": "auto",
-				"bucket": "podhub-persist", "keyPrefix": "media", "publicBaseUrl": endpoint + "/public",
-				"forcePathStyle": true, "accessKeyId": "AKIATEST", "secretAccessKey": "secretsecretsecretsecret",
-				"active": true,
-			},
-			{
-				"id": "slice", "role": "transit", "provider": provider, "endpoint": endpoint, "region": "auto",
-				"bucket": "podhub-slices", "keyPrefix": "media", "publicBaseUrl": endpoint + "/public",
-				"forcePathStyle": true, "accessKeyId": "AKIATEST", "secretAccessKey": "secretsecretsecretsecret",
-				"active": false,
-			},
-			{
-				"id": "bare", "role": "private", "provider": provider, "endpoint": endpoint, "region": "auto",
-				"bucket": "podhub-bare", "keyPrefix": "", "publicBaseUrl": endpoint + "/public",
-				"forcePathStyle": true, "accessKeyId": "AKIATEST", "secretAccessKey": "secretsecretsecretsecret",
-				"active": false,
-			},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	nonce := []byte("0123456789ab")
-	sealed, err := admindomain.SealSnapshot(secret, nonce, plain)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tag, err := pool.Exec(ctx, `
-		UPDATE platform_integration_config
-		SET revision = revision + 1, nonce = $1, ciphertext = $2, updated_at_ms = 2, updated_by_account_uuid = $3
-		WHERE singleton`, nonce, sealed, by)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tag.RowsAffected() > 0 {
-		return
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO platform_integration_config (singleton, revision, nonce, ciphertext, updated_at_ms, updated_by_account_uuid)
-		VALUES (true, 1, $1, $2, 1, $3)`, nonce, sealed, by); err != nil {
-		t.Fatal(err)
+func adminMediaAccounts(endpoint string) []admindomain.CloudAccount {
+	return []admindomain.CloudAccount{
+		{ID: "persist", Role: "assets", Provider: "legacy_s3", Endpoint: endpoint, Region: "auto",
+			Bucket: "podhub-persist", KeyPrefix: "media", PublicBaseURL: endpoint + "/public",
+			ForcePathStyle: true, AccessKeyID: "AKIATEST", SecretAccessKey: "secretsecretsecretsecret", Active: true},
+		{ID: "slice", Role: "transit", Provider: "legacy_s3", Endpoint: endpoint, Region: "auto",
+			Bucket: "podhub-slices", KeyPrefix: "media", PublicBaseURL: endpoint + "/public",
+			ForcePathStyle: true, AccessKeyID: "AKIATEST", SecretAccessKey: "secretsecretsecretsecret"},
+		{ID: "bare", Role: "private", Provider: "legacy_s3", Endpoint: endpoint, Region: "auto",
+			Bucket: "podhub-bare", PublicBaseURL: endpoint + "/public",
+			ForcePathStyle: true, AccessKeyID: "AKIATEST", SecretAccessKey: "secretsecretsecretsecret"},
 	}
 }
 

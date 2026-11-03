@@ -1,21 +1,9 @@
-/** 主要信息：供货事实与素材失焦即写；平台价确认后追加新版本。 */
+/** 商品信息只维护卖家选品事实与上架素材；平台价确认后追加新版本。 */
 import { useRef, useState } from "react"
-import {
-  Box,
-  Brush,
-  ClipboardList,
-  Clock,
-  Hash,
-  Layers,
-  Plus,
-  Ruler,
-  Scale,
-  Tag,
-  Type,
-  Weight,
-} from "lucide-react"
+import { Plus } from "lucide-react"
 
 import type {
+  SupplierDbPriceVersion,
   SupplierDbPropDef,
   SupplierDbRow,
   UpsertSupplierDbPropRequest,
@@ -23,9 +11,14 @@ import type {
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { Input } from "@/components/ui/input"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
+import { formatDateTimeMinute } from "@/lib/format"
 import { notifyError } from "@/lib/notify"
 
-import { SupplierPropIcon } from "./supplier-prop-icon"
 import {
   CommitInput,
   CommitTextarea,
@@ -45,6 +38,56 @@ import {
 } from "./supplier-row-fields"
 import { SupplierRowMedia } from "./supplier-row-media"
 
+/** 当前价在价格里；历史只列上一版与更早版本，避免和当前价重复。 */
+function PriceHistoryLine({ versions }: { versions: SupplierDbPriceVersion[] }) {
+  const previous = versions.slice(1)
+  if (!previous.length) return null
+  const [latest, ...older] = previous
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-3 text-meta text-muted-foreground">
+      <span className="inline-flex flex-wrap items-baseline gap-x-2">
+        <span>上次调价</span>
+        <span className="font-mono text-compact tabular-nums text-foreground">
+          {formatCnyCents(latest.priceCents)}
+        </span>
+        <span>{formatDateTimeMinute(latest.createdAtMs)}</span>
+      </span>
+      {older.length ? (
+        <Popover>
+          <PopoverTrigger
+            render={
+              <button
+                type="button"
+                className="cursor-pointer rounded-sm outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            }
+          >
+            全部 {previous.length} 次
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-64">
+            <p className="text-compact font-medium">历史平台价</p>
+            <ul className="mt-2 flex flex-col gap-1.5">
+              {previous.map((version, index) => (
+                <li
+                  key={`${version.createdAtMs}-${index}`}
+                  className="flex items-baseline justify-between gap-3 text-compact"
+                >
+                  <span className="font-mono tabular-nums">
+                    {formatCnyCents(version.priceCents)}
+                  </span>
+                  <span className="text-meta text-muted-foreground">
+                    {formatDateTimeMinute(version.createdAtMs)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </PopoverContent>
+        </Popover>
+      ) : null}
+    </div>
+  )
+}
+
 export function SupplierRowInfoTab({
   row,
   propDefs,
@@ -52,6 +95,7 @@ export function SupplierRowInfoTab({
   onUpdateProp,
   onAddProp,
   onAdjustPrice,
+  canAdjustPrice = false,
 }: {
   row: SupplierDbRow
   propDefs: SupplierDbPropDef[]
@@ -62,6 +106,7 @@ export function SupplierRowInfoTab({
   ) => Promise<boolean>
   onAddProp?: () => void
   onAdjustPrice: (priceCents: number, note: string) => Promise<boolean>
+  canAdjustPrice?: boolean
 }) {
   const [adjusting, setAdjusting] = useState(false)
   const [price, setPrice] = useState("")
@@ -69,11 +114,12 @@ export function SupplierRowInfoTab({
   const [saving, setSaving] = useState(false)
   const [invalid, setInvalid] = useState(false)
   const pending = useRef(false)
+  const visiblePropDefs = propDefs.filter((def) => def.sourceId === row.sourceId && def.sellerVisible)
 
   return (
-    <div className="flex flex-col gap-5" data-supplier-row-info-tab="">
-      <SheetSection title="商品资料" columns={2}>
-        <PropRow icon={<Type />} name="名称">
+    <div className="flex flex-col gap-4" data-supplier-row-info-tab="">
+      <SheetSection title="商品资料">
+        <PropRow name="名称" essential note="用于选品识别，最多 80 个字符；留空时暂存为“未命名”。">
           <CommitInput
             ariaLabel="名称"
             value={row.title}
@@ -81,7 +127,7 @@ export function SupplierRowInfoTab({
             onCommit={(next) => onPatch({ title: next })}
           />
         </PropRow>
-        <PropRow icon={<Hash />} name="编号">
+        <PropRow name="编号" required note="全库唯一的商品编号，新建商品时自动生成。">
           <CommitInput
             ariaLabel="编号"
             value={row.platformCode}
@@ -91,7 +137,7 @@ export function SupplierRowInfoTab({
           />
         </PropRow>
         {/* 规格是同款切换的判别字段：跟编号放一起，改它即改页头规格名。 */}
-        <PropRow icon={<Ruler />} name="规格">
+        <PropRow name="规格" essential required={Boolean(row.variantGroup?.trim())} note="用于区分尺寸、颜色等款式；同款分组内必须填写且不能重复。">
           <CommitInput
             ariaLabel="规格"
             value={row.size}
@@ -99,15 +145,72 @@ export function SupplierRowInfoTab({
             onCommit={(next) => onPatch({ size: next })}
           />
         </PropRow>
-        <PropRow icon={<Layers />} name="款号（同款分组）">
+      </SheetSection>
+
+      <SheetSection title="价格">
+        <PropRow name="成本价" note="内部供货成本，卖家不可见。">
+          <CommitInput ariaLabel="成本价（元）" value={centsToInput(row.costCents)} inputMode="decimal" placeholder="未设置" onCommit={async (next) => {
+            const cents = priceCentsFromYuan(next)
+            if (cents === undefined || cents === null && row.shippingCostCents != null) { notifyError("成本价需大于 0；清空前请先将运费设为零"); return false }
+            return onPatch({ costCents: cents })
+          }} />
+        </PropRow>
+        <PropRow name="运费" essential note="卖家可见的货源运费，单位为人民币元；不填按零运费。供货成本在商品表格维护。">
           <CommitInput
-            ariaLabel="款号（同款分组）"
-            value={row.variantGroup ?? ""}
-            placeholder="留空为独立商品"
-            onCommit={(next) => onPatch({ variantGroup: next })}
+            ariaLabel="运费（元）"
+            value={centsToInput(row.shippingCostCents ?? 0)}
+            inputMode="decimal"
+            mono
+            placeholder="¥"
+            onCommit={async (next) => {
+              const cents = nonNegativeCentsFromYuan(next)
+              if (cents === undefined) {
+                notifyError("运费需为不小于 0 的金额（元）")
+                return false
+              }
+              return onPatch({ shippingCostCents: cents === 0 ? null : cents })
+            }}
           />
         </PropRow>
-        <PropRow icon={<Layers />} name="材质">
+        <PropRow name="平台价" required note="上架前必须设置平台价。通过调价追加价格版本，旧价保留在历史中。">
+          <div className="flex flex-col gap-1.5">
+            <div className="flex min-h-11 items-center justify-between gap-2 rounded-lg bg-muted/60 px-3 py-1.5">
+              {row.platformPriceCents == null ? (
+                <span className="text-compact text-muted-foreground">未定价</span>
+              ) : (
+                <span className="font-mono text-base font-semibold tabular-nums">
+                  {formatCnyCents(row.platformPriceCents)}
+                </span>
+              )}
+              {canAdjustPrice ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setPrice(centsToInput(row.platformPriceCents))
+                    setNote("")
+                    setInvalid(false)
+                    setAdjusting(true)
+                  }}
+                >
+                  调价
+                </Button>
+              ) : (
+                <span className="text-meta text-muted-foreground">由超级管理员定价</span>
+              )}
+            </div>
+            <PriceHistoryLine versions={row.priceHistory ?? []} />
+          </div>
+        </PropRow>
+      </SheetSection>
+
+      <SheetSection title="素材">
+        <SupplierRowMedia row={row} />
+      </SheetSection>
+
+      <SheetSection title="商品属性">
+        <PropRow name="材质">
           <CommitInput
             ariaLabel="材质"
             value={row.material}
@@ -115,7 +218,7 @@ export function SupplierRowInfoTab({
             onCommit={(next) => onPatch({ material: next })}
           />
         </PropRow>
-        <PropRow icon={<Tag />} name="品牌">
+        <PropRow name="品牌">
           <CommitInput
             ariaLabel="品牌"
             value={row.brand}
@@ -123,7 +226,7 @@ export function SupplierRowInfoTab({
             onCommit={(next) => onPatch({ brand: next })}
           />
         </PropRow>
-        <PropRow icon={<Brush />} name="工艺">
+        <PropRow name="工艺">
           <CommitInput
             ariaLabel="工艺"
             value={row.craft}
@@ -131,7 +234,7 @@ export function SupplierRowInfoTab({
             onCommit={(next) => onPatch({ craft: next })}
           />
         </PropRow>
-        <PropRow icon={<Clock />} name="交期">
+        <PropRow name="交期" essential note="预计发货时间，供卖家判断履约时效。">
           <CommitInput
             ariaLabel="交期"
             value={row.leadTime}
@@ -139,13 +242,10 @@ export function SupplierRowInfoTab({
             onCommit={(next) => onPatch({ leadTime: next })}
           />
         </PropRow>
-        {propDefs.map((def) => (
+        {visiblePropDefs.map((def) => (
           <PropRow
             key={def.propId}
-            icon={<SupplierPropIcon type={def.type} />}
             name={def.name}
-            locked={!def.sellerVisible}
-            wide={def.type === "long_text" || def.type === "multi_select"}
           >
             <CustomPropField
               def={def}
@@ -165,110 +265,12 @@ export function SupplierRowInfoTab({
             <Plus aria-hidden className="size-3.5" />
             添加属性
           </button>
-        ) : propDefs.length ? null : (
-          <p className="text-meta text-faint-foreground">
-            自定义属性在表头「＋ 添加属性」维护。
-          </p>
-        )}
+        ) : null}
       </SheetSection>
 
-      <SheetSection title="价格" columns={2}>
-        <PropRow icon={<Hash />} name="成本价" locked>
-          <CommitInput
-            ariaLabel="成本价（元）"
-            value={centsToInput(row.costCents)}
-            inputMode="decimal"
-            mono
-            placeholder="¥"
-            onCommit={async (next) => {
-              const cents = priceCentsFromYuan(next)
-              if (cents === undefined) {
-                notifyError("成本价需为大于 0 的金额（元）")
-                return false
-              }
-              return onPatch({ costCents: cents })
-            }}
-          />
-        </PropRow>
-        {/* 不填即零运费：空值在面板里按 ¥0.00 读出；提交 0 或清空都落回
-            null —— offer 行只记 > 0 的成本事实（ck_sc_source_offers_shipping）。 */}
-        <PropRow icon={<Hash />} name="运费" locked>
-          <CommitInput
-            ariaLabel="运费（元）"
-            value={centsToInput(row.shippingCostCents ?? 0)}
-            inputMode="decimal"
-            mono
-            placeholder="¥"
-            onCommit={async (next) => {
-              const cents = nonNegativeCentsFromYuan(next)
-              if (cents === undefined) {
-                notifyError("运费需为不小于 0 的金额（元）")
-                return false
-              }
-              return onPatch({ shippingCostCents: cents === 0 ? null : cents })
-            }}
-          />
-        </PropRow>
-        <PropRow icon={<Hash />} name="平台价">
-          <div className="flex min-h-9 items-center justify-between gap-2">
-            <span className="font-mono tabular-nums">{formatCnyCents(row.platformPriceCents)}</span>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setPrice(centsToInput(row.platformPriceCents))
-                setNote("")
-                setInvalid(false)
-                setAdjusting(true)
-              }}
-            >
-              调价
-            </Button>
-          </div>
-        </PropRow>
-        <PropRow icon={<Hash />} name="建议零售价">
-          <CommitInput
-            ariaLabel="建议零售价（元）"
-            value={centsToInput(row.suggestedRetailCents)}
-            inputMode="decimal"
-            mono
-            placeholder="¥"
-            onCommit={async (next) => {
-              const cents = priceCentsFromYuan(next)
-              if (cents === undefined) {
-                notifyError("零售价需为大于 0 的金额（元）")
-                return false
-              }
-              return onPatch({ suggestedRetailCents: cents })
-            }}
-          />
-        </PropRow>
-        <PropRow icon={<Hash />} name="平台划线价">
-          <CommitInput
-            ariaLabel="平台划线价（元）"
-            value={centsToInput(row.suggestedOldPriceCents)}
-            inputMode="decimal"
-            mono
-            placeholder="¥"
-            onCommit={async (next) => {
-              const cents = priceCentsFromYuan(next)
-              if (cents === undefined) {
-                notifyError("划线价（平台）需为大于 0 的金额（元）")
-                return false
-              }
-              return onPatch({ suggestedOldPriceCents: cents })
-            }}
-          />
-        </PropRow>
-      </SheetSection>
-
-      <SheetSection title="包装与清单" columns={2}>
-        <p className="col-span-full text-meta text-muted-foreground">
-          厂家供货资料；各销售平台的包装字段独立维护。
-        </p>
-        <PropRow icon={<Box />} name="包装尺寸" wide>
-          <div className="grid grid-cols-3 gap-3">
+      <SheetSection title="包装与清单">
+        <PropRow name="包装尺寸" essential note="包装的宽、高、深，单位为毫米，用于评估运输体积。">
+          <div className="grid grid-cols-3 gap-2">
             {(
               [
                 ["packWidthMm", "包装宽度"],
@@ -297,21 +299,14 @@ export function SupplierRowInfoTab({
             ))}
           </div>
         </PropRow>
-        <PropRow icon={<Weight />} name="毛重">
+        <PropRow name="毛重" essential note="商品含包装的总重量，用于评估运输费用；可切换 g / kg。">
           <WeightCommitInput
             name="毛重"
             grams={row.grossWeightG}
             onCommit={(grams) => onPatch({ grossWeightG: grams })}
           />
         </PropRow>
-        <PropRow icon={<Scale />} name="包装重量">
-          <WeightCommitInput
-            name="包装重量"
-            grams={row.packWeightG}
-            onCommit={(grams) => onPatch({ packWeightG: grams })}
-          />
-        </PropRow>
-        <PropRow icon={<ClipboardList />} name="商品清单" wide>
+        <PropRow name="商品清单" essential wide note="明确一件商品实际包含的物品和数量。">
           <CommitTextarea
             ariaLabel="商品清单"
             value={row.contents}
@@ -322,27 +317,14 @@ export function SupplierRowInfoTab({
         </PropRow>
       </SheetSection>
 
-      <SheetSection title="素材">
-        <SupplierRowMedia row={row} />
-      </SheetSection>
-
-      <SheetSection title="描述与备注">
-        <PropRow icon={<Type />} name="商品描述">
+      <SheetSection title="商品说明">
+        <PropRow name="商品描述">
           <CommitTextarea
             ariaLabel="商品描述"
             value={row.description}
             rows={5}
             placeholder="多行正文，按换行展示"
             onCommit={(next) => onPatch({ description: next })}
-          />
-        </PropRow>
-        <PropRow icon={<ClipboardList />} name="内部备注" locked>
-          <CommitTextarea
-            ariaLabel="内部备注"
-            value={row.internalNote}
-            rows={3}
-            placeholder="仅平台可见"
-            onCommit={(next) => onPatch({ internalNote: next })}
           />
         </PropRow>
       </SheetSection>

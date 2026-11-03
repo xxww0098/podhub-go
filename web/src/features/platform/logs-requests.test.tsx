@@ -71,6 +71,7 @@ test("endpoint labels use the upstream protocol", () => {
   assert.equal(endpointLabel("chat_completions"), "chat/completions")
   assert.equal(endpointLabel("responses"), "responses")
   assert.equal(endpointLabel("anthropic_messages"), "messages")
+  assert.equal(endpointLabel("other_protocol"), "other_protocol")
   assert.equal(endpointLabel(undefined), "")
 })
 
@@ -146,31 +147,26 @@ test("the API request log stays on the staff-only platform screen", () => {
   assert.doesNotMatch(staff, /全平台各 Workspace/)
 })
 
-test("the staff ledger shows an empty state before any row arrives", () => {
+test("the staff ledger does not claim an empty result before the read completes", () => {
   const html = renderToStaticMarkup(<AdminUsageScreen />)
-  assert.match(html, /暂无 API 请求日志/)
+  assert.doesNotMatch(html, /暂无 API 请求日志/)
   assert.doesNotMatch(html, /加载失败/)
 })
 
-test("the table separates Workspace and email and exposes no credential column", () => {
+test("the table preserves identifying fields and exposes no credential column", () => {
   const source = readFileSync(new URL("./logs.tsx", import.meta.url), "utf8")
   for (const column of [
-    "Workspace",
-    "用户邮箱",
-    "模型 / 请求",
-    "渠道",
-    "思考深度",
-    "总延迟",
-    "生成速度",
-    "输入",
-    "输出",
-    "错误信息",
+    "请求名称",
+    "耗时",
+    "输入 / 输出 · 费用",
   ]) {
     assert.match(source, new RegExp(`TableHead[^>]*>${column}`))
   }
+  const row = renderToStaticMarkup(<RequestRow row={ledgerRow(30_000_000, 0)} />)
+  assert.match(row, /演示 Workspace/)
+  assert.match(row, /op@example.com/)
+  assert.match(row, /aria-expanded="false"/)
   assert.doesNotMatch(source, /凭据/)
-  assert.match(source, /row\.thinking_depth \?\? ""/)
-  assert.match(source, /row\.channel_name \?\? ""/)
   assert.match(source, /完整上游错误/)
   assert.match(source, /row\.upstream_error/)
 })
@@ -186,6 +182,6 @@ test("the staff ledger has server-backed request filters", () => {
   ]) {
     assert.match(source, new RegExp(label))
   }
-  assert.match(source, /adminListAiRequests\(targetPage, PAGE_SIZE, filters\)/)
+  assert.match(source, /adminListAiRequests\(targetPage, pageSize, effectiveFilters\)/)
   assert.match(source, /没有符合当前筛选条件的请求/)
 })

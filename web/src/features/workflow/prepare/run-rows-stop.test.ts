@@ -18,7 +18,7 @@ import {
   withStubbedDevice,
 } from "./executor-test-support"
 
-test("停止一键准备后不新增 OCR 或上传 Job", async () => {
+test("停止一键准备后不新增识图或上传 Job", async () => {
   setCardContext({ psdTemplateSha256: "template-sha" })
   setErrorFeedbackContext({ sessionKey: "stop-preparation-receipts" })
   let receipts = 0
@@ -28,7 +28,7 @@ test("停止一键准备后不新增 OCR 或上传 Job", async () => {
       for (const event of call.body.events) {
         assert.equal(event.kind, "error_feedback.v1")
         assert.equal(event.schema_version, 1)
-        assert.match(event.id, /^[0-9]{20}$/)
+        assert.match(event.id, /^[0-9A-F][0-9A-HJKMNP-TV-Z]{12}$/)
         const payload = JSON.parse(event.payload_json)
         assert.equal(payload.errorId, event.id)
         assert.equal(payload.code, "workflow_media_writeback_stale")

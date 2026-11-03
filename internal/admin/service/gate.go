@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/xxww0098/podhub-go/internal/platform/db"
 	"github.com/xxww0098/podhub-go/internal/platform/httpx/jsonwire"
 	"github.com/xxww0098/podhub-go/internal/platform/writer"
 )
@@ -50,41 +51,39 @@ func (d Deps) under(ctx context.Context, disabled string, fn func(*gate) error) 
 	if d.Pool == nil {
 		return fail(500, "INTERNAL", "服务暂不可用")
 	}
-	tx, err := d.Pool.Begin(ctx)
+	err := db.InTx(ctx, d.Pool, db.AppRole(), func(tx pgx.Tx) error {
+		defer writer.Forget(tx)
+		now := d.nowMS()
+		id := writer.Identity{Holder: d.Holder, InstanceID: d.Instance}
+		if id.Holder == "" {
+			id.Holder = writer.HolderAxum
+		}
+		if id.InstanceID == "" {
+			id.InstanceID = writer.ProcessIdentity().InstanceID
+		}
+		held, err := writer.Assert(ctx, tx, adminDomain, id, now, disabled)
+		g := &gate{tx: tx, Lease: Lease{ID: held.ID, Fence: held.Fence}}
+		if writer.IsDisabled(err) {
+			return fail(503, "WRITES_DISABLED", disabled)
+		}
+		if err != nil {
+			return err
+		}
+		if err := fn(g); err != nil {
+			return err
+		}
+		if g.n == 0 {
+			return fail(500, "INTERNAL", "服务暂不可用")
+		}
+		return nil
+	})
 	if err != nil {
-		return mapDB(err, 500, "INTERNAL", "服务暂不可用")
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	defer writer.Forget(tx)
-	now := d.nowMS()
-	id := writer.Identity{Holder: d.Holder, InstanceID: d.Instance}
-	if id.Holder == "" {
-		id.Holder = writer.HolderAxum
-	}
-	if id.InstanceID == "" {
-		id.InstanceID = writer.ProcessIdentity().InstanceID
-	}
-	held, err := writer.Assert(ctx, tx, adminDomain, id, now, disabled)
-	g := &gate{tx: tx, Lease: Lease{ID: held.ID, Fence: held.Fence}}
-	if writer.IsDisabled(err) {
-		return fail(503, "WRITES_DISABLED", disabled)
-	}
-	if err != nil {
-		return mapDB(err, 500, "INTERNAL", "服务暂不可用")
-	}
-	if err = fn(g); err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			return err
 		}
 		if _, ok := AsFail(err); ok {
 			return err
 		}
-		return mapDB(err, 500, "INTERNAL", "服务暂不可用")
-	}
-	if g.n == 0 {
-		return fail(500, "INTERNAL", "服务暂不可用")
-	}
-	if err = tx.Commit(ctx); err != nil {
 		return mapDB(err, 500, "INTERNAL", "服务暂不可用")
 	}
 	return nil
@@ -122,7 +121,9 @@ func (d Deps) audit(ctx context.Context, org, user int64, module, entity, entity
 	if d.Pool == nil {
 		return fail(500, "INTERNAL", "服务暂不可用")
 	}
-	err := writeAudit(ctx, d.Pool, Lease{}, org, user, module, entity, entityID, method, path, action, message, nil)
+	err := db.InTx(ctx, d.Pool, db.Staff(), func(tx pgx.Tx) error {
+		return writeAudit(ctx, tx, Lease{}, org, user, module, entity, entityID, method, path, action, message, nil)
+	})
 	if err != nil {
 		if _, ok := AsFail(err); ok {
 			return err

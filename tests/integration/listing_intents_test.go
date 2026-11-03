@@ -1,9 +1,8 @@
 package integration
 
 import (
-	"bytes"
-	"compress/gzip"
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -12,18 +11,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
-	listing "github.com/xxww0098/podhub-go/internal/listing/core/contract"
 )
 
 func TestListingIntentsCatalog(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	pool := migratedPool(t, ctx)
-	engine, err := listing.OpenEmbedded(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = engine.Close(context.Background()) })
+	engine := tagsEngine(t)
 
 	owner, orgA := insertWorkspace(t, ctx, pool, "intents-a@example.com", "Intents A")
 	other, orgB := insertWorkspace(t, ctx, pool, "intents-b@example.com", "Intents B")
@@ -152,7 +146,11 @@ func TestListingIntentsCatalog(t *testing.T) {
 		t.Fatalf("refusal %d %s", refused.Code, refused.Body.String())
 	}
 
-	claimRec := callJSON(reviewerH, http.MethodPost, "/api/listing/jobs/"+jobA+"/claim", "")
+	deniedClaim := callJSON(reviewerH, http.MethodPost, "/api/listing/jobs/"+jobA+"/claim", "")
+	if deniedClaim.Code != http.StatusForbidden {
+		t.Fatalf("invalid role claimed job: %d %s", deniedClaim.Code, deniedClaim.Body.String())
+	}
+	claimRec := callJSON(ownerH, http.MethodPost, "/api/listing/jobs/"+jobA+"/claim", "")
 	if claimRec.Code != http.StatusOK || !strings.Contains(claimRec.Body.String(), `"data":null`) {
 		t.Fatalf("claim %d %s", claimRec.Code, claimRec.Body.String())
 	}
@@ -164,11 +162,11 @@ func TestListingIntentsCatalog(t *testing.T) {
 		t.Fatalf("heartbeat %d %s", beat.Code, beat.Body.String())
 	}
 
-	expect(t, ownerH, http.MethodGet, "/api/catalog/fetch-config", http.StatusOK,
-		`{"enabled":false,"schedule_mode":"fixed","at_minute":180,"window_start_minute":120,"window_end_minute":240,"utc_offset_minutes":480,"language":"zh_hans","keys":[],"wb_credential":{"configured":false,"credential_revision":0,"last_verified_at_ms":null},"next_run_at_ms":null,"last_run_at_ms":null,"last_status":null,"last_error":"","last_duration_ms":null,"last_root_nodes":null,"last_key_client_id":null,"last_key_attempts":0,"failure_streak":0,"running":false,"coordinate_freshness":{"total":0,"fresh":0,"stale":0,"expired":0,"missing":0},"updated_at_ms":0}`)
-	expect(t, otherH, http.MethodGet, "/api/catalog/fetch-config", http.StatusForbidden, `{"error":"需要超级管理员权限","code":"forbidden"}`)
+	expect(t, ownerH, http.MethodGet, "/api/admin/catalog/fetch-config", http.StatusOK,
+		`{"enabled":false,"schedule_mode":"fixed","at_minute":180,"window_start_minute":120,"window_end_minute":240,"utc_offset_minutes":480,"keys":[],"next_run_at_ms":null,"last_run_at_ms":null,"last_status":null,"last_error":"","last_duration_ms":null,"last_root_nodes":null,"last_key_client_id":null,"last_key_attempts":0,"failure_streak":0,"running":false,"coordinate_freshness":{"total":0,"fresh":0,"stale":0,"expired":0,"missing":0},"updated_at_ms":0}`)
+	expect(t, otherH, http.MethodGet, "/api/admin/catalog/fetch-config", http.StatusForbidden, `{"error":"需要超级管理员权限","code":"forbidden"}`)
 
-	insertSchemaCache(t, ctx, pool, clock().UnixMilli())
+	insertSchemaCurrent(t, ctx, pool, clock().UnixMilli())
 	schema := callJSON(ownerH, http.MethodGet, "/api/catalog/schema?description_category_id=9&type_id=8&language=zh_hans&store_id="+storeA, "")
 	if schema.Code != http.StatusOK || !strings.Contains(schema.Body.String(), `"collection":true`) || !strings.Contains(schema.Body.String(), `"native_material"`) {
 		t.Fatalf("schema %d %s", schema.Code, schema.Body.String())
@@ -177,7 +175,7 @@ func TestListingIntentsCatalog(t *testing.T) {
 
 	insertTree(t, ctx, pool, clock().UnixMilli())
 	expect(t, ownerH, http.MethodGet, "/api/catalog/tree?language=zh_hans&store_id="+storeA, http.StatusOK,
-		`{"language":"zh_hans","fetched_at_ms":1787333400000,"items":[{"description_category_id":1,"category_name":"a","type_id":2,"type_name":"b","disabled":false,"parent_id":null}]}`)
+		`{"language":"zh_hans","fetched_at_ms":1787333400000,"items":[{"description_category_id":1,"category_name":"a","type_id":2,"type_name":"b","disabled":false,"parent_index":null}]}`)
 
 	wb := callJSON(ownerH, http.MethodGet, "/api/catalog/wb/subjects/15?language=ru", "")
 	if wb.Code != http.StatusOK || !strings.Contains(wb.Body.String(), `"code":"catalog_unavailable"`) || !strings.Contains(wb.Body.String(), `"catalog":null`) {
@@ -263,20 +261,12 @@ func insertDeadJob(t *testing.T, ctx context.Context, pool *pgxpool.Pool, id str
 	}
 }
 
-func insertSchemaCache(t *testing.T, ctx context.Context, pool *pgxpool.Pool, fetched int64) {
+func insertSchemaCurrent(t *testing.T, ctx context.Context, pool *pgxpool.Pool, fetched int64) {
 	t.Helper()
-	var buf bytes.Buffer
-	zw := gzip.NewWriter(&buf)
-	if _, err := zw.Write([]byte(`[{"key":"a","collection":true}]`)); err != nil {
-		t.Fatal(err)
-	}
-	if err := zw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	_, err := pool.Exec(ctx, `
-		INSERT INTO ozon_catalog_schema_cache (description_category_id, type_id, language, payload, fetched_at_ms, byte_size)
-		VALUES (9, 8, 'zh_hans', $1, $2, $3)`, buf.Bytes(), fetched, buf.Len())
-	if err != nil {
+	fields := []byte(`[{"key":"a","label":"A","group":"Attributes","editor":"text","required":false,"collection":true}]`)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO ozon_category_current (description_category_id, type_id, language, fields, content_digest, fetched_at_ms)
+		VALUES (9, 8, 'zh_hans', $1::jsonb, $2, $3)`, string(fields), fmt.Sprintf("sha256:%064x", 0), fetched); err != nil {
 		t.Fatal(err)
 	}
 }

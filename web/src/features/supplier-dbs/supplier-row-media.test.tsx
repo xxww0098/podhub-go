@@ -15,6 +15,7 @@ import {
   moveItem,
   promoteToCover,
   saveRowMedia,
+  appendGalleryImage,
 } from "./supplier-row-media"
 import {
   createSupplierDbsStore,
@@ -23,6 +24,13 @@ import {
 import { toast } from "@/components/ui/toast"
 
 const NOW = Date.now()
+
+test("replaying confirmation of the same gallery object does not add duplicate sortable items", () => {
+  const image = { url: "https://cdn.invalid/one.jpg", w: 10, h: 10 }
+  const once = appendGalleryImage([], image)
+  assert.deepEqual(appendGalleryImage(once, image), [image])
+  assert.equal(appendGalleryImage(once, { ...image, url: "https://cdn.invalid/two.jpg" }).length, 2)
+})
 
 function row(over: Partial<SupplierDbRow> = {}): SupplierDbRow {
   return {
@@ -210,9 +218,9 @@ test("媒体区三组：图集网格带封面徽标，PSD 名+大小+下载，�
   for (const name of ["图集", "PSD", "视频"]) {
     assert.ok(html.includes(`data-supplier-row-media="${name}"`), name)
   }
-  assert.match(html, /上传图片/)
-  assert.match(html, /上传 PSD/)
-  assert.match(html, /上传视频/)
+  assert.match(html, /aria-label="上传图片"/)
+  assert.match(html, /aria-label="上传 PSD"/)
+  assert.match(html, /aria-label="上传视频"/)
   // 图集：首图封面徽标 + 缩略图
   assert.match(html, /封面/)
   assert.match(html, /src="https:\/\/cdn\.invalid\/a\.png"/)
@@ -239,15 +247,16 @@ test("空态：三个上传入口都在，无内联错误", async () => {
   assert.match(html, /20MB/)
   assert.match(html, /500MB/)
   assert.match(html, /200MB/)
-  // 上传契约：图集必传，PSD / 视频选传 —— 标记落各自分组头部
+  // 必填徽标统一到字段头；PSD / 视频保持选传。
   const group = (name: string, next?: string) =>
     html.slice(
       html.indexOf(`data-supplier-row-media="${name}"`),
       next ? html.indexOf(`data-supplier-row-media="${next}"`) : undefined,
     )
-  assert.match(group("图集", "PSD"), /必传/)
-  assert.match(group("PSD", "视频"), /选传/)
-  assert.match(group("视频"), /选传/)
+  assert.match(group("图集", "PSD"), /必填/)
+  assert.doesNotMatch(group("图集", "PSD"), /data-field-status|已填|未填/)
+  assert.doesNotMatch(group("PSD", "视频"), /必填/)
+  assert.doesNotMatch(group("视频"), /必填/)
   assert.doesNotMatch(html, /role="alert"/)
 })
 

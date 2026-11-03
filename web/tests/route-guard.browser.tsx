@@ -117,7 +117,6 @@ async function atPath(
             overview={overview(options.role ?? "super_admin", options.accountMode)}
             onOverviewChange={() => {}}
             onSignedOut={() => {}}
-            onAddAccount={() => {}}
           />,
         )
       })
@@ -130,23 +129,24 @@ async function atPath(
 
 /** A plain account cannot reach the staff module by URL, and does not read it. */
 async function plainAccountCannotAddressTheStaffScreen() {
+  const start = requested.length
   await atPath("/?screen=supplier-dbs", async () => {
-    await waitForSearch("console")
-    await waitForScreen("console")
+    await waitForSearch("home")
+    await waitForScreen("home")
     check(!document.querySelector("[data-supplier-dbs]"), "the staff module must not mount")
     check(
-      !requested.some((url) => url.includes("supplier-dbs")),
+      !requested.slice(start).some((url) => url.includes("supplier-dbs")),
       "the staff API must not be read: " + requested.join(", "),
     )
   }, { role: "user" })
 }
 
-/** 列表管理 has exactly one address, and it is on the admin surface. */
-async function staffOnlyScreenHasNoWorkbenchAddress() {
+/** Even staff must use /admin to open a platform destination. */
+async function staffCannotAddressCatalogOnWorkbench() {
   await atPath("/?screen=supplier-dbs", async () => {
-    await waitForSearch("console")
-    await waitForScreen("console")
-    check(!document.querySelector("[data-supplier-dbs]"), "the staff module must not mount")
+    await waitForSearch("home")
+    await waitForScreen("home")
+    check(!document.querySelector("[data-supplier-dbs]"), "platform screens require /admin")
   }, { role: "super_admin" })
 }
 
@@ -166,13 +166,13 @@ async function addressChangeRepaintsTheSurface() {
   const stop = installAddressSync()
   try {
     await atPath("/admin?screen=supplier-dbs&settings=appearance", async () => {
-      await waitFor("[data-slot=\"dialog-content\"]")
+      await waitFor("[data-settings-page]")
       window.history.replaceState(null, "", "/admin?screen=supplier-dbs")
       window.dispatchEvent(new PopStateEvent("popstate"))
-      await waitForGone("[data-slot=\"dialog-content\"]")
+      await waitForGone("[data-settings-page]")
       check(
-        document.querySelector("[data-slot=\"dialog-content\"]") === null,
-        "dropping ?settings= closes the sheet",
+        document.querySelector("[data-settings-page]") === null,
+        "dropping ?settings= closes the settings pane",
       )
     })
   } finally {
@@ -182,8 +182,8 @@ async function addressChangeRepaintsTheSurface() {
 
 /** A nav click rewrites the address in place; the shell follows the address. */
 async function navClickNavigatesInPlace() {
-  await atPath("/?screen=console", async () => {
-    await waitForScreen("console")
+  await atPath("/?screen=home", async () => {
+    await waitForScreen("home")
     // The breadcrumb also marks its last segment current, so the question
     // "which destination is current" is asked of the rail, not the document.
     const railCurrent = () =>
@@ -191,21 +191,21 @@ async function navClickNavigatesInPlace() {
         '[data-slot="sidebar-content"] [aria-current="page"]',
       )?.getAttribute("aria-label")
     check(
-      railCurrent() === SCREEN_LABELS.console,
-      "console starts current, saw " + railCurrent(),
+      railCurrent() === SCREEN_LABELS.home,
+      "home starts current, saw " + railCurrent(),
     )
     const row = document.querySelector<HTMLButtonElement>(
-      '[aria-label="' + SCREEN_LABELS.products + '"]',
+      '[aria-label="' + SCREEN_LABELS.listing + '"]',
     )
-    check(row, "the 店铺商品 nav row must be painted")
+    check(row, "the 批量上架 nav row must be painted")
     row.click()
-    await waitForSearch("products")
+    await waitForSearch("listing")
     const deadline = performance.now() + 6000
-    while (railCurrent() !== SCREEN_LABELS.products && performance.now() < deadline) {
+    while (railCurrent() !== SCREEN_LABELS.listing && performance.now() < deadline) {
       await frame()
     }
     check(
-      railCurrent() === SCREEN_LABELS.products,
+      railCurrent() === SCREEN_LABELS.listing,
       "the click moves the current row, saw " + railCurrent(),
     )
     check(
@@ -244,7 +244,7 @@ async function listingHomepageDropsCatalogLeftovers() {
   }
 }
 
-/** 平台货源 detail is in-module: leaving and returning must land on the gallery. */
+/** 平台商品库 detail is in-module: leaving and returning must land on the gallery. */
 async function catalogProductDoesNotSurviveNav() {
   await atPath("/?screen=catalog&product=scp_1", async () => {
     await waitForSearch("catalog")
@@ -252,12 +252,12 @@ async function catalogProductDoesNotSurviveNav() {
       new URLSearchParams(window.location.search).get("product") === "scp_1",
       "a catalog deep link keeps product=, saw " + window.location.search,
     )
-    const consoleRow = document.querySelector<HTMLButtonElement>(
-      '[aria-label="' + SCREEN_LABELS.console + '"]',
+    const homeRow = document.querySelector<HTMLButtonElement>(
+      '[aria-label="' + SCREEN_LABELS.home + '"]',
     )
-    check(consoleRow, "the 数据大屏 nav row must be painted")
-    consoleRow.click()
-    await waitForSearch("console")
+    check(homeRow, "the 工作台 nav row must be painted")
+    homeRow.click()
+    await waitForSearch("home")
     check(
       !new URLSearchParams(window.location.search).has("product"),
       "leaving catalog leaked product=, saw " + window.location.search,
@@ -265,7 +265,7 @@ async function catalogProductDoesNotSurviveNav() {
     const catalogRow = document.querySelector<HTMLButtonElement>(
       '[aria-label="' + SCREEN_LABELS.catalog + '"]',
     )
-    check(catalogRow, "the 平台货源 nav row must be painted")
+    check(catalogRow, "the 平台商品库 nav row must be painted")
     catalogRow.click()
     await waitForSearch("catalog")
     check(
@@ -277,6 +277,7 @@ async function catalogProductDoesNotSurviveNav() {
 
 /** StrictMode double-invokes every effect: an address rewrite must settle. */
 async function strictModeSettlesTheAddress() {
+  const start = requested.length
   const root = createRoot(fixture)
   try {
     window.history.replaceState(null, "", "/?screen=supplier-dbs")
@@ -287,21 +288,20 @@ async function strictModeSettlesTheAddress() {
             overview={overview("user")}
             onOverviewChange={() => {}}
             onSignedOut={() => {}}
-            onAddAccount={() => {}}
           />
         </StrictMode>,
       )
     })
-    await waitForSearch("console")
-    await waitForScreen("console")
+    await waitForSearch("home")
+    await waitForScreen("home")
     await settle()
     await settle()
     check(
-      window.location.search === "?screen=console",
+      window.location.search === "?screen=home",
       "the address settles on what is painted, saw " + window.location.search,
     )
     check(
-      !requested.some((url) => url.includes("supplier-dbs")),
+      !requested.slice(start).some((url) => url.includes("supplier-dbs")),
       "the staff API must not be read: " + requested.join(", "),
     )
   } finally {
@@ -311,7 +311,7 @@ async function strictModeSettlesTheAddress() {
   }
 }
 
-/** 平台管理员 runs 货源管理 on /admin and never sees the super-only rail. */
+/** 平台管理员 runs 平台商品库管理 on /admin and never sees the super-only rail. */
 async function platformAdminUsesTheMainMenuSurface() {
   await atPath("/admin", async () => {
     await waitForScreen("supplier-dbs")
@@ -326,21 +326,38 @@ async function platformAdminUsesTheMainMenuSurface() {
   }, { role: "admin" })
 }
 
-/** 设置里的平台管理 is a super_admin surface; the sheet must not offer it. */
+/**
+ * 设置里的平台管理 is a super_admin surface; the rail must not offer it.
+ *
+ * 设置 is a row in the footer card's menu; its pane keeps a separate settings
+ * navigation beside the business navigation.
+ */
 async function settingsSheetOffersPlatformManagementByRank() {
   for (const [role, expected] of [["admin", false], ["super_admin", true]] as const) {
     await atPath("/?screen=console", async () => {
-      const gear = await waitFor<HTMLButtonElement>('[aria-label="设置"]')
-      gear.click()
-      const sheet = await waitFor('[data-slot="dialog-content"]')
+      const trigger = await waitFor<HTMLButtonElement>('[data-sidebar="footer"] [aria-haspopup="menu"]')
+      trigger.click()
+      const menu = await waitFor('[data-slot="dropdown-menu-content"]')
+      const destination = () =>
+        [...menu.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+          (item) => (item.textContent ?? "").trim() === "设置",
+        )
+      const deadlineOpen = performance.now() + 3000
+      while (!destination() && performance.now() < deadlineOpen) await frame()
+      const row = destination()
+      check(row, "the account menu offers 设置; saw " + menu.textContent)
+      row!.click()
+      await waitFor('[data-settings-page]')
+      // Read the settings navigation from the document beside the page pane.
+      const rail = () => document.querySelector('nav[aria-label="设置分区"]')
       // The rail's own two facts: the group heading and its rows. A substring
       // search would collide with the 平台管理员 role label.
       const railGroups = () =>
-        [...sheet.querySelectorAll('nav[aria-label="设置分区"] > div > p')].map((node) =>
+        [...(rail()?.querySelectorAll('[data-sidebar="group-label"]') ?? [])].map((node) =>
           (node.textContent ?? "").trim(),
         )
       const railRows = () =>
-        [...sheet.querySelectorAll('nav[aria-label="设置分区"] button')].map((node) =>
+        [...(rail()?.querySelectorAll('button') ?? [])].map((node) =>
           (node.textContent ?? "").trim(),
         )
       const offers = () => railGroups().includes("平台管理")
@@ -351,9 +368,19 @@ async function settingsSheetOffersPlatformManagementByRank() {
         role + " groups: " + railGroups().join(" / ") + " (平台管理 " + (expected ? "missing" : "leaked") + ")",
       )
       check(
-        railRows().includes("对象存储") === expected,
+        railRows().includes("支付") === expected,
         role + " platform panes: " + railRows().join(" / "),
       )
+      if (expected) {
+        const payment = [...(rail()?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
+          .find((button) => button.textContent?.trim() === "支付")
+        check(payment, "platform settings offers payment")
+        payment.click()
+        const deadline = performance.now() + 6000
+        while (window.location.pathname !== "/admin" && performance.now() < deadline) await frame()
+        check(window.location.pathname === "/admin", "platform settings must navigate to /admin")
+        check(new URLSearchParams(window.location.search).get("settings") === "payment", "the admin URL names payment")
+      }
     }, { role })
   }
 }
@@ -365,7 +392,7 @@ run.onclick = async () => {
   requested.length = 0
   const checks: Array<[string, () => Promise<void>]> = [
     ["a plain account cannot address the staff screen", plainAccountCannotAddressTheStaffScreen],
-    ["staff reach 列表管理 only through /admin", staffOnlyScreenHasNoWorkbenchAddress],
+    ["staff cannot address the supplier catalog on the workbench", staffCannotAddressCatalogOnWorkbench],
     ["Workspace standing does not hijack /admin", workspaceStandingDoesNotHijackTheAdminSurface],
     ["an address change repaints the surface", addressChangeRepaintsTheSurface],
     ["a nav click navigates in place", navClickNavigatesInPlace],

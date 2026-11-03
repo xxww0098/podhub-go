@@ -67,7 +67,7 @@ test("an admission refusal does not split into single completes", async (context
       headers: { "Content-Type": "application/json", "Retry-After": "0" },
     })
   }) as typeof fetch
-  const key = `images/teams/test-workspace/sha256/${DIGEST}.jpg`
+  const key = `uploads/2026-10-15/1792094400000-22222222-2222-4222-8222-222222222222/${DIGEST}.jpg`
   try {
     await assert.rejects(
       () => advanceBusyClock(context, () => confirmSliceBatch([{ request: request(), delivered: delivered(key) }])),
@@ -80,4 +80,33 @@ test("an admission refusal does not split into single completes", async (context
     globalThis.fetch = previous
     resetUploadMeter()
   }
+})
+
+test("one confirmation can contain server-selected objects from different physical batches", async () => {
+  const previous = globalThis.fetch
+  const firstBatch = "1792094400000.22222222-2222-4222-8222-222222222222"
+  const keys = [
+    `uploads/2026-10-15/${firstBatch.replace(".", "-")}/${DIGEST}.jpg`,
+    `uploads/2026-10-15/1792094400000-33333333-3333-4333-8333-333333333333/${"cd".repeat(32)}.jpg`,
+  ]
+  let calls = 0
+  globalThis.fetch = (async (input, init) => {
+    assert.ok(String(input).endsWith(route("mediaObjectsCompleteBatch")))
+    const body = JSON.parse(String(init?.body))
+    assert.equal(body.upload_batch, undefined)
+    calls++
+    return Response.json({ objects: body.objects.map((item: { account_id: string, object_key: string, storage_revision: number, byte_length: number }) => ({ object: {
+      account_id: item.account_id, object_key: item.object_key, public_url: `https://cdn.example.invalid/${item.object_key}`,
+      storage_revision: item.storage_revision, workspace_uuid: "test-workspace", byte_length: item.byte_length,
+      transport: "ready", deduplicated: true,
+    } })) })
+  }) as typeof fetch
+  try {
+    const out = await confirmSliceBatch(keys.map((key, index) => ({
+      request: { ...request(index === 0 ? DIGEST : "cd".repeat(32)), uploadBatch: firstBatch }, delivered: delivered(key),
+    })))
+    assert.equal(calls, 1)
+    assert.deepEqual(out.map(item => item.objectKey), keys)
+    assert.ok(out.every(item => !item.pendingConfirm))
+  } finally { globalThis.fetch = previous; resetUploadMeter() }
 })

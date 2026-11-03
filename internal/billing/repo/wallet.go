@@ -7,7 +7,6 @@ import (
 	"strconv"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
@@ -31,16 +30,8 @@ func RequireOrg(ctx context.Context, tx pgx.Tx, orgID int64) error {
 	return nil
 }
 
-func withWallet(ctx context.Context, tx pgx.Tx, orgID int64, fn func(owner int64) error) error {
-	var owner int64
-	err := tx.QueryRow(ctx, `SELECT owner_user_id FROM organizations WHERE id = $1`, orgID).Scan(&owner)
-	if err != nil {
-		return &Error{Msg: "workspace wallet owner missing"}
-	}
-	if _, err := tx.Exec(ctx,
-		`SELECT set_config($1, $2, true), set_config($3, $4, true)`,
-		tenantx.GUCCurrentOrgID, strconv.FormatInt(orgID, 10),
-		tenantx.GUCCurrentWalletUserID, strconv.FormatInt(owner, 10)); err != nil {
+func withWallet(ctx context.Context, tx pgx.Tx, orgID int64, fn func() error) error {
+	if _, err := tx.Exec(ctx, `SELECT set_config($1, $2, true)`, tenantx.GUCCurrentOrgID, strconv.FormatInt(orgID, 10)); err != nil {
 		return err
 	}
 	var previous string
@@ -50,7 +41,7 @@ func withWallet(ctx context.Context, tx pgx.Tx, orgID int64, fn func(owner int64
 	if _, err := tx.Exec(ctx, `SELECT set_config('role', $1, true)`, tenantx.RoleApp); err != nil {
 		return err
 	}
-	err = fn(owner)
+	err := fn()
 	var resetErr error
 	if previous == tenantx.RoleApp {
 		_, resetErr = tx.Exec(ctx, `SELECT set_config('role', $1, true)`, tenantx.RoleApp)
@@ -63,21 +54,21 @@ func withWallet(ctx context.Context, tx pgx.Tx, orgID int64, fn func(owner int64
 	return err
 }
 
-func ensure(ctx context.Context, tx pgx.Tx, owner int64) error {
-	_, err := tx.Exec(ctx, `INSERT INTO user_wallets (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`, owner)
+func ensure(ctx context.Context, tx pgx.Tx, orgID int64) error {
+	_, err := tx.Exec(ctx, `INSERT INTO workspace_wallets (org_id) VALUES ($1) ON CONFLICT (org_id) DO NOTHING`, orgID)
 	return err
 }
 
-func lock(ctx context.Context, tx pgx.Tx, owner int64) (WalletRow, error) {
-	if err := ensure(ctx, tx, owner); err != nil {
+func lock(ctx context.Context, tx pgx.Tx, orgID int64) (WalletRow, error) {
+	if err := ensure(ctx, tx, orgID); err != nil {
 		return WalletRow{}, err
 	}
 	var row WalletRow
 	err := tx.QueryRow(ctx, `
 		SELECT balance_microfen, held_microfen
-		  FROM user_wallets WHERE user_id = $1 FOR UPDATE`, owner).Scan(&row.BalanceMicrofen, &row.HeldMicrofen)
+		  FROM workspace_wallets WHERE org_id = $1 FOR UPDATE`, orgID).Scan(&row.BalanceMicrofen, &row.HeldMicrofen)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return WalletRow{}, &Error{Msg: "user wallet vanished after upsert"}
+		return WalletRow{}, &Error{Msg: "workspace wallet vanished after upsert"}
 	}
 	return row, err
 }
@@ -123,12 +114,12 @@ func sameID(a, b *int64) bool {
 
 func apply(ctx context.Context, tx pgx.Tx, orgID, balance, held int64) error {
 	tag, err := tx.Exec(ctx, `
-		UPDATE user_wallets
+		UPDATE workspace_wallets
 		   SET balance_microfen = $2,
 		       held_microfen = $3,
 		       version = version + 1,
 		       updated_at = clock_timestamp()
-		 WHERE user_id = (SELECT owner_user_id FROM organizations WHERE id = $1)`, orgID, balance, held)
+		 WHERE org_id = $1`, orgID, balance, held)
 	if err != nil {
 		return err
 	}
@@ -141,12 +132,11 @@ func apply(ctx context.Context, tx pgx.Tx, orgID, balance, held int64) error {
 func record(ctx context.Context, tx pgx.Tx, orgID int64, entry, key string, amount, heldDelta, beforeBal, afterBal, beforeHeld, afterHeld int64, ai, payment *int64, note string) error {
 	_, err := tx.Exec(ctx, `
 		INSERT INTO wallet_ledger
-		    (org_id, user_id, entry_type, idempotency_key, amount_microfen, held_delta_microfen,
+		    (org_id, entry_type, idempotency_key, amount_microfen, held_delta_microfen,
 		     balance_before_microfen, balance_after_microfen,
 		     held_before_microfen, held_after_microfen,
 		     ai_request_id, payment_order_id, note)
-		VALUES ($1, (SELECT owner_user_id FROM organizations WHERE id = $1),
-		        $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 		orgID, entry, key, amount, heldDelta, beforeBal, afterBal, beforeHeld, afterHeld, ai, payment, note)
 	return err
 }
@@ -199,7 +189,11 @@ func HoldTx(ctx context.Context, tx pgx.Tx, orgID int64, key string, ai *int64, 
 		return WalletRow{}, err
 	}
 	var out WalletRow
-	err = withWallet(ctx, tx, orgID, func(owner int64) error {
+	err = withWallet(ctx, tx, orgID, func() error {
+		row, err := lock(ctx, tx, orgID)
+		if err != nil {
+			return err
+		}
 		prior, err := existing(ctx, tx, orgID, key, "hold")
 		if err != nil {
 			return err
@@ -210,10 +204,6 @@ func HoldTx(ctx context.Context, tx pgx.Tx, orgID int64, key string, ai *int64, 
 			}
 			out = WalletRow{BalanceMicrofen: prior.Balance, HeldMicrofen: prior.Held}
 			return nil
-		}
-		row, err := lock(ctx, tx, owner)
-		if err != nil {
-			return err
 		}
 		if row.Available() < amount {
 			return &Error{Insufficient: true, Available: row.Available(), Required: amount}
@@ -238,7 +228,11 @@ func ReleaseTx(ctx context.Context, tx pgx.Tx, orgID int64, key string, ai *int6
 		return WalletRow{}, err
 	}
 	var out WalletRow
-	err = withWallet(ctx, tx, orgID, func(owner int64) error {
+	err = withWallet(ctx, tx, orgID, func() error {
+		row, err := lock(ctx, tx, orgID)
+		if err != nil {
+			return err
+		}
 		prior, err := existing(ctx, tx, orgID, key, "release")
 		if err != nil {
 			return err
@@ -258,10 +252,6 @@ func ReleaseTx(ctx context.Context, tx pgx.Tx, orgID int64, key string, ai *int6
 			return &Error{Msg: "a settled reservation cannot be refunded"}
 		}
 		if err := requireHold(ctx, tx, orgID, key, amount, ai); err != nil {
-			return err
-		}
-		row, err := lock(ctx, tx, owner)
-		if err != nil {
 			return err
 		}
 		if row.HeldMicrofen < amount {
@@ -299,7 +289,11 @@ func SettleTx(ctx context.Context, tx pgx.Tx, orgID int64, key string, ai *int64
 		note = fmt.Sprintf("platform absorbed %d microfen above the per-request ceiling", absorbed)
 	}
 	var out Settlement
-	err = withWallet(ctx, tx, orgID, func(owner int64) error {
+	err = withWallet(ctx, tx, orgID, func() error {
+		row, err := lock(ctx, tx, orgID)
+		if err != nil {
+			return err
+		}
 		prior, err := existing(ctx, tx, orgID, key, "settle")
 		if err != nil {
 			return err
@@ -319,10 +313,6 @@ func SettleTx(ctx context.Context, tx pgx.Tx, orgID int64, key string, ai *int64
 			return &Error{Msg: "a refunded reservation cannot be settled"}
 		}
 		if err := requireHold(ctx, tx, orgID, key, held, ai); err != nil {
-			return err
-		}
-		row, err := lock(ctx, tx, owner)
-		if err != nil {
 			return err
 		}
 		if row.HeldMicrofen < held || row.BalanceMicrofen < charged {
@@ -349,7 +339,11 @@ func TopupTx(ctx context.Context, tx pgx.Tx, orgID int64, key string, paymentOrd
 		return WalletRow{}, err
 	}
 	var out WalletRow
-	err = withWallet(ctx, tx, orgID, func(owner int64) error {
+	err = withWallet(ctx, tx, orgID, func() error {
+		row, err := lock(ctx, tx, orgID)
+		if err != nil {
+			return err
+		}
 		prior, err := existing(ctx, tx, orgID, key, "topup")
 		if err != nil {
 			return err
@@ -360,10 +354,6 @@ func TopupTx(ctx context.Context, tx pgx.Tx, orgID int64, key string, paymentOrd
 			}
 			out = WalletRow{BalanceMicrofen: prior.Balance, HeldMicrofen: prior.Held}
 			return nil
-		}
-		row, err := lock(ctx, tx, owner)
-		if err != nil {
-			return err
 		}
 		after, ok := checkedAdd(row.BalanceMicrofen, amount)
 		if !ok {
@@ -388,8 +378,8 @@ func AdjustTx(ctx context.Context, tx pgx.Tx, orgID int64, key string, amount in
 		return WalletRow{}, err
 	}
 	var out WalletRow
-	err = withWallet(ctx, tx, orgID, func(owner int64) error {
-		row, err := lock(ctx, tx, owner)
+	err = withWallet(ctx, tx, orgID, func() error {
+		row, err := lock(ctx, tx, orgID)
 		if err != nil {
 			return err
 		}
@@ -438,11 +428,11 @@ func Adjust(ctx context.Context, pool *pgxpool.Pool, orgID int64, key string, am
 	return row, tx.Commit(ctx)
 }
 
-// ViewTx reads the wallet and lifetime settle spend for the owner.
+// ViewTx reads the workspace wallet and its lifetime settle spend.
 func ViewTx(ctx context.Context, tx pgx.Tx, orgID int64) (WalletView, error) {
 	var view WalletView
-	err := withWallet(ctx, tx, orgID, func(owner int64) error {
-		if err := ensure(ctx, tx, owner); err != nil {
+	err := withWallet(ctx, tx, orgID, func() error {
+		if err := ensure(ctx, tx, orgID); err != nil {
 			return err
 		}
 		return tx.QueryRow(ctx, `
@@ -450,10 +440,10 @@ func ViewTx(ctx context.Context, tx pgx.Tx, orgID int64) (WalletView, error) {
 			       w.held_microfen,
 			       COALESCE((SELECT -SUM(l.amount_microfen)
 			                    FROM wallet_ledger l
-			                   WHERE l.user_id = w.user_id AND l.entry_type = 'settle'), 0)::bigint,
+			                   WHERE l.org_id = w.org_id AND l.entry_type = 'settle'), 0)::bigint,
 			       w.updated_at
-			  FROM user_wallets w
-			 WHERE w.user_id = (SELECT owner_user_id FROM organizations WHERE id = $1)`, orgID).Scan(
+			  FROM workspace_wallets w
+			 WHERE w.org_id = $1`, orgID).Scan(
 			&view.BalanceMicrofen, &view.HeldMicrofen, &view.SpentMicrofen, &view.UpdatedAt)
 	})
 	view.AvailableMicrofen = WalletRow{BalanceMicrofen: view.BalanceMicrofen, HeldMicrofen: view.HeldMicrofen}.Available()
@@ -463,7 +453,7 @@ func ViewTx(ctx context.Context, tx pgx.Tx, orgID int64) (WalletView, error) {
 // RecentLedgerTx returns newest ledger rows for this org. It does not ensure a wallet.
 func RecentLedgerTx(ctx context.Context, tx pgx.Tx, orgID int64, limit int32) ([]LedgerEntryView, error) {
 	var rows []LedgerEntryView
-	err := withWallet(ctx, tx, orgID, func(int64) error {
+	err := withWallet(ctx, tx, orgID, func() error {
 		list, err := tx.Query(ctx, `
 			SELECT entry_type, amount_microfen, balance_after_microfen, note, created_at
 			  FROM wallet_ledger
@@ -486,9 +476,9 @@ func RecentLedgerTx(ctx context.Context, tx pgx.Tx, orgID int64, limit int32) ([
 	return rows, err
 }
 
-// InvariantMismatch is one user whose cache disagrees with the ledger.
+// InvariantMismatch is one workspace whose cache disagrees with the ledger.
 type InvariantMismatch struct {
-	UserID        int64
+	OrgID         int64
 	WalletBalance int64
 	LedgerBalance int64
 	WalletHeld    int64
@@ -496,23 +486,23 @@ type InvariantMismatch struct {
 }
 
 // CheckInvariant compares every wallet row with the ledger sums.
-// The SQL sets no GUC. A superuser sees every user. podhub_app under FORCE
-// RLS sees only the current wallet user, which this function does not set.
+// The SQL sets no GUC. A superuser sees every workspace. podhub_app under FORCE
+// RLS sees only the current org, which this function does not set.
 func CheckInvariant(ctx context.Context, pool *pgxpool.Pool) ([]InvariantMismatch, error) {
 	rows, err := pool.Query(ctx, `
-		SELECT w.user_id,
+		SELECT w.org_id,
 		       w.balance_microfen,
 		       w.held_microfen,
 		       COALESCE(l.ledger_balance, 0)::bigint,
 		       COALESCE(l.ledger_held, 0)::bigint
-		  FROM user_wallets w
+		  FROM workspace_wallets w
 		  LEFT JOIN (
-		      SELECT user_id,
+		      SELECT org_id,
 		             SUM(amount_microfen)::bigint AS ledger_balance,
 		             SUM(held_delta_microfen)::bigint AS ledger_held
 		        FROM wallet_ledger
-		       GROUP BY user_id
-		  ) l USING (user_id)
+		       GROUP BY org_id
+		  ) l USING (org_id)
 		 WHERE w.balance_microfen <> COALESCE(l.ledger_balance, 0)
 		    OR w.held_microfen <> COALESCE(l.ledger_held, 0)`)
 	if err != nil {
@@ -522,16 +512,10 @@ func CheckInvariant(ctx context.Context, pool *pgxpool.Pool) ([]InvariantMismatc
 	var out []InvariantMismatch
 	for rows.Next() {
 		var row InvariantMismatch
-		if err := rows.Scan(&row.UserID, &row.WalletBalance, &row.WalletHeld, &row.LedgerBalance, &row.LedgerHeld); err != nil {
+		if err := rows.Scan(&row.OrgID, &row.WalletBalance, &row.WalletHeld, &row.LedgerBalance, &row.LedgerHeld); err != nil {
 			return nil, err
 		}
 		out = append(out, row)
 	}
 	return out, rows.Err()
-}
-
-// IsUnique reports a unique-index conflict.
-func IsUnique(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }

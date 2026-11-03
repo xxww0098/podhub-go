@@ -1,10 +1,7 @@
 package adminhttp
 
 import (
-	"bytes"
-	"encoding/json"
 	"io"
-	"log/slog"
 	"net/http"
 	"strings"
 
@@ -13,11 +10,14 @@ import (
 	"github.com/xxww0098/podhub-go/internal/admin/contract"
 	"github.com/xxww0098/podhub-go/internal/admin/domain"
 	"github.com/xxww0098/podhub-go/internal/admin/service"
+	"github.com/xxww0098/podhub-go/internal/platform/httpx/jsonwire"
 )
 
 func familyOf(path string) string {
 	switch {
-	case strings.HasPrefix(path, "/api/admin/supplier-accounts"), strings.HasPrefix(path, "/api/admin/supplier-withdrawals"):
+	case strings.HasPrefix(path, "/api/supplier-catalog/"):
+		return "dbs"
+	case strings.HasPrefix(path, "/api/admin/factories"), strings.HasPrefix(path, "/api/admin/supplier-accounts"), strings.HasPrefix(path, "/api/admin/supplier-withdrawals"):
 		return "portal"
 	case strings.HasPrefix(path, "/api/admin/supplier-automation"):
 		return "auto"
@@ -30,8 +30,9 @@ func familyOf(path string) string {
 
 func privateCatalog(path string) bool {
 	return strings.HasPrefix(path, "/api/admin/supplier-dbs") ||
-		strings.HasPrefix(path, "/api/admin/supplier-db-storage") ||
-		strings.HasPrefix(path, "/api/admin/supplier-prompts")
+		strings.HasPrefix(path, "/api/admin/factories") ||
+		strings.HasPrefix(path, "/api/supplier-catalog/") ||
+		strings.HasPrefix(path, "/api/admin/supplier-db-storage")
 }
 
 func readBody(r *http.Request) ([]byte, error) {
@@ -170,7 +171,7 @@ func writeFail(w http.ResponseWriter, fam string, err error) {
 	if status >= 400 {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 	}
-	writeJSON(w, status, struct {
+	jsonwire.Write(w, status, struct {
 		Error   string   `json:"error"`
 		Code    string   `json:"code"`
 		Missing []string `json:"missing"`
@@ -178,25 +179,9 @@ func writeFail(w http.ResponseWriter, fam string, err error) {
 }
 
 func writeData(w http.ResponseWriter, status int, data any) {
-	writeJSON(w, status, struct {
+	jsonwire.Write(w, status, struct {
 		Data any `json:"data"`
 	}{Data: data})
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(v); err != nil {
-		slog.Error("json encode", "err", err)
-		http.Error(w, msgUnavailable, http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	if _, err := w.Write(bytes.TrimRight(buf.Bytes(), "\n")); err != nil {
-		slog.Error("json write", "err", err)
-	}
 }
 
 func actorOf(p Session) contract.Actor {
@@ -216,6 +201,57 @@ func (h handler) dispatch(w http.ResponseWriter, r *http.Request, rt Route, p Se
 	actor := actorOf(p)
 	svc := h.svc()
 	switch rt.Method + " " + rt.Path {
+	case "GET /api/admin/factories":
+		rows, err := svc.ListFactories(r.Context(), actor)
+		if err != nil {
+			writeFail(w, fam, err)
+			return true
+		}
+		writeData(w, http.StatusOK, struct {
+			Factories []domain.Factory `json:"factories"`
+		}{rows})
+		return true
+	case "POST /api/admin/factories":
+		body, err := readBody(r)
+		if err != nil {
+			writeFamily(w, fam, http.StatusBadRequest, "请求格式无效", contract.KindValidation)
+			return true
+		}
+		factory, initial, err := svc.CreateFactory(r.Context(), actor, body)
+		if err != nil {
+			writeFail(w, fam, err)
+			return true
+		}
+		writeData(w, http.StatusCreated, struct {
+			Factory         domain.Factory `json:"factory"`
+			InitialPassword *string        `json:"initialPassword,omitempty"`
+		}{factory, initial})
+		return true
+	case "PUT /api/admin/factories/{factory_id}":
+		body, err := readBody(r)
+		if err != nil {
+			writeFamily(w, fam, http.StatusBadRequest, "请求格式无效", contract.KindValidation)
+			return true
+		}
+		factory, err := svc.UpdateFactory(r.Context(), actor, chi.URLParam(r, "factory_id"), body)
+		if err != nil {
+			writeFail(w, fam, err)
+			return true
+		}
+		writeData(w, http.StatusOK, struct {
+			Factory domain.Factory `json:"factory"`
+		}{factory})
+		return true
+	case "DELETE /api/admin/factories/{factory_id}":
+		id := chi.URLParam(r, "factory_id")
+		if err := svc.DeleteFactory(r.Context(), actor, id); err != nil {
+			writeFail(w, fam, err)
+			return true
+		}
+		writeData(w, http.StatusOK, struct {
+			FactoryID string `json:"factoryId"`
+		}{id})
+		return true
 	case "GET /api/admin/supplier-dbs":
 		rows, err := svc.ListDbs(r.Context(), actor)
 		if err != nil {
@@ -232,12 +268,12 @@ func (h handler) dispatch(w http.ResponseWriter, r *http.Request, rt Route, p Se
 			writeFamily(w, fam, http.StatusBadRequest, "请求格式无效", contract.KindValidation)
 			return true
 		}
-		db, initial, err := svc.CreateDb(r.Context(), actor, body)
+		db, err := svc.CreateDb(r.Context(), actor, body)
 		if err != nil {
 			writeFail(w, fam, err)
 			return true
 		}
-		writeData(w, http.StatusCreated, mutation(db, initial))
+		writeData(w, http.StatusCreated, dbMutation{Db: db})
 		return true
 	case "PUT /api/admin/supplier-dbs/{source_id}":
 		body, err := readBody(r)
@@ -245,12 +281,12 @@ func (h handler) dispatch(w http.ResponseWriter, r *http.Request, rt Route, p Se
 			writeFamily(w, fam, http.StatusBadRequest, "请求格式无效", contract.KindValidation)
 			return true
 		}
-		db, initial, err := svc.UpdateDb(r.Context(), actor, chi.URLParam(r, "source_id"), body)
+		db, err := svc.UpdateDb(r.Context(), actor, chi.URLParam(r, "source_id"), body)
 		if err != nil {
 			writeFail(w, fam, err)
 			return true
 		}
-		writeData(w, http.StatusOK, mutation(db, initial))
+		writeData(w, http.StatusOK, dbMutation{Db: db})
 		return true
 	case "DELETE /api/admin/supplier-dbs/{source_id}":
 		id := chi.URLParam(r, "source_id")
@@ -356,16 +392,6 @@ func (h handler) dispatch(w http.ResponseWriter, r *http.Request, rt Route, p Se
 			MemberID string `json:"memberId"`
 			Unbound  bool   `json:"unbound"`
 		}{canon, true})
-		return true
-	case "GET /api/admin/supplier-prompts":
-		rows, err := svc.ListPrompts(r.Context(), actor)
-		if err != nil {
-			writeFail(w, fam, err)
-			return true
-		}
-		writeData(w, http.StatusOK, struct {
-			Prompts []domain.Prompt `json:"prompts"`
-		}{rows})
 		return true
 	case "GET /api/admin/supplier-withdrawals":
 		rows, err := svc.ListWithdrawals(r.Context(), actor, r.URL.Query().Get("status"))
@@ -548,12 +574,7 @@ func (h handler) liveStaff(w http.ResponseWriter, r *http.Request, fam string, a
 }
 
 type dbMutation struct {
-	Db              domain.SupplierDb `json:"db"`
-	InitialPassword *string           `json:"initialPassword,omitempty"`
-}
-
-func mutation(db domain.SupplierDb, initial *string) dbMutation {
-	return dbMutation{Db: db, InitialPassword: initial}
+	Db domain.SupplierDb `json:"db"`
 }
 
 type accountMutationBody struct {

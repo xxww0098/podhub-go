@@ -108,7 +108,7 @@ test("coveredOfferIds → N/M 徽标：空覆盖无徽标、全覆盖「已委�
 })
 
 test("原图白名单与 500MB 上限在 presign 之前本地预检", () => {
-  assert.equal(assetExtensionOf("原图.PSD"), "psd")
+  assert.equal(assetExtensionOf("原图.PSD"), null)
   assert.equal(assetExtensionOf("photo.jpeg"), "jpg")
   assert.equal(assetExtensionOf("photo.JPG"), "jpg")
   assert.equal(assetExtensionOf("logo.png"), "png")
@@ -117,20 +117,20 @@ test("原图白名单与 500MB 上限在 presign 之前本地预检", () => {
   assert.equal(assetExtensionOf("no-extension"), null)
 
   assert.equal(assetFileError({ name: "a.png", size: 1 }), null)
-  assert.match(assetFileError({ name: "a.gif", size: 1 }) ?? "", /jpg\/png\/webp\/psd/)
+  assert.match(assetFileError({ name: "a.gif", size: 1 }) ?? "", /jpg\/png\/webp/)
+  assert.match(assetFileError({ name: "a.psd", size: 1 }) ?? "", /仅支持 jpg\/png\/webp/)
   assert.match(assetFileError({ name: "a.png", size: 0 }) ?? "", /空文件/)
   assert.match(
-    assetFileError({ name: "a.psd", size: 500 * 1024 * 1024 + 1 }) ?? "",
+    assetFileError({ name: "a.png", size: 500 * 1024 * 1024 + 1 }) ?? "",
     /500MB/,
   )
-  assert.equal(assetFileError({ name: "a.psd", size: 500 * 1024 * 1024 }), null)
+  assert.equal(assetFileError({ name: "a.png", size: 500 * 1024 * 1024 }), null)
 })
 
-test("Content-Type 声明：浏览器识别优先，扩展名兜底，PSD 走 octet-stream", () => {
+test("委托图片 Content-Type：浏览器识别优先，扩展名兜底", () => {
   assert.equal(assetContentType({ name: "a.png", type: "image/png" }), "image/png")
   assert.equal(assetContentType({ name: "a.jpg", type: "" }), "image/jpeg")
   assert.equal(assetContentType({ name: "a.webp", type: "" }), "image/webp")
-  assert.equal(assetContentType({ name: "a.psd", type: "" }), "application/octet-stream")
 })
 
 test("sha256 是小写 hex，服务端按它派生对象键并回读核验", async () => {

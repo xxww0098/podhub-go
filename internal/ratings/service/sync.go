@@ -126,7 +126,7 @@ func (s *Service) syncOne(ctx context.Context, st domain.Due, now time.Time) err
 		return errors.New("seller info body was not ratings")
 	}
 	if dropped > 0 {
-		slog.Error("store rating field dropped", "org", st.OrgID, "store", st.StoreID, "dropped", dropped)
+		slog.Warn("store rating field dropped", "org", st.OrgID, "store", st.StoreID, "dropped", dropped)
 	}
 	if _, err := s.Store.Apply(ctx, st.OrgID, st.StoreID, items, now, s.ranks()); err != nil {
 		_ = s.Store.Finish(ctx, st.OrgID, st.StoreID, now, false)

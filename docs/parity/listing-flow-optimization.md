@@ -148,7 +148,7 @@ HTTP 外层统一使用仓库要求的 snake_case：stored-row 使用 `store_id`
 
 ### CI 发现的请求命名修正
 
-`bf7c0c8` 的远端 CI 中，web、lint、rust 三个任务通过，Go 业务包和数据库集成测试也通过，但 `tests/testkit/TestOpenAPIPropertiesUseSnakeCase` 拒绝了新增请求 schema 的 camelCase 字段。本地上一轮漏跑了这个包。修复将真实前端 JSON、Go HTTP 解析及 OpenAPI 一起统一为上述 snake_case，并删除重复的 Draft 外层 schema；命名门禁保持原样，`tests/testkit` 已纳入本地复现命令。
+`bf7c0c8` 的远端 CI 中，web、lint、rust 三个任务通过，Go 业务包和数据库集成测试也通过，但 `tests/testkit/openapi_test.go` 的 `TestOpenAPIPropertiesUseSnakeCase` 拒绝了新增请求 schema 的 camelCase 字段。本地上一轮漏跑了这个包。修复将真实前端 JSON、Go HTTP 解析及 OpenAPI 一起统一为上述 snake_case，并删除重复的 Draft 外层 schema；命名门禁保持原样，`tests/testkit` 已纳入本地复现命令。
 
 请求断言先在旧实现得到红灯，修正后 `submit/...`、`api`、`testkit` 四个有测试的包启用 `-race -count=1`，145 项含子测试全部通过，0 跳过、0 失败。其中新增 PostgreSQL 草稿入队回归验证 HTTP 外层解析成功，传给测试模块的 WASM item 字节保持原样；旧 camelCase 字段不能替代必填字段，`rules_version` 会进入规则握手。
 

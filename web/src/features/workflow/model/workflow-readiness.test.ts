@@ -14,6 +14,19 @@ const exceptional = (blockers: WorkflowReadinessReport["blockers"]): WorkflowRea
   blockers, allowed_actions: [],
 })
 
+test("an AI failure shows its own reason before unrelated brand and name validation", () => {
+  const detail = publishStateDetail({
+    ...baseLifecycle, stage: "recognition_failed", ai: "failed", fields: "invalid",
+    failure_log: [
+      { stage: "ai", code: "workflow_source_missing", message: "本机没有该源图，请重新导入后再识别", occurred_at_ms: 1 },
+      { stage: "validation", code: "required", message: "Name 为必填项", occurred_at_ms: 2 },
+    ],
+  }, exceptional(["ai_failed", "fields_invalid"]), "", true,
+    { ai: "failed", render: "done", upload: "done" },
+    [{ message: "品牌：需要该类目属性的字典材料" }, { message: "Name 为必填项" }])
+  assert.equal(detail.text, "本机没有该源图，请重新导入后再识别")
+})
+
 test("recovered preparation history cannot replace the current failure reason", () => {
   const rows: Array<[WorkflowProductLifecycle, WorkflowReadinessReport, string, RegExp, RegExp]> = [
     [
@@ -143,7 +156,7 @@ test("a local failed leg while Cloud awaits content reads as exactly the glyph's
   assert.equal(preparationFailureCopy({ ai: "done", render: "done", upload: "done" }), undefined)
 })
 
-const PSD_REFUSAL = "发送未执行：PSD 尚未云端保存或未绑定该类目，请重新绑定模板"
+const PSD_REFUSAL = "发送未执行：本机 PSD 不可用，请重新绑定模板"
 const KILL_DETAIL = "上次发送：Ozon 写入已被暂停；等待维护解除后重新发送。此后草稿已修改，请核对后重新发送"
 
 test("the current pre-dispatch refusal beats an older rejection and drops its code", () => {

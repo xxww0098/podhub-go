@@ -13,12 +13,8 @@ import { installBrowserDiagnostics, reactErrorHandlers } from "@/lib/browser-dia
 import { installInvitationLink } from "@/lib/invitation-link"
 import "@/index.css"
 import "@/features/site/public-site.css"
-import "@/features/site/public-site-pages.css"
-import "@/features/site/public-site-catalog.css"
 import "@/features/site/public-site-responsive.css"
-import "@/features/site/public-site-c.css"
-import "@/features/site/public-site-c-responsive.css"
-import "@/features/site/public-site-c-pages.css"
+import "@/features/account/login-screen.css"
 
 const removeInvitationLink = installInvitationLink()
 const removeDiagnostics = installBrowserDiagnostics(window)

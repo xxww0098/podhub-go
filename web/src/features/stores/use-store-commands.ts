@@ -4,7 +4,7 @@ import type { OzonStoreView } from "@/bindings/commands"
 import { integrationsHttp } from "@/bindings/http-integrations"
 import { shouldOpenAccount } from "@/features/stores/stores-error"
 import { isCredentialExpiredAt } from "@/lib/credential-expiry"
-import { notifyCommandError, notifySuccess } from "@/lib/notify"
+import { notifyCommandError, notifyInfo, notifySuccess } from "@/lib/notify"
 
 import { loadStoreRoster, rememberStoreRoster, useStoreRoster } from "./store-roster-cache"
 
@@ -17,13 +17,13 @@ export type EditorDraft = {
   groupUuid: string | null;
 };
 
-export type StoreBusyKind = | "load" | "save" | "clear" | "delete" | "test" | "assign" | "grant" | "import" | "export" | "tag" | "group"
+export type StoreBusyKind = | "load" | "lookup" | "save" | "delete" | "test" | "assign" | "import" | "export" | "tag" | "group"
 
 type Roster = NonNullable<ReturnType<typeof useStoreRoster>>["overview"]
 
 /**
- * Every roster command: reload, the editor save/clear/delete paths, key
- * testing and grants, membership assignment and activation. The screen owns
+ * Every roster command: reload, the editor save/delete paths, key
+ * testing and membership assignment. The screen owns
  * the state these commands read and write; this hook owns what they do, so a
  * refusal is answered the same way from every entry point.
  */
@@ -187,8 +187,27 @@ export function useStoreCommands({
       }
     }
 
+    async function readStoreName() {
+      if (!draft || actionLock.current) return;
+      actionLock.current = true;
+      setBusy("lookup");
+      try {
+        const result = await integrationsHttp.integrationsResolveOzonStoreName({
+          client_id: draft.clientId.trim(),
+          api_key: draft.apiKey.trim(),
+          ...(draft.id ? { store_uuid: draft.id } : {}),
+        });
+        setDraft((current) => current ? { ...current, label: result.name } : current);
+      } catch (reason) {
+        notifyCommandError(reason, "无法读取店铺名称，请稍后重试。");
+      } finally {
+        actionLock.current = false;
+        setBusy(undefined);
+      }
+    }
+
     async function saveKey() {
-      if (!draft || !draft.label.trim() || actionLock.current) return;
+      if (!draft || actionLock.current) return;
       actionLock.current = true;
       setBusy("save");
       try {
@@ -212,6 +231,7 @@ export function useStoreCommands({
           if (
             draft.id &&
             editor &&
+            draft.label.trim() &&
             draft.label.trim() !== editor.label &&
             canEditName
           ) {
@@ -245,17 +265,23 @@ export function useStoreCommands({
           }
           setEditingId(undefined);
           setDraft(undefined);
-          notifySuccess("密钥已验证并加密托管", {
-            description: "登录任意设备即可使用；界面不会回显密钥。",
-          });
+          if (isNew && !draft.label.trim() && !upserted.name_filled) {
+            notifyInfo("凭据已保存，未读取到店铺名称", {
+              description: "可手动填写名称，或稍后测试连接重试。",
+            });
+          } else {
+            notifySuccess("密钥已验证并加密托管", {
+              description: "登录任意设备即可使用；界面不会回显密钥。",
+            });
+          }
         } else if (
           draft.id &&
           editor &&
-          ((draft.label.trim() !== editor.label && canEditName) ||
+          ((draft.label.trim() && draft.label.trim() !== editor.label && canEditName) ||
             (tagsChanged && canManageTags) ||
             groupSave)
         ) {
-          const nameChanged = draft.label.trim() !== editor.label && canEditName;
+          const nameChanged = Boolean(draft.label.trim()) && draft.label.trim() !== editor.label && canEditName;
           let next = await integrationsHttp.integrationsListOzonStores();
           if (nameChanged) {
             next = await integrationsHttp.integrationsRenameOzonStore({
@@ -287,29 +313,6 @@ export function useStoreCommands({
         }
       } catch (reason) {
         notifyCommandError(reason, "无法保存店铺，请稍后重试。");
-      } finally {
-        actionLock.current = false;
-        setBusy(undefined);
-      }
-    }
-
-    async function clearStore(id: string) {
-      if (actionLock.current) return false;
-      actionLock.current = true;
-      setBusy("clear");
-      try {
-        const next = await integrationsHttp.integrationsClearOzonStore({ id });
-        rememberStoreRoster(next, workspaceId);
-        if (editingId === id) {
-          setDraft((current) => (current ? { ...current, apiKey: "" } : current));
-        }
-        notifySuccess("已清除密钥", {
-          description: "Cloud 密文已删除，店铺槽位仍保留。",
-        });
-        return true;
-      } catch (reason) {
-        notifyCommandError(reason, "无法清除密钥，请稍后重试。");
-        return false;
       } finally {
         actionLock.current = false;
         setBusy(undefined);
@@ -386,31 +389,6 @@ export function useStoreCommands({
       }
     }
 
-    async function setKeyGrant(id: string, manage: boolean) {
-      setBusy("grant");
-      try {
-        const roster = await integrationsHttp.integrationsSetStoreKeyGrant({
-          id,
-          assignee_key_manage: manage,
-        });
-        rememberStoreRoster(roster, workspaceId);
-        notifySuccess(manage ? "已允许指派人管理密钥" : "已关闭指派人的密钥管理");
-      } catch (reason) {
-        notifyCommandError(reason, "无法更新密钥管理，请稍后重试。");
-      } finally {
-        setBusy(undefined);
-      }
-    }
-
-    async function setActive(id: string) {
-      try {
-        await integrationsHttp.integrationsSetActiveOzonStore({ id });
-        await reload({ soft: true, force: true });
-      } catch (reason) {
-        notifyCommandError(reason, "无法切换当前店铺，请稍后重试。");
-      }
-    }
-
     async function testStore(id: string) {
       setBusy("test");
       setTestingId(id);
@@ -447,7 +425,7 @@ export function useStoreCommands({
   }
 
   return {
-    reload, refreshFinanceBalances, openEditor, createStore, createTag, createGroup, saveKey, clearStore,
-    deleteStores, testStores, assignStore, setKeyGrant, setActive, testStore,
+    reload, refreshFinanceBalances, openEditor, createStore, createTag, createGroup, readStoreName, saveKey,
+    deleteStores, testStores, assignStore, testStore,
   }
 }

@@ -1,12 +1,14 @@
 # listing-core 怎么接到 Go
 
-来源提交：`xxww0098/podhub` `a03d735`。本文只记录已经打开过的源码和这次在本仓库里跑过的加载实验。
+来源提交：`xxww0098/podhub` `a03d735`。本文保留最初接入实验及其 Rust 对照。早期 HTTP 字段和路由描述是历史记录；当前契约以 `api/openapi.yaml` 为准。
 
-用户已经决定：上架规则只在服务端校验，浏览器只做提示；规则表经接口下发并带版本握手；不编译 Go WASM（`GOOS=js` / `GOARCH=wasm`）。`listing-core` 仍是 Rust 纯函数，Cloud 与浏览器共用。Go 是否用 wazero 加载**同一份**浏览器 wasm，要先评估。评估结论如下。是否改用上游那份浏览器产物，留在文末交给用户决定。
+用户已经决定：上架规则只在服务端校验，浏览器只做提示；规则表经接口下发并带版本握手；不编译 Go WASM（`GOOS=js` / `GOARCH=wasm`）。`listing-core` 仍是 Rust 纯函数，Cloud 与浏览器共用。当前服务端加载 `wasm/dist/server/listing-core.wasm`（快照、冻结与禁用标签 op 20）；浏览器加载 `wasm/dist/browser/listing-state.wasm`。是否统一产物由 [决策 O1](../decisions.md) 跟踪。
 
 ## 浏览器那份 wasm 长什么样
 
-`rust/crates/listing-core-wasm` 是 `wasm32-unknown-unknown` 的 C ABI（`cdylib`），没有 wasm-bindgen，没有线程。模块说明里的宿主导入只有 `env.fill_random(ptr, len)`。导出是 `alloc`、`free`、`schema_load`、`schema_drop`、`call`、`result_ptr`、`result_len`、`drop_result`、`last_error_ptr`、`last_error_len`。`call` 的 op 表是行编辑、冻结、issue 清单、阶段计划、OCR 答案和变体，**没有** `tag_is_banned` / `partition_tags` / `strip_tag_text`。
+`rust/crates/listing-core-wasm` 是 `wasm32-unknown-unknown` 的 C ABI（`cdylib`），没有 wasm-bindgen，没有线程。模块说明里的宿主导入只有 `env.fill_random(ptr, len)`。导出是 `alloc`、`free`、`schema_load`、`schema_drop`、`call`、`result_ptr`、`result_len`、`drop_result`、`last_error_ptr`、`last_error_len`。`call` 的 op 表是行编辑、冻结、issue 清单、阶段计划、识图答案和变体，**没有** `tag_is_banned` / `partition_tags` / `strip_tag_text`。
+
+op 19 `seedAssociatedRow` 是同源多规格导入的建行入口：宿主传 `orgId`、`supplierSourceId`、`variantGroup`、`rowId` 和与 op 1 相同的种子输入，内核用 `association_identity` 派生关联 id 与共同型号，再把 `PH-<rowId>` 货号和型号写进草稿，回 `{row, associationId, modelValue}`。类目没有普通 9048 字段、源图摘要不是 64 位十六进制、款号或货源库为空时是 `CORE_REFUSED`。Go 不再保留这套派生公式。
 
 禁用标签匹配在 `rust/crates/listing-core/src/banned_tags.rs`。Cloud 原生直接调用它：
 
@@ -20,19 +22,11 @@
 
 能加载这种形状，不能用浏览器那份现成产物来做禁用标签。
 
-本仓库的 `rust/crates/wasm-host-probe` 按同样的约定声明了 `env.fill_random`，并在 wasm 里对宿主写好的字节求和。`TestWazeroHostSatisfiesFillRandom` 用 wazero 提供这个导入，4 个字节各为 7 时和为 28；随后调用会 panic 的导出，wazero 把 trap 当成错误返回。所以「C ABI + 一个 `env.fill_random`」这件事，wazero 做得到。
+禁用标签现在是 listing-core-wasm 的 op 20（仅服务端构建，浏览器构建通过 `browser` feature 排除）：JSON 进、JSON 出，直接调用 `listing_core::banned_tags`，没有第二份抄来的源码。`cargo test -p listing-core` 跑 `banned_tags` 的单元测试；`cargo test -p listing-core-wasm` 经导出的 `call` 重放 `rust/crates/listing-core-wasm/tests/fixtures/banned_tags/oracle.json`。Go 的 `TestWasmMatchesNativeOracle` 用 wazero 跑同一批输入，紧凑 JSON 必须与 oracle 逐字节相同。CI 不重编，只对已提交产物跑。
 
-做不到的是「把浏览器正在用的那份 `listing-core.wasm` 原样加载，然后让它判断禁用标签」：
+wazero 提供 `env.fill_random`；模块中途 panic 会成为 trap，由宿主丢弃该实例（`internal/platform/wasm` 的池测试覆盖）。
 
-1. 那份模块的 op 表没有禁用标签函数。调用现有的 freeze（op 11）会复现「冻结时不查标签」的缺口，而不是补上它。
-2. 本仓库没有 podhub 工作区。编出那份 wasm 还要 `op-workflow` 等整棵依赖。本 PR 不把那棵树拷进来。
-3. 即使编出来，Go 仍然调用不到 `banned_tags`，除非上游先加一个导出。那会变成一份新的浏览器 wasm，不再是今天已经发出去的那一份。
-
-`rust/crates/listing-tags` 编出来的 `wasm/dist/server/listing-tags.wasm` **不是**那份浏览器产物。它只包含从 `banned_tags.rs`（blob `bce8b013`）和 `ocr_script.rs` 的形近字折叠（blob `923d5cd1`）抄来的纯函数，JSON 进、JSON 出。`cargo test` 跑的是抄过来的上游单元测试，再加 `testdata/oracle.json`。Go 的 `TestWasmMatchesNativeOracle` 用 wazero 跑同一批输入，紧凑 JSON 必须与 oracle 逐字节相同。本地重编后可以用 `scripts/build-wasm.sh tags --env FILE` 把 `LISTING_TAGS_WASM` 指到**刚编出来**的模块，再跑一遍同样的 oracle，避免只相信提交进仓库的二进制；CI 不重编，只对已提交产物跑。
-
-这份窄 wasm 的导入表是空的（不需要 `fill_random`，因为匹配函数不用随机数）。浏览器模块需要的那个导入，由上面的探针覆盖。
-
-## 本 PR 实际接上的行为
+## 最初接入行为（历史记录）
 
 规则从 `public.banned_tags` 读出，只保留 `enabled` 且 `match_mode` 为 `exact` 或 `stem` 的行，按 `id` 排序。这与 `store::load_enabled` 一致。未知的 `match_mode` 跳过，不当成命中。
 
@@ -49,11 +43,11 @@
 
 `POST /api/listing/submit` 先做这个闸。命中则 400 `banned_tag`，不入队、不写行、不调用 Ozon。没有 `storeId`/`items` 的正文通过闸之后是 400 `validation` `请求格式无效`，不写库、不入队。带 `storeId` 或 `items` 的正文走草稿入口。
 
-表是全平台的。迁移没有给它打开 RLS，本接口也不 `SET LOCAL ROLE`、不过滤 `org_id`。请求体里的租户标识不参与匹配。本 PR 不实现登录和超级管理员写入，因此没有无鉴权的管理写接口；审计仍留在 Rust 的 `/api/admin/banned-tags`。
+表是全平台的。迁移没有给它打开 RLS，本接口也不 `SET LOCAL ROLE`、不过滤 `org_id`。请求体里的租户标识不参与匹配。最初实验没有实现登录和超级管理员写入；后续禁用标签管理写入与审计已记录在 [Listing 写路径](listing-write-parity.md)。
 
 `OZON_WRITE_KILL_SWITCH` 与 `CLOUD_MEDIA_GC_DELETE` 的解析没有改。
 
-## 有意的行为变化（交给用户决定）
+## 有意的行为变化
 
 `submit.rustFreezeChecksTags` 恒为 `false`：当前 Rust 的 build→validate→freeze **不**查禁用标签。Go 的提交闸会拒绝。拒绝条件是下面两条的并集，动作用的是 PATCH 的拒绝，不是发送前的静默剥离：
 
@@ -62,20 +56,18 @@
 
 这样冻结前就停住，避免「先冻结、再剥离、请求哈希和出站字节不同」。`behaviorChange` 为 `submit_banned_tag_gate`。测试 `TestSubmitGateDivergesFromRustFreeze` 把「Go 拒绝」和「Rust 冻结不检查」放在同一个断言里。
 
-若用户不接受这道闸，应去掉 `decideSubmit` 里的拒绝，让提交路径回到「冻结时不查标签」，只保留 validate 里的对照结果。
+现有 `decideSubmit` 仍保留拒绝分支；是否调整由 [决策 O2](../decisions.md) 跟踪。本对拍记录不要求为旧 Rust 行为保留兼容。
 
 ## listing-core wasm 宿主
 
 `internal/listing/core` 加载手写 C ABI（不是 WASI）。wazero 只出现在 `internal/platform/wasm`；core 调用那个宿主。浏览器 op 1–13 在 `internal/listing/core/contract`。`listing/submit` 只 import 这份 contract，具体模块由 `internal/app` 装上。多了一个宿主导出 `snapshot_from_fields`，入参是缓存里的 snake_case 字段数组，出参是 `snapshot_from_live_fields` 的快照。因此提交进仓库的 `wasm/dist/server/listing-core.wasm` 不是上游浏览器那一份字节。校验和记在 `wasm/dist/SOURCES.sha256`。
 
-窄 wasm、listing-core 和浏览器模块同属一个 `rust/` workspace，共用 `rust/rust-toolchain.toml` 钉住的稳定工具链（1.99.0），都在本地用 `make wasm` 构建。CI 不安装 Rust、不重编 WASM；它校验源码 / 构建输入指纹与产物哈希。CI 传的 `LISTING_CORE_WASM` 与 `LISTING_TAGS_WASM` 指向已提交的 `wasm/dist/server/`，`WASM_HOST_PROBE` 指向 `wasm/dist/test/`，`LISTING_STATE_WASM` 指向 `wasm/dist/browser/`。Go 测试比较 `freeze_oracle.json` 的结果字节，不比较两次构建的 WASM 文件字节。禁用标签闸继续单独加载窄 wasm，生产代码里的 wazero 只在 `internal/platform/wasm`。
+服务端与浏览器的 listing-core 模块同属一个 `rust/` workspace，共用 `rust/rust-toolchain.toml` 钉住的稳定工具链（1.99.0），都在本地用 `make wasm` 构建。Go/Web CI 消费已提交 WASM，并校验源码 / 构建输入指纹与产物哈希；独立 Rust job 运行 `cargo test --locked -p listing-core -p listing-core-wasm -p render -p psdx -p render-wasm`，不重编 WASM。Go 测试比较 `freeze_oracle.json` 与禁用标签 `oracle.json` 的结果字节，不比较两次构建的 WASM 文件字节。禁用标签闸经 `engine.New(core.Shared(...))` 复用同一个 listing-core 实例池，生产代码里的 wazero 只在 `internal/platform/wasm`。
 
 `semantic_schema_revision` 的 sha256 仍按传入顺序计算，那次改动只落在 Go 侧、没有动 wasm 源码。Go 在调用 `snapshot_from_fields` 之前按 attribute id 排序，返回的快照把字段拨回缓存里的展示顺序，所以版本号不再跟着顺序变。发送时旧哈希和新哈希都认；对不上才按当前字段重验，只有新增必填且商品没填才拦。详见 `docs/parity/schema-revision-parity.md` 和 `docs/parity/regression-checklist.md`。
 
 草稿发送用 op 9 把 Draft 投成行，再用 op 11 冻结。op 11 还会拒绝 `schema_stale`、`coordinate_mismatch`、`candidates_unresolved`、`row_id_invalid`。Cloud 的 `submit_drafts_pipeline` 在冻结前还有媒体、供应商视频、系统媒体和发货门，那些门除了图片 key 的形状和 28 天期限，没有接上。图片 key 规则抄自 `media-core` 的 `parse_upload_key`，`media-core` 没有链进来。
 
-## 需要用户决定
+## 后续决策
 
-1. **窄 wasm 是否继续作为服务端匹配器。** 它和浏览器 wasm 不是同一份文件。替代方案是：在 `listing-core-wasm` 增加一个 op（建议 JSON 入参 `{op, tags, text, rules:[{term, matchMode}]}`，出参与现在的 `Out` 相同），由 Rust CI 产出浏览器与 Go 共用的那一个 `.wasm`，Go 只换成那个文件。在那之前，本仓库用窄 wasm，避免把词干规则重写成 Go。
-2. **提交闸是否保留。** 见上一节。不接受的话，Rust 与 Go 在「冻结时不查禁用标签」上重新一致，发送前剥离与请求哈希不一致的洞还在。
-3. **是否把 `GET /api/me/catalog/banned-tags` 的 `{data:{rules}}` 包一层。** 本接口是新的 `GET /api/listing/rules`，多了 `rulesVersion`。旧路径要等认证（不在本分支）再挂，不能做成无登录的同一 URL。
+产物是否统一、提交闸是否调整、排序是否放入 wasm，集中见 [决策 O1–O3](../decisions.md)。旧路径的兼容包装不再作为本项目要求；新增或删除路由按当前 OpenAPI 与鉴权实现处理。

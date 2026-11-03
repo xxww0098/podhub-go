@@ -2,10 +2,12 @@ package registry
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/xxww0098/podhub-go/internal/media/contract"
 	"github.com/xxww0098/podhub-go/internal/media/domain/storageregistry"
+	sign "github.com/xxww0098/podhub-go/internal/platform/r2/sigv4"
 )
 
 // Store is the durable half of presign and confirm. Every method runs in a
@@ -20,7 +22,7 @@ type Store interface {
 	// Confirm applies the confirm decision: reuse or insert the object row,
 	// then mark the upload confirmed. It returns the object id.
 	Confirm(ctx context.Context, uploadID string, decision storageregistry.ConfirmDecision) (string, error)
-	// Upload returns one pending upload for this actor and org.
+	// Upload returns one upload for this actor and org, including confirmed retries.
 	Upload(ctx context.Context, uploadID string, actorID, orgID int64) (UploadRow, error)
 	// ExpireUnconfirmed stops a pending claim whose object was already taken.
 	ExpireUnconfirmed(ctx context.Context, uploadID string) error
@@ -30,12 +32,13 @@ type Store interface {
 // machine so the pgx repository can implement this port without importing it.
 type UploadRow = storageregistry.Upload
 
-// Object is a head proof from the bucket. The service never reads bytes.
+// Object is server-verified metadata with a full-object SHA256 proof.
 type Object struct {
-	Exists      bool
-	ByteLength  int64
-	ContentType string
-	SHA256Hex   string
+	Exists            bool
+	ByteLength        int64
+	ContentType       string
+	SHA256Hex         string
+	ReadbackSHA256Hex string
 }
 
 // Signer produces the browser PUT and the GET for private reads. It refuses a
@@ -71,6 +74,14 @@ type Account struct {
 	AccessKeyID     string
 	SecretAccessKey string
 	SessionToken    string
+}
+
+// PublicURL uses this account's configured host; private accounts have no public URL.
+func (a Account) PublicURL(key string) string {
+	if strings.TrimSpace(a.PublicBaseURL) == "" || strings.TrimSpace(key) == "" {
+		return ""
+	}
+	return sign.PublicURL(sign.Account{PublicBaseURL: a.PublicBaseURL}, key)
 }
 
 // config turns the credential into the pure bucket model.

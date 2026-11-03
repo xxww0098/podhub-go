@@ -11,15 +11,15 @@ import (
 // NormalizedAccount is a create-account body.
 type NormalizedAccount = supcontract.NormalizedAccount
 
-// DecodeAccount requires sourceId and email. name and password may be omitted.
+// DecodeAccount requires factoryId and email. name and password may be omitted.
 func DecodeAccount(body []byte) (NormalizedAccount, error) {
 	raw, err := strictObject(body)
-	if err != nil || !hasOnly(raw, []string{"sourceId", "email", "name", "password"}) ||
-		!requireKeys(raw, []string{"sourceId", "email"}) {
+	if err != nil || !hasOnly(raw, []string{"factoryId", "email", "name", "password"}) ||
+		!requireKeys(raw, []string{"factoryId", "email"}) {
 		return NormalizedAccount{}, invalid()
 	}
 	var source, email string
-	if !unmarshal(raw["sourceId"], &source) || !unmarshal(raw["email"], &email) {
+	if !unmarshal(raw["factoryId"], &source) || !unmarshal(raw["email"], &email) {
 		return NormalizedAccount{}, invalid()
 	}
 	source = strings.TrimSpace(source)
@@ -31,7 +31,7 @@ func DecodeAccount(body []byte) (NormalizedAccount, error) {
 		return NormalizedAccount{}, fail(contract.KindValidation, "邮箱无效")
 	}
 	var out NormalizedAccount
-	out.SourceID = source
+	out.FactoryID = source
 	out.Email = email
 	if raw["name"] != nil && !bytes.Equal(bytes.TrimSpace(raw["name"]), []byte("null")) {
 		var name string

@@ -22,25 +22,21 @@ test("the Workspace menu carries the 兑换码 entry and the dialog form redeems
 
 test("redeem-code management has a loading state before the ledger arrives", () => {
   const html = renderToStaticMarkup(<RedeemCodesScreen />)
-  assert.match(html, /创建兑换码/)
+  assert.match(html, /aria-label="创建兑换码"/)
   assert.match(html, /正在读取兑换码/)
   assert.match(html, /搜索尾号、内容、批次或备注/)
-  assert.match(html, /按状态筛选/)
-  assert.match(html, /未使用/)
-  assert.match(html, /已作废/)
+  // Until the ledger arrives, there is no count to present as fact.
+  assert.doesNotMatch(html, /筛选全部，0 个/)
   assert.doesNotMatch(html, /兑换码统计/)
 })
 
-test("redeem-code row actions expose copy, delete and search clear", () => {
+test("redeem-code deletion is limited to eligible states", () => {
   const source = readFileSync(
     new URL("../src/features/redeem-codes/redeem-codes-screen.tsx", import.meta.url),
     "utf8",
   )
-  assert.match(source, /label="复制尾号"/)
-  assert.match(source, /label="删除"/)
   assert.doesNotMatch(source, /label="作废"/)
   assert.doesNotMatch(source, /adminRevokeRedeemCode/)
-  assert.match(source, /<PlatformAdminSearch/)
   assert.match(source, /adminDeleteRedeemCode/)
   assert.match(source, /status === "unused" \|\| status === "expired" \|\| status === "revoked"/)
 })
@@ -51,7 +47,7 @@ test("兑换码列表用勾选列驱动批量删除，逐条删除并把失败�
     "utf8",
   )
   // 表头全选（含半选）与行勾选，选中态落在行上。
-  assert.match(source, /aria-label="选择当前筛选的全部兑换码"/)
+  assert.match(source, /aria-label="选择本页全部兑换码"/)
   assert.match(source, /indeterminate=\{!allVisibleSelected && someVisibleSelected\}/)
   assert.ok(source.includes("toggleSelectRow(code.id, checked === true)"))
   assert.ok(source.includes('data-state={selectedIds.has(code.id) ? "selected" : undefined}'))
@@ -70,18 +66,24 @@ test("兑换码列表用勾选列驱动批量删除，逐条删除并把失败�
   assert.ok(source.includes("删除后无法恢复。"))
 })
 
-test("兑换内容是 tab，第二项是钱包额度而不是识别次数", () => {
+test("创建表单只有钱包额度，没有成员名额、档位或有效天数", () => {
   const source = readFileSync(
     new URL("../src/features/redeem-codes/redeem-codes-screen.tsx", import.meta.url),
     "utf8",
   )
-  assert.match(source, /<TabsTrigger value="member_seats"/)
-  assert.match(source, /<TabsTrigger value="wallet_credits"/)
-  // The dropdown and the OCR-count creation path are both gone from the form.
-  assert.doesNotMatch(source, /<option value="ocr_credits">/)
-  assert.doesNotMatch(source, /识别次数/)
+  assert.doesNotMatch(source, /member_seats|ocr_credits|duration_days|PAID_TIERS|PLAN_CATALOG/)
+  const start = source.indexOf("function CreateRedeemCodeSheet(")
+  const form = source.slice(start, source.indexOf("\nfunction ", start + 1))
+  assert.doesNotMatch(form, /<TabsTrigger/)
+  assert.doesNotMatch(source, /识别次数|成员名额|有效天数/)
   // 元 typed by the operator reaches the wire as 分.
-  assert.match(source, /wallet_cents: isWallet \? \(walletCents \?\? 0\) : 0/)
+  assert.match(source, /wallet_cents: walletCents,/)
+})
+
+test("钱包兑换码与订阅优惠码有各自的管理页签", () => {
+  const html = renderToStaticMarkup(<RedeemCodesScreen />)
+  assert.match(html, /钱包兑换码/)
+  assert.match(html, /订阅优惠码/)
 })
 
 test("保存兑换码 只有一层弹窗，未保存时由页脚按钮收口", () => {

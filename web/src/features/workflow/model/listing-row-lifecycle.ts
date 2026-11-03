@@ -183,6 +183,12 @@ export function lifecycleSealed(lifecycle: WorkflowProductLifecycle): boolean {
   return SEALED_STAGES.includes(lifecycle.stage)
 }
 
+export function rowPublishFenced(row: Pick<ListingRow, "stage" | "publishUnconfirmed" | "readiness">, lifecycle?: WorkflowProductLifecycle): boolean {
+  const fenced = [...SEALED_STAGES, "queued", "submitting"]
+  return row.publishUnconfirmed === true || fenced.includes(row.stage ?? "") || fenced.includes(lifecycle?.stage ?? "")
+    || Boolean(row.readiness?.blockers.some((code) => code === "outcome_unknown" || code === "operator_attested"))
+}
+
 /** Why an editable cell refuses a write, or null when it may. */
 export function proseCellSkip(
   row: { ai: string },

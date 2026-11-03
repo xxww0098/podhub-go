@@ -3,6 +3,7 @@ use crate::media::error::{MediaError, MediaErrorCode};
 use crate::media::model::RenderDocument;
 use crate::media::raster::{Backdrop, PixelSource, backdrop_to_bytes, new_backdrop};
 use crate::psd::LayerNode;
+use crate::psd::render::LayerMask;
 use std::borrow::Cow;
 
 const BYTE_TO_UNIT: [f64; 256] = {
@@ -30,8 +31,6 @@ struct CompositeContext<'a> {
     viewport_top: i64,
     viewport_bottom: i64,
 }
-
-type MaskSampler = Box<dyn Fn(i64, i64) -> f64>;
 
 pub(super) fn composite_document<'a>(
     doc: &'a RenderDocument,
@@ -79,31 +78,27 @@ fn default_resolve<'l>(layer: &'l LayerNode) -> Option<PixelSource<'l>> {
     })
 }
 
-fn mask_sampler(layer: &LayerNode) -> Option<MaskSampler> {
-    let mask = layer.mask.as_ref()?;
-    if mask.disabled {
-        return None;
+fn active_mask(layer: &LayerNode) -> Option<&LayerMask> {
+    layer.mask.as_ref().filter(|mask| !mask.disabled)
+}
+
+fn sample_mask(mask: &LayerMask, x: i64, y: i64) -> f64 {
+    let unmasked = 1.0 - mask.density;
+    let default_color = unmasked + mask.density * (mask.default_color as f64 / 255.0);
+    if x < mask.left || x >= mask.right || y < mask.top || y >= mask.bottom {
+        return default_color;
     }
-    let default_color = mask.default_color as f64 / 255.0;
-    let left = mask.left;
-    let top = mask.top;
-    let right = mask.right;
-    let bottom = mask.bottom;
-    let image = mask.image_data.clone();
-    Some(Box::new(move |x, y| {
-        if x < left || x >= right || y < top || y >= bottom {
-            return default_color;
-        }
-        let Some(image) = &image else {
-            return default_color;
-        };
-        let local_x = (x - left) as u32;
-        let local_y = (y - top) as u32;
-        if local_x >= image.width || local_y >= image.height {
-            return default_color;
-        }
-        image.data[((local_y * image.width + local_x) * 4) as usize] as f64 / 255.0
-    }))
+    let Some(image) = &mask.image_data else {
+        return default_color;
+    };
+    let local_x = (x - mask.left) as u32;
+    let local_y = (y - mask.top) as u32;
+    if local_x >= image.width || local_y >= image.height {
+        return default_color;
+    }
+    unmasked
+        + mask.density
+            * (image.data[((local_y * image.width + local_x) * 4) as usize] as f64 / 255.0)
 }
 
 fn blend_mode_name(mode: &str) -> &str {
@@ -120,7 +115,7 @@ fn blend_onto(
     source: &PixelSource<'_>,
     mode: &str,
     opacity: f64,
-    mask: Option<&MaskSampler>,
+    mask: Option<&LayerMask>,
 ) -> Result<(), MediaError> {
     if opacity <= 0.0 {
         return Ok(());
@@ -144,7 +139,7 @@ fn blend_onto(
             let si = (srow + (x - source.left) as usize) * 4;
             let mut source_alpha = BYTE_TO_UNIT[source.data[si + 3] as usize] * opacity;
             if let Some(mask) = mask {
-                source_alpha *= mask(x, y);
+                source_alpha *= sample_mask(mask, x, y);
             }
             if source_alpha <= 0.0 {
                 continue;
@@ -243,7 +238,7 @@ fn render_unit<'a>(
             &source,
             effective_mode,
             opacity,
-            mask_sampler(base).as_ref(),
+            active_mask(base),
         )?;
         return Ok(());
     }
@@ -258,7 +253,7 @@ fn render_unit<'a>(
         (region_right - region_left) as u32,
         (region_bottom - region_top) as u32,
     )?;
-    let base_mask = mask_sampler(base);
+    let base_mask = active_mask(base);
     for y in region_top..region_bottom {
         for x in region_left..region_right {
             let source_index =
@@ -267,7 +262,7 @@ fn render_unit<'a>(
                 (((y - region_top) * i64::from(region.width) + (x - region_left)) * 4) as usize;
             let mut alpha = BYTE_TO_UNIT[source.data[source_index + 3] as usize];
             if let Some(mask) = &base_mask {
-                alpha *= mask(x, y);
+                alpha *= sample_mask(mask, x, y);
             }
             if alpha <= 0.0 {
                 continue;
@@ -295,7 +290,7 @@ fn render_unit<'a>(
             &clip_source,
             blend_mode_name(&clip.blend_mode),
             clip.opacity * clip.fill_opacity,
-            mask_sampler(clip).as_ref(),
+            active_mask(clip),
         )?;
     }
     let merged = PixelSource {
@@ -318,7 +313,7 @@ fn clip_color_lerp(
     source: &PixelSource<'_>,
     mode: &str,
     opacity: f64,
-    mask: Option<&MaskSampler>,
+    mask: Option<&LayerMask>,
 ) -> Result<(), MediaError> {
     if opacity <= 0.0 {
         return Ok(());
@@ -345,7 +340,7 @@ fn clip_color_lerp(
             let si = (srow + (x - source.left) as usize) * 4;
             let mut source_alpha = BYTE_TO_UNIT[source.data[si + 3] as usize] * opacity;
             if let Some(mask) = mask {
-                source_alpha *= mask(x, y);
+                source_alpha *= sample_mask(mask, x, y);
             }
             if source_alpha <= 0.0 {
                 continue;
@@ -389,4 +384,41 @@ fn render_layers<'a>(
         render_unit(ctx, backdrop, base, &clips, doc_width)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::psd::Bitmap;
+
+    #[test]
+    fn borrowed_mask_sampling_preserves_pixels_and_default_outside_its_image() {
+        let mut mask = LayerMask {
+            left: 10,
+            top: 20,
+            right: 13,
+            bottom: 22,
+            default_color: 64,
+            disabled: false,
+            density: 1.0,
+            image_data: Some(Bitmap {
+                width: 2,
+                height: 1,
+                data: vec![0, 0, 0, 255, 128, 128, 128, 255],
+            }),
+        };
+        assert_eq!(sample_mask(&mask, 10, 20), 0.0);
+        assert_eq!(sample_mask(&mask, 11, 20), 128.0 / 255.0);
+        for (x, y) in [(9, 20), (13, 20), (10, 19), (10, 22), (12, 20), (10, 21)] {
+            assert_eq!(sample_mask(&mask, x, y), 64.0 / 255.0);
+        }
+        mask.density = 0.5;
+        assert_eq!(sample_mask(&mask, 10, 20), 0.5);
+        assert_eq!(sample_mask(&mask, 11, 20), 0.5 + 0.5 * (128.0 / 255.0));
+        assert_eq!(sample_mask(&mask, 9, 20), 0.5 + 0.5 * (64.0 / 255.0));
+        mask.image_data = None;
+        assert_eq!(sample_mask(&mask, 10, 20), 0.5 + 0.5 * (64.0 / 255.0));
+        mask.density = 0.0;
+        assert_eq!(sample_mask(&mask, 10, 20), 1.0);
+    }
 }

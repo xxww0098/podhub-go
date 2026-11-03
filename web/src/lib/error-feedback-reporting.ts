@@ -3,6 +3,7 @@ import type { DiagnosticClock, DiagnosticTimer } from "./diagnostic-window"
 import type { ErrorMediaSummary, ErrorReportEnvironment } from "./error-report-environment"
 import { spaDeviceId } from "./spa-device-id"
 import { UUID_PATTERN } from "./utils"
+import { ERROR_ID_PATTERN } from "./error-id"
 
 /** Machine identifiers and bounded environment. Never exception text, URLs or secrets. */
 export type ErrorFeedbackInput = ErrorReportEnvironment & {
@@ -61,7 +62,7 @@ function mediaOf(value: ErrorMediaSummary | undefined): ErrorMediaSummary | unde
 
 function receipt(input: ErrorFeedbackInput): ErrorFeedbackInput | null {
   const safe: ErrorFeedbackInput = { errorId: input.errorId, code: input.code }
-  if (typeof safe.errorId !== "string" || !/^[0-9]{20}$/.test(safe.errorId)
+  if (typeof safe.errorId !== "string" || !ERROR_ID_PATTERN.test(safe.errorId)
     || typeof safe.code !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(safe.code)) return null
   for (const key of ["traceId", "rowId", "cardId"] as const) {
     const value = input[key]
@@ -76,9 +77,11 @@ function receipt(input: ErrorFeedbackInput): ErrorFeedbackInput | null {
     if (typeof stage !== "string" || !ID.test(stage) || stage.length > 32) return null
     safe.stage = stage
   }
-  const status = httpStatus(input.status)
-  if (input.status !== undefined && status === undefined) return null
-  if (status !== undefined) safe.status = status
+  for (const key of ["status", "apiStatus"] as const) {
+    const status = httpStatus(input[key])
+    if (input[key] !== undefined && status === undefined) return null
+    if (status !== undefined) safe[key] = status
+  }
   const appVersion = text(input.appVersion, /^\d+\.\d+\.\d+$/, 32)
   if (appVersion) safe.appVersion = appVersion
   const userId = text(input.userId, UUID_PATTERN, 36)
@@ -89,8 +92,6 @@ function receipt(input: ErrorFeedbackInput): ErrorFeedbackInput | null {
   if (userAgent && !/:\/\/|bearer|token|x-amz|secret|password|=/i.test(userAgent)) safe.userAgent = userAgent
   const apiPath = text(input.apiPath, /^\/api\/[A-Za-z0-9_./-]{1,154}$/, 160)
   if (apiPath && !apiPath.includes("..") && !apiPath.includes("//")) safe.apiPath = apiPath
-  const apiStatus = httpStatus(input.apiStatus)
-  if (apiStatus !== undefined) safe.apiStatus = apiStatus
   const refusalReason = text(input.refusalReason, /^(?:[a-z]+:)?[A-Za-z0-9_.-]{1,64}$/, 64)
   if (refusalReason && refusalReason !== "operation_failed" && refusalReason !== "-") safe.refusalReason = refusalReason
   const media = mediaOf(input.media)

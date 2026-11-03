@@ -2,18 +2,30 @@ package contract
 
 import (
 	"net/url"
+	"regexp"
 	"strings"
 )
 
-// Validate checks one configured bucket against its role. A role accepts one
-// hostname and one provider; there is no fallback.
+var (
+	bucketNamePattern      = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$`)
+	developmentHostPattern = regexp.MustCompile(`^https://pub-[0-9a-f]{32}\.r2\.dev$`)
+)
+
+// Validate keeps production bucket roles fixed and allows explicit development buckets.
 func (c Config) Validate() error {
 	role, err := ParseRole(string(c.Role))
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(c.Bucket) != BucketName(role) {
+	bucket := strings.TrimSpace(c.Bucket)
+	if !bucketNamePattern.MatchString(bucket) {
 		return ErrBucket
+	}
+	switch bucket {
+	case BucketTransit, BucketAssets, BucketPrivate:
+		if bucket != BucketName(role) {
+			return ErrBucket
+		}
 	}
 	if strings.TrimSpace(c.Provider) != "cloudflare" {
 		return ErrProvider
@@ -30,9 +42,17 @@ func (c Config) Validate() error {
 	if _, err := NormalizePrefix(c.KeyPrefix); err != nil {
 		return err
 	}
-	want := PublicHost(role)
-	got := strings.TrimRight(strings.TrimSpace(c.PublicBaseURL), "/")
-	if got != want {
+	publicBase := strings.TrimSpace(c.PublicBaseURL)
+	switch {
+	case role == RolePrivate:
+		if publicBase != "" {
+			return ErrPublicHost
+		}
+	case bucket == BucketName(role):
+		if strings.TrimRight(publicBase, "/") != PublicHost(role) {
+			return ErrPublicHost
+		}
+	case !developmentHostPattern.MatchString(publicBase):
 		return ErrPublicHost
 	}
 	return nil

@@ -35,8 +35,8 @@ function store(overrides: Partial<OzonStoreView> = {}): OzonStoreView {
     assignee_email: "qyh@example.com",
     can_manage: true,
     can_edit_credential: true,
-    permissions: { manage_store: true, edit_name: true, manage_key_grants: true, manage_tags: true, test_key: true, manage_key: true, delete_store: true },
-    assignee_key_manage: true,
+    permissions: { manage_store: true, edit_name: true, manage_tags: true, test_key: true, manage_key: true, delete_store: true },
+
     ...overrides,
   }
 }

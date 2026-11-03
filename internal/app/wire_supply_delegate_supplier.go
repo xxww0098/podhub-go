@@ -1,15 +1,19 @@
 package app
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	ai "github.com/xxww0098/podhub-go/internal/ai/contract"
+	billingrepo "github.com/xxww0098/podhub-go/internal/billing/repo"
 	delegatehttp "github.com/xxww0098/podhub-go/internal/delegate/http"
 	delegaterepo "github.com/xxww0098/podhub-go/internal/delegate/repo"
 	delegatesvc "github.com/xxww0098/podhub-go/internal/delegate/service"
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
+	media "github.com/xxww0098/podhub-go/internal/media/contract"
 	"github.com/xxww0098/podhub-go/internal/platform/config"
 	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
 	sign "github.com/xxww0098/podhub-go/internal/platform/r2/sigv4"
@@ -27,13 +31,16 @@ import (
 // mountPR8A registers supply, delegate, and supplier. Delegate seller routes
 // call delegatesvc.Seller. Repos receive tenant.BeginApp from here so the
 // domains do not import the flat tenant package. Supplier receives the
-// loopback media account for asset and catalog blobs.
-func mountPR8A(router chi.Router, pool *pgxpool.Pool, sessions access.Resolver, blobs *sign.Account) {
-	cfg := config.Load()
+// current private bucket for originals and the assets account for catalog images.
+func mountPR8A(router chi.Router, pool *pgxpool.Pool, sessions access.Resolver, cfg config.Config) {
+	var blobs *sign.Account
+	if account, err := configuredR2Account(cfg, media.RoleAssets); err == nil {
+		blobs = &account
+	}
 	delegateRepo := delegaterepo.New(pool, tenant.BeginApp)
 	sellerAPI := delegatesvc.Seller{
 		DB:   delegateRepo,
-		Edge: delegateEdge(pool, cfg),
+		Edge: delegateEdge(cfg, pool),
 		Auto: cfg.DelegateAutoDispatch(),
 	}
 	supplyhttp.Mount(router, supplyhttp.Deps{
@@ -47,7 +54,13 @@ func mountPR8A(router chi.Router, pool *pgxpool.Pool, sessions access.Resolver, 
 	})
 	supplierhttp.Mount(router, supplierhttp.Deps{
 		Session: supplierSession{sessions},
-		Actions: suppliersvc.New(supplierrepo.New(pool, tenant.BeginApp).WithBlobs(blobs, blobs)),
+		Actions: suppliersvc.New(supplierrepo.New(pool, tenant.BeginApp).WithBlobs(func(ctx context.Context) (sign.Account, error) {
+			account, _, err := loadDelegateStorage(cfg)
+			return account, err
+		}, blobs).WithMoney(billingrepo.HoldTx, billingrepo.SettleTx).WithProfileValidation(func(raw string) bool {
+			_, err := ai.ParseProductProfile(raw)
+			return err == nil
+		})),
 	})
 	// The catalogue manager surface is mounted separately from the admin one:
 	// it runs on db.CatalogManager, which never sets app.staff_access.
@@ -120,7 +133,7 @@ func (s catalogSession) Resolve(r *http.Request) (*cataloghttp.Principal, *catal
 	}
 	var out *cataloghttp.Principal
 	if p != nil {
-		out = &cataloghttp.Principal{UserID: p.UserID}
+		out = &cataloghttp.Principal{UserID: p.UserID, PlatformRole: p.PlatformRole}
 	}
 	var ref *cataloghttp.Refusal
 	if refusal != nil {

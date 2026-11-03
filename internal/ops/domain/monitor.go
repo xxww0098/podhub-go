@@ -448,6 +448,7 @@ type priceRow struct {
 
 func loadPrices(fetch Fetch) (map[int64]priceRow, string) {
 	out := map[int64]priceRow{}
+	seen := map[string]bool{}
 	var cursor string
 	for page := 0; page < maxProductPages; page++ {
 		body := map[string]any{"filter": map[string]any{"visibility": "ALL"}, "limit": pageLimit}
@@ -459,32 +460,44 @@ func loadPrices(fetch Fetch) (map[int64]priceRow, string) {
 		if f := readPage(got, "经营数据", pricesPath, contract.CodeProducts); f != nil {
 			return out, f.Message
 		}
-		root := nested(asObject(got.Body), "result")
+		root := asObject(got.Body)
 		rows := arr(root, "items")
+		if rows == nil {
+			return out, "商品价格响应无效：items 必须是数组"
+		}
 		for _, row := range rows {
+			id := fieldI64(row, "product_id")
+			if id <= 0 {
+				return out, "商品价格响应无效：product_id 必须为正整数"
+			}
 			price := nested(row, "price")
 			actions := arr(nested(row, "marketing_actions"), "actions")
 			title := ""
 			if len(actions) > 0 {
 				title = fieldString(actions[0], "title")
 			}
-			out[fieldI64(row, "product_id")] = priceRow{
+			out[id] = priceRow{
 				Price: fieldF64(price, "price"), Marketing: fieldF64(price, "marketing_seller_price"),
 				Currency: fieldString(price, "currency_code"), Title: title,
 			}
 		}
 		cursor = strings.TrimSpace(fieldString(root, "cursor"))
-		if len(rows) < pageLimit || cursor == "" {
-			break
+		if cursor == "" {
+			return out, ""
 		}
+		if seen[cursor] {
+			return out, "商品价格分页游标重复，已停止同步"
+		}
+		seen[cursor] = true
 	}
-	return out, ""
+	return out, "商品价格分页超过安全上限 1000 页，已停止同步"
 }
 
 type stockRow struct{ Present, Reserved int64 }
 
 func loadStocks(fetch Fetch) (map[int64]stockRow, string) {
 	out := map[int64]stockRow{}
+	seen := map[string]bool{}
 	var cursor string
 	for page := 0; page < maxProductPages; page++ {
 		body := map[string]any{"filter": map[string]any{"visibility": "ALL"}, "limit": pageLimit}
@@ -498,20 +511,31 @@ func loadStocks(fetch Fetch) (map[int64]stockRow, string) {
 		}
 		root := asObject(got.Body)
 		rows := arr(root, "items")
+		if rows == nil {
+			return out, "商品库存响应无效：items 必须是数组"
+		}
 		for _, row := range rows {
+			id := fieldI64(row, "product_id")
+			if id <= 0 {
+				return out, "商品库存响应无效：product_id 必须为正整数"
+			}
 			var present, reserved int64
 			for _, st := range arr(row, "stocks") {
 				present += fieldI64(st, "present")
 				reserved += fieldI64(st, "reserved")
 			}
-			out[fieldI64(row, "product_id")] = stockRow{Present: present, Reserved: reserved}
+			out[id] = stockRow{Present: present, Reserved: reserved}
 		}
 		cursor = strings.TrimSpace(fieldString(root, "cursor"))
-		if len(rows) < pageLimit || cursor == "" {
-			break
+		if cursor == "" {
+			return out, ""
 		}
+		if seen[cursor] {
+			return out, "商品库存分页游标重复，已停止同步"
+		}
+		seen[cursor] = true
 	}
-	return out, ""
+	return out, "商品库存分页超过安全上限 1000 页，已停止同步"
 }
 
 func projectInfo(info map[string]json.RawMessage, archived bool, price *priceRow, stock *stockRow) monitorItem {

@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import { route } from "@/api/routes"
-import { diagLine, diagLog, PREPARE_LOG, RENDER_LOG, reportError, stageCountFields } from "./diag-log"
+import { diagLine, diagLog, PREPARE_LOG, RENDER_LOG, reportError } from "./diag-log"
 import { setErrorTelemetryContext } from "./error-telemetry"
 
 test("a diagnostic line is one prefixed, greppable key=value row", () => {
@@ -18,21 +18,6 @@ test("a diagnostic line is one prefixed, greppable key=value row", () => {
     "[render-wasm] renderProduct.ok design=SZ-0001.png template=3 ms=1235 memoryBytes=268435456 retry=true",
   )
   assert.equal(diagLine(PREPARE_LOG, "batch"), "[prepare] batch")
-})
-
-test("stage timings flatten to counts, with milliseconds only where the renderer had a clock", () => {
-  // Missing timing remains a count; measured stages retain their duration.
-  assert.deepEqual(
-    stageCountFields({
-      psdParse: { ms: null, count: 1 },
-      pass2Composite: { ms: null, count: 37 },
-      encodeTotal: { ms: 812.25, count: 4 },
-      broken: { count: "x" },
-    }),
-    { psdParse: 1, pass2Composite: 37, encodeTotal: "4/812.3ms" },
-  )
-  assert.deepEqual(stageCountFields(null), {})
-  assert.deepEqual(stageCountFields("nope"), {})
 })
 
 test("diagLog writes exactly one console line", () => {

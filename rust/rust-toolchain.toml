@@ -3,7 +3,7 @@
 # artifacts under `wasm/dist`. Native Rust CI tests use this same pin.
 #
 # The threaded browser renderer needs a nightly (std rebuilt with atomics);
-# `web/scripts/build-render.sh` selects `nightly-2026-09-14` explicitly for
+# `scripts/build-wasm.sh` selects `nightly-2026-09-14` explicitly for
 # that one artifact. Everything else builds with this stable pin.
 [toolchain]
 channel = "1.99.0"

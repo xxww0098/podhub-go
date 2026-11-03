@@ -22,12 +22,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/xxww0098/podhub-go/internal/app"
-	"github.com/xxww0098/podhub-go/internal/identity"
+	access "github.com/xxww0098/podhub-go/internal/identity/contract"
 	"github.com/xxww0098/podhub-go/internal/platform/config"
 	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
-	"github.com/xxww0098/podhub-go/internal/seller"
-	sellerdomain "github.com/xxww0098/podhub-go/internal/seller/domain"
-	sellerrepo "github.com/xxww0098/podhub-go/internal/seller/repo"
+	seller "github.com/xxww0098/podhub-go/internal/seller/ozon"
+	sellerdomain "github.com/xxww0098/podhub-go/internal/seller/ozon/domain"
+	sellerrepo "github.com/xxww0098/podhub-go/internal/seller/ozon/repo"
 	whcontract "github.com/xxww0098/podhub-go/internal/warehouse/contract"
 	"github.com/xxww0098/podhub-go/internal/warehouse/domain"
 	warehousehttp "github.com/xxww0098/podhub-go/internal/warehouse/http"
@@ -52,6 +52,7 @@ func TestWarehouseReadWriteArchive(t *testing.T) {
 	_, storeB := insertNextStore(t, ctx, pool, orgB)
 	_, storeCreate := insertNextStore(t, ctx, pool, orgA)
 	_, storeExpire := insertNextStore(t, ctx, pool, orgA)
+	_, storeArchive := insertNextStore(t, ctx, pool, orgA)
 
 	rowID := insertFenceRow(t, ctx, pool, orgA, storeA)
 	intentID := uuid.NewString()
@@ -107,7 +108,7 @@ func TestWarehouseReadWriteArchive(t *testing.T) {
 		if rec.Code != http.StatusNotFound {
 			t.Fatal(rec.Code, rec.Body.String())
 		}
-		rec = box.do(http.MethodGet, "/api/seller/warehouses?storeId="+storeA, "", orgA, userA, "viewer")
+		rec = box.do(http.MethodGet, "/api/seller/warehouses?storeId="+storeA, "", orgA, userA, "member")
 		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"warehouseId":11`) || !strings.Contains(rec.Body.String(), `"isActive":true`) {
 			t.Fatal(rec.Code, rec.Body.String())
 		}
@@ -185,25 +186,26 @@ func TestWarehouseReadWriteArchive(t *testing.T) {
 			t.Fatal("replay opened a key")
 		}
 		rep := box.do(http.MethodPost, "/api/seller/warehouses/report", `{"intentId":"`+intent+`","httpStatus":200,"operationId":"op-11"}`, orgA, userA, "owner")
-		if rep.Code != http.StatusOK || !strings.Contains(rep.Body.String(), `"accepted"`) {
+		if rep.Code != http.StatusOK || !strings.Contains(rep.Body.String(), `"unknown"`) {
 			t.Fatal(rep.Code, rep.Body.String())
 		}
-		assertWarehouseIntent(t, ctx, pool, intent, "accepted", "")
+		assertWarehouseIntent(t, ctx, pool, intent, "unknown", "")
 		bad := box.do(http.MethodPost, "/api/seller/warehouses/report", `{"intentId":"`+intent+`","httpStatus":500}`, orgA, userA, "owner")
 		if bad.Code != http.StatusConflict || !strings.Contains(bad.Body.String(), "report_state") {
 			t.Fatal(bad.Code, bad.Body.String())
 		}
-		assertWarehouseIntent(t, ctx, pool, intent, "accepted", "")
-		status := box.do(http.MethodPost, "/api/seller/warehouses/operations/status", `{"storeId":"`+storeA+`","operationId":"op-11"}`, orgA, userA, "viewer")
+		assertWarehouseIntent(t, ctx, pool, intent, "unknown", "")
+		status := box.do(http.MethodPost, "/api/seller/warehouses/operations/status", `{"storeId":"`+storeA+`","operationId":"op-11"}`, orgA, userA, "member")
 		if status.Code != http.StatusOK || !strings.Contains(status.Body.String(), `"SUCCESS"`) {
 			t.Fatal(status.Code, status.Body.String())
 		}
+		assertWarehouseIntent(t, ctx, pool, intent, "unknown", "")
 		missing := box.do(http.MethodPost, "/api/seller/warehouses/operations/status", `{"storeId":"`+storeA+`","operationId":"nope"}`, orgA, userA, "owner")
 		if missing.Code != http.StatusNotFound {
 			t.Fatal(missing.Code, missing.Body.String())
 		}
 
-		rec = box.do(http.MethodPost, "/api/seller/warehouses/grant", whGrantJSON(storeA, "up-403", "update", false, intPtr(11)), orgA, userA, "owner")
+		rec = box.do(http.MethodPost, "/api/seller/warehouses/grant", whGrantJSON(storeA, "up-403", "create", false, nil), orgA, userA, "owner")
 		intent = whIntent(t, rec)
 		rep = box.do(http.MethodPost, "/api/seller/warehouses/report", `{"intentId":"`+intent+`","httpStatus":403}`, orgA, userA, "owner")
 		if rep.Code != http.StatusOK || !strings.Contains(rep.Body.String(), `"rejected"`) {
@@ -217,7 +219,7 @@ func TestWarehouseReadWriteArchive(t *testing.T) {
 			t.Fatal(grpc7, err)
 		}
 
-		rec = box.do(http.MethodPost, "/api/seller/warehouses/grant", whGrantJSON(storeA, "up-400", "update", false, intPtr(11)), orgA, userA, "owner")
+		rec = box.do(http.MethodPost, "/api/seller/warehouses/grant", whGrantJSON(storeA, "up-400", "create", false, nil), orgA, userA, "owner")
 		intent = whIntent(t, rec)
 		rep = box.do(http.MethodPost, "/api/seller/warehouses/report", `{"intentId":"`+intent+`","httpStatus":422}`, orgA, userA, "owner")
 		if rep.Code != http.StatusOK {
@@ -353,13 +355,14 @@ func TestWarehouseReadWriteArchive(t *testing.T) {
 			OrgID: orgA, UserID: userA, StoreID: storeExpire,
 			ClientOperationID: "create-next", Kind: whcontract.KindCreate,
 		}, Role: "owner"})
-		if err != nil || got.APIKey != warehouseFixtureKey || box.opens.Load() != opens+1 {
+		if !errors.Is(err, whcontract.Busy()) || got.APIKey != "" || box.opens.Load() != opens {
 			t.Fatal(err, got.APIKey, box.opens.Load()-opens)
 		}
 	})
 
-	t.Run("archive then sync keeps the local mark", func(t *testing.T) {
-		rec := box.do(http.MethodPost, "/api/seller/warehouses/grant", whGrantJSON(storeA, "arc-yes", "archive", true, intPtr(11)), orgA, userA, "owner")
+	t.Run("archive acceptance does not change the local mark", func(t *testing.T) {
+		box.syncStore(t, storeArchive)
+		rec := box.do(http.MethodPost, "/api/seller/warehouses/grant", whGrantJSON(storeArchive, "arc-yes", "archive", true, intPtr(11)), orgA, userA, "owner")
 		intent := whIntent(t, rec)
 		rep := box.do(http.MethodPost, "/api/seller/warehouses/report", `{"intentId":"`+intent+`","httpStatus":200,"operationId":"op-arc"}`, orgA, userA, "owner")
 		if rep.Code != http.StatusOK {
@@ -368,25 +371,28 @@ func TestWarehouseReadWriteArchive(t *testing.T) {
 		var archived bool
 		if err := pool.QueryRow(ctx, `
 			SELECT archived_at IS NOT NULL FROM public.ozon_warehouses
-			 WHERE org_id = $1 AND store_id = $2::uuid AND warehouse_id = 11`, orgA, storeA).Scan(&archived); err != nil || !archived {
+			 WHERE org_id = $1 AND store_id = $2::uuid AND warehouse_id = 11`, orgA, storeArchive).Scan(&archived); err != nil || archived {
 			t.Fatal(archived, err)
 		}
 		box.name.Store("归档后")
-		rec = box.do(http.MethodPost, "/api/seller/warehouses/sync", `{"storeId":"`+storeA+`"}`, orgA, userA, "owner")
+		rec = box.do(http.MethodPost, "/api/seller/warehouses/sync", `{"storeId":"`+storeArchive+`"}`, orgA, userA, "owner")
 		if rec.Code != http.StatusOK {
 			t.Fatal(rec.Code, rec.Body.String())
 		}
 		var name string
 		if err := pool.QueryRow(ctx, `
 			SELECT name, archived_at IS NOT NULL FROM public.ozon_warehouses
-			 WHERE org_id = $1 AND store_id = $2::uuid AND warehouse_id = 11`, orgA, storeA).Scan(&name, &archived); err != nil || name != "归档后" || !archived {
+			 WHERE org_id = $1 AND store_id = $2::uuid AND warehouse_id = 11`, orgA, storeArchive).Scan(&name, &archived); err != nil || name != "归档后" || archived {
 			t.Fatal(name, archived, err)
 		}
-		rec = box.do(http.MethodGet, "/api/seller/warehouses/11?storeId="+storeA, "", orgA, userA, "owner")
-		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"archived":true`) || !strings.Contains(rec.Body.String(), `"isActive":false`) {
+		rec = box.do(http.MethodGet, "/api/seller/warehouses/11?storeId="+storeArchive, "", orgA, userA, "owner")
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"archived":false`) || !strings.Contains(rec.Body.String(), `"isActive":true`) {
 			t.Fatal(rec.Code, rec.Body.String())
 		}
-		rec = box.do(http.MethodPost, "/api/seller/warehouses/grant", whGrantJSON(storeA, "un-yes", "unarchive", false, intPtr(11)), orgA, userA, "owner")
+		if _, err := pool.Exec(ctx, `UPDATE ozon_warehouses SET archived_at=clock_timestamp() WHERE org_id=$1 AND store_id=$2::uuid AND warehouse_id=12`, orgA, storeArchive); err != nil {
+			t.Fatal(err)
+		}
+		rec = box.do(http.MethodPost, "/api/seller/warehouses/grant", whGrantJSON(storeArchive, "un-yes", "unarchive", false, intPtr(12)), orgA, userA, "owner")
 		intent = whIntent(t, rec)
 		rep = box.do(http.MethodPost, "/api/seller/warehouses/report", `{"intentId":"`+intent+`","httpStatus":200,"operationId":"op-un"}`, orgA, userA, "owner")
 		if rep.Code != http.StatusOK {
@@ -394,7 +400,7 @@ func TestWarehouseReadWriteArchive(t *testing.T) {
 		}
 		if err := pool.QueryRow(ctx, `
 			SELECT archived_at IS NOT NULL FROM public.ozon_warehouses
-			 WHERE org_id = $1 AND store_id = $2::uuid AND warehouse_id = 11`, orgA, storeA).Scan(&archived); err != nil || archived {
+			 WHERE org_id = $1 AND store_id = $2::uuid AND warehouse_id = 12`, orgA, storeArchive).Scan(&archived); err != nil || !archived {
 			t.Fatal(archived, err)
 		}
 	})
@@ -492,14 +498,11 @@ func newWarehouseBox(t *testing.T, ctx context.Context, pool *pgxpool.Pool) *war
 		Session: warehouseHeaderSession{},
 		Actions: box.svc,
 		Read: func(role string) bool {
-			parsed, ok := identity.ParseWorkspaceRole(role)
-			return ok && parsed.Allows(identity.CapStoreRead)
+			_, ok := access.ParseWorkspace(role)
+			return ok
 		},
-		Write: func(role string) bool {
-			parsed, ok := identity.ParseWorkspaceRole(role)
-			return ok && parsed.Allows(identity.CapWarehouseWrite)
-		},
-		Now: time.Now,
+		Write: access.CanManage,
+		Now:   time.Now,
 	}
 	live := chi.NewRouter()
 	warehousehttp.Mount(live, deps)
@@ -544,7 +547,7 @@ func (b *warehouseBox) serve(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "filter", http.StatusBadRequest)
 			return
 		}
-		_, _ = io.WriteString(w, `{"has_next":false,"result":[{"id":21,"name":"快递","warehouse_id":11,"provider_id":4,"template_id":"tpl","cutoff":"18:00","sla_cut_in":90,"status":"ACTIVE","created_at":"2026-01-02T03:04:05Z","updated_at":"2026-01-03T03:04:05Z"}]}`)
+		_, _ = io.WriteString(w, `{"has_next":false,"delivery_methods":[{"id":21,"name":"快递","warehouse_id":11,"provider_id":4,"template_id":"tpl","cutoff":"18:00","sla_cut_in":90,"status":"ACTIVE","created_at":"2026-01-02T03:04:05Z","updated_at":"2026-01-03T03:04:05Z"}]}`)
 	case domain.PathOperation:
 		_, _ = io.WriteString(w, `{"status":"SUCCESS","result":{"warehouse_id":11}}`)
 	default:

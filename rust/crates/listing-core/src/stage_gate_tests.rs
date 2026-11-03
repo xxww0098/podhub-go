@@ -9,7 +9,9 @@ fn candidate(pending: bool) -> ConfirmCandidate {
     ConfirmCandidate {
         index: 0,
         extension: "jpg".to_owned(),
-        object_key: format!("images/teams/test-workspace/sha256/{digest}.jpg"),
+        object_key: format!(
+            "uploads/2026-10-15/1792094400000-22222222-2222-4222-8222-222222222222/{digest}.jpg"
+        ),
         digest,
         byte_length: 12,
         storage_revision: 3,
@@ -45,6 +47,19 @@ fn a_mismatched_key_never_joins_the_batch() {
         ConfirmItem::Reject { code, .. } => assert_eq!(*code, "media_confirm_key"),
         other => panic!("{other:?}"),
     }
+}
+
+#[test]
+fn a_nested_or_mismatched_slice_key_is_rejected() {
+    let mut bad = candidate(true);
+    bad.object_key = format!("uploads/2026-10-15/batch/extra/{}.jpg", digest());
+    assert!(matches!(
+        plan_confirm(&[bad]).items[0],
+        ConfirmItem::Reject {
+            code: "media_confirm_key",
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -113,73 +128,22 @@ fn settled_text_is_shown_locally_and_settled_once() {
 }
 
 #[test]
-fn an_unusable_answer_retries_once_then_pauses() {
-    let retry = plan_ocr(&OcrFacts {
+fn invalid_paid_or_released_answers_require_a_person_and_unknown_results_pause() {
+    for status in ["settled", "unbilled_unknown"] {
+        let plan = plan_ocr(&OcrFacts {
+            has_recovery: true,
+            original_status: status.into(),
+            original_usable: Some(false),
+            ..empty_facts()
+        });
+        assert_eq!(plan.step, OcrStep::Unusable);
+    }
+    let plan = plan_ocr(&OcrFacts {
         has_recovery: true,
-        original_status: "settled".to_owned(),
-        original_usable: Some(false),
-        original_request_id: "air-1".to_owned(),
+        original_status: "unbilled_unknown".into(),
         ..empty_facts()
     });
-    assert_eq!(retry.step, OcrStep::SimpleRetry);
-    let pause = plan_ocr(&OcrFacts {
-        has_recovery: true,
-        original_status: "settled".to_owned(),
-        original_usable: Some(false),
-        retry_status: "settled".to_owned(),
-        retry_usable: Some(false),
-        ..empty_facts()
-    });
-    assert_eq!(pause.step, OcrStep::Unusable);
-    let unknown = plan_ocr(&OcrFacts {
-        has_recovery: true,
-        original_status: "unbilled_unknown".to_owned(),
-        ..empty_facts()
-    });
-    assert_eq!(unknown.step, OcrStep::Pause);
-    assert_eq!(unknown.display, OcrDisplay::Server);
-}
-
-#[test]
-fn a_released_contract_refusal_retries_once_and_a_true_unknown_still_pauses() {
-    // Guarded billing: the refused answer ended `unbilled_unknown` with its
-    // hold released, and Cloud reported it unusable (not unknown).
-    let retry = plan_ocr(&OcrFacts {
-        has_recovery: true,
-        original_status: "unbilled_unknown".to_owned(),
-        original_usable: Some(false),
-        original_request_id: "air-1".to_owned(),
-        ..empty_facts()
-    });
-    assert_eq!(retry.step, OcrStep::SimpleRetry);
-    let both = plan_ocr(&OcrFacts {
-        has_recovery: true,
-        original_status: "unbilled_unknown".to_owned(),
-        original_usable: Some(false),
-        retry_status: "unbilled_unknown".to_owned(),
-        retry_usable: Some(false),
-        ..empty_facts()
-    });
-    assert_eq!(both.step, OcrStep::Unusable);
-    let retry_settled = plan_ocr(&OcrFacts {
-        has_recovery: true,
-        original_status: "unbilled_unknown".to_owned(),
-        original_usable: Some(false),
-        retry_status: "settled".to_owned(),
-        retry_usable: Some(true),
-        retry_request_id: "air-2".to_owned(),
-        ..empty_facts()
-    });
-    assert_eq!(retry_settled.step, OcrStep::Settle);
-    assert_eq!(retry_settled.request_id.as_deref(), Some("air-2"));
-    let true_unknown_retry = plan_ocr(&OcrFacts {
-        has_recovery: true,
-        original_status: "unbilled_unknown".to_owned(),
-        original_usable: Some(false),
-        retry_status: "unbilled_unknown".to_owned(),
-        ..empty_facts()
-    });
-    assert_eq!(true_unknown_retry.step, OcrStep::Pause);
+    assert_eq!(plan.step, OcrStep::Pause);
 }
 
 #[test]
@@ -255,8 +219,5 @@ fn empty_facts() -> OcrFacts {
         original_status: String::new(),
         original_usable: None,
         original_request_id: String::new(),
-        retry_status: String::new(),
-        retry_usable: None,
-        retry_request_id: String::new(),
     }
 }

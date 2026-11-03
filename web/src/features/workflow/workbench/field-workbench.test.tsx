@@ -266,7 +266,7 @@ test("发送选中 scopes the same Cloud gate to the ticked rows", () => {
   // The counts on every verb are scope counts, so the scope itself is named:
   // without this chip a ribbon of numbers next to an empty checkbox column
   // reads as a selection nobody made.
-  assert.match(untouched, />全部 3</)
+  assert.match(untouched, />本视图 3</)
   assert.match(untouched, /aria-label="全部发送（2）到 测试店铺"/)
   assert.doesNotMatch(
     untouched,
@@ -284,7 +284,7 @@ test("发送选中 scopes the same Cloud gate to the ticked rows", () => {
   assert.doesNotMatch(picked, /aria-label="全部发送（2）到 测试店铺"/)
   assert.match(picked, /aria-label="准备选中（2）"/)
   assert.match(picked, /aria-label="删除所选 2 张图片"/)
-  assert.match(picked, />删除</)
+  assert.match(picked, /<button[^>]*aria-label="删除所选 2 张图片"/)
   // 型号 is a batch verb over the same ticked rows; it has no unselected scope.
   assert.match(picked, /aria-label="设置所选 2 行的型号"/)
   assert.doesNotMatch(untouched, /aria-label="设置所选/)
@@ -302,7 +302,7 @@ test("发送选中 scopes the same Cloud gate to the ticked rows", () => {
   }
   assert.doesNotMatch(untouched, /data-toolbar-slot="selection-actions"/)
   assert.doesNotMatch(picked, /data-toolbar-slot="selection-actions"/)
-  assert.match(untouched, /data-toolbar-slot="selection"[^>]*grid w-\[84px\]/)
+  assert.match(untouched, /data-toolbar-slot="selection"[^>]*grid[^>]*w-28/)
   assert.match(picked, /data-toolbar-slot="selection"[^>]*grid[^>]*w-\[212px\]/)
   assert.match(untouched, /data-toolbar-slot="media"[^>]*grid w-\[174px\]/)
   assert.match(picked, /data-toolbar-slot="media"[^>]*grid w-\[174px\]/)

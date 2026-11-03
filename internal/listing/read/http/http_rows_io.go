@@ -2,10 +2,9 @@ package readhttp
 
 import (
 	"bytes"
-	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	catalogcontract "github.com/xxww0098/podhub-go/internal/catalog/contract"
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
 	"github.com/xxww0098/podhub-go/internal/platform/httpx/jsonwire"
 )
@@ -23,7 +23,8 @@ const rowColumns = `id::text, card_id::text, store_id::text, revision, view_revi
 	payload, build_state, build_sources, updated_at,
 	(SELECT i.submission_receipt FROM submission_intents i
 	  WHERE i.org_id = listing_rows.org_id AND i.listing_row_id = listing_rows.id
-	  ORDER BY i.updated_at DESC, i.id DESC LIMIT 1),
+	    AND i.row_revision = listing_rows.revision
+	  ORDER BY i.created_at DESC, i.id DESC LIMIT 1),
 	EXISTS (SELECT 1 FROM jobs j WHERE j.org_id = listing_rows.org_id AND j.aggregate_id = listing_rows.id
 		AND j.aggregate_type = 'listing_row' AND j.kind = 'ai.recognize'
 		AND j.cancel_requested_at IS NULL AND j.state IN ('queued','retry_wait','running')),
@@ -32,7 +33,13 @@ const rowColumns = `id::text, card_id::text, store_id::text, revision, view_revi
 		AND j.cancel_requested_at IS NULL AND j.state IN ('queued','retry_wait','running')),
 	EXISTS (SELECT 1 FROM jobs j WHERE j.org_id = listing_rows.org_id AND j.aggregate_id = listing_rows.id
 		AND j.aggregate_type = 'listing_row' AND j.kind = 'media.render'
-		AND j.cancel_requested_at IS NULL AND j.state IN ('queued','retry_wait','running'))`
+		AND j.cancel_requested_at IS NULL AND j.state IN ('queued','retry_wait','running')),
+	(SELECT jsonb_build_object('row_revision',i.row_revision,'state',i.state,
+		'last_error_code',i.last_error_code,'submission_issues',i.submission_issues,
+		'reconciliation_outcome',i.reconciliation_outcome,'external_task_id',i.external_task_id)
+	 FROM submission_intents i
+	 WHERE i.org_id=listing_rows.org_id AND i.listing_row_id=listing_rows.id
+	 ORDER BY i.row_revision DESC,i.created_at DESC,i.id DESC LIMIT 1)`
 
 const schemaTTLMS = int64(24 * 60 * 60 * 1000)
 
@@ -52,6 +59,7 @@ func scanStoredRow(row pgx.Row) (storedScan, error) {
 		&item.Content, &item.Media, &item.Validation, &item.Submission,
 		&item.Payload, &item.BuildState, &sources, &updated, &item.Receipt,
 		&item.RecognizeJob, &item.UploadJob, &item.SliceJob,
+		&item.LatestIntent,
 	)
 	if err != nil {
 		return storedScan{}, err
@@ -212,19 +220,19 @@ func writeRowConflict(w http.ResponseWriter, revision int64, payload []byte, bas
 		Error    string `json:"error"`
 		Code     string `json:"code"`
 		Conflict struct {
-			ServerRevision     int64           `json:"serverRevision"`
-			ServerPayload      json.RawMessage `json:"serverPayload"`
-			ClientBaseRevision int64           `json:"clientBaseRevision"`
-			ClientChanges      json.RawMessage `json:"clientChanges"`
+			ServerRevision     int64           `json:"server_revision"`
+			ServerPayload      json.RawMessage `json:"server_payload"`
+			ClientBaseRevision int64           `json:"client_base_revision"`
+			ClientChanges      json.RawMessage `json:"client_changes"`
 		} `json:"conflict"`
 	}{
 		Error: "商品行已被他人更新，请刷新后重试",
 		Code:  "conflict",
 		Conflict: struct {
-			ServerRevision     int64           `json:"serverRevision"`
-			ServerPayload      json.RawMessage `json:"serverPayload"`
-			ClientBaseRevision int64           `json:"clientBaseRevision"`
-			ClientChanges      json.RawMessage `json:"clientChanges"`
+			ServerRevision     int64           `json:"server_revision"`
+			ServerPayload      json.RawMessage `json:"server_payload"`
+			ClientBaseRevision int64           `json:"client_base_revision"`
+			ClientChanges      json.RawMessage `json:"client_changes"`
 		}{revision, server, base, changes},
 	})
 }
@@ -240,22 +248,13 @@ func (h Host) finishCreateRow(w http.ResponseWriter, r *http.Request, p access.P
 		writeErr(w, http.StatusBadRequest, "draft 不是有效的上架草稿："+err.Error(), "validation")
 		return
 	}
-	var assocID, model string
+	var assoc *associationRequest
 	if hasAssociation(body.Association) {
-		var req struct {
-			SupplierSourceID string `json:"supplierSourceId"`
-			VariantGroup     string `json:"variantGroup"`
-		}
-		if err := json.Unmarshal(body.Association, &req); err != nil {
+		assoc = &associationRequest{}
+		if err := json.Unmarshal(body.Association, assoc); err != nil {
 			writeErr(w, http.StatusBadRequest, "请求格式无效", "validation")
 			return
 		}
-		ident, msg := AssociationIdentity(p.OrgID, req.SupplierSourceID, req.VariantGroup, sha)
-		if msg != "" {
-			writeErr(w, http.StatusBadRequest, msg, "validation")
-			return
-		}
-		assocID, model = ident.ID, ident.Model
 	}
 	storeArg := body.StoreID
 	var storeID string
@@ -277,11 +276,15 @@ func (h Host) finishCreateRow(w http.ResponseWriter, r *http.Request, p access.P
 		if err != nil {
 			return err
 		}
+		card.payload, err = projectSupplierCard(r.Context(), tx, card.payload, h.clock().UnixMilli())
+		if err != nil {
+			return err
+		}
 		if storeID == "" && card.view.StoreID != nil {
 			storeID = *card.view.StoreID
 		}
-		if assocID != "" {
-			if msg := supplierBinding(r, tx, card.payload, body.Association); msg != "" {
+		if assoc != nil {
+			if msg := supplierBinding(r, tx, card.payload, *assoc); msg != "" {
 				return rowRefuse{http.StatusConflict, msg, "conflict"}
 			}
 		}
@@ -289,33 +292,32 @@ func (h Host) finishCreateRow(w http.ResponseWriter, r *http.Request, p access.P
 		if err != nil {
 			return err
 		}
-		if assocID != "" && !plainModel(schema) {
-			return rowRefuse{http.StatusBadRequest, "该类目没有可用的共同型号字段（plain 9048），暂不支持同款关联", "validation"}
-		}
 		key := ""
 		if body.CreateKey != nil {
 			key = strings.TrimSpace(*body.CreateKey)
+		}
+		if h.core() == nil {
+			return errors.New("listing-core wasm is not loaded")
+		}
+		id := uuid.NewString()
+		seed := seedInput{
+			Card: card.payload, Source: map[string]string{"sha256": sha, "fileName": body.Source.FileName},
+			Draft: draftValue, Now: uint64(h.clock().UnixMilli()),
+		}
+		var seeded []byte
+		var assocID, model string
+		if assoc != nil {
+			seeded, assocID, model, err = h.seedAssociated(r.Context(), schema, seed, id, p.OrgID, *assoc)
+		} else {
+			seeded, err = h.seedPlain(r.Context(), schema, seed)
+		}
+		if err != nil {
+			return err
 		}
 		fingerprint := ""
 		if key != "" {
 			fingerprint = CreateFingerprint(cardID, storeID, sha, body.Source.FileName, assocID, model, clientFP, draftJSON)
 		}
-		seedBody, err := json.Marshal(seedInput{
-			Card: card.payload, Source: map[string]string{"sha256": sha, "fileName": body.Source.FileName},
-			Draft: draftValue, Now: uint64(h.clock().UnixMilli()),
-		})
-		if err != nil {
-			return err
-		}
-		if h.core() == nil {
-			return errors.New("listing-core wasm is not loaded")
-		}
-		seeded, err := h.core().Call(r.Context(), OpSeedRow, schema, seedBody)
-		if err != nil {
-			status, message, code := refuseCore(err)
-			return rowRefuse{status, message, code}
-		}
-		id := uuid.NewString()
 		var got *string
 		err = tx.QueryRow(r.Context(), `
 			INSERT INTO listing_rows
@@ -372,6 +374,58 @@ type seedInput struct {
 	Now    uint64            `json:"nowMs"`
 }
 
+// associationRequest is the same-design claim a create request carries. The
+// server re-checks it against the Card's supplier binding; listing-core
+// derives the identity from it.
+type associationRequest struct {
+	SupplierSourceID string `json:"supplierSourceId"`
+	VariantGroup     string `json:"variantGroup"`
+}
+
+// seedPlain runs the ordinary row seed.
+func (h Host) seedPlain(ctx context.Context, schema []byte, in seedInput) ([]byte, error) {
+	body, err := json.Marshal(in)
+	if err != nil {
+		return nil, err
+	}
+	seeded, err := h.core().Call(ctx, OpSeedRow, schema, body)
+	if err != nil {
+		status, message, code := refuseCore(err)
+		return nil, rowRefuse{status, message, code}
+	}
+	return seeded, nil
+}
+
+// seedAssociated runs op 19: the seed plus the fixed 货号, the common 型号 and
+// the association id, all derived inside listing-core so Go holds no second
+// copy of the formula.
+func (h Host) seedAssociated(ctx context.Context, schema []byte, in seedInput, rowID string, orgID int64, assoc associationRequest) (row []byte, associationID, model string, err error) {
+	body, err := json.Marshal(struct {
+		seedInput
+		RowID            string `json:"rowId"`
+		OrgID            int64  `json:"orgId"`
+		SupplierSourceID string `json:"supplierSourceId"`
+		VariantGroup     string `json:"variantGroup"`
+	}{in, rowID, orgID, assoc.SupplierSourceID, assoc.VariantGroup})
+	if err != nil {
+		return nil, "", "", err
+	}
+	out, err := h.core().Call(ctx, OpSeedAssociatedRow, schema, body)
+	if err != nil {
+		status, message, code := refuseCore(err)
+		return nil, "", "", rowRefuse{status, message, code}
+	}
+	var answer struct {
+		Row           json.RawMessage `json:"row"`
+		AssociationID string          `json:"associationId"`
+		ModelValue    string          `json:"modelValue"`
+	}
+	if err := json.Unmarshal(out, &answer); err != nil || len(answer.Row) == 0 || answer.AssociationID == "" || answer.ModelValue == "" {
+		return nil, "", "", coreUnreadable("OpSeedAssociatedRow", err)
+	}
+	return answer.Row, answer.AssociationID, answer.ModelValue, nil
+}
+
 type rowRefuse struct {
 	status  int
 	message string
@@ -395,25 +449,16 @@ func (h Host) schemaFor(r *http.Request, tx pgx.Tx, payload []byte) (schema []by
 	if lang == "" {
 		lang = "default"
 	}
-	var raw []byte
+	var fields json.RawMessage
 	var fetched int64
 	err = tx.QueryRow(r.Context(), `
-		SELECT payload, fetched_at_ms FROM public.ozon_catalog_schema_cache
-		WHERE description_category_id = $1 AND type_id = $2 AND language = $3`, cat, typ, lang).Scan(&raw, &fetched)
+		SELECT fields, fetched_at_ms, COALESCE(schema_revision, '') FROM public.ozon_category_current
+		WHERE description_category_id = $1 AND type_id = $2 AND language = $3`, cat, typ, lang).Scan(&fields, &fetched, &revision)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && h.clock().UnixMilli()-fetched > schemaTTLMS) {
 		return nil, "", rowRefuse{http.StatusConflict, "该类目尚未同步，请先同步类目字段后重试", "schema_sync_required"}
 	}
 	if err != nil {
 		return nil, "", err
-	}
-	zr, err := gzip.NewReader(bytes.NewReader(raw))
-	if err != nil {
-		return nil, "", err
-	}
-	defer zr.Close()
-	fields, err := io.ReadAll(io.LimitReader(zr, 4<<20+1))
-	if err != nil || len(fields) > 4<<20 {
-		return nil, "", errors.New("schema cache")
 	}
 	input, err := json.Marshal(struct {
 		Category int64           `json:"description_category_id"`
@@ -426,7 +471,7 @@ func (h Host) schemaFor(r *http.Request, tx pgx.Tx, payload []byte) (schema []by
 	if h.core() == nil {
 		return nil, "", errors.New("listing-core wasm is not loaded")
 	}
-	snapshot, err := h.core().Snapshot(r.Context(), input)
+	computed, err := h.core().Snapshot(r.Context(), input)
 	if err != nil {
 		status, message, code := refuseCore(err)
 		return nil, "", rowRefuse{status, message, code}
@@ -434,70 +479,64 @@ func (h Host) schemaFor(r *http.Request, tx pgx.Tx, payload []byte) (schema []by
 	var rev struct {
 		Revision string `json:"schema_revision"`
 	}
-	if err := json.Unmarshal(snapshot, &rev); err != nil || rev.Revision == "" {
+	if err := json.Unmarshal(computed, &rev); err != nil || rev.Revision == "" {
 		return nil, "", errors.New("schema revision")
 	}
-	var same bool
+	if revision != "" && revision != rev.Revision {
+		return nil, "", rowRefuse{http.StatusConflict, "类目字段版本已变化，请重新同步类目后重试", "schema_sync_required"}
+	}
+	revision = rev.Revision
+	var snapshot []byte
 	err = tx.QueryRow(r.Context(), `
-		SELECT snapshot = $2::jsonb FROM public.listing_schema_revisions WHERE schema_revision = $1`, rev.Revision, string(snapshot)).Scan(&same)
+		SELECT snapshot FROM public.listing_schema_revisions WHERE schema_revision = $1`, revision).Scan(&snapshot)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, "", rowRefuse{http.StatusConflict, "类目字段版本尚未注册，请重新同步类目后重试", "schema_sync_required"}
 	}
 	if err != nil {
 		return nil, "", err
 	}
-	if !same {
+	if !catalogcontract.SameSnapshot(snapshot, computed) {
 		return nil, "", rowRefuse{http.StatusConflict, "类目字段版本内容不一致，已拒绝保存", "conflict"}
 	}
+	var search json.RawMessage
+	err = tx.QueryRow(r.Context(), `
+		SELECT COALESCE(jsonb_agg(jsonb_build_object(
+		  'descriptionCategoryId',description_category_id,'attributeId',attribute_id,
+		  'dictionaryId',dictionary_id,'valueId',option_id,'label',value)
+		  ORDER BY attribute_id,dictionary_id,option_id),'[]'::jsonb)
+		FROM public.catalog_dictionary_search_material
+		WHERE description_category_id=$1 AND type_id=$2 AND language=$3`, cat, typ, lang).Scan(&search)
+	if err != nil {
+		return nil, "", err
+	}
 	schema, err = json.Marshal(map[string]json.RawMessage{
-		"snapshot": json.RawMessage(snapshot), "searchMaterials": json.RawMessage(`[]`),
+		"snapshot": json.RawMessage(snapshot), "searchMaterials": search,
 	})
-	return schema, rev.Revision, err
+	return schema, revision, err
 }
 
-func supplierBinding(r *http.Request, tx pgx.Tx, payload, association []byte) string {
+// supplierBinding proves the claimed design is the one the Card was created
+// from. A Card with no supplier product has nothing to prove it against, so
+// it cannot join an association.
+func supplierBinding(r *http.Request, tx pgx.Tx, payload []byte, req associationRequest) string {
+	const refused = "该上架方案的货源绑定与本次同款来源不一致，服务端拒绝关联；请从货源清单重新导入"
 	var card map[string]any
 	if err := json.Unmarshal(payload, &card); err != nil {
-		return ""
+		return refused
 	}
 	product, _ := card["supplierProductId"].(string)
 	product = strings.TrimSpace(product)
 	if product == "" {
-		return ""
+		return refused
 	}
-	var req struct {
-		SupplierSourceID string `json:"supplierSourceId"`
-		VariantGroup     string `json:"variantGroup"`
-	}
-	_ = json.Unmarshal(association, &req)
 	var source, group string
 	err := tx.QueryRow(r.Context(), `
 		SELECT p.source_id, p.variant_group FROM public.sc_products p
 		WHERE p.product_id = $1 AND p.archived = false`, product).Scan(&source, &group)
 	if err != nil || strings.TrimSpace(source) != strings.TrimSpace(req.SupplierSourceID) || strings.TrimSpace(group) != strings.TrimSpace(req.VariantGroup) {
-		return "该上架方案的货源绑定与本次同款来源不一致，服务端拒绝关联；请从货源清单重新导入"
+		return refused
 	}
 	return ""
-}
-
-func plainModel(schema []byte) bool {
-	var body struct {
-		Snapshot struct {
-			Fields []struct {
-				AttributeID *string `json:"attribute_id"`
-				ComplexID   *string `json:"complex_id"`
-			} `json:"fields"`
-		} `json:"snapshot"`
-	}
-	if err := json.Unmarshal(schema, &body); err != nil {
-		return false
-	}
-	for _, field := range body.Snapshot.Fields {
-		if field.AttributeID != nil && *field.AttributeID == "9048" && (field.ComplexID == nil || *field.ComplexID == "" || *field.ComplexID == "0") {
-			return true
-		}
-	}
-	return false
 }
 
 func hasAssociation(raw json.RawMessage) bool {
@@ -535,6 +574,9 @@ func canonicalDraft(raw json.RawMessage) (string, json.RawMessage, error) {
 	if err := json.Unmarshal(values, &valueMap); err != nil {
 		return "", nil, errors.New("invalid type: map, expected a map for values")
 	}
+	if !normalizeMediaDraftValues(valueMap) {
+		return "", nil, errors.New("图片字段必须使用字符串或字符串列表")
+	}
 	sorted, err := json.Marshal(valueMap)
 	if err != nil {
 		return "", nil, err
@@ -555,6 +597,50 @@ func canonicalDraft(raw json.RawMessage) (string, json.RawMessage, error) {
 		return "", nil, err
 	}
 	return string(encoded), encoded, nil
+}
+
+// Match Go's canonical object semantics before Rust decodes the media tags.
+func normalizeMediaDraftValues(values map[string]json.RawMessage) bool {
+	for _, key := range []string{"images", "images360", "primary_image", "color_image"} {
+		raw, ok := values[key]
+		if !ok {
+			continue
+		}
+		var value map[string]json.RawMessage
+		if json.Unmarshal(raw, &value) != nil || jsonNull(value["value"]) {
+			return false
+		}
+		var kind string
+		if json.Unmarshal(value["kind"], &kind) != nil {
+			return false
+		}
+		switch kind {
+		case "text", "url":
+			var text string
+			if json.Unmarshal(value["value"], &text) != nil {
+				return false
+			}
+		case "text_list", "url_list":
+			var list []json.RawMessage
+			if json.Unmarshal(value["value"], &list) != nil {
+				return false
+			}
+			for _, item := range list {
+				var text string
+				if jsonNull(item) || json.Unmarshal(item, &text) != nil {
+					return false
+				}
+			}
+		default:
+			return false
+		}
+		encoded, err := json.Marshal(map[string]json.RawMessage{"kind": value["kind"], "value": value["value"]})
+		if err != nil {
+			return false
+		}
+		values[key] = encoded
+	}
+	return true
 }
 
 func marshalDraft(fields map[string]json.RawMessage) ([]byte, error) {

@@ -96,10 +96,13 @@ func TestSupplierSessionReadsNoFunds(t *testing.T) {
 	const supplierID = 950010
 	const source = "src_funds_guard"
 	seedAccount(t, ctx, pool, supplierID, "supplier-funds@test.example", "user", "supplier")
-	if _, err := pool.Exec(ctx, `INSERT INTO sc_sources (source_id, name, created_at_ms, updated_at_ms) VALUES ($1, $1, 1, 1)`, source); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO sc_factories (factory_id, name, created_at_ms, updated_at_ms) VALUES ($1, $1, 1, 1)`, source); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO sc_sources (source_id, name, factory_id, created_at_ms, updated_at_ms) VALUES ($1, $1, $1, 1, 1)`, source); err != nil {
 		t.Fatalf("insert source: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO sc_source_members (source_id, user_id, role, status, created_by, created_at_ms) VALUES ($1, $2, 'member', 'active', $2, 1)`, source, supplierID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO sc_factory_members (factory_id, user_id, status, created_by, created_at_ms) VALUES ($1, $2, 'active', $2, 1)`, source, supplierID); err != nil {
 		t.Fatalf("insert member: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO supplier_wallets (source_id, balance_microfen, held_microfen, updated_at_ms) VALUES ($1, 500, 0, 1)`, source); err != nil {
@@ -183,6 +186,7 @@ func TestPublicCannotExecuteDefinerFunctions(t *testing.T) {
 		"public.delegate_source_active_fulfiller_count(text)",
 		"public.delegate_source_active_fulfiller_id(text)",
 		"public.delegate_credit_fulfiller_wallet(uuid,bigint)",
+		"public.supplier_member_of_source(text)",
 	}
 	for _, fn := range functions {
 		var publicCan bool
@@ -265,7 +269,10 @@ func TestDispatchIsFulfillerScoped(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO organizations (id, owner_user_id, name, plan, created_at, updated_at) VALUES ($1, $2, 'O', 'free', clock_timestamp(), clock_timestamp())`, orgID, fulfillerUser); err != nil {
 		t.Fatalf("insert org: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO sc_sources (source_id, name, created_at_ms, updated_at_ms) VALUES ($1, $1, 1, 1)`, source); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO sc_factories (factory_id, name, created_at_ms, updated_at_ms) VALUES ($1, $1, 1, 1)`, source); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO sc_sources (source_id, name, factory_id, created_at_ms, updated_at_ms) VALUES ($1, $1, $1, 1, 1)`, source); err != nil {
 		t.Fatalf("insert source: %v", err)
 	}
 	var fulfillerID string
@@ -284,7 +291,7 @@ func TestDispatchIsFulfillerScoped(t *testing.T) {
 
 	// The newcomer joins the SAME source as an active member. Under the old
 	// source-wide model that alone was enough to see and take the packet.
-	if _, err := pool.Exec(ctx, `INSERT INTO sc_source_members (source_id, user_id, role, status, created_by, created_at_ms) VALUES ($1, $2, 'member', 'active', $2, 1)`, source, newcomer); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO sc_factory_members (factory_id, user_id, status, created_by, created_at_ms) VALUES ($1, $2, 'active', $2, 1)`, source, newcomer); err != nil {
 		t.Fatalf("insert newcomer member: %v", err)
 	}
 

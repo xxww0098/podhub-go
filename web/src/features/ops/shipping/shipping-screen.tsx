@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import {
   AlertTriangle,
+  Copy,
+  Info,
   Package,
-  Printer,
   RefreshCw,
-  Truck,
 } from "lucide-react"
 
 import type { ShippingListRequest, ShippingListView, ShippingPostingView } from "@/bindings/commands"
@@ -28,9 +28,10 @@ import {
 import { PageToolbar } from "@/components/page-toolbar"
 import { CursorPagerFooter } from "@/components/cursor-pager-footer"
 import { useScreenActive } from "@/components/screen-pane"
-import { KeyValue, KeyValueGrid, Section } from "@/components/section"
+import { KeyValue, KeyValueGrid } from "@/components/section"
 import { StateChip } from "@/components/state-chip"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Empty,
   EmptyContent,
@@ -56,12 +57,12 @@ import {
 } from "@/components/ui/table"
 import {
   Tabs,
-  TabsIndicator,
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { clearLive, notifyError, notifyLive } from "@/lib/notify"
+import { copyToClipboard } from "@/lib/clipboard"
 import { errorMessage } from "@/lib/error-message"
 import { cn } from "@/lib/utils"
 import { useVisiblePolling } from "@/lib/visible-polling"
@@ -82,10 +83,8 @@ import {
   labelPrintLabel,
   packingLabel,
   queueRequest,
-  shippingActions,
   shippingStatusLabel,
   shouldStartShippingRead,
-  type ShippingAction,
   type ShippingLoadState,
   type ShippingQueue,
 } from "./shipping-model"
@@ -112,10 +111,8 @@ export function ShippingScreen({ workspaceId, onOpenStores }: ShippingScreenProp
   const [cursors, setCursors] = useState([""])
   const [view, setView] = useState<ShippingListView>(emptyView(""))
   const [load, setLoad] = useState<ShippingLoadState>("idle")
-  const [open, setOpen] = useState<{
-    posting: ShippingPostingView
-    action: ShippingAction
-  } | null>(null)
+  const [open, setOpen] = useState<ShippingPostingView | null>(null)
+  const [selectedNumbers, setSelectedNumbers] = useState<Set<string>>(() => new Set())
   const [delegateBadges, setDelegateBadges] = useState<Record<string, DelegateBadge>>({})
   const requestSequence = useRef(0)
   const badgeSequence = useRef(0)
@@ -210,6 +207,11 @@ export function ShippingScreen({ workspaceId, onOpenStores }: ShippingScreenProp
         } else {
           setView(next)
           setLoad(next.postings.length === 0 ? "empty" : "ready")
+          const visible = new Set(next.postings.map((posting) => posting.posting_number))
+          setSelectedNumbers((current) => {
+            const retained = new Set([...current].filter((number) => visible.has(number)))
+            return retained.size === current.size ? current : retained
+          })
           void loadDelegateBadges(request.store_id, next.postings)
         }
         return !keepCommittedPage
@@ -280,6 +282,7 @@ export function ShippingScreen({ workspaceId, onOpenStores }: ShippingScreenProp
       ? storeUidRef.current
       : preferredStoreUid(configured, roster.overview.active_id)
     if (nextStoreUid !== storeUidRef.current) {
+      setSelectedNumbers(new Set())
       setCursors([""])
       setView(emptyView(nextStoreUid))
       setLoad(nextStoreUid ? "loading" : "idle")
@@ -300,12 +303,16 @@ export function ShippingScreen({ workspaceId, onOpenStores }: ShippingScreenProp
   const currentView = view.store_id === storeUid ? view : emptyView(storeUid)
   const storeName =
     stores.find((store) => store.storeUid === storeUid)?.name ?? ""
+  const currentQueueCount = page === 1 && (load === "ready" || load === "empty")
+    ? `${currentView.postings.length}${currentView.has_next ? "+" : ""}`
+    : undefined
 
   function beginNavigation(nextStore = storeUid) {
     requestSequence.current += 1
     badgeSequence.current += 1
     postingInFlight.current = null
     setDelegateBadges({})
+    setSelectedNumbers(new Set())
     setView(emptyView(nextStore))
     setLoad("loading")
   }
@@ -315,72 +322,76 @@ export function ShippingScreen({ workspaceId, onOpenStores }: ShippingScreenProp
     const committed = await loadPostings(requestFor(nextCursors.at(-1) ?? ""), {
       keepCommittedPage: nextPage > page,
     })
-    if (committed) setCursors(nextCursors)
+    if (committed) {
+      setSelectedNumbers(new Set())
+      setCursors(nextCursors)
+    }
   }
 
   return (
-    <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden scroll-pt-14">
-      <Section
-        className="min-h-0 flex-1 overflow-hidden"
-        title="待发货单"
-        action={
-          stores.length > 0 ? (
+    <section aria-label="订单发货" className="flex min-h-0 w-full flex-1 flex-col gap-2 overflow-auto scroll-pt-14">
+        {stores.length > 0 ? (
+          <>
             <PageToolbar
               primary={
                 <>
-              <OpsStoreSelect
-                value={storeUid}
-                stores={stores}
-                triggerClassName="min-w-52"
-                onChange={(next) => {
-                  if (next === storeUid) return
-                  beginNavigation(next)
-                  setStoreUid(next)
-                  setCursors([""])
-                  setOpen(null)
-                }}
-              />
-              <Tabs
-                value={queue}
-                onValueChange={(next) => {
-                  const parsed = QUEUE_FILTERS.find((item) => item.value === next)
-                  if (!parsed || parsed.value === queue) return
-                  beginNavigation()
-                  setQueue(parsed.value)
-                  setCursors([""])
-                  setOpen(null)
-                }}
-              >
-                <TabsList aria-label="发货队列">
-                  <TabsIndicator />
-                  {QUEUE_FILTERS.map((item) => (
-                    <TabsTrigger
-                      key={item.value}
-                      value={item.value}
-                      className="h-8 px-2.5"
-                    >
-                      {item.label}
-                    </TabsTrigger>
-                  ))}
-                </TabsList>
-              </Tabs>
+                  <span className="text-xs font-medium max-sm:hidden">Ozon 店铺</span>
+                  <OpsStoreSelect
+                    value={storeUid}
+                    stores={stores}
+                    triggerClassName="w-full min-w-0 sm:w-auto sm:min-w-52"
+                    onChange={(next) => {
+                      if (next === storeUid) return
+                      beginNavigation(next)
+                      setStoreUid(next)
+                      setCursors([""])
+                      setOpen(null)
+                    }}
+                  />
                 </>
               }
               secondary={
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!storeUid || load === "loading"}
-                onClick={() => void loadPostings(requestFor())}
-              >
-                <RefreshCw className={cn(load === "loading" && "animate-spin")} />
-                {load === "loading" ? "正在读取…" : "刷新"}
-              </Button>
+                <Button
+                  aria-label="刷新发货单"
+                  variant="outline"
+                  size="sm"
+                  disabled={!storeUid || load === "loading"}
+                  onClick={() => void loadPostings(requestFor())}
+                >
+                  <RefreshCw data-icon="inline-start" />刷新
+                </Button>
               }
             />
-          ) : null
-        }
-      >
+            <Tabs
+              className="min-w-0 max-w-full"
+              value={queue}
+              onValueChange={(next) => {
+                const parsed = QUEUE_FILTERS.find((item) => item.value === next)
+                if (!parsed || parsed.value === queue) return
+                beginNavigation()
+                setQueue(parsed.value)
+                setCursors([""])
+                setOpen(null)
+              }}
+            >
+              <TabsList aria-label="发货队列" className="w-full flex-wrap gap-1 border-0 bg-transparent p-0">
+                {QUEUE_FILTERS.map((item) => (
+                  <TabsTrigger
+                    key={item.value}
+                    value={item.value}
+                    title={item.range}
+                    aria-label={`${item.label}，${item.range}${item.value === queue && currentQueueCount !== undefined ? `，${currentView.has_next ? "至少 " : ""}${currentView.postings.length} 单` : ""}`}
+                    className="h-9 whitespace-nowrap rounded-md border border-transparent px-3 text-sm data-active:border-brand data-active:bg-brand-soft data-active:text-brand max-md:min-h-11 max-md:min-w-11"
+                  >
+                    {item.label}
+                    {item.value === queue && currentQueueCount !== undefined ? <span aria-hidden className="ml-1 rounded-md bg-muted px-1.5 py-0.5 text-xs tabular-nums">{currentQueueCount}</span> : null}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+              <p className="px-3 text-xs text-muted-foreground">{QUEUE_FILTERS.find((item) => item.value === queue)?.range}</p>
+            </Tabs>
+          </>
+        ) : null}
         <StoreGate
           loading={storesLoading}
           error={storesError}
@@ -396,15 +407,23 @@ export function ShippingScreen({ workspaceId, onOpenStores }: ShippingScreenProp
             storeName={storeName}
             load={load}
             page={page}
-            selectedNumber={open?.posting.posting_number}
+            selectedNumber={open?.posting_number}
+            selectedNumbers={selectedNumbers}
+            onSelectedNumbersChange={setSelectedNumbers}
             delegateBadges={delegateBadges}
-            onOpen={(posting, action) => setOpen({ posting, action })}
+            onOpen={setOpen}
             onPrevious={() => void goToCursors(cursors.slice(0, -1))}
             onNext={() => void goToCursors([...cursors, currentView.cursor])}
             onRetry={() => void loadPostings(requestFor())}
           />
+          <div role="note" className="flex shrink-0 items-start gap-2 rounded-xl border border-brand/25 bg-brand-soft/40 px-3 py-2 text-xs">
+            <Info aria-hidden className="mt-0.5 size-4 shrink-0 text-brand" />
+            <div className="min-w-0">
+              <p className="font-medium">发货确认请前往 Ozon 后台</p>
+              <p className="mt-0.5 text-muted-foreground">订单信息在此同步；打单和发货请在 Ozon 卖家后台完成。</p>
+            </div>
+          </div>
         </StoreGate>
-      </Section>
       <ShippingDetailDialog
         open={open}
         storeName={storeName}
@@ -412,7 +431,7 @@ export function ShippingScreen({ workspaceId, onOpenStores }: ShippingScreenProp
           if (!next) setOpen(null)
         }}
       />
-    </div>
+    </section>
   )
 }
 
@@ -422,8 +441,10 @@ export type ShippingResultsProps = {
   load: ShippingLoadState
   page: number
   selectedNumber?: string
+  selectedNumbers?: ReadonlySet<string>
+  onSelectedNumbersChange?: (numbers: Set<string>) => void
   delegateBadges?: Record<string, DelegateBadge>
-  onOpen?: (posting: ShippingPostingView, action: ShippingAction) => void
+  onOpen?: (posting: ShippingPostingView) => void
   onPrevious: () => void
   onNext: () => void
   onRetry: () => void
@@ -435,6 +456,8 @@ export function ShippingResults({
   load,
   page,
   selectedNumber,
+  selectedNumbers = new Set(),
+  onSelectedNumbersChange,
   delegateBadges,
   onOpen,
   onPrevious,
@@ -458,25 +481,38 @@ export function ShippingResults({
   if ((load === "idle" || load === "loading") && view.postings.length === 0) {
     return <LoadingPanel>正在读取待发货单…</LoadingPanel>
   }
-  if (load === "empty" && page === 1) {
-    return (
-      <NoticePanel
-        icon="empty"
-        title="当前队列没有待发货单"
-        body="换一家店铺或队列后再刷新。"
-      />
-    )
-  }
+  const showEmpty = load === "empty" && page === 1 && view.postings.length === 0
+  const selectedVisible = [...new Set(view.postings.map((posting) => posting.posting_number))].filter((number) => selectedNumbers.has(number))
 
   return (
     <div
-      className="overflow-hidden rounded-xl border border-border bg-card"
+      className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card"
       aria-busy={load === "loading"}
     >
+      {selectedVisible.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-3 border-b border-border px-3 py-2 text-sm">
+          <span>已选 {selectedVisible.length} 单</span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={load === "loading" || load === "error"}
+            onClick={() => void copyToClipboard(selectedVisible.join("\n"), {
+              success: `已复制 ${selectedVisible.length} 个单号`,
+              failure: "复制失败，请手动选择单号。",
+            })}
+          >
+            <Copy data-icon="inline-start" />复制单号
+          </Button>
+        </div>
+      ) : null}
       <ShippingPostingsTable
         postings={view.postings}
+        showEmpty={showEmpty}
         storeName={storeName}
         selectedNumber={selectedNumber}
+        selectedNumbers={selectedNumbers}
+        onSelectedNumbersChange={onSelectedNumbersChange}
+        selectionDisabled={load === "loading" || load === "error"}
         delegateBadges={delegateBadges}
         onOpen={onOpen}
       />
@@ -508,65 +544,94 @@ function LoadingPanel({ children }: { children: string }) {
   )
 }
 
-function NoticePanel({
-  title,
-  body,
-  icon = "warn",
-  children,
-}: {
-  title: string
-  body: string
-  icon?: "warn" | "empty"
-  children?: ReactNode
-}) {
-  const Icon = icon === "empty" ? Package : AlertTriangle
+function ShippingEmpty() {
   return (
-    <Empty role={icon === "warn" ? "alert" : "status"} className="min-h-48">
+    <Empty role="status" className="h-full min-h-48 rounded-none border-0">
       <EmptyHeader>
         <EmptyMedia variant="icon">
-          <Icon />
+          <Package />
         </EmptyMedia>
-        <EmptyTitle>{title}</EmptyTitle>
-        <EmptyDescription>{body}</EmptyDescription>
+        <EmptyTitle>当前筛选没有订单</EmptyTitle>
+        <EmptyDescription>换一家店铺或队列后再刷新。</EmptyDescription>
       </EmptyHeader>
-      {children ? <EmptyContent>{children}</EmptyContent> : null}
     </Empty>
   )
 }
 
 export function ShippingPostingsTable({
   postings,
+  showEmpty = false,
   storeName = "",
   selectedNumber,
+  selectedNumbers = new Set(),
+  onSelectedNumbersChange,
+  selectionDisabled = false,
   delegateBadges = {},
   onOpen,
 }: {
   postings: ShippingPostingView[]
+  showEmpty?: boolean
   storeName?: string
   selectedNumber?: string
+  selectedNumbers?: ReadonlySet<string>
+  onSelectedNumbersChange?: (numbers: Set<string>) => void
+  selectionDisabled?: boolean
   /** posting_number → 已委托徽标（纯只读）。 */
   delegateBadges?: Record<string, DelegateBadge>
-  onOpen?: (posting: ShippingPostingView, action: ShippingAction) => void
+  onOpen?: (posting: ShippingPostingView) => void
 }) {
+  const pageNumbers = [...new Set(postings.map((posting) => posting.posting_number))]
+  const selectedCount = pageNumbers.filter((number) => selectedNumbers.has(number)).length
+  const allSelected = pageNumbers.length > 0 && selectedCount === pageNumbers.length
   return (
-    <Table containerClassName="max-w-full">
-      <TableHeader>
+    <Table
+      aria-label="订单发货"
+      className={showEmpty ? "h-full" : undefined}
+      containerClassName="min-h-0 max-w-full flex-1 overflow-auto"
+    >
+      <TableHeader className="sticky top-0 z-10 bg-card [&_th]:h-10 [&_th]:bg-muted/70 [&_th]:text-foreground">
         <TableRow>
+          <TableHead className="w-10">
+            <Checkbox
+              className="max-md:after:-inset-3.5"
+              aria-label="选择本页全部订单"
+              checked={allSelected}
+              indeterminate={selectedCount > 0 && !allSelected}
+              disabled={selectionDisabled || pageNumbers.length === 0 || !onSelectedNumbersChange}
+              onCheckedChange={(checked) => onSelectedNumbersChange?.(checked ? new Set(pageNumbers) : new Set())}
+            />
+          </TableHead>
           <TableHead className="w-52">单号</TableHead>
           <TableHead className="w-28">状态</TableHead>
           <TableHead className="w-36">店铺</TableHead>
-          <TableHead className="w-32">截止</TableHead>
+          <TableHead className="w-40">备货截止</TableHead>
           <TableHead className="w-20">件数</TableHead>
-          <TableHead className="w-36">操作</TableHead>
+          <TableHead className="w-36">委托状态</TableHead>
+          <TableHead className="w-16">操作</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
+        {showEmpty ? (
+          <TableRow>
+            <TableCell colSpan={8} className="h-full border-0 p-0">
+              <ShippingEmpty />
+            </TableCell>
+          </TableRow>
+        ) : null}
         {postings.map((posting) => (
           <ShippingPostingRow
             key={posting.posting_number}
             posting={posting}
             storeName={storeName}
             selected={selectedNumber === posting.posting_number}
+            checked={selectedNumbers.has(posting.posting_number)}
+            selectionDisabled={selectionDisabled || !onSelectedNumbersChange}
+            onCheckedChange={(checked) => {
+              const next = new Set(selectedNumbers)
+              if (checked) next.add(posting.posting_number)
+              else next.delete(posting.posting_number)
+              onSelectedNumbersChange?.(next)
+            }}
             delegateBadge={delegateBadges[posting.posting_number]}
             onOpen={onOpen}
           />
@@ -580,27 +645,34 @@ function ShippingPostingRow({
   posting,
   storeName,
   selected,
+  checked,
+  selectionDisabled,
+  onCheckedChange,
   delegateBadge,
   onOpen,
 }: {
   posting: ShippingPostingView
   storeName: string
   selected: boolean
+  checked: boolean
+  selectionDisabled: boolean
+  onCheckedChange: (checked: boolean) => void
   delegateBadge?: DelegateBadge
-  onOpen?: (posting: ShippingPostingView, action: ShippingAction) => void
+  onOpen?: (posting: ShippingPostingView) => void
 }) {
-  const actions = shippingActions(posting)
-  const primary = actions[0]
   return (
-    <TableRow
-      data-state={selected ? "selected" : undefined}
-      className={cn(onOpen && "cursor-pointer")}
-      onClick={() => {
-        if (primary) onOpen?.(posting, primary.id)
-      }}
-    >
+    <TableRow data-state={selected || checked ? "selected" : undefined} className="text-xs md:[&>td]:py-2.5">
       <TableCell>
-        <p className="font-mono text-compact break-all select-all tabular-nums">
+        <Checkbox
+          className="max-md:after:-inset-3.5"
+          aria-label={`选择 ${posting.posting_number}`}
+          checked={checked}
+          disabled={selectionDisabled}
+          onCheckedChange={(next) => onCheckedChange(next === true)}
+        />
+      </TableCell>
+      <TableCell>
+        <p className="text-xs font-medium break-all select-all tabular-nums">
           {posting.posting_number}
         </p>
         {posting.substatus ? (
@@ -616,21 +688,14 @@ function ShippingPostingRow({
             status={posting.status || "unknown"}
             label={shippingStatusLabel(posting.status || "unknown")}
           />
-          {delegateBadge ? (
-            <StateChip
-              status="delegated"
-              tone="good"
-              label={delegateBadge.label}
-            />
-          ) : null}
         </div>
       </TableCell>
       <TableCell>
-        <Disclose value={storeName || "—"} />
+        <Disclose value={storeName || "—"} className="mt-0 font-sans text-xs text-foreground" />
       </TableCell>
       <TableCell>
         <div className="flex min-w-0 flex-col gap-1">
-          <span className="font-mono text-compact tabular-nums">
+          <span className="text-xs tabular-nums">
             {formatInstant(posting.shipment_date)}
           </span>
           <StateChip
@@ -640,29 +705,26 @@ function ShippingPostingRow({
         </div>
       </TableCell>
       <TableCell>
-        <span className="font-mono text-compact tabular-nums">
+        <span className="text-xs tabular-nums">
           {posting.quantity}
         </span>
         <p className="sr-only">共 {posting.quantity} 件</p>
       </TableCell>
       <TableCell>
-        <div className="flex flex-wrap items-center gap-1">
-          {actions.map((action) => (
-            <Button
-              key={action.id}
-              size="xs"
-              variant={action.id === "ship" ? "brand" : "outline"}
-              aria-label={`${action.label} ${posting.posting_number}`}
-              onClick={(event) => {
-                event.stopPropagation()
-                onOpen?.(posting, action.id)
-              }}
-            >
-              {action.id === "label" ? <Printer /> : <Truck />}
-              {action.label}
-            </Button>
-          ))}
-        </div>
+        {delegateBadge ? (
+          <StateChip status="delegated" tone="good" label={delegateBadge.label} />
+        ) : (
+          <span className="text-muted-foreground">未知</span>
+        )}
+      </TableCell>
+      <TableCell>
+        <Button
+          size="sm"
+          variant="outline"
+          aria-label={`查看 ${posting.posting_number}`}
+          disabled={!onOpen}
+          onClick={() => onOpen?.(posting)}
+        >查看</Button>
       </TableCell>
     </TableRow>
   )
@@ -673,11 +735,11 @@ function ShippingDetailDialog({
   storeName,
   onOpenChange,
 }: {
-  open: { posting: ShippingPostingView; action: ShippingAction } | null
+  open: ShippingPostingView | null
   storeName: string
   onOpenChange: (open: boolean) => void
 }) {
-  const posting = open?.posting
+  const posting = open
   return (
     <Dialog open={Boolean(open)} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[min(42rem,calc(100dvh-2rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-lg">
@@ -685,11 +747,7 @@ function ShippingDetailDialog({
           <DialogTitle className="font-mono text-sm break-all">
             {posting?.posting_number ?? "发货单"}
           </DialogTitle>
-          <DialogDescription>
-            {open?.action === "ship"
-              ? "发货确认尚未接入 Seller 写接口。核对件数与截止后到 Ozon 后台发货。"
-              : "打单尚未接入 Seller 写接口。组包完成后到 Ozon 后台打印面单。"}
-          </DialogDescription>
+          <DialogDescription>打单和发货请在 Ozon 卖家后台完成。</DialogDescription>
         </DialogHeader>
         {posting ? (
           <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
@@ -764,7 +822,7 @@ function ShippingDetailDialog({
   )
 }
 
-function Disclose({ value, label }: { value: string; label?: string }) {
+function Disclose({ value, label, className }: { value: string; label?: string; className?: string }) {
   if (!value.trim()) return null
   return (
     <Tooltip>
@@ -772,7 +830,7 @@ function Disclose({ value, label }: { value: string; label?: string }) {
         render={
           <button
             type="button"
-            className="mt-0.5 max-w-[28ch] cursor-pointer truncate text-left font-mono text-meta text-muted-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
+            className={cn("mt-0.5 max-w-[28ch] cursor-pointer truncate text-left font-mono text-meta text-muted-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring max-md:min-h-11 max-md:min-w-11", className)}
             aria-label={label ?? value}
           />
         }

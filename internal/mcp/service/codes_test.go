@@ -19,9 +19,9 @@ func TestGrantCallerCannotMintCodes(t *testing.T) {
 
 	codes := &recordCodes{}
 	svc := New(grantStore{grant: sampleCodeGrant()}).WithCodes(codes)
-	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"generateActivationCodes","arguments":{"member_seats":1,"quantity":1,"duration_days":30,"tier":"pro"}}}`
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"generateQuotaCards","arguments":{"wallet_cents":100,"quantity":1}}}`
 	status, raw := svc.Handle(context.Background(), "hash", []byte(body))
-	if status != 200 || codes.calls != 0 || !strings.Contains(string(raw), stepUpRequired) || !strings.Contains(string(raw), `"isError":true`) {
+	if status != 200 || codes.calls != 0 || !strings.Contains(string(raw), adminSessionRequired) || !strings.Contains(string(raw), `"isError":true`) {
 		t.Fatalf("status %d calls %d %s", status, codes.calls, raw)
 	}
 	if strings.Contains(buf.String(), "POD-") || strings.Contains(string(raw), "POD-") {
@@ -30,7 +30,7 @@ func TestGrantCallerCannotMintCodes(t *testing.T) {
 
 	list := `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`
 	_, listed := svc.Handle(context.Background(), "hash", []byte(list))
-	for _, name := range []string{`"search"`, `"execute"`, `"generateActivationCodes"`, `"generateQuotaCards"`, `"listRedeemCodes"`, "成员席位批次兑换码已停用", "生成额度卡"} {
+	for _, name := range []string{`"search"`, `"execute"`, `"generateQuotaCards"`, `"listRedeemCodes"`, "生成额度卡"} {
 		if !strings.Contains(string(listed), name) {
 			t.Fatalf("missing %s in %s", name, listed)
 		}
@@ -46,7 +46,7 @@ func TestSessionCodeToolDoesNotLogPlaintext(t *testing.T) {
 
 	codes := &recordCodes{body: []byte(`{"data":{"codes":[{"code":"` + plain + `"}]}}`)}
 	svc := New(nil).WithCodes(codes)
-	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"generateQuotaCards","arguments":{"member_seats":0,"quantity":1,"duration_days":1,"wallet_cents":100}}}`
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"generateQuotaCards","arguments":{"quantity":1,"wallet_cents":100}}}`
 	status, raw := svc.HandleSession(context.Background(), domain.Caller{UserID: 1, PlatformRole: "super_admin"}, []byte(body))
 	if status != 200 || codes.calls != 1 || codes.last != toolQuota || !strings.Contains(string(raw), plain) {
 		t.Fatalf("status %d calls %d last %s %s", status, codes.calls, codes.last, raw)
@@ -83,11 +83,6 @@ type recordCodes struct {
 	body  json.RawMessage
 }
 
-func (r *recordCodes) CreateActivation(context.Context, domain.Caller, json.RawMessage) (json.RawMessage, error) {
-	r.calls++
-	r.last = toolActivation
-	return r.body, nil
-}
 func (r *recordCodes) CreateQuota(context.Context, domain.Caller, json.RawMessage) (json.RawMessage, error) {
 	r.calls++
 	r.last = toolQuota

@@ -417,9 +417,6 @@ func stampManualPress(ctx context.Context, tx pgx.Tx, orgID int64, storeUUID str
 	return nil
 }
 
-// isPressureStatus reports the statuses the incident ledger records.
-func isPressureStatus(status int) bool { return status == 429 || status >= 500 }
-
 // recordIncident inserts one pressure signal. Best effort: callers must not
 // fail a request because the ledger write failed.
 func recordIncident(ctx context.Context, tx pgx.Tx, orgID int64, storeUUID, clientID, path, origin string, status int, nowMS int64) error {

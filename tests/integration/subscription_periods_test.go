@@ -94,7 +94,7 @@ func TestSubscriptionPaidPeriods(t *testing.T) {
 	ctx, pool, org, user := subscriptionTenant(t)
 	now := subscriptionTime(10, 21)
 	boundary := subscriptionTime(11, 21)
-	target := contract.Target{PlanKey: "lite", ExtraStores: 3}
+	target := contract.Target{PlanKey: "lite", Stores: 8}
 	q := subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "subscribe", Target: target, Months: 1}, now)
 	if q.AmountCents != 16000 {
 		t.Fatalf("first month: %d", q.AmountCents)
@@ -108,25 +108,24 @@ func TestSubscriptionPaidPeriods(t *testing.T) {
 	}
 	keep := append([]string{}, stores[1:]...) // Keep the newer stores, never creation-order substitution.
 	before := subscriptionRead(t, ctx, pool, org, now)
-	req := contract.QuoteRequest{Action: "schedule", Target: contract.Target{PlanKey: "lite", ExtraStores: 1}, Months: 1, KeepStores: keep}
+	req := contract.QuoteRequest{Action: "renew", Target: contract.Target{PlanKey: "lite", Stores: 6}, Months: 1, KeepStores: keep}
 	q = subscriptionPreview(t, ctx, pool, org, req, subscriptionTime(10, 30))
 	after := subscriptionRead(t, ctx, pool, org, now)
-	if before.Revision != after.Revision || after.Next.Stores != 8 {
+	if before.Revision != after.Revision || after.NextRenewal.Stores != 8 {
 		t.Fatal("preview changed renewal")
 	}
 	stale := subscriptionPreview(t, ctx, pool, org, req, subscriptionTime(10, 30))
-	if err := billingrepo.ConfirmSchedule(ctx, pool, org, q.ID, false, subscriptionTime(10, 30)); err != nil {
-		t.Fatal(err)
+	if q.AmountCents != 12000 || q.FreeOnly {
+		t.Fatalf("reduced renewal: %+v", q)
 	}
-	if err := billingrepo.ConfirmSchedule(ctx, pool, org, stale.ID, false, subscriptionTime(10, 30)); err == nil {
+	subscriptionPay(t, ctx, pool, org, user, q, subscriptionTime(10, 30))
+	if _, err := billingrepo.CreateSubscriptionOrder(ctx, pool, org, user, "po_"+uuid.NewString(), "manual", "CNY", stale.ID, []byte(`{}`), subscriptionTime(10, 30)); err == nil {
 		t.Fatal("stale admin overwrite accepted")
 	}
 	after = subscriptionRead(t, ctx, pool, org, subscriptionTime(10, 30))
-	if after.Stores.Limit != 8 || after.Next.Stores != 6 || after.NextRenewal.AmountCents != 12000 {
-		t.Fatalf("schedule: %+v", after)
+	if after.Stores.Limit != 8 || after.NextRenewal.Stores != 8 || len(after.Periods) != 2 || after.Periods[1].Stores != 6 {
+		t.Fatalf("purchased future capacity: %+v", after)
 	}
-	q = subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "renew", Months: 1}, subscriptionTime(11, 10))
-	subscriptionPay(t, ctx, pool, org, user, q, subscriptionTime(11, 10))
 	after = subscriptionRead(t, ctx, pool, org, subscriptionTime(11, 10))
 	if after.Stores.Limit != 8 || !after.CurrentEnd.Equal(boundary) || !after.TermEnd.Equal(subscriptionTime(12, 21)) {
 		t.Fatalf("early renewal changed current: %+v", after)
@@ -176,9 +175,8 @@ func TestSubscriptionPaidPeriods(t *testing.T) {
 			t.Fatalf("paused store created new intents: %d %v", count, err)
 		}
 	})
-	// Free reversal applies only to unpaid configuration. This future month already costs 40 yuan to restore.
-	restore := true
-	q = subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "change", Target: target, Months: 1, RenewWithChange: &restore}, subscriptionTime(11, 12))
+	// Raising the already purchased future month from six stores to eight costs 40 yuan.
+	q = subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "change", Target: target, Months: 1}, subscriptionTime(11, 12))
 	if q.AmountCents != 4000 {
 		t.Fatalf("restore already paid future: %d", q.AmountCents)
 	}
@@ -195,63 +193,66 @@ func TestSubscriptionPaidPeriods(t *testing.T) {
 	}
 }
 
-func TestSubscriptionTemporaryAddonsKeepRenewal(t *testing.T) {
+func TestSubscriptionGrowthUpgradesAllPaidPeriods(t *testing.T) {
 	ctx, pool, org, user := subscriptionTenant(t)
 	now := subscriptionTime(10, 21)
-	q := subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "subscribe", Target: contract.Target{PlanKey: "lite", ExtraStores: 3, ExtraMembers: 2}, Months: 3}, now)
+	q := subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "subscribe", Target: contract.Target{PlanKey: "lite", Stores: 8}, Months: 3}, now)
 	subscriptionPay(t, ctx, pool, org, user, q, now)
-	q = subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "schedule", Target: contract.Target{PlanKey: "lite", ExtraStores: 1}}, subscriptionTime(11, 1))
-	if err := billingrepo.ConfirmSchedule(ctx, pool, org, q.ID, false, subscriptionTime(11, 1)); err != nil {
-		t.Fatal(err)
-	}
 	v := subscriptionRead(t, ctx, pool, org, subscriptionTime(11, 1))
-	if !v.Next.EffectiveAt.Equal(time.Date(2027, 1, 21, 10, 0, 0, 0, domain.Shanghai)) {
+	if v.TermEnd == nil || !v.TermEnd.Equal(time.Date(2027, 1, 21, 10, 0, 0, 0, domain.Shanghai)) {
 		t.Fatal("prepaid months shortened")
 	}
-	q = subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "change", Target: contract.Target{PlanKey: "lite", ExtraStores: 5, ExtraMembers: 2}}, subscriptionTime(11, 1))
-	if q.Renewal.ExtraStores != 1 || q.Renewal.ExtraMembers != 2 {
-		t.Fatalf("temporary addition reset renewal: %+v", q)
+	q = subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "renew", Target: contract.Target{PlanKey: "lite", Stores: 6}}, subscriptionTime(11, 1))
+	subscriptionPay(t, ctx, pool, org, user, q, subscriptionTime(11, 1))
+	q = subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "change", Target: contract.Target{PlanKey: "lite", Stores: 10}}, subscriptionTime(11, 1))
+	if q.Target.Stores != 10 {
+		t.Fatalf("growth target: %+v", q)
 	}
 	subscriptionPay(t, ctx, pool, org, user, q, subscriptionTime(11, 1))
 	v = subscriptionRead(t, ctx, pool, org, subscriptionTime(11, 1))
-	if v.Stores.Limit != 10 || v.Next.Stores != 6 || v.Next.ExtraMembers != 2 {
-		t.Fatalf("temporary addition: %+v", v)
+	if v.Stores.Limit != 10 || v.NextRenewal.Stores != 10 || v.Periods[len(v.Periods)-1].Stores != 10 {
+		t.Fatalf("paid period growth: %+v", v)
 	}
-	expired := subscriptionRead(t, ctx, pool, org, time.Date(2027, 1, 21, 10, 0, 0, 0, domain.Shanghai))
-	if expired.Status != "expired" || expired.Stores.Limit != 1 {
-		t.Fatal("unpaid renewal granted access")
+	expired := subscriptionRead(t, ctx, pool, org, time.Date(2027, 2, 21, 10, 0, 0, 0, domain.Shanghai))
+	if expired.Status != "expired" || expired.Stores.Limit != 0 || !expired.Frozen {
+		t.Fatalf("unpaid renewal must freeze the workspace: %+v", expired)
 	}
 }
 
 func TestSubscriptionListsAndPendingOrder(t *testing.T) {
 	ctx, pool, org, user := subscriptionTenant(t)
 	now := subscriptionTime(10, 21)
-	q := subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "subscribe", Target: contract.Target{PlanKey: "lite", ExtraStores: 3}}, now)
+	q := subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "subscribe", Target: contract.Target{PlanKey: "lite", Stores: 8}}, now)
 	subscriptionPay(t, ctx, pool, org, user, q, now)
+	stores := []string{}
 	for i := 0; i < 7; i++ {
-		seedCompanyStore(t, ctx, pool, org, uuid.NewString(), i+1, "S", nil)
+		id := uuid.NewString()
+		stores = append(stores, id)
+		seedCompanyStore(t, ctx, pool, org, id, i+1, "S", nil)
 	}
-	_, err := billingrepo.Quote(ctx, pool, org, contract.QuoteRequest{Action: "schedule", Target: contract.Target{PlanKey: "lite", ExtraStores: 1}}, now)
+	_, err := billingrepo.Quote(ctx, pool, org, contract.QuoteRequest{Action: "renew", Target: contract.Target{PlanKey: "lite", Stores: 6}}, now)
 	var refusal *domain.QuoteError
 	if !errors.As(err, &refusal) || refusal.Code != domain.CodeCapacityBelowUsage {
 		t.Fatalf("missing list: %v", err)
 	}
-	// Raising unpaid renewal capacity is free even when it exceeds currently paid capacity.
-	q = subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "schedule", Target: contract.Target{PlanKey: "lite", ExtraStores: 4}}, now)
+	q = subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "renew", Months: 1}, now)
+	subscriptionPay(t, ctx, pool, org, user, q, now)
+	future := subscriptionRead(t, ctx, pool, org, now).Periods[1]
+	q = subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "keep", PeriodID: future.ID, Target: contract.Target{PlanKey: "lite", Stores: 8}, KeepStores: stores[1:]}, now)
 	renewal := subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "renew", Months: 1}, now)
 	agreement := []byte(fmt.Sprintf(`{"version":"t","title":"t","effective_at":"t","content":"t","accepted_at":"t","accepted_by":"%d"}`, user))
 	_, err = billingrepo.CreateSubscriptionOrder(ctx, pool, org, user, "po_"+uuid.NewString(), "manual", "CNY", renewal.ID, agreement, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = billingrepo.ConfirmSchedule(ctx, pool, org, q.ID, false, now); err == nil {
+	if err = billingrepo.ConfirmKeep(ctx, pool, org, q.ID, false, now); err == nil {
 		t.Fatal("changed frozen pending order silently")
 	}
-	if err = billingrepo.ConfirmSchedule(ctx, pool, org, q.ID, true, now); err != nil {
+	if err = billingrepo.ConfirmKeep(ctx, pool, org, q.ID, true, now); err != nil {
 		t.Fatal(err)
 	}
 	v := subscriptionRead(t, ctx, pool, org, now)
-	if v.Next.Stores != 9 || v.PendingOrder {
+	if v.NextRenewal.Stores != 8 || v.PendingOrder || len(v.Periods[1].KeepStores) != 6 {
 		t.Fatal("explicit cancel and edit did not commit")
 	}
 }
@@ -259,7 +260,7 @@ func TestSubscriptionListsAndPendingOrder(t *testing.T) {
 func TestSubscriptionFutureKeepAndDeletedStore(t *testing.T) {
 	ctx, pool, org, user := subscriptionTenant(t)
 	now := subscriptionTime(10, 21)
-	q := subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "subscribe", Target: contract.Target{PlanKey: "lite", ExtraStores: 3}}, now)
+	q := subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "subscribe", Target: contract.Target{PlanKey: "lite", Stores: 8}}, now)
 	subscriptionPay(t, ctx, pool, org, user, q, now)
 	ids := []string{}
 	for i := 0; i < 7; i++ {
@@ -267,26 +268,22 @@ func TestSubscriptionFutureKeepAndDeletedStore(t *testing.T) {
 		ids = append(ids, id)
 		seedCompanyStore(t, ctx, pool, org, id, i+1, "S", nil)
 	}
-	q = subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "schedule", Target: contract.Target{PlanKey: "lite", ExtraStores: 1}, KeepStores: ids[1:]}, now)
-	if err := billingrepo.ConfirmSchedule(ctx, pool, org, q.ID, false, now); err != nil {
-		t.Fatal(err)
-	}
+	q = subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "renew", Target: contract.Target{PlanKey: "lite", Stores: 6}, KeepStores: ids[1:]}, subscriptionTime(11, 10))
+	subscriptionPay(t, ctx, pool, org, user, q, subscriptionTime(11, 10))
 	// Deleting a retained store leaves its place idle; it must not be substituted.
 	if _, err := pool.Exec(ctx, `UPDATE organization_stores SET deleted_at_ms=1 WHERE uuid=$1`, ids[6]); err != nil {
 		t.Fatal(err)
 	}
-	q = subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "renew"}, subscriptionTime(11, 10))
-	subscriptionPay(t, ctx, pool, org, user, q, subscriptionTime(11, 10))
 	if subscriptionAllowed(t, ctx, pool, org, ids[0], subscriptionTime(11, 21)) {
 		t.Fatal("deleted retained store silently replaced")
 	}
 	v := subscriptionRead(t, ctx, pool, org, subscriptionTime(11, 10))
 	future := v.Periods[len(v.Periods)-1]
-	q = subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "keep", PeriodID: future.ID, Target: future.Target, KeepStores: ids[:5]}, subscriptionTime(11, 11))
-	if q.AmountCents != 0 || !q.ScheduleOnly {
+	q = subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "keep", PeriodID: future.ID, Target: contract.Target{PlanKey: future.PlanKey, Stores: future.Stores}, KeepStores: ids[:5]}, subscriptionTime(11, 11))
+	if q.AmountCents != 0 || !q.FreeOnly {
 		t.Fatal("same-capacity keep list charged")
 	}
-	if err := billingrepo.ConfirmSchedule(ctx, pool, org, q.ID, false, subscriptionTime(11, 11)); err != nil {
+	if err := billingrepo.ConfirmKeep(ctx, pool, org, q.ID, false, subscriptionTime(11, 11)); err != nil {
 		t.Fatal(err)
 	}
 	if !subscriptionAllowed(t, ctx, pool, org, ids[0], subscriptionTime(11, 21)) {
@@ -300,26 +297,31 @@ func TestSubscriptionFutureKeepAndDeletedStore(t *testing.T) {
 func TestSubscriptionPaidAfterCancel(t *testing.T) {
 	ctx, pool, org, user := subscriptionTenant(t)
 	now := subscriptionTime(10, 21)
-	q := subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "subscribe", Target: contract.Target{PlanKey: "lite", ExtraStores: 3}}, now)
+	q := subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "subscribe", Target: contract.Target{PlanKey: "lite", Stores: 8}}, now)
 	subscriptionPay(t, ctx, pool, org, user, q, now)
+	store := uuid.NewString()
+	seedCompanyStore(t, ctx, pool, org, store, 1, "Retained store", nil)
+	q = subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "renew", Target: contract.Target{PlanKey: "lite", Stores: 6}}, subscriptionTime(11, 1))
+	subscriptionPay(t, ctx, pool, org, user, q, subscriptionTime(11, 1))
+	future := subscriptionRead(t, ctx, pool, org, subscriptionTime(11, 10)).Periods[1]
 	q = subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "renew"}, subscriptionTime(11, 10))
 	agreement := []byte(fmt.Sprintf(`{"version":"t","title":"t","effective_at":"t","content":"t","accepted_at":"t","accepted_by":"%d"}`, user))
 	pending, err := billingrepo.CreateSubscriptionOrder(ctx, pool, org, user, "po_"+uuid.NewString(), "easypay", "CNY", q.ID, agreement, subscriptionTime(11, 10))
 	if err != nil {
 		t.Fatal(err)
 	}
-	change := subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "schedule", Target: contract.Target{PlanKey: "lite", ExtraStores: 1}}, subscriptionTime(11, 10))
-	if err = billingrepo.ConfirmSchedule(ctx, pool, org, change.ID, true, subscriptionTime(11, 10)); err == nil {
+	change := subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "keep", PeriodID: future.ID, Target: contract.Target{PlanKey: "lite", Stores: 6}, KeepStores: []string{store}}, subscriptionTime(11, 10))
+	if err = billingrepo.ConfirmKeep(ctx, pool, org, change.ID, true, subscriptionTime(11, 10)); err == nil {
 		t.Fatal("external payment was canceled without channel confirmation")
 	}
 	if _, err = pool.Exec(ctx, `UPDATE payment_orders SET status='canceled' WHERE public_id=$1`, pending.PublicID); err != nil {
 		t.Fatal(err)
 	}
-	if err = billingrepo.ConfirmSchedule(ctx, pool, org, change.ID, true, subscriptionTime(11, 10)); err != nil {
+	if err = billingrepo.ConfirmKeep(ctx, pool, org, change.ID, true, subscriptionTime(11, 10)); err != nil {
 		t.Fatal(err)
 	}
 	router := chi.NewRouter()
-	billinghttp.Register(router, billinghttp.Deps{Pool: pool, Now: func() time.Time { return subscriptionTime(11, 11) }, Payments: billinghttp.Payments{EasyPayPID: "1000", EasyPayKey: "secret"}})
+	billinghttp.Register(router, billinghttp.Deps{Billing: billingHTTPPort(), Pool: pool, Now: func() time.Time { return subscriptionTime(11, 11) }, Payments: billinghttp.Payments{EasyPayPID: "1000", EasyPayKey: "secret"}})
 	form := map[string]string{"pid": "1000", "money": "160.00", "out_trade_no": pending.PublicID, "trade_no": "subscription-late-trade", "trade_status": "TRADE_SUCCESS"}
 	form["sign"] = domain.EasyPayMD5(form, "secret")
 	body := url.Values{}
@@ -336,8 +338,8 @@ func TestSubscriptionPaidAfterCancel(t *testing.T) {
 		}
 	}
 	v := subscriptionRead(t, ctx, pool, org, subscriptionTime(11, 11))
-	if v.Next.Stores != 6 || len(v.Periods) != 2 || v.Periods[1].Stores != 8 {
-		t.Fatalf("paid late must fulfill frozen order and preserve new renewal: %+v", v)
+	if v.NextRenewal.Stores != 8 || len(v.Periods) != 3 || v.Periods[1].Stores != 6 || len(v.Periods[1].KeepStores) != 1 || v.Periods[1].KeepStores[0] != store || v.Periods[2].Stores != 8 {
+		t.Fatalf("paid late must fulfill frozen order and preserve purchased periods: %+v", v)
 	}
 	var status string
 	if err = pool.QueryRow(ctx, `SELECT status FROM payment_orders WHERE public_id=$1`, pending.PublicID).Scan(&status); err != nil {
@@ -351,7 +353,7 @@ func TestSubscriptionPaidAfterCancel(t *testing.T) {
 func TestSubscriptionFulfillmentFailureKeepsReceipt(t *testing.T) {
 	ctx, pool, org, user := subscriptionTenant(t)
 	now := subscriptionTime(10, 21)
-	q := subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "subscribe", Target: contract.Target{PlanKey: "lite"}}, now)
+	q := subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "subscribe", Target: contract.Target{PlanKey: "lite", Stores: 5}}, now)
 	agreement := []byte(fmt.Sprintf(`{"version":"t","title":"t","effective_at":"t","content":"t","accepted_at":"t","accepted_by":"%d"}`, user))
 	pending, err := billingrepo.CreateSubscriptionOrder(ctx, pool, org, user, "po_"+uuid.NewString(), "manual", "CNY", q.ID, agreement, now)
 	if err != nil {
@@ -370,7 +372,7 @@ func TestSubscriptionFulfillmentFailureKeepsReceipt(t *testing.T) {
 		if err = json.Unmarshal(raw["period"], &period); err != nil {
 			return err
 		}
-		period["plan_members"] = 0
+		period["stores"] = 0
 		raw["period"], _ = json.Marshal(period)
 		order.SubscriptionSnapshot, _ = json.Marshal(raw)
 		if _, err = billingrepo.MarkOrderPaid(ctx, tx, order.ID, "paid", now); err != nil {
@@ -404,7 +406,7 @@ func TestSubscriptionHTTPContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	router := chi.NewRouter()
-	billinghttp.Register(router, billinghttp.Deps{Pool: pool, Now: func() time.Time { return now }, Access: access.FixedResolver{Principal: &access.Principal{OrgID: org, UserID: user, WorkspaceRole: "owner"}}})
+	billinghttp.Register(router, billinghttp.Deps{Billing: billingHTTPPort(), Pool: pool, Now: func() time.Time { return now }, Access: access.FixedResolver{Principal: &access.Principal{OrgID: org, UserID: user, WorkspaceRole: "owner"}}})
 	call := func(method, path, specPath, body string, status int) []byte {
 		t.Helper()
 		rec := httptest.NewRecorder()
@@ -420,14 +422,14 @@ func TestSubscriptionHTTPContract(t *testing.T) {
 		return rec.Body.Bytes()
 	}
 	call("GET", "/api/billing/subscription", "/api/billing/subscription", "", 200)
-	call("POST", "/api/billing/quotes", "/api/billing/quotes", `{"action":"subscribe","target":{"plan_key":"lite"}}`, 400)
-	raw := call("POST", "/api/billing/quotes", "/api/billing/quotes", fmt.Sprintf(`{"expected_workspace_uuid":"%s","action":"subscribe","target":{"plan_key":"lite","extra_stores":3,"extra_members":0}}`, workspace), 200)
+	call("POST", "/api/billing/quotes", "/api/billing/quotes", `{"action":"subscribe","target":{"plan_key":"lite","stores":5}}`, 400)
+	raw := call("POST", "/api/billing/quotes", "/api/billing/quotes", fmt.Sprintf(`{"expected_workspace_uuid":"%s","action":"subscribe","target":{"plan_key":"lite","stores":8}}`, workspace), 200)
 	var q contract.Offered
 	if err = json.Unmarshal(raw, &q); err != nil {
 		t.Fatal(err)
 	}
 	call("POST", "/api/billing/orders", "/api/billing/orders", fmt.Sprintf(`{"quote_id":"%s","accepted_version":"obsolete"}`, q.ID), 400)
-	raw = call("POST", "/api/billing/orders", "/api/billing/orders", fmt.Sprintf(`{"quote_id":"%s","accepted_version":"subscription-2026-10-21"}`, q.ID), 201)
+	raw = call("POST", "/api/billing/orders", "/api/billing/orders", fmt.Sprintf(`{"quote_id":"%s","accepted_version":"subscription-2026-10-31"}`, q.ID), 201)
 	var order contract.OrderBrief
 	if err = json.Unmarshal(raw, &order); err != nil {
 		t.Fatal(err)
@@ -445,23 +447,25 @@ func TestSubscriptionHTTPContract(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	raw = call("POST", "/api/billing/quotes", "/api/billing/quotes", fmt.Sprintf(`{"expected_workspace_uuid":"%s","action":"schedule","target":{"plan_key":"lite","extra_stores":1,"extra_members":0}}`, workspace), 200)
+	raw = call("POST", "/api/billing/quotes", "/api/billing/quotes", fmt.Sprintf(`{"expected_workspace_uuid":"%s","action":"renew","target":{"plan_key":"lite","stores":6}}`, workspace), 200)
 	if err = json.Unmarshal(raw, &q); err != nil {
 		t.Fatal(err)
 	}
-	call("POST", "/api/billing/schedule", "/api/billing/schedule", fmt.Sprintf(`{"quote_id":"%s","cancel_pending":false}`, q.ID), 200)
+	subscriptionPay(t, ctx, pool, org, user, q, now)
+	future := subscriptionRead(t, ctx, pool, org, now).Periods[1]
+	raw = call("POST", "/api/billing/quotes", "/api/billing/quotes", fmt.Sprintf(`{"expected_workspace_uuid":%q,"action":"keep","period_id":%d,"target":{"plan_key":"lite","stores":6},"keep_store_ids":[]}`, workspace, future.ID), 200)
+	if err = json.Unmarshal(raw, &q); err != nil {
+		t.Fatal(err)
+	}
+	call("POST", "/api/billing/keep", "/api/billing/keep", fmt.Sprintf(`{"quote_id":"%s","cancel_pending":false}`, q.ID), 200)
 }
 
 func TestSubscriptionBoundarySweepAndOrderReaper(t *testing.T) {
 	ctx, pool, org, user := subscriptionTenant(t)
 	now := subscriptionTime(10, 21)
-	q := subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "subscribe", Target: contract.Target{PlanKey: "lite", ExtraStores: 3}}, now)
+	q := subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "subscribe", Target: contract.Target{PlanKey: "lite", Stores: 8}}, now)
 	subscriptionPay(t, ctx, pool, org, user, q, now)
-	q = subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "schedule", Target: contract.Target{PlanKey: "lite", ExtraStores: 1}}, now)
-	if err := billingrepo.ConfirmSchedule(ctx, pool, org, q.ID, false, now); err != nil {
-		t.Fatal(err)
-	}
-	q = subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "renew"}, subscriptionTime(11, 10))
+	q = subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "renew", Target: contract.Target{PlanKey: "lite", Stores: 6}}, subscriptionTime(11, 10))
 	subscriptionPay(t, ctx, pool, org, user, q, subscriptionTime(11, 10))
 	n, err := billingrepo.ExpireDue(ctx, pool, 200, subscriptionTime(11, 21))
 	if err != nil || n != 1 {
@@ -486,7 +490,7 @@ func TestSubscriptionBoundarySweepAndOrderReaper(t *testing.T) {
 func TestSubscriptionGrowthKeepsSelectedStoresAndAllocatesCurrentVacancy(t *testing.T) {
 	ctx, pool, org, user := subscriptionTenant(t)
 	now := time.Now().Add(-time.Minute)
-	q := subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "subscribe", Target: contract.Target{PlanKey: "lite", ExtraStores: 3}}, now)
+	q := subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "subscribe", Target: contract.Target{PlanKey: "lite", Stores: 8}}, now)
 	subscriptionPay(t, ctx, pool, org, user, q, now)
 	ids := []string{}
 	for i := 0; i < 15; i++ {
@@ -498,12 +502,10 @@ func TestSubscriptionGrowthKeepsSelectedStoresAndAllocatesCurrentVacancy(t *test
 	if _, err := pool.Exec(ctx, `UPDATE subscription_periods SET keep_store_ids=$2 WHERE org_id=$1`, org, keep); err != nil {
 		t.Fatal(err)
 	}
-	q = subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "schedule", Target: contract.Target{PlanKey: "lite", ExtraStores: 1}, KeepStores: keep}, now)
-	if err := billingrepo.ConfirmSchedule(ctx, pool, org, q.ID, false, now); err != nil {
-		t.Fatal(err)
-	}
+	q = subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "renew", Target: contract.Target{PlanKey: "lite", Stores: 6}, KeepStores: keep}, now)
+	subscriptionPay(t, ctx, pool, org, user, q, now)
 	at := time.Now()
-	q = subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "change", Target: contract.Target{PlanKey: "lite", ExtraStores: 5}}, at)
+	q = subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "change", Target: contract.Target{PlanKey: "lite", Stores: 10}, KeepStores: keep}, at)
 	subscriptionPay(t, ctx, pool, org, user, q, at)
 	if !subscriptionAllowed(t, ctx, pool, org, ids[14], at) {
 		t.Fatal("growth replaced an already retained store with an older one")
@@ -527,28 +529,34 @@ func TestSubscriptionGrowthKeepsSelectedStoresAndAllocatesCurrentVacancy(t *test
 		t.Fatal("new store could not use a current vacant purchased slot")
 	}
 	v := subscriptionRead(t, ctx, pool, org, time.Now())
-	if v.Next.Stores != 6 {
-		t.Fatal("creating a store canceled the renewal reduction")
+	if v.NextRenewal.Stores != 10 || v.Periods[len(v.Periods)-1].Stores != 10 {
+		t.Fatal("creating a store changed purchased capacity")
 	}
-	for _, id := range v.Next.KeepStores {
+	// A new store uses the current vacancy without changing the future period's selection.
+	for _, id := range v.Periods[len(v.Periods)-1].KeepStores {
 		if id == newID {
 			t.Fatal("new store silently replaced a future reservation")
 		}
 	}
 }
 
-func TestSubscriptionUpgradeRetainsAlreadyPaidExtras(t *testing.T) {
+func TestSubscriptionUpgradeRetainsAlreadyPaidCapacity(t *testing.T) {
 	ctx, pool, org, user := subscriptionTenant(t)
 	now := subscriptionTime(10, 21)
-	q := subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "subscribe", Target: contract.Target{PlanKey: "lite", ExtraStores: 3, ExtraMembers: 2}}, now)
+	q := subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "subscribe", Target: contract.Target{PlanKey: "lite", Stores: 8}}, now)
 	subscriptionPay(t, ctx, pool, org, user, q, now)
-	q = subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "change", Target: contract.Target{PlanKey: "pro", ExtraStores: 1}}, subscriptionTime(10, 30))
-	if q.Target.Stores != 33 || q.Target.Members != 8 {
+	// A smaller target on a higher plan keeps the larger paid counts and only reprices the units.
+	q = subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "change", Target: contract.Target{PlanKey: "pro", Stores: 6}}, subscriptionTime(10, 30))
+	if q.Target.PlanKey != "pro" || q.Target.Stores != 8 {
 		t.Fatalf("preview lost paid capacity: %+v", q.Target)
+	}
+	// Monthly difference 8*(2500-2000) = 4000, prorated over 22 of the 31 days left in the term.
+	if q.AmountCents != 2839 {
+		t.Fatalf("upgrade price: %d", q.AmountCents)
 	}
 	subscriptionPay(t, ctx, pool, org, user, q, subscriptionTime(10, 30))
 	v := subscriptionRead(t, ctx, pool, org, subscriptionTime(10, 30))
-	if v.Stores.Limit != 33 || v.Members.Limit != 8 {
-		t.Fatalf("upgrade lost paid add-ons: %+v", v)
+	if v.Stores.Limit != 8 || v.Members.Limit != domain.MemberCap {
+		t.Fatalf("upgrade lost paid capacity: %+v", v)
 	}
 }

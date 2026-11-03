@@ -4,6 +4,7 @@ import test from "node:test"
 import { renderToStaticMarkup } from "react-dom/server"
 import { FieldWorkbench } from "./field-workbench"
 import { batchSelectionScopes } from "./workbench-contract"
+import { WorkbenchGridHud } from "./workbench-grid-hud"
 import { idleLifecycle, instance, readyToPublish, row, schema } from "./workbench-test-fixtures"
 import { workbenchProps } from "./workbench-test-harness"
 
@@ -184,7 +185,7 @@ test("a thousand-row workbench does not mount every Product Instance", () => {
   assert.match(html, /data-preparation-step="ai" data-state="idle"/)
 })
 
-test("workbench renders the Pro Ledger keyboard matrix HUD status bar", () => {
+test("an unfocused workbench does not reserve a keyboard instruction bar", () => {
   const html = renderToStaticMarkup(
     <FieldWorkbench
       {...workbenchProps}
@@ -195,20 +196,13 @@ test("workbench renders the Pro Ledger keyboard matrix HUD status bar", () => {
     />,
   )
 
-  assert.match(html, /aria-label="工作台键盘矩阵导航状态"/)
-  assert.match(html, /Pro Ledger 矩阵导航已就绪/)
-  assert.match(html, />↑↓←→<\/kbd>/)
-  assert.match(html, />⌘D \/ Ctrl\+D<\/kbd>/)
-  assert.match(html, />Enter<\/kbd>/)
-  assert.match(html, />Space<\/kbd>/)
-  assert.match(html, />⌘C<\/kbd>/)
+  assert.doesNotMatch(html, /aria-label="工作台键盘矩阵导航状态"|Pro Ledger/)
 })
 
 test("fill down is a real button and requires a focused source cell", () => {
-  const target = row(1)
   const html = renderToStaticMarkup(
-    <FieldWorkbench {...workbenchProps} schema={schema} rows={[target]}
-      productDrafts={{ [target.draftId]: instance(target) }} selectedRowIds={new Set()} />,
+    <WorkbenchGridHud focusedCell={{ rowIndex: 0, colIndex: 2 }} selectedMode={false}
+      pickedCount={0} canFillDown={false} onFillDown={() => {}} />,
   )
   const button = html.match(/<button[^>]*title="将当前单元格填充到选中行或下方可编辑行（⌘D \/ Ctrl\+D）"[^>]*>[\s\S]*?<\/button>/)?.[0]
   assert.ok(button, "fill-down needs a clickable affordance, not just a shortcut legend")

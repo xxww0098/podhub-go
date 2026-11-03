@@ -12,13 +12,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	catalogrepo "github.com/xxww0098/podhub-go/internal/admin/catalog/repo"
-	admindomain "github.com/xxww0098/podhub-go/internal/admin/domain"
 	adminhttp "github.com/xxww0098/podhub-go/internal/admin/http"
 	adminsvc "github.com/xxww0098/podhub-go/internal/admin/service"
-	"github.com/xxww0098/podhub-go/internal/platform/seal"
 )
-
-const catalogKey = "catalog-whitelist-key-32chars-minx"
 
 func TestCatalogMediaURLWhitelist(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -30,11 +26,9 @@ func TestCatalogMediaURLWhitelist(t *testing.T) {
 	})
 	sess := &adminhttp.Session{
 		UserID: 7, OrgID: 1, PlatformRole: "super_admin", PublicID: "catalog@pod.example",
-		TotpEnrolled: true, StepUpElevated: true,
 	}
-	ready := mountCatalog(pool, sess, catalogKey)
-	shortH := mountCatalog(pool, sess, "short")
-	exampleH := mountCatalog(pool, sess, seal.ExampleIntegrationKey)
+	ready := mountCatalog(pool, sess, nil)
+	missingStorage := mountCatalog(pool, sess, nil)
 
 	// 00365 turned RLS on for the catalog tables. Assert the post-00365
 	// invariant instead of the old "no RLS" world: forced RLS with at least
@@ -72,33 +66,24 @@ func TestCatalogMediaURLWhitelist(t *testing.T) {
 	sess.PlatformRole = "admin"
 	wantBody(t, adminCall(ready, http.MethodPost, "/api/admin/platform-catalog/products", `{"title":"x"}`, nil), http.StatusForbidden, `{"error":"需要超级管理员权限","code":"FORBIDDEN"}`)
 	sess.PlatformRole = "super_admin"
-	sess.TotpEnrolled = false
-	wantBody(t, adminCall(ready, http.MethodPost, "/api/admin/platform-catalog/products", `{"title":"x"}`, nil), http.StatusForbidden, `{"error":"请先绑定验证器","code":"FORBIDDEN"}`)
-	sess.TotpEnrolled = true
-	sess.StepUpElevated = false
-	wantBody(t, adminCall(ready, http.MethodPost, "/api/admin/platform-catalog/products", `{"title":"x"}`, nil), http.StatusForbidden, `{"error":"管理操作需要重新验证","code":"FORBIDDEN"}`)
-	sess.StepUpElevated = true
 
-	empty := adminCall(shortH, http.MethodPost, "/api/admin/platform-catalog/products", `{"title":"empty-ok"}`, nil)
+	empty := adminCall(missingStorage, http.MethodPost, "/api/admin/platform-catalog/products", `{"title":"empty-ok"}`, nil)
 	if empty.Code != http.StatusCreated || empty.Header().Get("X-Content-Type-Options") != "nosniff" {
 		t.Fatalf("empty %d %s", empty.Code, empty.Body.String())
 	}
-	rejected := adminCall(shortH, http.MethodPost, "/api/admin/platform-catalog/products", `{"title":"rejected","media":["https://media.example.invalid/a.jpg"]}`, nil)
+	rejected := adminCall(missingStorage, http.MethodPost, "/api/admin/platform-catalog/products", `{"title":"rejected","media":["https://media.example.invalid/a.jpg"]}`, nil)
 	wantBody(t, rejected, http.StatusBadRequest, `{"error":"图片须先通过图片上传接口写入媒体存储","code":"VALIDATION"}`)
 	var n int64
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM sc_products WHERE title = 'rejected'`).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("rejected stored %d %v", n, err)
 	}
 
-	sealCatalogBases(t, ctx, pool, catalogKey, []map[string]any{
-		{"id": "media", "publicBaseUrl": "https://media.example.invalid", "active": false},
-		{"id": "native", "publicBaseUrl": "https://cdn.example/native", "active": true},
-		{"id": "blank", "publicBaseUrl": ""},
-		{"id": "space", "publicBaseUrl": " "},
-	})
+	ready = mountCatalog(pool, sess, []string{"https://media.example.invalid", "https://cdn.example/native"})
 	evil := adminCall(ready, http.MethodPost, "/api/admin/platform-catalog/products", `{"title":"evil","media":["  https://media.example.invalid.evil/a.jpg  "]}`, nil)
-	if evil.Code != http.StatusCreated || !strings.Contains(evil.Body.String(), `"https://media.example.invalid.evil/a.jpg"`) || strings.Contains(evil.Body.String(), "  https://") {
-		t.Fatalf("evil %d %s", evil.Code, evil.Body.String())
+	wantBody(t, evil, http.StatusBadRequest, `{"error":"图片须先通过图片上传接口写入媒体存储","code":"VALIDATION"}`)
+	valid := adminCall(ready, http.MethodPost, "/api/admin/platform-catalog/products", `{"title":"valid","media":["  https://media.example.invalid/a.jpg  "]}`, nil)
+	if valid.Code != http.StatusCreated || strings.Contains(valid.Body.String(), "  https://") {
+		t.Fatalf("valid %d %s", valid.Code, valid.Body.String())
 	}
 	var wrapped struct {
 		Data struct {
@@ -107,34 +92,28 @@ func TestCatalogMediaURLWhitelist(t *testing.T) {
 			} `json:"product"`
 		} `json:"data"`
 	}
-	if json.Unmarshal(evil.Body.Bytes(), &wrapped) != nil || wrapped.Data.Product.ID == "" {
-		t.Fatal(evil.Body.String())
+	if json.Unmarshal(valid.Body.Bytes(), &wrapped) != nil || wrapped.Data.Product.ID == "" {
+		t.Fatal(valid.Body.String())
 	}
 	productID := wrapped.Data.Product.ID
 	var media string
-	if err := pool.QueryRow(ctx, `SELECT media::text FROM sc_products WHERE product_id = $1`, productID).Scan(&media); err != nil || media != `["https://media.example.invalid.evil/a.jpg"]` {
+	if err := pool.QueryRow(ctx, `SELECT media::text FROM sc_products WHERE product_id = $1`, productID).Scan(&media); err != nil || media != `["https://media.example.invalid/a.jpg"]` {
 		t.Fatalf("stored %s %v", media, err)
 	}
-	wantBody(t, adminCall(ready, http.MethodPost, "/api/admin/platform-catalog/products", `{"title":"upper","media":["HTTPS://media.example.invalid/a.jpg"]}`, nil), http.StatusBadRequest, `{"error":"图片须先通过图片上传接口写入媒体存储","code":"VALIDATION"}`)
+	if upper := adminCall(ready, http.MethodPost, "/api/admin/platform-catalog/products", `{"title":"upper","media":["HTTPS://media.example.invalid/a.jpg"]}`, nil); upper.Code != http.StatusCreated {
+		t.Fatalf("uppercase scheme: %d %s", upper.Code, upper.Body.String())
+	}
 	wantBody(t, adminCall(ready, http.MethodPost, "/api/admin/platform-catalog/products", `{"title":"other","media":["https://other.example/a.jpg"]}`, nil), http.StatusBadRequest, `{"error":"图片须先通过图片上传接口写入媒体存储","code":"VALIDATION"}`)
 	wantBody(t, adminCall(ready, http.MethodPost, "/api/admin/platform-catalog/products", `{"title":"supplier","media":["https://supplier.example.invalid/a.jpg"]}`, nil), http.StatusBadRequest, `{"error":"图片须先通过图片上传接口写入媒体存储","code":"VALIDATION"}`)
-	inactive := adminCall(ready, http.MethodPost, "/api/admin/platform-catalog/products", `{"title":"inactive","media":["https://media.example.invalid/a.jpg"]}`, nil)
-	if inactive.Code != http.StatusCreated {
-		t.Fatalf("inactive %d %s", inactive.Code, inactive.Body.String())
-	}
 	native := adminCall(ready, http.MethodPost, "/api/admin/platform-catalog/products", `{"title":"native","media":["https://cdn.example/native/a.jpg"]}`, nil)
 	if native.Code != http.StatusCreated {
 		t.Fatalf("native %d %s", native.Code, native.Body.String())
 	}
 
-	sealCatalogBases(t, ctx, pool, catalogKey, []map[string]any{
-		{"id": "slash", "publicBaseUrl": "https://cdn.example/native/", "active": true},
-	})
+	ready = mountCatalog(pool, sess, []string{"https://cdn.example/native/"})
 	wantBody(t, adminCall(ready, http.MethodPost, "/api/admin/platform-catalog/products", `{"title":"slash","media":["https://cdn.example/native"]}`, nil), http.StatusBadRequest, `{"error":"图片须先通过图片上传接口写入媒体存储","code":"VALIDATION"}`)
 
-	sealCatalogBases(t, ctx, pool, catalogKey, []map[string]any{
-		{"id": "media", "publicBaseUrl": "https://media.example.invalid", "active": true},
-	})
+	ready = mountCatalog(pool, sess, []string{"https://media.example.invalid"})
 	var many strings.Builder
 	many.WriteString(`{"title":"many","media":[`)
 	for i := 0; i < 21; i++ {
@@ -163,25 +142,6 @@ func TestCatalogMediaURLWhitelist(t *testing.T) {
 	if json.Unmarshal(skuRec.Body.Bytes(), &sku) != nil || sku.Data.SKU.ID == "" {
 		t.Fatal(skuRec.Body.String())
 	}
-	if _, err := pool.Exec(ctx, `
-		UPDATE platform_integration_config
-		SET nonce = $1, ciphertext = $2
-		WHERE singleton`, []byte("0123456789ab"), []byte("not-a-ciphertext")); err != nil {
-		t.Fatal(err)
-	}
-	garbage := adminCall(ready, http.MethodPost, "/api/admin/platform-catalog/products", `{"title":"garbage"}`, nil)
-	wantBody(t, garbage, http.StatusServiceUnavailable, `{"error":"服务暂不可用","code":"MEDIA_UNAVAILABLE"}`)
-	if garbage.Header().Get("Retry-After") != "" {
-		t.Fatal(garbage.Header().Get("Retry-After"))
-	}
-	missingKey := adminCall(shortH, http.MethodPost, "/api/admin/platform-catalog/products", `{"title":"nokey"}`, nil)
-	wantBody(t, missingKey, http.StatusServiceUnavailable, `{"error":"平台连接配置密钥未设置","code":"MEDIA_UNAVAILABLE"}`)
-	example := adminCall(exampleH, http.MethodPost, "/api/admin/platform-catalog/products", `{"title":"example"}`, nil)
-	wantBody(t, example, http.StatusServiceUnavailable, `{"error":"平台连接配置密钥不能使用 .env.example 中的占位值","code":"MEDIA_UNAVAILABLE"}`)
-
-	sealCatalogBases(t, ctx, pool, catalogKey, []map[string]any{
-		{"id": "media", "publicBaseUrl": "https://media.example.invalid", "active": true},
-	})
 	if _, err := pool.Exec(ctx, `DELETE FROM writer_leases WHERE domain = 'admin' AND revoked_at_ms IS NULL`); err != nil {
 		t.Fatal(err)
 	}
@@ -210,44 +170,13 @@ func TestCatalogMediaURLWhitelist(t *testing.T) {
 	}
 }
 
-func mountCatalog(pool *pgxpool.Pool, sess *adminhttp.Session, key string) http.Handler {
+func mountCatalog(pool *pgxpool.Pool, sess *adminhttp.Session, bases []string) http.Handler {
 	r := chi.NewRouter()
 	adminhttp.Mount(r, adminhttp.Deps{
 		Resolve: func(*http.Request) (*adminhttp.Session, *adminhttp.Refusal, error) {
 			return sess, nil, nil
 		},
-		Catalog: adminsvc.NewCatalog(catalogrepo.CatalogRepo{Pool: pool, Key: key}, adminsvc.CatalogOptions{}),
+		Catalog: adminsvc.NewCatalog(catalogrepo.CatalogRepo{Pool: pool, PublicBases: bases}, adminsvc.CatalogOptions{}),
 	})
 	return r
-}
-
-func sealCatalogBases(t *testing.T, ctx context.Context, pool *pgxpool.Pool, secret string, accounts []map[string]any) {
-	t.Helper()
-	plain, err := json.Marshal(map[string]any{
-		"schemaVersion":  1,
-		"storageBuckets": accounts,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	nonce := []byte("0123456789ab")
-	sealed, err := admindomain.SealSnapshot(secret, nonce, plain)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tag, err := pool.Exec(ctx, `
-		UPDATE platform_integration_config
-		SET revision = revision + 1, nonce = $1, ciphertext = $2, updated_at_ms = 2, updated_by_account_uuid = $3
-		WHERE singleton`, nonce, sealed, "catalog@pod.example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tag.RowsAffected() > 0 {
-		return
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO platform_integration_config (singleton, revision, nonce, ciphertext, updated_at_ms, updated_by_account_uuid)
-		VALUES (true, 1, $1, $2, 1, $3)`, nonce, sealed, "catalog@pod.example"); err != nil {
-		t.Fatal(err)
-	}
 }

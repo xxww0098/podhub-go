@@ -13,7 +13,7 @@ import (
 
 const partSize = uint64(16 * 1024 * 1024)
 
-// StorageUpload is the tree or row presign body.
+// StorageUpload is the storage-tree presign body.
 type StorageUpload struct {
 	Path        string
 	ContentType string
@@ -47,6 +47,73 @@ func DecodeStorageUpload(body []byte) (StorageUpload, error) {
 	}
 	if !hex64(in.SHA256) {
 		return StorageUpload{}, fail(contract.KindValidation, "sha256 无效")
+	}
+	in.SHA256 = strings.ToLower(in.SHA256)
+	return in, nil
+}
+
+// RowUpload names a local file; its object key is chosen by the service.
+type RowUpload struct {
+	Kind        string
+	Filename    string
+	ContentType string
+	Bytes       uint64
+	SHA256      string
+	Extension   string
+}
+
+func DecodeRowUpload(body []byte) (RowUpload, error) {
+	raw, err := strictObject(body)
+	if err != nil {
+		return RowUpload{}, invalid()
+	}
+	if _, present := raw["resume_ticket"]; present {
+		return RowUpload{}, fail(contract.KindValidation, "暂不支持断点续传，请重新选择文件")
+	}
+	keys := []string{"kind", "filename", "content_type", "bytes", "sha256"}
+	if !hasOnly(raw, keys) || !requireKeys(raw, keys) {
+		return RowUpload{}, invalid()
+	}
+	var in RowUpload
+	var size json.Number
+	if !unmarshal(raw["kind"], &in.Kind) || !unmarshal(raw["filename"], &in.Filename) ||
+		!unmarshal(raw["content_type"], &in.ContentType) || !unmarshal(raw["bytes"], &size) || !unmarshal(raw["sha256"], &in.SHA256) {
+		return RowUpload{}, invalid()
+	}
+	if in.Filename == "" || strings.TrimSpace(in.Filename) != in.Filename || utf8.RuneCountInString(in.Filename) > 255 ||
+		strings.ContainsAny(in.Filename, "/\\") || hasUnicodeControl(in.Filename) {
+		return RowUpload{}, fail(contract.KindValidation, "文件名无效，不能包含目录路径")
+	}
+	in.Extension, err = FileExt(in.Filename)
+	if err != nil {
+		return RowUpload{}, err
+	}
+	var contentType string
+	var maxBytes uint64
+	switch in.Kind {
+	case "gallery":
+		maxBytes = 20 << 20
+		contentType = map[string]string{"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}[in.Extension]
+	case "psd":
+		maxBytes = 500 << 20
+		if in.Extension == "psd" {
+			contentType = "image/vnd.adobe.photoshop"
+		}
+	case "video":
+		maxBytes = 200 << 20
+		contentType = map[string]string{"mp4": "video/mp4", "mov": "video/quicktime"}[in.Extension]
+	default:
+		return RowUpload{}, fail(contract.KindValidation, "上传类型无效")
+	}
+	if contentType == "" || in.ContentType != contentType {
+		return RowUpload{}, fail(contract.KindValidation, "文件扩展名与上传类型或 contentType 不一致")
+	}
+	in.Bytes, err = strconv.ParseUint(size.String(), 10, 64)
+	if err != nil || in.Bytes == 0 || in.Bytes > maxBytes {
+		return RowUpload{}, fail(contract.KindValidation, "文件大小超出该上传类型的限制")
+	}
+	if !hex64(in.SHA256) {
+		return RowUpload{}, fail(contract.KindValidation, "sha256 无效")
 	}
 	in.SHA256 = strings.ToLower(in.SHA256)
 	return in, nil
@@ -152,11 +219,11 @@ type ConfirmTree struct {
 // DecodeConfirmTree rejects unknown fields.
 func DecodeConfirmTree(body []byte) (ConfirmTree, error) {
 	raw, err := strictObject(body)
-	if err != nil || !hasOnly(raw, []string{"path", "uploadTicket"}) || !requireKeys(raw, []string{"path", "uploadTicket"}) {
+	if err != nil || !hasOnly(raw, []string{"path", "upload_ticket"}) || !requireKeys(raw, []string{"path", "upload_ticket"}) {
 		return ConfirmTree{}, invalid()
 	}
 	var in ConfirmTree
-	if !unmarshal(raw["path"], &in.Path) || !unmarshal(raw["uploadTicket"], &in.Ticket) {
+	if !unmarshal(raw["path"], &in.Path) || !unmarshal(raw["upload_ticket"], &in.Ticket) {
 		return ConfirmTree{}, invalid()
 	}
 	p, err := SupplierPath(in.Path, false)
@@ -173,7 +240,7 @@ type PartETag struct {
 	ETag   string
 }
 
-// ConfirmRow reads uploadTicket and an optional parts list.
+// ConfirmRow reads upload_ticket and an optional parts list.
 type ConfirmRow struct {
 	Ticket string
 	Parts  []PartETag
@@ -182,17 +249,17 @@ type ConfirmRow struct {
 // DecodeConfirmRow allows a missing parts key.
 func DecodeConfirmRow(body []byte) (ConfirmRow, error) {
 	raw, err := strictObject(body)
-	if err != nil || !hasOnly(raw, []string{"uploadTicket", "parts"}) || !requireKeys(raw, []string{"uploadTicket"}) {
+	if err != nil || !hasOnly(raw, []string{"upload_ticket", "parts"}) || !requireKeys(raw, []string{"upload_ticket"}) {
 		return ConfirmRow{}, invalid()
 	}
 	var ticket string
-	if !unmarshal(raw["uploadTicket"], &ticket) {
+	if !unmarshal(raw["upload_ticket"], &ticket) {
 		return ConfirmRow{}, invalid()
 	}
 	var parts []PartETag
 	if rawParts, ok := raw["parts"]; ok {
 		var rows []struct {
-			Number int    `json:"partNumber"`
+			Number int    `json:"part_number"`
 			ETag   string `json:"etag"`
 		}
 		if err := json.Unmarshal(rawParts, &rows); err != nil {
@@ -205,20 +272,20 @@ func DecodeConfirmRow(body []byte) (ConfirmRow, error) {
 	return ConfirmRow{Ticket: ticket, Parts: parts}, nil
 }
 
-// DecodeAbort reads an optional uploadTicket. An empty object is a no-op abort.
+// DecodeAbort reads an optional upload_ticket. An empty object is a no-op abort.
 func DecodeAbort(body []byte) (string, error) {
 	if len(strings.TrimSpace(string(body))) == 0 {
 		return "", nil
 	}
 	raw, err := strictObject(body)
-	if err != nil || !hasOnly(raw, []string{"uploadTicket"}) {
+	if err != nil || !hasOnly(raw, []string{"upload_ticket"}) {
 		return "", invalid()
 	}
-	if _, ok := raw["uploadTicket"]; !ok {
+	if _, ok := raw["upload_ticket"]; !ok {
 		return "", nil
 	}
 	var ticket string
-	if !unmarshal(raw["uploadTicket"], &ticket) {
+	if !unmarshal(raw["upload_ticket"], &ticket) {
 		return "", invalid()
 	}
 	return ticket, nil

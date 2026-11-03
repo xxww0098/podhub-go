@@ -57,9 +57,9 @@ export async function uploadMediaJob(
     throw Object.assign(new Error("当前没有可用的 Workspace"), { code: "workflow_workspace_missing" })
   }
   const pending = images.filter((image) => image.phase !== "public_ready")
-  // A Store change can reset the media rail while retaining valid receipts.
-  // Reconfirm those identities against the current immutable upload record.
-  const work = pending.length ? pending : images
+  // A prior receipt can expire while later slices are still uploading. Every
+  // attempt rebinds the whole manifest; public objects keep their byte-free path.
+  const work = images
   const resume = await openSliceResume({
     workspaceUuid,
     rowId: row.id,
@@ -97,7 +97,7 @@ export async function uploadMediaJob(
     request: DeliverMediaObjectRequest
     delivered: DeliveredMediaObject
     stat: SliceTransferStat
-    confirmIndividually: () => Promise<ConfirmImageData | null>
+    refreshConfirmation: () => Promise<DeliveredMediaObject | null>
     rememberConfirmation: (landed: ConfirmImageData) => ConfirmImageData
   }
   const successes: SliceSuccess[] = []
@@ -109,35 +109,23 @@ export async function uploadMediaJob(
     const extension = request.extension
     const stat = statForSlice(image.index, image.byte_size, encodeMs, viaLocal ? { via: "local" } : delivered)
     sliceStats.push(stat)
-    const confirm = async (object: { objectKey: string, accountId: string }) => {
-      assertMediaWorkspace(workspaceUuid)
-      const landed = await api.post<ConfirmImageData>(route("listingRowsByIdMediaImagesByIndex", { id: row.id, index: image.index }),
-        { job_id: job.id, object_key: object.objectKey, account_id: object.accountId },
-        CONTROL_PLANE_TIMEOUT_MS)
-      assertMediaWorkspace(workspaceUuid)
-      return landed
-    }
     successes.push({
       image, request, delivered, stat,
-      confirmIndividually: async () => {
+      refreshConfirmation: async () => {
         execution.assertCurrent()
         if (execution.stopped()) return null
-        try { return await confirm(delivered) }
-        catch (reason) {
-          if (errorFields(reason).code !== "cloud_media_confirmation_required") throw reason
-          if (execution.stopped()) return null
-          if (!batch) batch = await uploadBatch?.()
-          const { byteLength: _manifestLength, issued: _issued, deferComplete: _defer, ...confirmationRequest } = request
-          const refreshed = await deliverMediaObject({
-            ...confirmationRequest,
-            ...(batch ? { uploadBatch: batch.uploadBatch } : {}),
-            refreshConfirmation: true,
-          })
-          addTransfer(stat, refreshed)
-          execution.assertCurrent()
-          if (execution.stopped()) return null
-          return confirm(refreshed)
-        }
+        if (!batch) batch = await uploadBatch?.()
+        const { byteLength: _manifestLength, issued: _issued, deferComplete: _defer, ...confirmationRequest } = request
+        const refreshed = await deliverMediaObject({
+          ...confirmationRequest,
+          ...(batch ? { uploadBatch: batch.uploadBatch } : {}),
+          refreshConfirmation: true,
+        })
+        addTransfer(stat, refreshed)
+        execution.assertCurrent()
+        if (execution.stopped()) return null
+        resume.rememberObject(request.digest, extension, image.byte_size ?? 0, refreshed, batch)
+        return refreshed
       },
       rememberConfirmation: (landed) => {
         assertMediaWorkspace(workspaceUuid)
@@ -194,13 +182,13 @@ export async function uploadMediaJob(
       const existing = image.phase === "public_ready" && image.object_key && image.account_id
         ? { objectKey: image.object_key, accountId: image.account_id, publicUrl: image.public_url ?? "", workspaceUuid } : undefined
       const encodeMs = lookupSliceEncode(image.content_hash)
+      if (existing) {
+        note(image, request, { ...existing, via: "local" }, encodeMs, true)
+        continue
+      }
       const resumed = resume.delivery(request.digest, extension)
       if (resumed) {
         note(image, request, resumed, encodeMs, resumed.via === "local")
-        continue
-      }
-      if (existing) {
-        note(image, request, { ...existing, via: "local" }, encodeMs, true)
         continue
       }
       const cached = request.uploadBatch
@@ -319,7 +307,9 @@ export async function uploadMediaJob(
       execution.assertCurrent()
       assertMediaWorkspace(workspaceUuid)
       const bindStarted = performance.now()
-      try {
+      const bind = async () => {
+        execution.assertCurrent()
+        assertMediaWorkspace(workspaceUuid)
         const response = await api.post<components["schemas"]["ConfirmListingRowImagesResponse"]>(route("listingRowsByIdMediaImages", { id: row.id }), {
           job_id: job.id,
           images: successful.map(({ image, delivered }) => ({
@@ -333,21 +323,29 @@ export async function uploadMediaJob(
           throw Object.assign(new Error("图片确认回执与切片清单不一致"), { code: "workflow_media_confirmation_mismatch" })
         }
         receipts.push(...landed.map((receipt, index) => successful[index]!.rememberConfirmation(receipt as ConfirmImageData)))
+      }
+      try {
+        await bind()
       } catch (reason) {
         if (errorFields(reason).code !== "cloud_media_confirmation_required") {
           // A receipt-binding refusal must not hide an exhausted transfer and
           // accidentally let the outer busy/stage retry replenish its PUT budget.
           failures.push({ error: reason })
         } else {
-          // Old cached proofs are rare: isolate their recovery through the existing
-          // per-image endpoint so valid objects still keep their durable receipts.
+          // Final settlement validates every image. Renew every object before
+          // rebinding, so one image cannot race an earlier expired proof.
+          let refreshedAll = true
           await mapLimit(successful, UPLOAD_CONCURRENCY, async result => {
             try {
-              const landed = await result.confirmIndividually()
-              if (landed) receipts.push(result.rememberConfirmation(landed))
-              else interrupted = true
-            } catch (error) { failures.push({ error }) }
+              const refreshed = await result.refreshConfirmation()
+              if (refreshed) result.delivered = refreshed
+              else { refreshedAll = false; interrupted = true }
+            } catch (error) { refreshedAll = false; failures.push({ error }) }
           })
+          if (refreshedAll && !execution.stopped()) {
+            try { await bind() }
+            catch (error) { failures.push({ error }) }
+          }
         }
       } finally {
         bindMs += elapsedMs(bindStarted)

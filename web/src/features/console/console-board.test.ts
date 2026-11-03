@@ -1,10 +1,13 @@
 import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
 import test from "node:test"
 
 import type { StoreRosterRow } from "./console-metrics"
 import {
   buildAdvice,
   cohortPercentDelta,
+  CONSOLE_LEDGER_ROW_CAP,
+  ledgerMayBeTruncated,
   listingDailySeries,
   storeRankings,
 } from "./console-board"
@@ -18,6 +21,14 @@ const now = Date.parse("2026-09-20T12:00:00Z")
 const day = 24 * 60 * 60 * 1000
 
 // --- 上架日序列 ---------------------------------------------------------------
+
+test("the ledger sample at or above the server cap cannot be claimed complete", () => {
+  const backend = readFileSync(new URL("../../../../internal/ops/domain/console.go", import.meta.url), "utf8")
+  assert.equal(Number(backend.match(/LedgerRowCap\s*=\s*(\d+)/)?.[1]), CONSOLE_LEDGER_ROW_CAP)
+  assert.equal(ledgerMayBeTruncated(Array(CONSOLE_LEDGER_ROW_CAP - 1)), false)
+  assert.equal(ledgerMayBeTruncated(Array(CONSOLE_LEDGER_ROW_CAP)), true)
+  assert.equal(ledgerMayBeTruncated(Array(CONSOLE_LEDGER_ROW_CAP + 1)), true)
+})
 
 test("listing daily series counts only submission intents, bucketed by UTC day", () => {
   const series = listingDailySeries(
@@ -67,11 +78,11 @@ function rankRow(
   }
 }
 
-test("store rankings rank by the 14-day window, exclude unread rows", () => {
+test("store rankings use 30-day counts and exclude unread rows", () => {
   const rows = storeRankings([
-    rankRow("unread", { status: "unread", daySeries: Array.from({ length: 14 }, () => 99) }),
-    rankRow("low", { daySeries: [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0] }),
-    rankRow("high", { daySeries: [1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2] }),
+    rankRow("unread", { status: "unread", orderedUnits: 99 }),
+    rankRow("low", { orderedUnits: 1, previousOrderedUnits: 0 }),
+    rankRow("high", { orderedUnits: 21, previousOrderedUnits: 7 }),
     rankRow("no-orders", { status: "no_orders" }),
   ])
 
@@ -84,17 +95,16 @@ test("store rankings rank by the 14-day window, exclude unread rows", () => {
     ],
   )
   const high = rows[0]
-  // 前 7 日 7 件，后 7 日 14 件 → +100%。
-  assert.equal(high?.deltaPct, 100)
-  // 前半窗口全零时没有对照，不给百分比。
+  assert.equal(high?.deltaPct, 200)
+  // 上一个窗口为零时没有对照，不给百分比。
   assert.equal(rows.find((row) => row.storeId === "low")?.deltaPct, null)
 })
 
 test("store rankings break unit ties by name then id", () => {
   const rows = storeRankings([
-    rankRow("b-id", { name: "同名店", daySeries: [0, 0, 0, 0, 0, 0, 0, 2] }),
-    rankRow("a-id", { name: "同名店", daySeries: [0, 0, 0, 0, 0, 0, 0, 2] }),
-    rankRow("c-id", { name: "阿店", daySeries: [0, 0, 0, 0, 0, 0, 0, 2] }),
+    rankRow("b-id", { name: "同名店", orderedUnits: 2 }),
+    rankRow("a-id", { name: "同名店", orderedUnits: 2 }),
+    rankRow("c-id", { name: "阿店", orderedUnits: 2 }),
   ])
   assert.deepEqual(
     rows.map((row) => row.storeId),
@@ -125,7 +135,7 @@ function mirrorRow(
   storeId: string,
   over: Partial<StoreProductMirrorRow> = {},
 ): StoreProductMirrorRow {
-  return { store_id: storeId, price_stock_enabled: true, ...over }
+  return { store_id: storeId, ...over }
 }
 
 test("lifecycle scope sums fresh+stale mirrors; unsynced scopes never draw as zero", () => {
@@ -136,14 +146,16 @@ test("lifecycle scope sums fresh+stale mirrors; unsynced scopes never draw as ze
         count_hidden: 5,
         count_moderation_failed: 2,
         count_archived: 1,
-        probed_at_ms: now - 1_000,
+        last_full_sync_at_ms: now - 1_000,
       }),
       mirrorRow("b", {
         count_on_sale: 15,
         count_hidden: 4,
-        probed_at_ms: now - 3 * day,
+        count_moderation_failed: 0,
+        count_archived: 0,
+        last_full_sync_at_ms: now - day,
       }),
-      mirrorRow("c", { count_on_sale: 9, probed_at_ms: now - 10 * day }),
+      mirrorRow("c", { count_on_sale: 9, last_full_sync_at_ms: now - 4 * day }),
       mirrorRow("d", {}),
     ],
     [],
@@ -168,14 +180,18 @@ test("lifecycle scope sums fresh+stale mirrors; unsynced scopes never draw as ze
   // 过期/从未同步的单店是「未同步」，不是四个零桶。
   assert.equal(lifecycleScope(summary, "c").status, "unsynced")
   assert.equal(lifecycleScope(summary, "d").status, "unsynced")
+  assert.equal(lifecycleScope(summary, "missing").status, "unsynced")
+  assert.equal(lifecycleScope({ ...summary, coverage: { ...summary.coverage, read: summary.coverage.read + 1 } }, null).status, "unsynced")
 
   const empty = summarizeStoreProducts(
-    [mirrorRow("a", { count_on_sale: 0, probed_at_ms: now - 1_000 })],
+    [mirrorRow("a", { count_on_sale: 0, count_hidden: 0, count_moderation_failed: 0, count_archived: 0, last_full_sync_at_ms: now - 1_000 })],
     [],
     now,
   )
   assert.equal(lifecycleScope(empty, null).status, "empty")
   assert.equal(lifecycleScope(empty, "a").status, "empty")
+  const incomplete = summarizeStoreProducts([mirrorRow("a", { count_on_sale: 2, last_full_sync_at_ms: now - 1_000 })], [], now)
+  assert.equal(lifecycleScope(incomplete, null).status, "unsynced")
 })
 
 // --- 运营建议 -----------------------------------------------------------------

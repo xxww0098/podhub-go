@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/xxww0098/podhub-go/internal/catalog/domain"
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
+	"github.com/xxww0098/podhub-go/internal/platform/db"
 	"github.com/xxww0098/podhub-go/internal/platform/httpx/jsonwire"
 	"github.com/xxww0098/podhub-go/internal/platform/seal"
 )
@@ -110,7 +112,7 @@ func (h Host) fillTree(w http.ResponseWriter, r *http.Request, p access.Principa
 		return
 	}
 	now := h.Now().UnixMilli()
-	if _, err := h.Pool.Exec(r.Context(), `
+	if _, err := h.exec(r.Context(), `
 		INSERT INTO public.ozon_catalog_tree_cache (language, payload, fetched_at_ms, byte_size, updated_at)
 		VALUES ($1, $2, $3, $4, clock_timestamp())
 		ON CONFLICT (language) DO UPDATE
@@ -132,14 +134,16 @@ func (h Host) storeCredential(r *http.Request, org int64, storeID string) (strin
 	var env seal.Store
 	var clientID *string
 	var expires *int64
-	err := h.Pool.QueryRow(r.Context(), `
+	err := db.InTx(r.Context(), h.Pool, db.App(org), func(tx pgx.Tx) error {
+		return tx.QueryRow(r.Context(), `
 		SELECT c.envelope_version, c.client_id, c.key_id, c.nonce, c.ciphertext,
 		       c.wrapped_dek, c.dek_nonce, c.key_fingerprint, c.key_expires_at_ms
 		  FROM store_seller_credentials c
 		  JOIN organization_stores s ON s.id = c.store_id
 		 WHERE c.org_id = $1 AND s.uuid = $2::uuid`, org, storeID).Scan(
-		&env.Version, &clientID, &env.KeyID, &env.Nonce, &env.Ciphertext,
-		&env.WrappedDEK, &env.DEKNonce, &env.Fingerprint, &expires)
+			&env.Version, &clientID, &env.KeyID, &env.Nonce, &env.Ciphertext,
+			&env.WrappedDEK, &env.DEKNonce, &env.Fingerprint, &expires)
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", &credFail{http.StatusBadRequest, "该店铺尚未登记 Seller 密钥", "validation"}
 	}
@@ -188,9 +192,7 @@ func (h Host) fillSchema(w http.ResponseWriter, r *http.Request, category, typeI
 		return
 	}
 	if len(keys) == 0 {
-		jsonwire.Write(w, http.StatusOK, struct {
-			Data *struct{} `json:"data"`
-		}{})
+		jsonwire.Write(w, http.StatusOK, nil)
 		return
 	}
 	var last error
@@ -206,24 +208,13 @@ func (h Host) fillSchema(w http.ResponseWriter, r *http.Request, category, typeI
 			last = err
 			continue
 		}
-		gz, err := gzipBytes(raw)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, access.MsgUnavailable, "internal")
-			return
-		}
 		now := h.Now().UnixMilli()
-		if _, err := h.Pool.Exec(r.Context(), `
-			INSERT INTO public.ozon_catalog_schema_cache
-			    (description_category_id, type_id, language, payload, fetched_at_ms, byte_size, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, clock_timestamp())
-			ON CONFLICT (description_category_id, type_id, language) DO UPDATE
-			SET payload = EXCLUDED.payload,
-			    fetched_at_ms = EXCLUDED.fetched_at_ms,
-			    byte_size = EXCLUDED.byte_size,
-			    updated_at = clock_timestamp()`, category, typeID, language, gz, now, len(gz)); err != nil {
-			slog.Error("catalog schema cache", "err", err)
+		revision, err := h.persistFetchedFields(r.Context(), category, typeID, language, raw, now)
+		if err != nil {
+			last = err
+			continue
 		}
-		h.writeSchemaMaterial(w, r, category, typeID, language, now, raw)
+		h.writeSchemaMaterial(w, r, category, typeID, language, now, raw, revision)
 		return
 	}
 	negativeRecord(key, h.Now())
@@ -236,34 +227,37 @@ type platformKey struct {
 }
 
 func (h Host) platformKeys(ctx context.Context) ([]platformKey, error) {
-	rows, err := h.Pool.Query(ctx, `
-		SELECT client_id, COALESCE(api_key_key_id, ''), api_key_nonce, api_key_ciphertext
-		FROM public.platform_catalog_fetch_keys
-		WHERE disabled_at_ms IS NULL AND api_key_nonce IS NOT NULL AND api_key_ciphertext IS NOT NULL
-		ORDER BY position`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
 	var out []platformKey
-	for rows.Next() {
-		var clientID, keyID string
-		var nonce, ct []byte
-		if err := rows.Scan(&clientID, &keyID, &nonce, &ct); err != nil {
-			return nil, err
+	err := h.readIn(ctx, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+  SELECT client_id, COALESCE(api_key_key_id, ''), api_key_nonce, api_key_ciphertext
+  FROM public.platform_catalog_fetch_keys
+  WHERE disabled_at_ms IS NULL AND api_key_nonce IS NOT NULL AND api_key_ciphertext IS NOT NULL
+  ORDER BY position`)
+		if err != nil {
+			return err
 		}
-		plain, err := seal.OpenBlob(h.Seals.Primary, keyID, nonce, ct)
-		if err != nil && len(h.Seals.Previous) == 32 {
-			plain, err = seal.OpenBlob(h.Seals.Previous, keyID, nonce, ct)
+		defer rows.Close()
+		for rows.Next() {
+			var clientID, keyID string
+			var nonce, ct []byte
+			if err := rows.Scan(&clientID, &keyID, &nonce, &ct); err != nil {
+				return err
+			}
+			plain, err := seal.OpenBlob(h.Seals.Primary, keyID, nonce, ct)
+			if err != nil && len(h.Seals.Previous) == 32 {
+				plain, err = seal.OpenBlob(h.Seals.Previous, keyID, nonce, ct)
+			}
+			if err != nil || len(plain) == 0 {
+				slog.Warn("catalog platform key", "client", clientID, "err", err)
+				out = append(out, platformKey{})
+				continue
+			}
+			out = append(out, platformKey{clientID: clientID, apiKey: string(plain)})
 		}
-		if err != nil || len(plain) == 0 {
-			slog.Warn("catalog platform key", "client", clientID, "err", err)
-			out = append(out, platformKey{})
-			continue
-		}
-		out = append(out, platformKey{clientID: clientID, apiKey: string(plain)})
-	}
-	return out, rows.Err()
+		return rows.Err()
+	})
+	return out, err
 }
 
 func (h Host) schemaFromSeller(ctx context.Context, category, typeID int64, language, clientID, apiKey string) ([]domain.ListingField, error) {
@@ -281,10 +275,10 @@ func (h Host) schemaFromSeller(ctx context.Context, category, typeID int64, lang
 	body, _ := json.Marshal(req)
 	status, resp, err := h.post(ctx, "/v1/description-category/attribute", body, clientID, apiKey)
 	if err != nil {
-		return nil, err
+		return nil, &upstreamError{path: "/v1/description-category/attribute", err: err}
 	}
 	if status < 200 || status >= 300 {
-		return nil, errors.New("attribute status")
+		return nil, &upstreamError{path: "/v1/description-category/attribute", status: status}
 	}
 	attrs, err := decodeAttributes(resp)
 	if err != nil {
@@ -381,10 +375,10 @@ func (h Host) fetchValues(ctx context.Context, category, typeID int64, language,
 		body, _ := json.Marshal(req)
 		status, resp, err := h.post(ctx, "/v1/description-category/attribute/values", body, clientID, apiKey)
 		if err != nil {
-			return nil, false, err
+			return nil, false, &upstreamError{path: "/v1/description-category/attribute/values", err: err}
 		}
 		if status < 200 || status >= 300 {
-			return nil, false, errors.New("values status")
+			return nil, false, &upstreamError{path: "/v1/description-category/attribute/values", status: status}
 		}
 		var page struct {
 			Result []struct {
@@ -462,7 +456,7 @@ func decodeAttributes(raw []byte) ([]ozonAttribute, error) {
 
 func (h Host) treeHasCoordinate(r *http.Request, language string, category, typeID int64) (*bool, error) {
 	var payload []byte
-	err := h.Pool.QueryRow(r.Context(), `SELECT payload FROM public.ozon_catalog_tree_cache WHERE language = $1`, language).Scan(&payload)
+	err := h.queryOne(r.Context(), `SELECT payload FROM public.ozon_catalog_tree_cache WHERE language = $1`, language, []any{&payload})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -480,46 +474,17 @@ func (h Host) treeHasCoordinate(r *http.Request, language string, category, type
 	return &found, nil
 }
 
-// walkTree answers whether the flat node list carries the category/type
-// pair. A node's category context is its own description_category_id when
-// set, else its parent's context, exactly as the recursive walk computed.
+// FlattenTree already resolves a type's inherited category.
 func walkTree(nodes []domain.TreeNode, category, typeID int64) bool {
-	byType := make(map[int64]*domain.TreeNode, len(nodes))
-	contexts := make(map[int64]int64, len(nodes))
-	var contextOf func(node *domain.TreeNode) int64
-	contextOf = func(node *domain.TreeNode) int64 {
-		if cached, ok := contexts[node.TypeID]; ok {
-			return cached
-		}
-		current := node.DescriptionCategoryID
-		if current <= 0 && node.ParentID != nil {
-			if parent, ok := byType[*node.ParentID]; ok {
-				current = contextOf(parent)
-			}
-		}
-		contexts[node.TypeID] = current
-		return current
-	}
-	for i := range nodes {
-		byType[nodes[i].TypeID] = &nodes[i]
-	}
-	for i := range nodes {
-		node := &nodes[i]
-		if node.TypeID != typeID {
-			continue
-		}
-		current := node.DescriptionCategoryID
-		if current <= 0 {
-			current = contextOf(node)
-		}
-		if current == category {
+	for _, node := range nodes {
+		if node.TypeID == typeID && node.DescriptionCategoryID == category {
 			return true
 		}
 	}
 	return false
 }
 
-func (h Host) writeSchemaMaterial(w http.ResponseWriter, r *http.Request, category, typeID int64, language string, fetched int64, fields json.RawMessage) {
+func (h Host) writeSchemaMaterial(w http.ResponseWriter, r *http.Request, category, typeID int64, language string, fetched int64, fields json.RawMessage, revision string) {
 	parsed, err := domain.FieldsFromCache(fields)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "类目字段缓存损坏，请稍后重试", "internal")
@@ -531,11 +496,58 @@ func (h Host) writeSchemaMaterial(w http.ResponseWriter, r *http.Request, catego
 		writeErr(w, http.StatusInternalServerError, access.MsgUnavailable, "internal")
 		return
 	}
-	native := domain.MaterialFromFields(category, typeID, parsed, search)
+	snapshot, revision, err := h.registeredSchemaSnapshot(r.Context(), category, typeID, language, fields, revision)
+	if err != nil {
+		slog.Error("catalog snapshot registration", "err", err)
+		writeErr(w, http.StatusServiceUnavailable, "类目字段版本暂时不可用", "internal")
+		return
+	}
 	jsonwire.Write(w, http.StatusOK, schemaWire{
 		DescriptionCategoryID: category, TypeID: typeID, Language: language, FetchedAtMs: fetched,
-		Fields: fields, Native: native,
+		Fields: fields, Native: nativeMaterialWire{Snapshot: snapshot, SearchMaterials: search},
 	})
+}
+
+// registeredSchemaSnapshot serves the immutable snapshot already registered
+// for revision. A row written before schema_revision existed, or a missing
+// registry row, is repaired once here instead of recomputing on every read.
+func (h Host) registeredSchemaSnapshot(ctx context.Context, category, typeID int64, language string, fields json.RawMessage, revision string) ([]byte, string, error) {
+	if revision != "" {
+		var snapshot []byte
+		err := h.readIn(ctx, func(tx pgx.Tx) error {
+			return tx.QueryRow(ctx, `SELECT snapshot FROM public.listing_schema_revisions WHERE schema_revision = $1`, revision).Scan(&snapshot)
+		})
+		if err == nil {
+			return snapshot, revision, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return nil, "", err
+		}
+	}
+	snapshot, computed, err := h.snapshotFields(ctx, category, typeID, fields)
+	if err != nil {
+		return nil, "", err
+	}
+	if revision != "" && revision != computed {
+		return nil, "", errors.New("catalog schema revision is inconsistent")
+	}
+	err = h.readIn(ctx, func(tx pgx.Tx) error {
+		if revision == "" {
+			if _, err := tx.Exec(ctx, `
+				UPDATE public.ozon_category_current
+				   SET schema_revision = $4, updated_at = clock_timestamp()
+				 WHERE description_category_id = $1 AND type_id = $2 AND language = $3
+				   AND schema_revision IS NULL`,
+				category, typeID, language, computed); err != nil {
+				return err
+			}
+		}
+		return putSnapshot(ctx, tx, snapshot, computed)
+	})
+	if err != nil {
+		return nil, "", err
+	}
+	return snapshot, computed, nil
 }
 
 func (h Host) searchMaterials(r *http.Request, category, typeID int64, language string, fields []domain.ListingField) ([]domain.SearchHit, error) {
@@ -549,24 +561,27 @@ func (h Host) searchMaterials(r *http.Request, category, typeID int64, language 
 	if !truncated {
 		return []domain.SearchHit{}, nil
 	}
-	rows, err := h.Pool.Query(r.Context(), `
+	var out []domain.SearchHit
+	err := h.readIn(r.Context(), func(tx pgx.Tx) error {
+		rows, err := tx.Query(r.Context(), `
 		SELECT attribute_id, dictionary_id, option_id, value
 		FROM public.catalog_dictionary_search_material
 		WHERE description_category_id = $1 AND type_id = $2 AND language = $3`, category, typeID, language)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []domain.SearchHit
-	for rows.Next() {
-		var hit domain.SearchHit
-		if err := rows.Scan(&hit.AttributeID, &hit.DictionaryID, &hit.ValueID, &hit.Label); err != nil {
-			return nil, err
+		if err != nil {
+			return err
 		}
-		hit.DescriptionCategoryID = category
-		out = append(out, hit)
-	}
-	if err := rows.Err(); err != nil {
+		defer rows.Close()
+		for rows.Next() {
+			var hit domain.SearchHit
+			if err := rows.Scan(&hit.AttributeID, &hit.DictionaryID, &hit.ValueID, &hit.Label); err != nil {
+				return err
+			}
+			hit.DescriptionCategoryID = category
+			out = append(out, hit)
+		}
+		return rows.Err()
+	})
+	if err != nil {
 		return nil, err
 	}
 	for _, field := range fields {
@@ -589,12 +604,17 @@ func (h Host) searchMaterials(r *http.Request, category, typeID int64, language 
 }
 
 type schemaWire struct {
-	DescriptionCategoryID int64                   `json:"description_category_id"`
-	TypeID                int64                   `json:"type_id"`
-	Language              string                  `json:"language"`
-	FetchedAtMs           int64                   `json:"fetched_at_ms"`
-	Fields                json.RawMessage         `json:"fields"`
-	Native                domain.SnapshotMaterial `json:"native_material"`
+	DescriptionCategoryID int64              `json:"description_category_id"`
+	TypeID                int64              `json:"type_id"`
+	Language              string             `json:"language"`
+	FetchedAtMs           int64              `json:"fetched_at_ms"`
+	Fields                json.RawMessage    `json:"fields"`
+	Native                nativeMaterialWire `json:"native_material"`
+}
+
+type nativeMaterialWire struct {
+	Snapshot        json.RawMessage    `json:"snapshot"`
+	SearchMaterials []domain.SearchHit `json:"search_materials"`
 }
 
 func (h Host) post(ctx context.Context, path string, body []byte, clientID, apiKey string) (int, []byte, error) {
@@ -605,6 +625,25 @@ func (h Host) post(ctx context.Context, path string, body []byte, clientID, apiK
 }
 
 var errUnreachable = errors.New("unreachable")
+
+// upstreamError keeps the Seller path and HTTP status (0 for a transport
+// failure) so a batch fetch can tell a retryable outage from a coordinate the
+// upstream will always refuse. It unwraps to the underlying Seller error, so
+// the interactive paths keep their saturated/credential classification.
+type upstreamError struct {
+	path   string
+	status int
+	err    error
+}
+
+func (e *upstreamError) Error() string {
+	if e.err != nil {
+		return e.path + ": " + e.err.Error()
+	}
+	return fmt.Sprintf("%s: upstream status %d", e.path, e.status)
+}
+
+func (e *upstreamError) Unwrap() error { return e.err }
 
 type sellerClass interface{ SellerClass() string }
 

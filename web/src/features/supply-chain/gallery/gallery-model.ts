@@ -30,7 +30,7 @@ import { replaceAddress } from "@/lib/address"
 export type GallerySort = "listed-desc" | "price-asc" | "price-desc" | "lead-time"
 
 export type GalleryFilters = {
-  /** sourceId of the selected 平台货源, "" = all. */
+  /** sourceId of the selected 平台商品库, "" = all. */
   db: string
   /** descriptionCategoryId as string, "" = all. */
   cat: string
@@ -201,13 +201,13 @@ export function writeGalleryProductToUrl(productId?: string): void {
 export type GalleryFacet = { value: string; label: string; count: number }
 
 /**
- * The keyword match: 名称 / 编号 / fixed_tags. One declaration, because the
+ * The keyword match: 名称 / 编号 / fixed_tags / 类目. One declaration, because the
  * facet counts and the result list must agree on what "matching" means.
  */
-export function matchesQuery(row: SellerSupplierDbRowData, query: string): boolean {
+export function matchesQuery(row: SellerSupplierDbRowData, query: string, categories: CategoryIndex): boolean {
   const needle = query.trim().toLowerCase()
   if (!needle) return true
-  const haystack = `${row.title} ${row.platformCode} ${row.fixedTags.join(" ")}`
+  const haystack = `${row.title} ${row.platformCode} ${row.fixedTags.join(" ")} ${categoryLabelOf(row, categories)}`
   return haystack.toLowerCase().includes(needle)
 }
 
@@ -215,8 +215,9 @@ export function matchesQuery(row: SellerSupplierDbRowData, query: string): boole
 export function queryRows(
   rows: SellerSupplierDbRowData[],
   query: string,
+  categories: CategoryIndex,
 ): SellerSupplierDbRowData[] {
-  return rows.filter((row) => matchesQuery(row, query))
+  return rows.filter((row) => matchesQuery(row, query, categories))
 }
 
 /** 库 facets: one row per listed db, counted over the keyword-matched rows. */
@@ -225,9 +226,9 @@ export function dbFacets(
   rows: SellerSupplierDbRowData[],
 ): GalleryFacet[] {
   return dbs.map((db) => ({
-    value: db.sourceId,
+    value: db.source_id,
     label: db.name,
-    count: rows.filter((row) => row.sourceId === db.sourceId).length,
+    count: rows.filter((row) => row.sourceId === db.source_id).length,
   }))
 }
 
@@ -344,6 +345,7 @@ export function hasFacetFilters(filters: GalleryFilters): boolean {
 export function filterGallery(
   rows: SellerSupplierDbRowData[],
   filters: GalleryFilters,
+  categories: CategoryIndex,
   sort: GallerySort = "listed-desc",
 ): SellerSupplierDbRowData[] {
   const matched = rows.filter((row) => {
@@ -351,7 +353,7 @@ export function filterGallery(
     if (filters.cat && categoryKey(row) !== filters.cat) return false
     if (!priceInRange(row.platformPriceCents, filters.priceMin, filters.priceMax)) return false
     if (filters.tags.some((tag) => !row.fixedTags.includes(tag))) return false
-    return matchesQuery(row, filters.q)
+    return matchesQuery(row, filters.q, categories)
   })
   return sortGallery(matched, sort)
 }
@@ -476,42 +478,6 @@ export function pageNumbers(page: number, pages: number): Array<number | "ellips
     window.push(value)
   }
   return window
-}
-
-// ---------- density (localStorage view preference, never a filter) ----------
-
-export type GalleryDensity = "compact" | "standard" | "large"
-
-export const DENSITY_LABELS: Record<GalleryDensity, string> = {
-  compact: "紧凑",
-  standard: "标准",
-  large: "大图",
-}
-
-export const GALLERY_DENSITY_KEY = "podhub.supplier-dbs-gallery.density"
-
-export function readGalleryDensity(
-  storage: Pick<Storage, "getItem"> | undefined,
-): GalleryDensity {
-  if (!storage) return "standard"
-  try {
-    const raw = storage.getItem(GALLERY_DENSITY_KEY)
-    return raw === "compact" || raw === "large" ? raw : "standard"
-  } catch {
-    return "standard"
-  }
-}
-
-export function writeGalleryDensity(
-  storage: Pick<Storage, "setItem"> | undefined,
-  density: GalleryDensity,
-): void {
-  if (!storage) return
-  try {
-    storage.setItem(GALLERY_DENSITY_KEY, density)
-  } catch {
-    // A full or private-mode store is not worth failing the screen for.
-  }
 }
 
 // ---------- listing hand-off ----------

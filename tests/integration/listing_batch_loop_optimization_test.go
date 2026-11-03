@@ -14,7 +14,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/xxww0098/podhub-go/internal/listing/submit"
 	queuecontract "github.com/xxww0098/podhub-go/internal/queue/contract"
 	queuedomain "github.com/xxww0098/podhub-go/internal/queue/domain"
 	queuerepo "github.com/xxww0098/podhub-go/internal/queue/repo"
@@ -99,7 +98,7 @@ func TestListingBatchLoopSerializesOneOrgAndMakesProgress(t *testing.T) {
 			case <-ctx.Done():
 				return ctx.Err()
 			}
-			return submit.Work(ctx, pool, job, eg.Port())
+			return listingSubmit().Work(ctx, pool, job, eg.Port())
 		},
 	})
 	queueLoopStarted(t, started, 3*time.Second)

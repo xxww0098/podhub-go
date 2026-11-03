@@ -13,7 +13,7 @@ import (
 	supcontract "github.com/xxww0098/podhub-go/internal/admin/supplier/contract"
 )
 
-const dbNotEmpty = "库内仍有行或被订单/绑定引用的归档行，无法删除"
+const dbReferenced = "该库或商品关联了订单、绑定、其他库供货或财务记录，无法删除"
 const missingRow = corerepo.MissingRow
 
 func (r Portal) ListDbs(ctx context.Context, actor outcome.Actor) ([]corecontract.SupplierDb, error) {
@@ -29,9 +29,8 @@ func (r Portal) ListDbs(ctx context.Context, actor outcome.Actor) ([]corecontrac
 	return out, err
 }
 
-func (r Portal) CreateDb(ctx context.Context, actor outcome.Actor, in supcontract.NormalizedDb, sourceID string, props []supcontract.PropSeed, nowMs int64, password string) (corecontract.SupplierDb, *string, error) {
+func (r Portal) CreateDb(ctx context.Context, actor outcome.Actor, in supcontract.NormalizedDb, sourceID string, props []supcontract.PropSeed, nowMs int64) (corecontract.SupplierDb, error) {
 	var db corecontract.SupplierDb
-	var initial *string
 	err := r.withTx(ctx, actor.OrgID, func(tx pgx.Tx) error {
 		if err := corerepo.AssertWrite(ctx, tx); err != nil {
 			return err
@@ -39,6 +38,16 @@ func (r Portal) CreateDb(ctx context.Context, actor outcome.Actor, in supcontrac
 		publicID, owner, err := r.identity(ctx, tx, actor)
 		if err != nil {
 			return err
+		}
+		var factoryID string
+		if in.FactoryID == "" {
+			return &outcome.Fail{Kind: outcome.KindValidation, Message: "请选择工厂"}
+		}
+		if err := tx.QueryRow(ctx, `SELECT factory_id FROM public.sc_factories WHERE factory_id=$1 FOR KEY SHARE`, in.FactoryID).Scan(&factoryID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return corerepo.NotFound("工厂不存在")
+			}
+			return corerepo.MapDB(err)
 		}
 		prefs := in.ViewPrefs
 		if len(prefs) == 0 {
@@ -48,10 +57,10 @@ func (r Portal) CreateDb(ctx context.Context, actor outcome.Actor, in supcontrac
 			INSERT INTO public.sc_sources
 			       (source_id, name, country, contact, internal_note, listed, icon,
 			        accepts_delegate, view_prefs, created_at_ms, updated_at_ms,
-			        created_by_account_uuid)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$11)`,
+			        created_by_account_uuid, factory_id)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$11,$12)`,
 			sourceID, in.Name, in.Country, in.Contact, in.InternalNote, in.Listed, in.Icon,
-			in.AcceptsDelegate, prefs, nowMs, publicID)
+			in.AcceptsDelegate, prefs, nowMs, publicID, factoryID)
 		if c := corerepo.Constraint(err); c != "" {
 			return corerepo.Conflict("库名称已存在")
 		}
@@ -69,14 +78,6 @@ func (r Portal) CreateDb(ctx context.Context, actor outcome.Actor, in supcontrac
 		}{in.Name, in.Listed})); err != nil {
 			return err
 		}
-		if in.AccountEmail != nil {
-			memberID, once, err := provision(ctx, tx, actor, sourceID, *in.AccountEmail, nil, password, "/api/admin/supplier-dbs", nowMs, "新建厂家账号需要超级管理员", missingRow)
-			if err != nil {
-				return err
-			}
-			initial = once
-			_ = memberID
-		}
 		rows, err := listDbs(ctx, tx, owner, sourceID)
 		if err != nil {
 			return err
@@ -87,12 +88,11 @@ func (r Portal) CreateDb(ctx context.Context, actor outcome.Actor, in supcontrac
 		db = rows[0]
 		return nil
 	})
-	return db, initial, err
+	return db, err
 }
 
-func (r Portal) UpdateDb(ctx context.Context, actor outcome.Actor, sourceID string, in supcontract.NormalizedDb, nowMs int64, password string) (corecontract.SupplierDb, *string, error) {
+func (r Portal) UpdateDb(ctx context.Context, actor outcome.Actor, sourceID string, in supcontract.NormalizedDb, nowMs int64) (corecontract.SupplierDb, error) {
 	var db corecontract.SupplierDb
-	var initial *string
 	err := r.withTx(ctx, actor.OrgID, func(tx pgx.Tx) error {
 		_, owner, err := r.identity(ctx, tx, actor)
 		if err != nil {
@@ -106,6 +106,37 @@ func (r Portal) UpdateDb(ctx context.Context, actor outcome.Actor, sourceID stri
 		}
 		if _, err := lockSource(ctx, tx, sourceID); err != nil {
 			return err
+		}
+		if in.FactoryID != "" {
+			if sourceID == "src_unassigned" {
+				return corerepo.Conflict("系统未分配商品库不能绑定工厂")
+			}
+			var current *string
+			if err := tx.QueryRow(ctx, `SELECT factory_id FROM public.sc_sources WHERE source_id=$1`, sourceID).Scan(&current); err != nil {
+				return corerepo.MapDB(err)
+			}
+			if current != nil {
+				return corerepo.Conflict("商品库已绑定工厂，不能更换")
+			}
+			var factoryID string
+			if err := tx.QueryRow(ctx, `SELECT factory_id FROM public.sc_factories WHERE factory_id=$1 FOR KEY SHARE`, in.FactoryID).Scan(&factoryID); err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return corerepo.NotFound("工厂不存在")
+				}
+				return corerepo.MapDB(err)
+			}
+			var unrelated bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM public.sc_source_fulfillers f
+				WHERE f.source_id=$1 AND f.status='active' AND NOT EXISTS (
+					SELECT 1 FROM public.sc_factory_members m WHERE m.factory_id=$2 AND m.user_id=f.user_id AND m.status='active'))`, sourceID, factoryID).Scan(&unrelated); err != nil {
+				return corerepo.MapDB(err)
+			}
+			if unrelated {
+				return corerepo.Conflict("请先解除与所选工厂无关的履约授权")
+			}
+			if _, err := tx.Exec(ctx, `UPDATE public.sc_sources SET factory_id=$2 WHERE source_id=$1`, sourceID, factoryID); err != nil {
+				return corerepo.MapDB(err)
+			}
 		}
 		var prefs any
 		if !in.KeepViewPrefs {
@@ -134,13 +165,6 @@ func (r Portal) UpdateDb(ctx context.Context, actor outcome.Actor, sourceID stri
 		}{in.Name, in.Listed})); err != nil {
 			return err
 		}
-		if in.AccountEmail != nil {
-			once, err := rebind(ctx, tx, actor, sourceID, *in.AccountEmail, password, nowMs)
-			if err != nil {
-				return err
-			}
-			initial = once
-		}
 		rows, err := listDbs(ctx, tx, owner, sourceID)
 		if err != nil {
 			return err
@@ -151,7 +175,7 @@ func (r Portal) UpdateDb(ctx context.Context, actor outcome.Actor, sourceID stri
 		db = rows[0]
 		return nil
 	})
-	return db, initial, err
+	return db, err
 }
 
 func (r Portal) DeleteDb(ctx context.Context, actor outcome.Actor, sourceID string) error {
@@ -169,54 +193,55 @@ func (r Portal) DeleteDb(ctx context.Context, actor outcome.Actor, sourceID stri
 		if _, err := lockSource(ctx, tx, sourceID); err != nil {
 			return err
 		}
-		rows, err := tx.Query(ctx, `
-			SELECT s.sku_id, p.product_id
-			  FROM public.sc_products p
-			  JOIN public.sc_skus s ON s.product_id = p.product_id
-			 WHERE p.source_id = $1 AND p.archived
-			 ORDER BY p.product_id, s.sku_id`, sourceID)
-		if err != nil {
-			return corerepo.MapDB(err)
-		}
-		type pair struct{ sku, product string }
-		var archived []pair
-		for rows.Next() {
-			var p pair
-			if err := rows.Scan(&p.sku, &p.product); err != nil {
-				rows.Close()
+		if actor.Role != "super_admin" {
+			var published bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM public.sc_products
+				WHERE source_id=$1 AND published)`, sourceID).Scan(&published); err != nil {
 				return corerepo.MapDB(err)
 			}
-			archived = append(archived, p)
+			if published {
+				return &outcome.Fail{Kind: outcome.KindForbidden, Message: "已发布规格需由超级管理员停用后再删除工厂"}
+			}
 		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
+		if _, err := tx.Exec(ctx, `
+			SELECT s.sku_id FROM public.sc_skus s
+			JOIN public.sc_products p ON p.product_id = s.product_id
+			WHERE p.source_id = $1 ORDER BY s.sku_id FOR UPDATE OF s`, sourceID); err != nil {
 			return corerepo.MapDB(err)
 		}
-		for _, p := range archived {
-			ref, err := referenced(ctx, tx, p.sku)
-			if err != nil {
-				return err
-			}
-			if ref {
-				continue
-			}
-			if err := deleteSKU(ctx, tx, p.sku, p.product, sourceID); err != nil {
+		var referenced bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS (
+			  SELECT 1 FROM public.sc_skus s
+			  JOIN public.sc_products p ON p.product_id = s.product_id
+			  WHERE p.source_id = $1 AND (
+			    EXISTS (SELECT 1 FROM public.sc_order_lines l WHERE l.platform_sku_id = s.sku_id) OR
+			    EXISTS (SELECT 1 FROM public.sc_source_offers o WHERE o.sku_id = s.sku_id AND o.source_id <> $1)
+			  )
+			)`, sourceID).Scan(&referenced); err != nil {
+			return corerepo.MapDB(err)
+		}
+		if referenced {
+			return corerepo.Conflict(dbReferenced)
+		}
+		for _, query := range []string{
+			`DELETE FROM public.sc_price_versions WHERE sku_id IN
+			 (SELECT s.sku_id FROM public.sc_skus s JOIN public.sc_products p ON p.product_id = s.product_id WHERE p.source_id = $1)`,
+			`DELETE FROM public.sc_skus WHERE product_id IN (SELECT product_id FROM public.sc_products WHERE source_id = $1)`,
+			`DELETE FROM public.sc_products WHERE source_id = $1`,
+			`DELETE FROM public.sc_catalog_managers WHERE source_id = $1`,
+			`DELETE FROM public.sc_source_fulfillers WHERE source_id = $1`,
+		} {
+			if _, err := tx.Exec(ctx, query, sourceID); err != nil {
 				if corerepo.IsFK(err) {
-					continue
+					return corerepo.Conflict(dbReferenced)
 				}
-				return err
+				return corerepo.MapDB(err)
 			}
-		}
-		var n int64
-		if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM public.sc_products WHERE source_id = $1`, sourceID).Scan(&n); err != nil {
-			return corerepo.MapDB(err)
-		}
-		if n > 0 {
-			return corerepo.Conflict(dbNotEmpty)
 		}
 		tag, err := tx.Exec(ctx, `DELETE FROM public.sc_sources WHERE source_id = $1`, sourceID)
 		if corerepo.IsFK(err) {
-			return corerepo.Conflict(dbNotEmpty)
+			return corerepo.Conflict(dbReferenced)
 		}
 		if err != nil {
 			return corerepo.MapDB(err)
@@ -413,6 +438,9 @@ func (r Portal) DeleteRow(ctx context.Context, actor outcome.Actor, sourceID, pr
 		sku, published, err := lockProduct(ctx, tx, sourceID, productID)
 		if err != nil {
 			return err
+		}
+		if published && actor.Role != "super_admin" {
+			return &outcome.Fail{Kind: outcome.KindForbidden, Message: "已发布规格需由超级管理员停用后再删除"}
 		}
 		ref, err := referenced(ctx, tx, sku)
 		if err != nil {

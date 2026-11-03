@@ -145,23 +145,6 @@ export async function deleteResume(id: string): Promise<void> {
   await job
 }
 
-export async function listResumes(kind: UploadResumeRecord["kind"]): Promise<UploadResumeRecord[]> {
-  if (!idbAvailable()) {
-    return [...memory.values()].filter((record) => record.kind === kind).map(clone)
-  }
-  try {
-    const db = await openDb()
-    const rows = await requestToPromise(
-      db.transaction(STORE, "readonly").objectStore(STORE).index("byKind").getAll(kind),
-    ) as UploadResumeRecord[]
-    db.close()
-    for (const row of rows) memory.set(row.id, row)
-    return rows.map(clone)
-  } catch {
-    return [...memory.values()].filter((record) => record.kind === kind).map(clone)
-  }
-}
-
 type GrantedFileHandle = {
   queryPermission?: (descriptor: { mode: "read" }) => Promise<"granted" | "denied" | "prompt">
   getFile: () => Promise<File>

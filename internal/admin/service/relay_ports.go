@@ -19,4 +19,7 @@ type RelayOptions struct {
 	Dir       string
 	SwitchDir string
 	Route     string
+	// Probe verifies the configured proxy to the fixed official Seller endpoint.
+	// It is supplied by assembly and must not fall back to direct.
+	Probe func(context.Context, string) error
 }

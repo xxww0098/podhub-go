@@ -1,5 +1,15 @@
 # 店铺公司名自动填充与分组
 
+## 2026-10-27 当前接线
+
+新增店铺只要求 Client ID 和 API Key，名称可留空。创建时空名称暂存为「新店铺」并标记 `auto`；有名称则标记 `manual`。凭据登记和测试成功后，实际服务调用 `OnCredentialSaved` / `OnCredentialVerified` 读取公司简称；读取失败不回滚已经保存的凭据，前端提示名称未获取。普通店铺更新中的改名也标记 `manual`，数据库写回再次检查来源，避免并发回填覆盖手动改名。
+
+名称输入框右侧的「获取」调用 `POST /api/workspaces/stores/credentials/resolve-name`。它只返回名称并填入草稿，不创建店铺、不登记密钥、不保存名称。新店使用输入的 Client ID / API Key；编辑时密钥可留空，由后端在现有店铺权限内打开托管密钥，且 Client ID 必须一致。读取走既有 `SellerReadCall` 的 `/v1/seller/info` 白名单，不在响应或日志中回显密钥。
+
+本次验证使用 Docker PostgreSQL 16 和本地 Seller HTTP 夹具：新店空名、空白名、手动名、上游失败、缺名称、重试、托管密钥权限、只读获取和手动改名保护均通过。真实 React 表单交互、前端构建、店铺 Go 测试、架构检查和 API 路由检查通过。完整集成包被既有 `subscription_periods_test.go` 的旧计费类型编译错误阻塞，店铺相关测试用明确文件集单独运行通过；没有使用真实 Ozon 凭据复跑外部接口。
+
+以下为 ST1 历史记录，原有迁移编号、未接线和开发环境描述不代表当前实现。
+
 本文件记录 ST1。Go 仓库里原先没有店铺列表、改名、密钥保存和密钥校验的 HTTP。Rust 版已退役，这里不引用 Rust 行为，只证明这次改动没有改掉 Go 里已经存在的输出。
 
 `/v1/seller/info` 的字段名由用户用真实密钥核实。本仓库没有复现那次调用。解析保留 `company.name`（简称，用来填店铺名）、`company.legal_name`（全称，用来分组）、`company.currency`、`company.country`、`subscription.is_premium`、`subscription.type`。`company.inn`、`company.ogrn`、`company.tax_system`、`company.ownership_form` 不进结果结构、不写列、不进 slog、不进审计、不进响应。`ratings` 不在这次范围内。字段缺失、类型不对、`company` 为 null 时得到空字符串，不 panic。JSON 本身坏掉时，HTTP 2xx 仍把密钥记为 valid，但不改公司字段。
@@ -20,7 +30,7 @@
 
 ## 测试
 
-本机没有 Docker。店铺集成测试用本机 PostgreSQL 16 的 `initdb`（`tests/testkit.StartPostgres`），卖方地址是 `httptest` 回环。`TestResultConsistency` 在没有 Docker 且未设置 `PODHUB_PARITY_DSN` 时跳过；其中的指纹对照由 `TestStoreCompanyAutofillAndGroups` 调用的 `testkit.CompareHeadFingerprint` 覆盖，该断言已通过。
+本机没有 Docker。店铺集成测试用本机 PostgreSQL 16 的 `initdb`（`tests/testkit.StartPostgres`），卖方地址是 `httptest` 回环。`TestResultConsistency` 在没有 Docker 且未设置 `PODHUB_PARITY_DSN` 时跳过。
 
 ```text
 go test -count=1 -timeout 180s ./internal/store/... ./internal/ops/domain/ ./internal/ops/repo/ ./tests/archtest/
@@ -42,7 +52,7 @@ go test -count=1 -timeout 15m ./tests/integration/ -run 'TestStoreCompanyAutofil
 | `TestSellerInfoRefusesPublicHost` | PASS。`https://api-seller.ozon.ru` 返回 `ErrRefusedOrigin`，读写计数都是 0 |
 | `TestHealthCurrencyAndRefresh` | PASS。币种不一致提示；401 为 invalid；传输失败为 unknown/network；刷新写出字段；操作员禁止；日志没有密钥和税号 |
 | `TestRefreshRejectsSecretsAndReturnsWarning` | PASS。刷新请求里的密钥和税号字段被 400 丢掉，成功响应带 `currency_mismatch` |
-| `TestStoreCompanyAutofillAndGroups` | PASS。回环 Postgres 与回环 mock：字段落库、币种不一致提示、valid/invalid/unknown、刷新、另一个 org 读不到、缺 GUC 失败、库行/日志/分组响应/刷新响应没有密钥和税号字段。goose 迁到 332，指纹对照通过 |
+| `TestStoreCompanyAutofillAndGroups` | PASS。回环 Postgres 与回环 mock：字段落库、币种不一致提示、valid/invalid/unknown、刷新、另一个 org 读不到、缺 GUC 失败、库行/日志/分组响应/刷新响应没有密钥和税号字段。goose 迁到当时的 head，指纹对照通过（该指纹机制已随迁移压缩删除） |
 | `TestExistingStoreNameBecomesManual` | PASS。先迁到 329 再插入非空店名；升到 331 后该行仍是 `auto`；00332 把它改成 `manual` 且简称不覆盖。00332 之后新建的行是 `auto` 并被填充 |
 | `TestSnapshotJSONOmitsCompanyFields` | PASS。旧控制台快照没有新字段 |
 | `TestRosterSQLDoesNotProjectCompanyNames` | PASS。旧花名册 SQL 没有新列 |

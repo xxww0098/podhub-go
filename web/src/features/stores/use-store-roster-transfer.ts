@@ -3,7 +3,7 @@ import { useMemo, useState } from "react"
 import type { ImportOzonStoreResultView } from "@/bindings/commands"
 import { integrationsHttp } from "@/bindings/http-integrations"
 import { notifyCommandError, notifyError, notifyInfo, notifySuccess } from "@/lib/notify"
-import { formatStoreImportText, parseStoreImportText, writableTagNames } from "./store-import"
+import { formatStoreImportText, parseStoreImportText, writableGroupName } from "./store-import"
 import { rememberStoreRoster } from "./store-roster-cache"
 
 /**
@@ -13,15 +13,15 @@ import { rememberStoreRoster } from "./store-roster-cache"
  */
 export function useStoreRosterTransfer({
   workspaceId,
-  rosterTags,
+  rosterGroups,
   stores,
   actionLock,
   onBusy,
   reload,
 }: {
   workspaceId?: number
-  rosterTags: readonly { name: string }[]
-  stores: readonly { id: string, tags?: readonly { name: string }[] }[]
+  rosterGroups: readonly { name: string }[]
+  stores: readonly { id: string, group?: { name: string } | null }[]
   actionLock: { current: boolean }
   onBusy: (kind: "import" | "export" | undefined) => void
   reload: (options?: { soft?: boolean, force?: boolean }) => Promise<void> | void
@@ -36,18 +36,16 @@ export function useStoreRosterTransfer({
   () => parseStoreImportText(importText),
   [importText],
   );
-  const importNewTags = useMemo(() => {
+  const importNewGroups = useMemo(() => {
   const known = new Set(
-    rosterTags.map((tag) => tag.name.toLowerCase()),
+    rosterGroups.map((group) => group.name.toLowerCase()),
   );
   return new Set(
-    importParsed.rows.flatMap((row) =>
-      (row.tags ?? [])
-        .filter((tag) => !known.has(tag.toLowerCase()))
-        .map((tag) => tag.toLowerCase()),
-    ),
+    importParsed.rows
+      .map((row) => row.group?.toLowerCase())
+      .filter((group): group is string => !!group && !known.has(group)),
   ).size;
-  }, [importParsed, rosterTags]);
+  }, [importParsed, rosterGroups]);
 
   async function importKeys() {
   if (actionLock.current) return;
@@ -65,7 +63,7 @@ export function useStoreRosterTransfer({
   if (parsed.rows.length === 0) {
     setImportResults(issueResults.length ? issueResults : undefined);
     notifyError("没有可导入的店铺行", {
-      description: "每行一条：店铺名,Client ID,API Key，行尾可加 #标签。",
+      description: "每行一条：店铺名,Client ID,API Key，行尾可加 #分组。",
     });
     return;
   }
@@ -83,7 +81,7 @@ export function useStoreRosterTransfer({
         name: row.name,
         client_id: row.clientId,
         api_key: row.apiKey,
-        tag_names: row.tags,
+        group_name: row.group,
       })),
     });
     rememberStoreRoster(outcome.overview, workspaceId);
@@ -133,23 +131,20 @@ export function useStoreRosterTransfer({
       notifyInfo("没有可导出的店铺密钥");
       return;
     }
-    // Tag names join on the painted roster — every exportable Store is
+    // Group names join on the painted roster — every exportable Store is
     // visible to this operator, so its uuid is always present here.
-    const tagNamesByUuid = new Map(
-      stores.map((store) => [
-        store.id,
-        (store.tags ?? []).map((tag) => tag.name),
-      ]),
+    const groupByUuid = new Map(
+      stores.map((store) => [store.id, store.group?.name ?? null]),
     );
     let unwritable = 0;
     const items = data.items.map((item) => {
-      const tags = tagNamesByUuid.get(item.uuid);
-      unwritable += (tags?.length ?? 0) - writableTagNames(tags).length;
-      return { ...item, tags };
+      const group = groupByUuid.get(item.uuid);
+      if (group && writableGroupName(group) === undefined) unwritable += 1;
+      return { ...item, group };
     });
     setExportText(formatStoreImportText(items));
     if (unwritable > 0) {
-      notifyInfo(`${unwritable} 个标签名含有分隔符，未能写入导出文本`);
+      notifyInfo(`${unwritable} 个分组名含有分隔符，未能写入导出文本`);
     }
   } catch (reason) {
     notifyCommandError(reason, "批量导出失败，请稍后重试。");
@@ -169,7 +164,7 @@ export function useStoreRosterTransfer({
     exportText,
     setExportText,
     importParsed,
-    importNewTags,
+    importNewGroups,
     importKeys,
     exportKeys,
   }

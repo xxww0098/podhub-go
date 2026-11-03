@@ -3,6 +3,7 @@ package integration
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -14,22 +15,17 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/jackc/pgx/v5/stdlib"
-	"github.com/pressly/goose/v3"
 
-	dbschema "github.com/xxww0098/podhub-go/db"
 	"github.com/xxww0098/podhub-go/internal/app"
 	"github.com/xxww0098/podhub-go/internal/platform/config"
-	"github.com/xxww0098/podhub-go/internal/platform/db"
 	"github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
 	"github.com/xxww0098/podhub-go/internal/platform/seal"
-	"github.com/xxww0098/podhub-go/internal/seller"
+	seller "github.com/xxww0098/podhub-go/internal/seller/ozon"
 	"github.com/xxww0098/podhub-go/internal/store/contract"
 	"github.com/xxww0098/podhub-go/internal/store/domain"
 	storehttp "github.com/xxww0098/podhub-go/internal/store/http"
 	storerepo "github.com/xxww0098/podhub-go/internal/store/repo"
 	storesvc "github.com/xxww0098/podhub-go/internal/store/service"
-	"github.com/xxww0098/podhub-go/tests/testkit"
 )
 
 const (
@@ -44,8 +40,6 @@ func TestStoreCompanyAutofillAndGroups(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	pool := migratedPool(t, ctx)
-	testkit.CompareHeadFingerprint(t, ctx, pool)
-
 	ownerA := int64(97101)
 	opA := int64(97102)
 	ownerB := int64(97103)
@@ -290,80 +284,6 @@ func TestStoreCompanyAutofillAndGroups(t *testing.T) {
 	}
 }
 
-// TestExistingStoreNameBecomesManual applies 00329, inserts a row, then
-// continues. The shared template is already at head, so this test keeps an
-// empty private cluster.
-func TestExistingStoreNameBecomesManual(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
-	dsn, cleanup, err := testkit.StartPostgres(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(cleanup)
-	t.Setenv("PODHUB_ALLOW_SUPERUSER_DB", "1")
-	pool, err := db.Connect(ctx, config.Config{DatabaseURL: dsn})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
-	goose.SetBaseFS(dbschema.Migrations)
-	if err := goose.SetDialect("postgres"); err != nil {
-		t.Fatal(err)
-	}
-	sqlDB := stdlib.OpenDBFromPool(pool)
-	t.Cleanup(func() { sqlDB.Close() })
-	if err := goose.UpToContext(ctx, sqlDB, "migrations", 329); err != nil {
-		t.Fatal(err)
-	}
-
-	owner := int64(97201)
-	orgID := seedCompanyOrg(t, ctx, pool, owner, "kept")
-	idKept := "00000000-0000-4000-8000-0000000000a1"
-	seedCompanyStore(t, ctx, pool, orgID, idKept, 1, "kept-shop", nil)
-	if err := goose.UpToContext(ctx, sqlDB, "migrations", 331); err != nil {
-		t.Fatal(err)
-	}
-	assertStore(t, ctx, pool, idKept, "kept-shop", "", "", domain.SourceAuto)
-	if err := goose.UpContext(ctx, sqlDB, "migrations"); err != nil {
-		t.Fatal(err)
-	}
-	var applied int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM goose_db_version WHERE version_id = 332 AND is_applied`).Scan(&applied); err != nil {
-		t.Fatal(err)
-	}
-	if applied != 1 {
-		t.Fatalf("00332 applied %d", applied)
-	}
-	assertStore(t, ctx, pool, idKept, "kept-shop", "", "", domain.SourceManual)
-
-	idNew := "00000000-0000-4000-8000-0000000000a2"
-	seedCompanyStore(t, ctx, pool, orgID, idNew, 2, "new-shop", nil)
-	assertStore(t, ctx, pool, idNew, "new-shop", "", "", domain.SourceAuto)
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"company":{"name":"LUAN4","legal_name":"Co","currency":"CNY"}}`))
-	}))
-	t.Cleanup(srv.Close)
-	t.Setenv("CLOUD_SELLER_BASE_URL", srv.URL+"/")
-	t.Setenv("OZON_WRITE_KILL_SWITCH", "1")
-	eg := seller.New(config.Load())
-	svc := storesvc.New(storerepo.New(pool, tenantx.BeginApp), loopSeller{eg})
-	kept, err := svc.OnCredentialSaved(ctx, orgID, idKept, "client-fixture", storeFixtureKey)
-	if err != nil || kept.Filled || kept.Name != "kept-shop" || kept.Source != domain.SourceManual {
-		t.Fatalf("kept %+v %v", kept, err)
-	}
-	filled, err := svc.OnCredentialSaved(ctx, orgID, idNew, "client-fixture", storeFixtureKey)
-	if err != nil || !filled.Filled || filled.Name != "LUAN4" || filled.Source != domain.SourceAuto {
-		t.Fatalf("new %+v %v", filled, err)
-	}
-	assertStore(t, ctx, pool, idKept, "kept-shop", "LUAN4", "Co", domain.SourceManual)
-	assertStore(t, ctx, pool, idNew, "LUAN4", "LUAN4", "Co", domain.SourceAuto)
-	if eg.WritePosts() != 0 {
-		t.Fatalf("writes %d", eg.WritePosts())
-	}
-}
-
 type loopSeller struct{ eg *seller.Egress }
 
 func (c loopSeller) PostSellerInfo(ctx context.Context, clientID, apiKey string) (int, []byte, error) {
@@ -395,6 +315,13 @@ func seedCompanyOrg(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userI
 func seedCompanyMember(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, role string, order int) int64 {
 	t.Helper()
 	var id int64
+	tag := fmt.Sprint(userID)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO account_users (id, public_id, email, password_hash, role, name, target, supplier_id, plan, created_at, updated_at)
+		VALUES ($1, $2, $3, 'x', 'user', 'Store', '/workspace', '', 'lite', clock_timestamp(), clock_timestamp())
+		ON CONFLICT (id) DO NOTHING`, userID, "stm"+tag, "member"+tag+"@store.example.invalid"); err != nil {
+		t.Fatal(err)
+	}
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO organization_members (org_id, user_id, role, status, display_name, created_at, updated_at, join_order)
 		VALUES ($1, $2, $3, 'active', $3, clock_timestamp(), clock_timestamp(), $4) RETURNING id`,

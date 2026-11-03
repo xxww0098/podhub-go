@@ -1,5 +1,9 @@
 import { estimateCallYuan } from "@/lib/ai-call-estimate"
-import type { AiPriceView, PublishAiPriceRequest } from "@/bindings/commands"
+import type { AiPriceView } from "@/bindings/commands"
+import type { components } from "@/api/schema"
+
+/** The current-price route provides rates without a publication timestamp. */
+export type PublishedAiPrice = Omit<AiPriceView, "effective_from"> & { effective_from?: string }
 
 /** 计费编辑态。输入单位一律是人民币元；换算成整数 microfen 只在存取边界做。 */
 export type AiBillingDraft = {
@@ -34,7 +38,7 @@ export function formatYuan(yuan: number): string {
 }
 
 /** 编辑态 ← 当前生效价（无价则给可直接发布的空白默认）。 */
-export function billingDraftFromPrice(price?: AiPriceView): AiBillingDraft {
+export function billingDraftFromPrice(price?: PublishedAiPrice): AiBillingDraft {
   if (!price) {
     return {
       mode: "token",
@@ -63,7 +67,7 @@ export function billingDraftFromPrice(price?: AiPriceView): AiBillingDraft {
 export function publishRequestFromBilling(
   model: string,
   billing: AiBillingDraft,
-): PublishAiPriceRequest | undefined {
+): components["schemas"]["PublishAiPriceRequest"] | undefined {
   const modelId = model.trim()
   // Cloud 也只收无空白、无控制字符的 id——客户端先拦，提示才能指名问题。
   if (!modelId || /\s/.test(modelId)) return undefined

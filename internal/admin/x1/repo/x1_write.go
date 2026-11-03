@@ -163,9 +163,7 @@ func scanRow(rows rower, now int64) (x1contract.RowData, error) {
 	var row x1contract.RowData
 	var description string
 	var productPub, skuPub, listed bool
-	var promptTags, publishedTags, videos, gallery, psd, props []byte
-	var publishedPrompt string
-	var draft, publishedRev *int32
+	var promptTags, videos, gallery, psd, props, priceHistory []byte
 	var state, validated, current *string
 	var fetched *int64
 	var creator *string
@@ -174,8 +172,7 @@ func scanRow(rows rower, now int64) (x1contract.RowData, error) {
 	if err := rows.Scan(
 		&row.ProductID, &row.SourceID, &row.Title, &description, &row.VariantGroup,
 		&productPub, &row.Revision, &row.PromptName, &row.PromptFileName,
-		&row.PromptContent, &promptTags, &publishedPrompt, &publishedTags,
-		&draft, &publishedRev, &videos, &gallery, &psd,
+		&row.PromptContent, &promptTags, &videos, &gallery, &psd,
 		&state, &validated, &current, &fetched, &listed,
 		&row.DescriptionCategoryID, &row.TypeID, &row.InternalNote, &props, &row.Archived,
 		&row.Size, &row.Material, &row.Craft, &row.GrossWeightG, &row.Brand,
@@ -183,7 +180,7 @@ func scanRow(rows rower, now int64) (x1contract.RowData, error) {
 		&row.CreatedAtMS, &row.UpdatedAtMS, &row.CreatedBy, &creator,
 		&row.SKU, &row.PlatformCode, &row.LeadTime, &skuPub,
 		&row.SuggestedRetailCents, &row.SuggestedOldPrice,
-		&row.CostCents, &row.ShippingCostCents, &row.PlatformPriceCents,
+		&row.CostCents, &row.ShippingCostCents, &row.PlatformPriceCents, &priceHistory,
 	); err != nil {
 		return x1contract.RowData{}, corerepo.MapDB(err)
 	}
@@ -195,16 +192,15 @@ func scanRow(rows rower, now int64) (x1contract.RowData, error) {
 	row.ProductVideos = itemsVideos(videos)
 	row.FixedTags = tagsOf(promptTags)
 	row.Props = propsOf(props)
-	row.DraftPromptRevision = draft
-	row.PublishedPromptRev = publishedRev
+	row.PriceHistory = priceVersionsOf(priceHistory)
 	row.CreatorName = creator
 	facts.SourceListed = listed
 	facts.Archived = row.Archived
 	facts.SKUPublished = skuPub
 	facts.CategoryID = row.DescriptionCategoryID
 	facts.TypeID = row.TypeID
-	facts.PublishedPrompt = publishedPrompt
-	facts.PublishedTags = tagsOf(publishedTags)
+	facts.Profile = row.PromptContent
+	facts.FixedTags = row.FixedTags
 	facts.PlatformPrice = row.PlatformPriceCents
 	facts.ConfigState = state
 	facts.ValidatedDigest = validated
@@ -247,6 +243,14 @@ func itemsFiles(raw []byte) []x1contract.FileItem {
 	return out
 }
 
+func priceVersionsOf(raw []byte) []x1contract.PriceVersion {
+	var out []x1contract.PriceVersion
+	if json.Unmarshal(raw, &out) != nil || out == nil {
+		return []x1contract.PriceVersion{}
+	}
+	return out
+}
+
 func itemsVideos(raw []byte) []x1contract.VideoItem {
 	var out []x1contract.VideoItem
 	if json.Unmarshal(raw, &out) != nil || out == nil {
@@ -260,25 +264,22 @@ func jsonBytes(v any) []byte {
 }
 
 type editor struct {
-	exists     bool
-	category   int64
-	typeID     int64
-	language   string
-	values     []byte
-	tags       []byte
-	prompt     string
-	ai         []byte
-	revision   int64
-	state      string
-	digest     *string
-	issues     []byte
-	published  *int32
-	updated    int64
-	compareTxt string
-	compareTag []byte
-	compareAI  []byte
-	stamp      x1contract.CatalogStamp
-	newCoords  bool
+	exists    bool
+	category  int64
+	typeID    int64
+	language  string
+	values    []byte
+	complex   []byte
+	tags      []byte
+	prompt    string
+	ai        []byte
+	revision  int64
+	state     string
+	digest    *string
+	issues    []byte
+	updated   int64
+	stamp     x1contract.CatalogStamp
+	newCoords bool
 }
 
 func loadEditor(ctx context.Context, tx pgx.Tx, productID string) (editor, error) {
@@ -293,14 +294,15 @@ func loadEditor(ctx context.Context, tx pgx.Tx, productID string) (editor, error
 		return editor{}, corerepo.MapDB(err)
 	}
 	err = tx.QueryRow(ctx, `
-		SELECT description_category_id, type_id, language, values, fixed_tags, prompt_text, ai_output,
-		       revision, state, validated_catalog_digest, issues, published_revision, updated_at_ms
+		SELECT description_category_id, type_id, language, values, complex_values, fixed_tags, prompt_text, ai_output,
+		       revision, state, validated_catalog_digest, issues, updated_at_ms
 		  FROM public.supplier_ozon_configs WHERE product_id = $1`, productID).Scan(
-		&e.category, &e.typeID, &e.language, &e.values, &e.tags, &e.prompt, &e.ai,
-		&e.revision, &e.state, &e.digest, &e.issues, &e.published, &e.updated)
+		&e.category, &e.typeID, &e.language, &e.values, &e.complex, &e.tags, &e.prompt, &e.ai,
+		&e.revision, &e.state, &e.digest, &e.issues, &e.updated)
 	if errors.Is(err, pgx.ErrNoRows) {
 		e.language = "zh_hans"
 		e.values = []byte(`{}`)
+		e.complex = []byte(`[]`)
 		e.tags = []byte(`[]`)
 		e.ai = jsonBytes(x1contract.DefaultAI())
 		e.issues = []byte(`[]`)
@@ -309,36 +311,14 @@ func loadEditor(ctx context.Context, tx pgx.Tx, productID string) (editor, error
 	} else {
 		e.exists = true
 	}
-	var brief *string
-	var revTags, revAI []byte
-	err = tx.QueryRow(ctx, `
-		SELECT brief, fixed_tags, ai_output FROM public.prompt_revisions
-		 WHERE product_id = $1 ORDER BY revision DESC LIMIT 1`, productID).Scan(&brief, &revTags, &revAI)
-	if err == nil {
-		e.compareTxt = *brief
-		e.compareTag = revTags
-		e.compareAI = revAI
-	} else if errors.Is(err, pgx.ErrNoRows) {
-		e.compareTxt = e.prompt
-		e.compareTag = e.tags
-		e.compareAI = e.ai
-	} else {
-		return editor{}, corerepo.MapDB(err)
-	}
 	if category != nil && typeID != nil && *category > 0 && *typeID > 0 {
 		lang := e.language
 		if lang == "" {
 			lang = "zh_hans"
 		}
-		var digest string
-		var fetched int64
-		err = tx.QueryRow(ctx, `
-			SELECT content_digest, fetched_at_ms FROM public.ozon_category_current
-			 WHERE description_category_id = $1 AND type_id = $2 AND language = $3`, *category, *typeID, lang).Scan(&digest, &fetched)
-		if err == nil {
-			e.stamp = x1contract.CatalogStamp{Digest: digest, Fetched: fetched, Present: true}
-		} else if !errors.Is(err, pgx.ErrNoRows) {
-			return editor{}, corerepo.MapDB(err)
+		e.stamp, err = loadStamp(ctx, tx, *category, *typeID, lang)
+		if err != nil {
+			return editor{}, err
 		}
 	}
 	if category != nil {
@@ -349,7 +329,7 @@ func loadEditor(ctx context.Context, tx pgx.Tx, productID string) (editor, error
 	return e, nil
 }
 
-func writeRowConfig(ctx context.Context, tx pgx.Tx, actor contract.Actor, sourceID, productID, content string, tags []string, publicID string, now int64) error {
+func (r X1) writeRowConfig(ctx context.Context, tx pgx.Tx, actor contract.Actor, sourceID, productID, content string, tags []string, publicID string, now int64) error {
 	var category, typeID *int64
 	var got string
 	err := tx.QueryRow(ctx, `
@@ -376,12 +356,14 @@ func writeRowConfig(ctx context.Context, tx pgx.Tx, actor contract.Actor, source
 		return corerepo.MapDB(err)
 	}
 	incomingTags := jsonBytes(tags)
-	if ed.exists && ed.category == *category && ed.typeID == *typeID && ed.compareTxt == content && bytesEqual(ed.compareTag, incomingTags) && !x1contract.HasLegacyIssue(ed.issues) && digestEqual(ed.digest, ed.stamp) {
+	if ed.exists && ed.category == *category && ed.typeID == *typeID && ed.prompt == content && bytesEqual(ed.tags, incomingTags) && !x1contract.HasLegacyIssue(ed.issues) && digestEqual(ed.digest, ed.stamp) {
 		return nil
 	}
 	values := []byte(`{}`)
+	complex := []byte(`[]`)
 	if ed.exists && ed.category == *category && ed.typeID == *typeID && len(ed.values) > 0 {
 		values = ed.values
+		complex = rawOr(ed.complex, `[]`)
 	}
 	lang := ed.language
 	if lang == "" {
@@ -391,12 +373,15 @@ func writeRowConfig(ctx context.Context, tx pgx.Tx, actor contract.Actor, source
 	if ed.exists {
 		expected = ed.revision
 	}
-	judge := x1contract.Judge(valuesMap(values), ed.stamp, now)
-	incomingAI := ed.compareAI
+	judge, err := r.judgeOzon(ctx, tx, *category, *typeID, lang, values, complex, ed.stamp, now)
+	if err != nil {
+		return err
+	}
+	incomingAI := ed.ai
 	if len(incomingAI) == 0 {
 		incomingAI = jsonBytes(x1contract.DefaultAI())
 	}
-	if err := putOzon(ctx, tx, actor, sourceID, productID, *category, *typeID, lang, values, incomingTags, content, incomingAI, ed, judge, expected, publicID, now); err != nil {
+	if err := putOzon(ctx, tx, actor, sourceID, productID, *category, *typeID, lang, values, complex, incomingTags, content, incomingAI, judge, expected, publicID, now); err != nil {
 		return err
 	}
 	if !ed.exists || ed.category != *category || ed.typeID != *typeID {
@@ -424,13 +409,7 @@ func canonTags(raw []byte) []byte {
 	return jsonBytes(tagsOf(raw))
 }
 
-func valuesMap(raw []byte) map[string]json.RawMessage {
-	out := map[string]json.RawMessage{}
-	_ = json.Unmarshal(raw, &out)
-	return out
-}
-
-func putOzon(ctx context.Context, tx pgx.Tx, actor contract.Actor, sourceID, productID string, category, typeID int64, language string, values, tags []byte, prompt string, incomingAI []byte, ed editor, judge x1contract.JudgeResult, expected int64, publicID string, now int64) error {
+func putOzon(ctx context.Context, tx pgx.Tx, actor contract.Actor, sourceID, productID string, category, typeID int64, language string, values, complex, tags []byte, prompt string, incomingAI []byte, judge x1contract.JudgeResult, expected int64, publicID string, now int64) error {
 	if _, err := corerepo.LockSource(ctx, tx, sourceID); err != nil {
 		return err
 	}
@@ -441,23 +420,19 @@ func putOzon(ctx context.Context, tx pgx.Tx, actor contract.Actor, sourceID, pro
 		SELECT product_id FROM public.sc_products WHERE source_id = $1 AND product_id = $2 FOR NO KEY UPDATE`, sourceID, productID); err != nil {
 		return corerepo.MapDB(err)
 	}
-	cellPrompt, cellTags, cellAI := prompt, tags, incomingAI
-	if ed.published != nil {
-		cellPrompt, cellTags, cellAI = ed.prompt, ed.tags, ed.ai
-	}
 	var wrote int64
 	var err error
 	if expected == 0 {
 		err = tx.QueryRow(ctx, `
 			INSERT INTO public.supplier_ozon_configs (
 			    product_id, description_category_id, type_id, language,
-			    values, fixed_tags, prompt_text, ai_output, revision, state,
+			    values, fixed_tags, prompt_text, ai_output, revision, state, complex_values,
 			    validated_catalog_digest, issues, created_at_ms, updated_at_ms,
 			    created_by_account_uuid, updated_by_account_uuid)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1, $9, $10, $11, $12, $12, $13, $13)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1, $9, $14, $10, $11, $12, $12, $13, $13)
 			ON CONFLICT (product_id) DO NOTHING
 			RETURNING revision`,
-			productID, category, typeID, language, values, cellTags, cellPrompt, cellAI, judge.State, judge.Digest, rawOr(judge.Issues, `[]`), now, publicID).Scan(&wrote)
+			productID, category, typeID, language, values, tags, prompt, incomingAI, judge.State, judge.Digest, rawOr(judge.Issues, `[]`), now, publicID, rawOr(complex, `[]`)).Scan(&wrote)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return corerepo.Conflict("配置已被其他操作更新")
 		}
@@ -465,10 +440,10 @@ func putOzon(ctx context.Context, tx pgx.Tx, actor contract.Actor, sourceID, pro
 		err = tx.QueryRow(ctx, `
 			UPDATE public.supplier_ozon_configs
 			SET description_category_id = $2, type_id = $3, language = $4,
-			    values = $5, fixed_tags = $6, prompt_text = $7, ai_output = $8
+			    values = $5, fixed_tags = $6, prompt_text = $7, ai_output = $8, complex_values=$10
 			WHERE product_id = $1 AND revision = $9
 			RETURNING revision`,
-			productID, category, typeID, language, values, cellTags, cellPrompt, cellAI, expected).Scan(&wrote)
+			productID, category, typeID, language, values, tags, prompt, incomingAI, expected, rawOr(complex, `[]`)).Scan(&wrote)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return corerepo.Conflict("配置已被其他操作更新")
 		}
@@ -487,9 +462,6 @@ func putOzon(ctx context.Context, tx pgx.Tx, actor contract.Actor, sourceID, pro
 	if err != nil {
 		return corerepo.MapDB(err)
 	}
-	if err := recordIntent(ctx, tx, productID, prompt, tags, incomingAI, publicID, now); err != nil {
-		return err
-	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE public.sc_products SET revision = revision + 1, updated_at_ms = $3
 		 WHERE source_id = $1 AND product_id = $2`, sourceID, productID, now); err != nil {
@@ -503,69 +475,4 @@ func putOzon(ctx context.Context, tx pgx.Tx, actor contract.Actor, sourceID, pro
 		State    string `json:"state"`
 		Issues   int    `json:"issueCount"`
 	}{sourceID, category, typeID, language, judge.State, judge.Count}))
-}
-
-func recordIntent(ctx context.Context, tx pgx.Tx, productID, brief string, tags, ai []byte, author string, now int64) error {
-	var pointer *int32
-	err := tx.QueryRow(ctx, `SELECT published_revision FROM public.supplier_ozon_configs WHERE product_id = $1`, productID).Scan(&pointer)
-	if err != nil {
-		return corerepo.MapDB(err)
-	}
-	if pointer == nil {
-		if strings.TrimSpace(brief) == "" {
-			return nil
-		}
-		rev, same, err := latestSnapshot(ctx, tx, productID, brief, tags, ai)
-		if err != nil {
-			return err
-		}
-		if !same {
-			rev, err = insertRevision(ctx, tx, productID, brief, tags, ai, author, now)
-			if err != nil {
-				return err
-			}
-		}
-		_, err = tx.Exec(ctx, `
-			UPDATE public.supplier_ozon_configs SET published_revision = $2
-			 WHERE product_id = $1 AND published_revision IS NULL`, productID, rev)
-		return corerepo.MapDB(err)
-	}
-	_, same, err := latestSnapshot(ctx, tx, productID, brief, tags, ai)
-	if err != nil {
-		return err
-	}
-	if same {
-		return nil
-	}
-	_, err = insertRevision(ctx, tx, productID, brief, tags, ai, author, now)
-	return err
-}
-
-func latestSnapshot(ctx context.Context, tx pgx.Tx, productID, brief string, tags, ai []byte) (int32, bool, error) {
-	var rev int32
-	var gotBrief string
-	var gotTags, gotAI []byte
-	err := tx.QueryRow(ctx, `
-		SELECT revision, brief, fixed_tags, ai_output FROM public.prompt_revisions
-		 WHERE product_id = $1 ORDER BY revision DESC LIMIT 1`, productID).Scan(&rev, &gotBrief, &gotTags, &gotAI)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, false, nil
-	}
-	if err != nil {
-		return 0, false, corerepo.MapDB(err)
-	}
-	return rev, gotBrief == brief && bytesEqual(gotTags, tags) && string(gotAI) == string(ai), nil
-}
-
-func insertRevision(ctx context.Context, tx pgx.Tx, productID, brief string, tags, ai []byte, author string, now int64) (int32, error) {
-	var rev int32
-	if err := tx.QueryRow(ctx, `SELECT COALESCE(MAX(revision), 0) + 1 FROM public.prompt_revisions WHERE product_id = $1`, productID).Scan(&rev); err != nil {
-		return 0, corerepo.MapDB(err)
-	}
-	_, err := tx.Exec(ctx, `
-		INSERT INTO public.prompt_revisions
-		    (product_id, revision, brief, fixed_tags, ai_output, note, author_id, created_at_ms)
-		VALUES ($1, $2, $3, $4, $5, NULL, $6, $7)`,
-		productID, rev, brief, tags, ai, author, now)
-	return rev, corerepo.MapDB(err)
 }

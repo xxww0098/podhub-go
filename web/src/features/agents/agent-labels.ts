@@ -2,9 +2,7 @@
 
 export const PRODUCT_LABELS: Record<string, string> = {
   wallet_topup: "钱包充值",
-  member_seats: "成员名额",
-  // Legacy rows written before the store-slots→member-seats rename.
-  store_slots: "成员名额",
+  subscription: "订阅",
 }
 
 export const COMMISSION_LABELS: Record<string, string> = {

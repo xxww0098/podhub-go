@@ -14,16 +14,16 @@ import (
 
 const bcryptCost = 12
 
-// Catalogue fetches one model list. The HTTP layer supplies a loopback client.
+// Catalogue fetches one model list. The HTTP layer supplies the client.
+// allowPublic is the stored allow_public_egress switch for this probe.
 type Catalogue interface {
-	Fetch(ctx context.Context, endpoint, format, apiKey string) (status int, body []byte, pinned bool, err error)
+	Fetch(ctx context.Context, endpoint, format, apiKey string, allowPublic bool) (status int, body []byte, pinned bool, err error)
 }
 
 // API is the admin users and AI-auth behavior.
 type API struct {
 	DB             DB
 	Now            func() time.Time
-	TotpKey        string
 	IntegrationKey string
 	Loopback       bool
 	Fetch          Catalogue
@@ -34,21 +34,6 @@ func (a *API) now() time.Time {
 		return time.Now()
 	}
 	return a.Now()
-}
-
-// RequireStepUp is the enrolled-and-elevated half of require_super_admin.
-func (a *API) RequireStepUp(ctx context.Context, actor domain.Actor) *contract.Fault {
-	enrolled, elevated, fault := a.DB.Standing(ctx, actor.TokenHash, actor.ID)
-	if fault != nil {
-		return fault
-	}
-	if !enrolled {
-		return contract.Forbidden("请先绑定验证器")
-	}
-	if !elevated {
-		return contract.Forbidden("管理操作需要重新验证")
-	}
-	return nil
 }
 
 func (a *API) ListUsers(ctx context.Context, actor domain.Actor) (any, *contract.Fault) {
@@ -131,9 +116,11 @@ func (a *API) SetPassword(ctx context.Context, actor domain.Actor, publicID, pas
 	return okBody(), nil
 }
 
-func (a *API) SetSeats(ctx context.Context, actor domain.Actor, publicID string, seats int64) (any, *contract.Fault) {
-	if !domain.SeatRange(seats) {
-		return nil, contract.Validation("成员名额需在 1-200 之间")
+// SetSeats sets the member override (1..MemberCap) or clears it with nil so
+// the Workspace follows the global cap.
+func (a *API) SetSeats(ctx context.Context, actor domain.Actor, publicID string, seats *int64) (any, *contract.Fault) {
+	if seats != nil && !domain.SeatRange(*seats) {
+		return nil, contract.Validation("成员名额需在 1-10 之间")
 	}
 	id := strings.TrimSpace(publicID)
 	account, fault := a.DB.SetSeats(ctx, actor, id, "/api/admin/users/"+id+"/seats", seats)
@@ -141,48 +128,6 @@ func (a *API) SetSeats(ctx context.Context, actor domain.Actor, publicID string,
 		return nil, fault
 	}
 	return mutationBody(actor, account), nil
-}
-
-func (a *API) PreviewSeats(ctx context.Context, actor domain.Actor, publicID string, intent domain.SeatIntent, workspaceID *int64) (any, *contract.Fault) {
-	id := strings.TrimSpace(publicID)
-	account, fault := a.DB.ReadAccount(ctx, id)
-	if fault != nil {
-		return nil, fault
-	}
-	if account.ID != actor.ID {
-		if msg, ok := domain.Authorize(actor.Role, domain.Change{Kind: "edit"}, account.Role, false); !ok {
-			return nil, contract.Forbidden(msg)
-		}
-	}
-	_, load, fault := a.DB.PreviewSeats(ctx, id, workspaceID)
-	if fault != nil {
-		return nil, fault
-	}
-	target, msg := domain.ResolveSeats(load.State, intent)
-	if msg != "" {
-		return nil, contract.Validation(msg)
-	}
-	members := target.PlanMembers(load.Members)
-	stores := target.PlanStores(load.Stores)
-	return previewBody(load.State, target, members, stores), nil
-}
-
-func (a *API) ApplySeats(ctx context.Context, actor domain.Actor, publicID string, intent domain.SeatIntent, workspaceID *int64, revision, stores int64) (any, *contract.Fault) {
-	id := strings.TrimSpace(publicID)
-	account, fault := a.DB.ReadAccount(ctx, id)
-	if fault != nil {
-		return nil, fault
-	}
-	if account.ID != actor.ID {
-		if msg, ok := domain.Authorize(actor.Role, domain.Change{Kind: "edit"}, account.Role, false); !ok {
-			return nil, contract.Forbidden(msg)
-		}
-	}
-	members, storePlan, target, next, fault := a.DB.ApplySeats(ctx, actor, id, "/api/admin/users/"+id+"/member-seats/apply", workspaceID, intent, revision, stores)
-	if fault != nil {
-		return nil, fault
-	}
-	return applyBody(target, members, storePlan, next), nil
 }
 
 func (a *API) Dissolve(ctx context.Context, actor domain.Actor, uuid, name string) (any, *contract.Fault) {

@@ -1,35 +1,37 @@
 # River、goose 与 Rust 的差异
 
-用户已决定按原方案使用 River 和 goose，并接受实现差异。同样的输入仍必须得到同样的输出、状态和数据。本文逐项写明差异、结果为什么不变、对应测试。测试在 `internal/queue/contract_test.go`（纯函数，任何环境都跑）和 `tests/integration/consistency_test.go`（testcontainers-go）。没有 Docker 套接字时集成测试跳过；GitHub Actions 的 `ubuntu-latest` 有 Docker，CI 的 `go test ./...` 会执行它们。
+用户已决定按原方案使用 River 和 goose，并接受实现差异。同样的输入仍必须得到同样的输出、状态和数据。本文逐项写明差异、结果为什么不变、对应测试。测试在 `internal/queue/domain/backoff_test.go`（纯函数，任何环境都跑）和 `tests/integration/consistency_test.go`（testcontainers-go）。没有 Docker 套接字时集成测试跳过；GitHub Actions 的 `ubuntu-latest` 有 Docker，CI 的 `go test ./...` 会执行它们。
 
 来源提交：`xxww0098/podhub` `a03d735`。下面凡是写了文件的，都是本仓库重新打开过的源码。
 
 ## 迁移：goose 怎么跟上声明顺序
 
+> 当前状态：迁移历史已压缩为 `00001_roles.sql`、`00002_schema.sql`、`00003_seed.sql` 三个文件，版本连续，`gooseUp` 用严格 `Up`；`Up` 之后核对已应用版本集合，本目录一旦出现高于基线的新文件，仍记着旧链版本的库会报错退出（指出 368）而不是静默跳过。本节记录压缩前的对拍过程与当时的结论；其中依赖具体迁移号、指纹文件或 `WithAllowMissing` 的段落属于历史，不再对应当前代码。见 [architecture.md](../architecture.md) §队列与迁移。
+
 Rust 的顺序是 `migration/src/migrator.rs` 里 `Migrator::migrations()` 的声明顺序，共 291 步。已记录的元数据必须是这份列表的前缀。goose 按文件名里的版本号排序，同号直接报错。
 
 第 280 步 `BannedTags` 的戳是 `m20261014_000055`，第 281 步 `StoreProductVariantFacts` 是 `m20261014_000054`，第 282 步 `SellerResourceOccupancies` 又是 `m20261014_000055`。按戳排序会把第 281 步排到第 280 步前面，并且第 280 与第 282 步版本号冲突。
 
-处理：不把 Rust 戳当作 goose 版本。goose 版本写成声明序号（第 280 步就是版本 280）。SQL 从对应 SeaORM 迁移原样抄入，包括 `CREATE FUNCTION` / `CREATE TRIGGER` 和角色授权。最终 schema 与 `tests/integration/testdata/expected-head-fingerprint.json` 逐表、逐列、逐约束一致。指纹不含函数体、触发器体和角色授权，这三项靠数据库测试另证，不能靠指纹蒙过。
+处理：不把 Rust 戳当作 goose 版本。goose 版本写成声明序号（第 280 步就是版本 280）。SQL 从对应 SeaORM 迁移原样抄入，包括 `CREATE FUNCTION` / `CREATE TRIGGER` 和角色授权。当时用 `tests/integration/testdata/expected-head-fingerprint.json` 逐表、逐列、逐约束比对；该指纹文件已随压缩删除，压缩后的等价性改由「从 head 库 `pg_dump --schema-only` 生成基线」保证：函数体、触发器、策略与 ACL 都直接来自 head。
 
 中间版本号和 `seaql_migrations` 的记录方式可以不同。不变的是按声明顺序执行之后的 schema，以及这些函数、触发器的正文。
 
 | 项 | 差异 | 为什么结果不变 | 测试 |
 | --- | --- | --- | --- |
-| 排序 | goose 升序版本号；Rust 是声明顺序 | 重编号之后 goose 的升序就是声明顺序 | `TestDeclarationOrderIsNotVersionOrder`；`TestResultConsistency/goose_declaration_order` 在两个库里分别按版本号和按 280/281/282 重编号执行，断言前者得到 facts→banned，后者得到 banned→facts→occupancy |
-| 重复戳 | 第 280 与第 282 步同为 `000055` | 重编号后版本唯一，goose 不会拒收，也不会合并两步 | 同一测试把两个版本 55 的文件交给 goose，断言报 `duplicate migration version 55` |
-| 现有链 | goose 版本是声明序号 1..291，不是 Rust 戳。292 是追加的授权迁移，293 是追加的 new-api 日志表，294 是追加的账单与平台订单 RLS，300 是追加的错误摘要表，315 追加浏览器发放时间戳，00325–00329 追加仓库表，330 与 331 追加 `organization_stores` 的公司名和卖家信息列，332 只回填 `name_source`，00335–00337 追加店铺评级表并给通知 kind 增加 `store_rating_worsened`，都不是 Rust 声明步 | 空库按 1..291 执行后，132 张业务表的列、约束、索引与指纹一致。292 只 `GRANT`。293 新增 `ai_billing_ratio_documents` 与 `ai_consume_logs`，不改已有表。294 只在已有表上 `ENABLE`/`FORCE` RLS 并增加点名策略，不改列、索引、约束。300 新增 `error_digest` 与 `prune_aged_inbox`。00325–00329 新增仓库缓存、配送方式缓存、同步时间、写意图和行锁围栏五张表，不改已有表，表名在 `postRustTables`。330 与 331 只在 `organization_stores` 末尾追加列、一个索引和 CHECK，登记在 `postRustColumns`、`postRustIndexes`、`postRustConstraints`，不改指纹里已有的列。332 不改 schema。00335–00337 的三张评级表在 `postRustTables`，00337 的通知 kind 在 `sameConstraintDef` 里去掉后再比 | `TestResultConsistency/schema_diff` 对比 `tests/integration/testdata/expected-head-fingerprint.json`。少一张、任一列或策略表达式不同即失败。293 与 300 的表在 `postRustTables` 里排除。294 的策略名在 `intentionalRLSPolicies` 里跳过，其它策略仍逐条比较。授权不在指纹里，`TestReconcileGaps` 用 `has_table_privilege` 核对 292。293 的 RLS 在 `tests/integration/newapi_billing_logs_test.go`。详见 `docs/parity/security-hardening.md` 与 `docs/parity/error-digest-parity.md` |
-| 函数与触发器 | 指纹没有正文 | 正文留在 goose 文件里，goose 用 `StatementBegin` 整段送出，不按分号切开 `$$` | `TestResultConsistency/function_and_trigger_bodies` 断言 35 个非扩展、非 River 函数（含 00300 的 `prune_aged_inbox`）的 `prosrc` 能在迁移原文里找到。00294 的 7 个账单函数在 `intentionalFunctions` 里另计，正文同样必须出现在迁移原文里。25 个非内部触发器的名字都出现在原文里 |
+| 排序 | goose 升序版本号；Rust 是声明顺序 | 重编号之后 goose 的升序就是声明顺序 | `TestDeclarationOrderIsNotVersionOrder`；压缩前的 `TestResultConsistency/goose_declaration_order` 已随历史一并删除，压缩后只剩三个连续版本 |
+| 重复戳 | 第 280 与第 282 步同为 `000055` | 重编号后版本唯一，goose 不会拒收，也不会合并两步 | `internal/platform/db/migrate_versions_test.go` 拒绝重复版本 |
+| 现有链 | goose 版本是声明序号 1..291，不是 Rust 戳。292 是追加的授权迁移，293 是追加的 AI 日志表，294 是追加的账单与平台订单 RLS，300 是追加的错误摘要表，315 追加浏览器发放时间戳，00325–00329 追加仓库表，330 与 331 追加 `organization_stores` 的公司名和卖家信息列，332 只回填 `name_source`，00335–00337 追加店铺评级表并给通知 kind 增加 `store_rating_worsened`，都不是 Rust 声明步 | 空库按 1..291 执行后，132 张业务表的列、约束、索引与指纹一致。292 只 `GRANT`。293 新增 `ai_billing_ratio_documents` 与 `ai_consume_logs`，不改已有表；`00029` 删除只服务于已移除计费路径的 `ai_billing_ratio_documents`。294 只在已有表上 `ENABLE`/`FORCE` RLS 并增加点名策略，不改列、索引、约束。300 新增 `error_digest` 与 `prune_aged_inbox`。00325–00329 新增仓库缓存、配送方式缓存、同步时间、写意图和行锁围栏五张表，不改已有表，表名在 `postRustTables`。330 与 331 只在 `organization_stores` 末尾追加列、一个索引和 CHECK，登记在 `postRustColumns`、`postRustIndexes`、`postRustConstraints`，不改指纹里已有的列。332 不改 schema。00335–00337 的三张评级表在 `postRustTables`，00337 的通知 kind 在 `sameConstraintDef` 里去掉后再比 | `TestResultConsistency/schema_diff` 对比 `tests/integration/testdata/expected-head-fingerprint.json`。少一张、任一列或策略表达式不同即失败。293 与 300 的表在 `postRustTables` 里排除。294 的策略名在 `intentionalRLSPolicies` 里跳过，其它策略仍逐条比较。授权不在指纹里，`TestReconcileGaps` 用 `has_table_privilege` 核对 292。`ai_consume_logs` 的 RLS 在 `tests/integration/ai_consume_logs_rls_test.go`。详见 `docs/parity/security-hardening.md` 与 `docs/parity/error-digest-parity.md` |
+| 函数与触发器 | 指纹没有正文 | 正文留在 goose 文件里，goose 用 `StatementBegin` 整段送出，不按分号切开 `$$` | 压缩后的 `00002_schema.sql` 直接由 head 库 `pg_dump` 生成，函数体与触发器定义就是 head 的正文；原先逐条比对迁移原文的 `function_and_trigger_bodies` 子测试已删除 |
 
-00320 追加 `ozon_error_catalog`、`ozon_error_observation`、`ozon_error_sighting`。没有新函数，也没有改 00001–00315。非扩展函数仍是 35。这三张表登记在 `postRustTables`，不进入既有指纹表的列比较。仓库读失败和写操作报回调用这份目录的 `RecordRows`，来源是 `ozon_request`，不改 00320 的表。00340 只给 `podhub_login_api` 补 `podhub_ozon_catalog` 的 `SET` 授权。00341 追加 `podhub_ozon_sample_prune` 和只更新 `sample_description` 的策略，没有新函数。非扩展函数仍是 35。
+00320 追加 `ozon_error_catalog`、`ozon_error_observation`、`ozon_error_sighting`。没有新函数，也没有改 00001–00315。非扩展函数仍是 35。这三张表已随压缩进入 `00002_schema.sql`。仓库读失败和写操作报回调用这份目录的 `RecordRows`，来源是 `ozon_request`，不改 00320 的表。00340 只给 `podhub_login_api` 补 `podhub_ozon_catalog` 的 `SET` 授权。00341 追加 `podhub_ozon_sample_prune` 和只更新 `sample_description` 的策略，没有新函数。非扩展函数仍是 35。
 
 00331 在 `organization_stores` 末尾再追加币种、国家、订阅、同步时间和密钥健康列，以及两个 CHECK。`company.inn`、`company.ogrn`、`company.tax_system`、`company.ownership_form` 和 `ratings` 不是列。登记在 `postRustColumns` 与 `postRustConstraints`。没有新函数。
 
 00332 只把当时已有非空店名的 `name_source` 从 `auto` 改成 `manual`。不新增列、索引、约束或函数，指纹对照不需要新的排除项。
 
-00330–00332、00335–00337、00340–00341 是三组合入顺序和版本号不一致的迁移。一种已迁移库停在 00337：有评级，没有店铺名文件，也还没有 00340–00341。另一种停在 00341：错误目录分支已经执行 00340–00341，并且当时已经有 00325–00329，但没有 00330–00332 和 00335–00337。goose 默认拒绝这两种库。`internal/platform/db/migrate.go` 的 `gooseUp` 只在 `UpContext` 传入 `goose.WithAllowMissing()`，先按版本升序补缺号，再执行比已记录最大值更高的文件。Down 和其他 goose 命令不带这个选项。空库没有缺号，执行顺序不变，`expected-head-fingerprint.json` 不因此改变。风险：该选项会补跑任何一个被漏记的更低版本，不是只放过这三组；迁移 SQL 若不能重入，补跑会以 SQL 错误失败。`TestMigrationVersionsUnique` 拒绝重复编号。`TestMigrationGuard` 用 `db/migrations.sha256` 钉住这些已合入文件的字节。基线最大号是这份清单里的最大版本 00341；已经列在清单里的更小编号仍合法，清单外的新文件必须大于 00341，再把 sha256 补进清单。编号不要求连续。这个测试不调用 goose，也不改补跑用的临时目录。`TestAllowMissingCatchesUpToFreshSchema` 用临时目录分别复现这两种缺号，确认默认 `Up` 报 missing，再走 `db.Migrate`。补跑后的版本集合和库结构指纹与全新库一致；版本行的插入顺序保持各自的历史。
+00330–00332、00335–00337、00340–00341 是三组合入顺序和版本号不一致的迁移。当时一种已迁移库停在 00337，另一种停在 00341，goose 默认拒绝这两种库，因此 `gooseUp` 曾传入 `goose.WithAllowMissing()` 补缺号。压缩后版本连续，缺号不可能再出现，该选项已移除，`gooseUp` 回到严格的默认 `Up`。
 
-`banned_tags` 的对比包括列序、类型、非空、identity、默认值、四个约束名与定义、RLS 关闭、种子 6 行。约束文本在比较前去掉空白和 `::text`，因为 PostgreSQL 会把 `IN (...)` 打印成 `= ANY (ARRAY[...])`，指纹里已经是这种写法。
+`banned_tags` 的对比包括列序、类型、非空、identity、默认值、四个约束名与定义、RLS 关闭、种子 6 行。压缩后这些都由 `00002_schema.sql` 与 `00003_seed.sql` 直接给出，`TestResultConsistency/banned_tag_rules` 仍校验种子词干规则。
 
 ### River 运行时授权
 
@@ -47,7 +49,7 @@ Rust 的顺序是 `migration/src/migrator.rs` 里 `Migrator::migrations()` 的�
 
 River 是 worker 的运行时。业务上看得见的状态、租约、退避和幂等以 `jobs` 的词汇为准，由 `internal/queue` 的契约函数计算。禁止把 `river_job_state` 改名当成 `jobs.state`。`TestRiverStateIsNotRenamed` 与 `TestResultConsistency/river_state_is_not_the_business_state` 锁住这件事。
 
-领取循环在 `internal/queue/kernel.go` 写 `public.jobs`。River 注册 `podhub.noop` 和周期任务 `podhub.error_digest`。后者先把超过 180 天的 Ozon 活样本置空（次数和首末次时间保留），再把上一小时的错误类 inbox 投影写入 `error_digest`。两步都不写 `jobs.state`。同一批输入下，`state`、`attempt`、租约、队首计数和配额行由下面的数据库测试钉住。对拍对象是 goose 里已经抄入的函数和触发器，加上先前与 `lease.rs`、`settlement.rs`、`backoff.rs` 对齐的契约。这次用只读接口打开 `xxww0098/podhub` 的 `a03d735` 返回 404，没有第二台 Rust 进程。
+领取循环在 `internal/queue/repo/kernel.go` 写 `public.jobs`。River 注册 `podhub.noop` 和周期任务 `podhub.error_digest`。后者先把超过 180 天的 Ozon 活样本置空（次数和首末次时间保留），再把上一小时的错误类 inbox 投影写入 `error_digest`。两步都不写 `jobs.state`。同一批输入下，`state`、`attempt`、租约、队首计数和配额行由下面的数据库测试钉住。对拍对象是 goose 里已经抄入的函数和触发器，加上先前与 `lease.rs`、`settlement.rs`、`backoff.rs` 对齐的契约。这次用只读接口打开 `xxww0098/podhub` 的 `a03d735` 返回 404，没有第二台 Rust 进程。
 
 ### 1. 表和状态枚举
 
@@ -146,33 +148,32 @@ River 是 worker 的运行时。业务上看得见的状态、租约、退避和
 
 测试：`TestScanSchedule`、`TestProductSyncDisabledDropsOnlyThatScan`、`TestScanPanicAndDisableAreIdle`、`TestResultConsistency/reconciler_seat`。座位测试要证明的仍是：持锁连接还活着时第二把会话立刻失败；持锁连接 `Hijack` 后 `Close`，第二把必须拿到锁，任何错误都失败。`Close` 之后最多等 5 秒、每 20 毫秒试一次，用来等后端放开会话锁。断言没有放宽，崩溃前的拒绝也没有加重试。拿到之后仍主动 `pg_advisory_unlock`。
 
-## 店铺评级表（00335–00337）
+## 店铺评级表（00335–00337，现已并入 `00002_schema.sql`）
 
-合并 `d6c0b8f` 之后，00325–00329 是仓库表。评级仍从 00335 追加，不改 00325–00329。00335 新增 `store_rating_snapshots` 与 `store_rating_sync`，00336 新增 `store_rating_history`，00337 只给 `notifications.kind` 增加 `store_rating_worsened`。三张新表不在 Rust 指纹里，列在 `postRustTables`。`ck_notifications_kind` 的定义在 `sameConstraintDef` 里去掉新增 kind 后与指纹相同，其余约束不改。没有新的 PL/pgSQL 函数，也没有新触发器。函数计数仍是 35。
+合并 `d6c0b8f` 之后，00325–00329 是仓库表。评级仍从 00335 追加，不改 00325–00329。00335 新增 `store_rating_snapshots` 与 `store_rating_sync`，00336 新增 `store_rating_history`，00337 只给 `notifications.kind` 增加 `store_rating_worsened`。三张新表已随压缩进入 `00002_schema.sql`，不再需要 `postRustTables` 这类排除项。没有新的 PL/pgSQL 函数，也没有新触发器。
 
 同步由 River 周期任务 `podhub.store_rating_sync` 领取，不写 `jobs.state`。清理是 `podhub.store_rating_prune`。读接口不拿 `FOR UPDATE`。
 
-## 无法证明，交给用户决定
+## 历史对拍未证明的边界
 
 这些点没有用测试把「同一输入、同一结果」钉死。在补上证据之前，不要把它们写成已经等价。
 
 1. `release_leases` 对 `submission_intents` 和 `listing_rows` 的连带更新没有最小表对拍。过期清扫和落账只改 `jobs` 并释放许可。
-2. `seaql_migration_steps` 的指纹行数是 79（逐步标记）。这次空库重放不插入这些标记，测试锁的是「指纹 79、重放 0」。列结构仍然对得上。
+2. `seaql_migration_steps` 已随压缩删除：它是 Rust 迁移器的逐步标记表，Go 代码不读它，`00002_schema.sql` 也不再创建。
 3. 第 261 步 `DiagnosticV3Privacy` 是带 `$1` 的键集改写，空库上没有 DDL。goose 文件只有 `SELECT 1`。历史行怎么被改写没有重放。
 4. `CLOUD_DB_LOGIN_PASSWORD` 未设置时 Rust 也不改登录角色口令。这次同样跳过。设了这个环境变量之后的 `ALTER ROLE ... PASSWORD` 没有对拍。
 5. 带 `$1` 的回填（`jobs` 的 command id、listing row identity 等）在空库上是空转，没有重放。已存在历史行时的结果没有证明。
 6. 健康检查的字节 golden 来自 a03d735 的 `HealthResponse`（`src/wire/cloud_api.rs`、`src/health.rs`）经 serde_json 的形状，不是一台活着的 Rust 进程。没有把 Rust 指到生产库。
-7. 角色授权语句已抄入，指纹不记录 `pg_auth_members`。这次没有逐条比对角色成员。领取循环要 `SET LOCAL ROLE podhub_worker`。测试用的是超级用户 `postgres`。正式登录角色是否拿得到这个成员关系，没有对拍。
+7. 角色授权语句已抄入，压缩后由 `00001_roles.sql` 单独给出角色与成员关系（`SET TRUE`、`INHERIT FALSE`），并由 `ozon_error_catalog_followup_test.go` 等用例断言。领取循环要 `SET LOCAL ROLE podhub_worker`。测试连接用的是超级用户 `postgres`。
 8. 超过 `time.Duration` 上限的 `Retry-After` 无法与 Rust `Duration` 逐位相同。
 9. `claim.rs` 这次没有逐行打开（仓库 404）。领取顺序按 `jobs_claim_idx` / `jobs_worker_claim_idx` 和盘点写成 `priority, run_at, created_at, id`，并由 `jobs_kernel_rows` 锁住这个顺序。不能把它写成已经逐行核对过 `claim.rs`。
 10. `PermitClass` 是推断：`ai.recognize` → `ai_ocr`，`media.upload` → `cloud_upload`，其余 → `all_execution`。`claim.rs` 没有重新打开。
 11. `ENQUEUE_BATCH_LIMIT` 的整数值未知。商品同步扫描的批大小记为 0，tick 不入队。
-12. 未移植的任务体不是 Rust worker 的提交结果。`Execute` 对写 kind 只走 `ozon.Send`（杀开关开着时 `ErrWritesDisabled`，关着时 `ErrNotPorted`，两种都不拨号）。读和对账探测返回 `ErrWorkNotPorted`，不查杀开关。循环把这三类错误重排成 `admission_unavailable`，撤回 attempt，状态 `retry_wait`。这是为了骨架不留着 `running` 租约、也不把次数烧光。它不是一次真实提交的行。
+12. 未注册的任务处理器不是 Rust worker 的提交结果。2026-10-25 已删除旧 `Execute → ozon.Send` 骨架；当前缺少 `Work` 或回调返回 `ErrWorkNotPorted` 时，循环以 `admission_unavailable` 撤回 attempt 并重排成 `retry_wait`，不访问外部平台，也不结算成功。已注册的 `Work` 自己负责业务执行与结算，Ozon 写闸由真实出口检查。这条兜底行为不证明发生过真实提交。
 13. 浏览器 `media.render` / `media.upload` 不占队首计数，但 Go 仍先锁队首再锁配额，然后删掉 0/0 的队首行。Rust 的 `ensure_queue_capacities` 可能对这两类完全不锁队首。先队首后配额不会和「只锁配额」死锁；若有路径先锁配额再要队首，则会。
 14. 一次 `Enqueue` 是一个事务。其中一条车道满了，整批回滚。Rust 是否先提交前面的行，没有读到。
 15. 一次领取会为最多 128 个用户各拿一把 `eq-user` 建议锁。Postgres 默认 `max_locks_per_transaction = 64` 是平均值，不是单事务硬顶，但共享锁表按它分配。集成测试的容器追加 `-c max_locks_per_transaction=256`，不替换镜像入口。生产库要不要改这个参数，没有从 Rust 部署读到。
 16. `CLOUD_LANE_QUEUED_COST_LIMIT`、`DELEGATE_SYNC_INTERVAL_MS` 和三个 in-flight 环境变量的非法值按「空或解析失败用默认、小于 1 用下限或默认、车道上限超过 1024 夹到 1024」处理。这是合理夹取，不是从 Rust 重新逐行读来的。
-17. oapi-codegen 是否取代 utoipa，仍未决定。
-18. `listing.submit`（单行 kind）是否还有生产入队点，盘点仍标为待核。
+17. `listing.submit`（单行 kind）是否还有生产入队点，盘点仍标为待核。
 
-身份与租户阶段另有一份清单，见 [identity-parity.md](identity-parity.md)。那份清单不改变上面 1–18。
+后续扫描、任务执行与授权的补齐见 [对账缺口对照](reconcile-gap-parity.md) 和 [提交流水线对照](listing-submit-parity.md)；上面的早期缺口不能直接当作当前实现状态。身份与租户差异见 [identity-parity.md](identity-parity.md)。

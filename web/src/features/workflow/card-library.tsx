@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState } from "react"
 import {
   Copy,
-  Layers,
-  PackageOpen,
+  CircleAlert,
+  ChevronLeft,
+  ChevronRight,
+  ListChecks,
+  PackageSearch,
   Plus,
   Search,
+  RefreshCw,
   Send,
   Trash2,
   X,
@@ -18,12 +22,17 @@ import type {
   WorkflowCategoryVideo,
   WorkflowDraftValue,
 } from "@/bindings/commands"
+import { supplierDbsCatalogHttp, type SellerSupplierDbRowData } from "@/bindings/http-supplier-dbs-catalog"
 import { PageToolbar } from "@/components/page-toolbar"
+import { useScreenActive } from "@/components/screen-pane"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
 import { Spinner } from "@/components/ui/spinner"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
   Table,
   TableBody,
@@ -36,14 +45,6 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { ReasonTooltip } from "@/components/reason-tooltip"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty"
 import { notifyCommandError, notifyError } from "@/lib/notify"
 import { cn } from "@/lib/utils"
 import { CardBindDialog } from "./card-bind-dialog"
@@ -62,21 +63,36 @@ import {
 } from "@/features/category-schema/category-tree"
 import { parseSalePrice } from "./sale-price"
 import {
-  RICH_CONTENT_ATTRIBUTE_ID,
   THEME_ATTRIBUTE_ID,
   fieldByAttributeId,
   savedFormTitle,
 } from "./workflow-shared"
-import { draftAttributeValue } from "@/bindings/listing-projection"
-import { textValue, valueAsText } from "./workflow-draft"
-import {
-  CardRichContentCell,
-  CardRichContentDialog,
-  CardThemeCell,
-} from "./card-default-cells"
+import { draftAttributeValue, type ManualProfitAssumptions } from "@/bindings/listing-projection"
+import { valueAsText } from "./workflow-draft"
+import { CardThemeCell } from "./card-default-cells"
+import { CardRichContentCell } from "./card-rich-content-cell"
 import { DictionaryPickerDialog } from "./dictionary-drawer-field"
 import { CardLibrarySkeleton } from "./card-library-skeleton"
 import { themeCoordinate, useDeferredThemeSupport } from "./card-library-theme"
+import { ProfitQuotePanel } from "./pricing/profit-quote-panel"
+import { marketImageSrc } from "@/features/supply-chain/gallery/market-image"
+
+type SupplierCardMedia = { imageUrl: string; code: string }
+
+export function supplierCardMedia(rows: readonly SellerSupplierDbRowData[]): Record<string, SupplierCardMedia> {
+  return Object.fromEntries(rows.map((row) => [row.productId, {
+    imageUrl: row.gallery?.[0]?.url ?? "",
+    code: row.platformCode,
+  }]))
+}
+
+function CardThumbnail({ src, title }: { src?: string; title: string }) {
+  const [failed, setFailed] = useState(false)
+  if (src && !failed) {
+    return <img src={marketImageSrc(src, 256)} alt={`${title} 商品图片`} onError={() => setFailed(true)} className="size-14 shrink-0 rounded-md border border-border object-cover" />
+  }
+  return <span role="img" aria-label={`${title} 商品图片不可用`} title="商品图片不可用" className="flex size-14 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-muted-foreground"><PackageSearch aria-hidden className="size-5" /></span>
+}
 
 /** Leaf first, ancestors underneath — a register line, not a truncated breadcrumb. */
 function splitCategoryPath(path: string): { leaf: string; ancestors: string } {
@@ -94,10 +110,10 @@ function specPromptLines(form: ListingCardSummary): { spec: string; prompt: stri
 }
 
 function specPromptLabel(spec: string, prompt: string): string {
-  if (spec && prompt) return `规格 ${spec} · 提示词 ${prompt}`
+  if (spec && prompt) return `规格 ${spec} · 商品事实 ${prompt}`
   if (spec) return `规格 ${spec}`
-  if (prompt) return `提示词 ${prompt}`
-  return "无规格与提示词"
+  if (prompt) return `商品事实 ${prompt}`
+  return "无规格与商品事实"
 }
 
 /** Name, spec, prompt, price, category, store — the columns an operator can already see. */
@@ -168,6 +184,8 @@ export function CardLibrary({
   forms,
   videoUploads,
   busy,
+  loadError = false,
+  onRetryLoad,
   composing,
   composeBusy,
   composeSaving,
@@ -213,6 +231,7 @@ export function CardLibrary({
   highlightDraftId,
   onSavePrice,
   onSaveOldPrice,
+  onProfitApply,
   savingPriceId,
   onSaveDefaultField,
   savingDefaultFieldId,
@@ -221,6 +240,8 @@ export function CardLibrary({
   forms: ListingCardSummary[]
   videoUploads: Record<string, { done: number; total: number }>
   busy: boolean
+  loadError?: boolean
+  onRetryLoad?: () => void
   composing: boolean
   composeBusy: boolean
   composeSaving: boolean
@@ -286,6 +307,7 @@ export function CardLibrary({
     form: ListingCardSummary,
     price: number | null,
   ) => Promise<boolean | undefined>
+  onProfitApply?: (form: ListingCardSummary, input: ManualProfitAssumptions) => Promise<void>
   savingPriceId?: string
   /**
    * 主题 / JSON富内容 share the price cells' contract: one card default field
@@ -297,16 +319,21 @@ export function CardLibrary({
     fieldKey: string,
     value: WorkflowDraftValue | undefined,
   ) => Promise<boolean | undefined>
-  /** The Card whose 主题 / JSON富内容 default write is in flight. */
+  /** The Card whose default field write is in flight. */
   savingDefaultFieldId?: string
-  /** One Card's Category Schema, for the 主题 picker's dictionary. */
+  /** One Card's Category Schema, for the default field editors. */
   onLoadCardSchema: (form: ListingCardSummary) => Promise<CategorySchemaView>
 }) {
   const [pendingDeletes, setPendingDeletes] = useState<ListingCardSummary[]>([])
   const [query, setQuery] = useState("")
+  const [page, setPage] = useState(0)
+  const [pageSize, setPageSize] = useState(20)
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set())
+  const [supplierMedia, setSupplierMedia] = useState<Record<string, SupplierCardMedia>>({})
+  const active = useScreenActive()
   const searchRef = useRef<HTMLInputElement>(null)
   const templates = forms
+  const supplierIds = [...new Set(forms.map((form) => form.supplier_product_id).filter(Boolean))].sort().join("\n")
   const visible = listingCardVisibleForms(
     templates,
     query,
@@ -314,7 +341,14 @@ export function CardLibrary({
     stores,
     highlightDraftId,
   )
-  const visibleIds = visible.map((form) => form.draft_id)
+  const highlighted = visible.find((form) => form.draft_id === highlightDraftId)
+  const ordered = highlighted
+    ? [highlighted, ...visible.filter((form) => form !== highlighted)]
+    : visible
+  const pageCount = Math.max(1, Math.ceil(ordered.length / pageSize))
+  const currentPage = Math.min(page, pageCount - 1)
+  const pageForms = ordered.slice(currentPage * pageSize, (currentPage + 1) * pageSize)
+  const visibleIds = pageForms.map((form) => form.draft_id)
   const liveSelected = templates.filter((form) => selectedIds.has(form.draft_id))
   const selectedCount = liveSelected.length
   const allVisibleSelected =
@@ -330,73 +364,57 @@ export function CardLibrary({
   const dialogOpen = composing
   const composeLeafChosen =
     composeSelection.descriptionCategoryId > 0 && composeSelection.typeId > 0
+
+  useEffect(() => {
+    if (!active || !supplierIds) return
+    let live = true
+    const wanted = new Set(supplierIds.split("\n"))
+    void supplierDbsCatalogHttp.listSupplierDbCatalog()
+      .then(({ rows }) => { if (live) setSupplierMedia(supplierCardMedia(rows.filter((row) => wanted.has(row.productId)))) })
+      .catch(() => { if (live) setSupplierMedia({}) })
+    return () => { live = false }
+  }, [active, supplierIds])
   // undefined = loading, null = read failed (the picker can retry on click).
   // Probes wait until after this paint and share a small concurrency cap so
   // they do not compete with the list's own first response.
   const { themeSupport, noteThemeSupport } = useDeferredThemeSupport(forms, onLoadCardSchema)
 
   /**
-   * 主题 / JSON富内容 的名册编辑：主题走共享字典选择器（与默认字段表单同一个），
-   * 富内容走粘贴弹窗。Schema 在打开时按卡坐标拉一次（工作台用同一入口），
+   * 主题走共享字典选择器（与默认字段表单同一个）。
+   * Schema 在打开时按卡坐标拉一次（工作台用同一入口），
    * 失败只报 toast 并收起，不在格子里留内联错误。
    */
-  const [defaultEdit, setDefaultEdit] = useState<{
-    form: ListingCardSummary
-    column: "theme" | "rich_content"
-  } | null>(null)
+  const [defaultEdit, setDefaultEdit] = useState<ListingCardSummary | null>(null)
   const [defaultSchema, setDefaultSchema] = useState<
     CategorySchemaView | undefined
   >(undefined)
   const [themeDraft, setThemeDraft] = useState<WorkflowDraftValue | undefined>()
   const [themeInitial, setThemeInitial] = useState<WorkflowDraftValue | undefined>()
-  const [richDraft, setRichDraft] = useState("")
   const defaultEditGeneration = useRef(0)
   const themeField = defaultSchema
     ? fieldByAttributeId(defaultSchema, THEME_ATTRIBUTE_ID)
     : undefined
-  const richContentField = defaultSchema
-    ? fieldByAttributeId(defaultSchema, RICH_CONTENT_ATTRIBUTE_ID)
-    : undefined
-
-  /** 卡默认里的 主题 / JSON富内容 摘要 —— 无 Schema 时按已知键扫描（见 draftAttributeValue）。 */
+  /** 卡默认里的主题摘要 —— 无 Schema 时按已知键扫描（见 draftAttributeValue）。 */
   const cardThemeText = (form: ListingCardSummary) =>
     valueAsText(draftAttributeValue(form.defaults, THEME_ATTRIBUTE_ID, "theme"))
       .split("\n")
       .filter(Boolean)
       .join("、")
-  const cardRichContentText = (form: ListingCardSummary) =>
-    valueAsText(
-      draftAttributeValue(form.defaults, RICH_CONTENT_ATTRIBUTE_ID, "rich_content"),
-    ).trim()
-
-  function openDefaultEdit(
-    form: ListingCardSummary,
-    column: "theme" | "rich_content",
-  ) {
+  function openDefaultEdit(form: ListingCardSummary) {
     const generation = ++defaultEditGeneration.current
     const theme = draftAttributeValue(form.defaults, THEME_ATTRIBUTE_ID, "theme")
-    setDefaultEdit({ form, column })
+    setDefaultEdit(form)
     setDefaultSchema(undefined)
     setThemeDraft(theme)
     setThemeInitial(theme)
-    setRichDraft(cardRichContentText(form))
     void onLoadCardSchema(form)
       .then((schema) => {
         if (generation !== defaultEditGeneration.current) return
-        const field =
-          column === "theme"
-            ? fieldByAttributeId(schema, THEME_ATTRIBUTE_ID)
-            : fieldByAttributeId(schema, RICH_CONTENT_ATTRIBUTE_ID)
-        if (column === "theme") {
-          noteThemeSupport(themeCoordinate(form), Boolean(field))
-        }
+        const field = fieldByAttributeId(schema, THEME_ATTRIBUTE_ID)
+        noteThemeSupport(themeCoordinate(form), Boolean(field))
         if (!field) {
           setDefaultEdit(null)
-          notifyError(
-            column === "theme"
-              ? "当前类目无主题属性"
-              : "当前类目无 JSON富内容属性",
-          )
+          notifyError("当前类目无主题属性")
           return
         }
         setDefaultSchema(schema)
@@ -421,17 +439,8 @@ export function CardLibrary({
       JSON.stringify(themeDraft ?? null) !== JSON.stringify(themeInitial ?? null)
     closeDefaultEdit()
     if (edit && changed && themeField) {
-      void onSaveDefaultField(edit.form, themeField.key, themeDraft)
+      void onSaveDefaultField(edit, themeField.key, themeDraft)
     }
-  }
-
-  function commitRichContent(raw: string) {
-    const edit = defaultEdit
-    const field = richContentField
-    if (!edit || !field) return
-    const value = raw.trim() ? textValue(field, raw) : undefined
-    closeDefaultEdit()
-    void onSaveDefaultField(edit.form, field.key, value)
   }
 
   const toggleSelectAll = (checked: boolean) => {
@@ -457,7 +466,12 @@ export function CardLibrary({
   useEffect(() => {
     if (!highlightDraftId) return
     setQuery("")
+    setPage(0)
   }, [highlightDraftId])
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, pageCount - 1))
+  }, [pageCount])
 
   useEffect(() => {
     if (!highlightDraftId) return
@@ -465,7 +479,7 @@ export function CardLibrary({
       `[data-listing-card="${CSS.escape(highlightDraftId)}"]`,
     )
     row?.scrollIntoView({ block: "nearest" })
-  }, [highlightDraftId, forms.length, query])
+  }, [highlightDraftId, forms.length, query, currentPage])
 
   useEffect(() => {
     if (!templates.length || dialogOpen) return
@@ -488,103 +502,90 @@ export function CardLibrary({
 
   return (
     <div
-      className="flex min-h-0 w-full flex-1 flex-col gap-3"
+      className="flex min-h-0 w-full flex-1 flex-col gap-2"
       data-testid="workflow-screen"
     >
-      {templates.length ? (
+      <h1 className="sr-only">上架方案</h1>
+      {loadError ? (
+        <div role="status" className="flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-card px-3 py-2 text-xs">
+          <p className="flex items-center gap-2 text-muted-foreground"><CircleAlert className="size-4 shrink-0" aria-hidden />{templates.length ? "刷新失败，当前显示上次读取的方案。" : "上架方案读取失败，请重试。"}</p>
+          <IconButton icon={RefreshCw} label="重试读取上架方案" variant="outline" size="icon-sm" disabled={busy || !onRetryLoad} onClick={onRetryLoad} />
+        </div>
+      ) : null}
+      {templates.length || !loadError ? (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="flex h-fit max-h-full min-h-0 w-full flex-col overflow-hidden rounded-xl border border-border bg-card">
-            <div className="shrink-0 border-b border-border px-3 py-2">
+          <div className="flex min-h-0 w-full flex-1 flex-col gap-2">
+            <div className="shrink-0">
               <PageToolbar
                 primary={
-                  <>
-                    <div className="relative w-56 min-w-0">
-                      <Search
-                        aria-hidden
-                        className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground"
-                      />
-                      <Input
-                        ref={searchRef}
-                        type="search"
-                        aria-label="搜索上架方案"
-                        placeholder="搜索名称、规格、类目或店铺"
-                        title="搜索名称、规格、类目或店铺（/ 聚焦）"
-                        value={query}
-                        disabled={dialogOpen}
-                        onChange={(event) => setQuery(event.target.value)}
-                        className="h-8 pl-8"
-                      />
-                    </div>
-                    <p className="whitespace-nowrap text-sm text-muted-foreground">
-                      <span className="font-mono text-sm font-medium tabular-nums text-foreground">
-                        {visible.length}
-                      </span>
-                      {query.trim() && visible.length !== templates.length ? (
-                        <span className="font-mono text-sm tabular-nums">
-                          {" "}
-                          / {templates.length}
-                        </span>
-                      ) : null}
-                      {" "}个上架方案
-                    </p>
-                  </>
-                }
-                secondary={
                   <>
                     {selectedCount > 0 ? (
                       <div
                         role="toolbar"
                         aria-label="批量操作"
-                        className="flex items-center gap-0.5 rounded-full border border-border bg-card pr-1 pl-3"
+                        className="flex flex-wrap items-center gap-1 rounded-md border border-border bg-card pr-1 pl-2.5"
                       >
                         <span className="text-compact font-medium text-muted-foreground tabular-nums">
                           已选 {selectedCount} 个方案
                         </span>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
+                        <IconButton
+                          icon={Trash2}
+                          label="删除所选方案"
+                          size="icon-sm"
+                          variant="destructive"
                           disabled={dialogOpen || busy || selectedUploading}
-                          className="cursor-pointer text-destructive hover:text-destructive"
                           onClick={() => setPendingDeletes(liveSelected)}
-                        >
-                          删除
-                        </Button>
-                        <Button
-                          type="button"
+                        />
+                        <IconButton
+                          icon={X}
+                          label="清除选择"
                           size="icon-xs"
                           variant="ghost"
-                          aria-label="清除选择"
-                          className="cursor-pointer"
                           onClick={() => setSelectedIds(new Set())}
-                        >
-                          <X aria-hidden />
-                        </Button>
+                        />
                       </div>
                     ) : null}
-                    <Button
-                      type="button"
-                      size="sm"
-                      disabled={dialogOpen || busy}
-                      onClick={onOpenCatalog}
-                    >
-                      <Plus data-icon="inline-start" />
-                      从商库添加
+                  </>
+                }
+                secondary={
+                  <>
+                    <div className="w-full min-w-0 sm:w-80">
+                      <InputGroup>
+                        <InputGroupAddon><Search aria-hidden /></InputGroupAddon>
+                        <InputGroupInput
+                          ref={searchRef}
+                          type="search"
+                          aria-label="搜索上架方案"
+                          placeholder="搜索名称、规格、类目或店铺"
+                          title="搜索名称、规格、类目或店铺（/ 聚焦）"
+                          value={query}
+                          disabled={dialogOpen || templates.length === 0}
+                          onChange={(event) => { setQuery(event.target.value); setPage(0) }}
+                        />
+                      </InputGroup>
+                    </div>
+                    <Button type="button" size="sm" aria-label="添加商品" disabled={dialogOpen || busy || !onOpenCatalog} onClick={onOpenCatalog}>
+                      <Plus data-icon="inline-start" aria-hidden />添加商品
                     </Button>
                   </>
                 }
               />
             </div>
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-border bg-card">
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
+              <h2 className="flex items-center gap-2 text-sm font-semibold"><ListChecks aria-hidden className="size-4" />上架方案库</h2>
+              <p className="text-xs text-muted-foreground">共 <span className="font-mono tabular-nums">{visible.length}</span> 个方案{query.trim() && visible.length !== templates.length ? ` / ${templates.length} 个` : ""}</p>
+            </div>
             <Table
-              className="min-w-[64rem]"
-              containerClassName="min-h-0 overflow-auto overscroll-contain"
+              className={templates.length ? "min-w-[64rem]" : undefined}
+              containerClassName="min-h-0 flex-1 overflow-auto overscroll-contain"
             >
             <TableCaption className="sr-only">上架方案</TableCaption>
-            <TableHeader className="sticky top-0 z-10">
+            <TableHeader className={cn("sticky top-0 z-10 [&_th]:bg-muted [&_th]:font-medium [&_th]:tracking-normal", templates.length === 0 && "hidden md:table-header-group")}>
               <TableRow className="hover:bg-transparent">
                 <TableHead className="w-10 bg-card">
                   <Checkbox
-                    aria-label="选择全部上架方案"
+                    aria-label="选择当前页上架方案"
                     checked={allVisibleSelected}
                     indeterminate={!allVisibleSelected && someVisibleSelected}
                     disabled={dialogOpen || visibleIds.length === 0}
@@ -592,11 +593,11 @@ export function CardLibrary({
                   />
                 </TableHead>
                 <TableHead className="bg-card">名称</TableHead>
-                <TableHead className="bg-card">规格与提示词</TableHead>
-                <TableHead className="w-28 bg-card">销售价</TableHead>
+                <TableHead className="bg-card">规格与商品事实</TableHead>
+                <TableHead className="w-36 bg-card">销售价</TableHead>
                 <TableHead className="w-28 bg-card">划线价</TableHead>
                 <TableHead className="w-40 bg-card">主题</TableHead>
-                <TableHead className="w-44 bg-card">JSON富内容</TableHead>
+                <TableHead className="w-40 bg-card">JSON富内容</TableHead>
                 <TableHead className="bg-card">类目</TableHead>
                 <TableHead className="bg-card">店铺</TableHead>
                 <TableHead className="bg-card text-right">操作</TableHead>
@@ -607,13 +608,23 @@ export function CardLibrary({
                 <TableRow className="hover:bg-transparent">
                   <TableCell
                     colSpan={10}
-                    className="py-10 text-center text-sm text-muted-foreground"
+                    className="py-12 text-center"
                   >
-                    没有匹配的上架方案
+                    <div className="flex flex-col items-center justify-center gap-2">
+                      <div className="flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                        <PackageSearch className="size-5" />
+                      </div>
+                      <p className="text-sm font-medium text-foreground">
+                        {query ? "没有匹配的上架方案" : "暂无上架方案"}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {query ? "尝试调整搜索关键词" : "从平台商品库添加商品"}
+                      </p>
+                    </div>
                   </TableCell>
                 </TableRow>
               ) : null}
-              {visible.map((form) => {
+              {pageForms.map((form) => {
                 const title = savedFormTitle(form)
                 const path = categoryPathLabel(
                   form.description_category_id,
@@ -624,6 +635,7 @@ export function CardLibrary({
                 const uploading = videoUploads[form.draft_id]
                 const psdName = form.psd_template_file_name.trim()
                 const { spec, prompt } = specPromptLines(form)
+                const media = form.supplier_unavailable ? undefined : supplierMedia[form.supplier_product_id ?? ""]
 
                 const selected = selectedIds.has(form.draft_id)
                 // The library cell's PSD binding. A dead source keeps the
@@ -653,9 +665,9 @@ export function CardLibrary({
                     data-highlighted={highlightDraftId === form.draft_id ? "true" : undefined}
                     data-state={selected ? "selected" : undefined}
                     className={cn(
-                      dialogOpen && "pointer-events-none opacity-60",
+                      dialogOpen && "pointer-events-none",
                       highlightDraftId === form.draft_id &&
-                        "bg-brand/8 ring-1 ring-inset ring-brand/40",
+                        "bg-brand/8",
                     )}
                   >
                     <TableCell
@@ -672,15 +684,18 @@ export function CardLibrary({
                       />
                     </TableCell>
                     <TableCell className="py-2.5">
-                      <div className="min-w-0">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <CardThumbnail key={media?.imageUrl || "none"} src={media?.imageUrl} title={title} />
+                        <div className="min-w-0">
                         <div className="flex min-w-0 items-center gap-1.5">
-                          <p className="block min-w-0 max-w-full truncate text-left text-sm font-medium tracking-[-0.01em] text-foreground">
+                          <p className="line-clamp-2 min-w-0 max-w-full text-left text-sm font-medium leading-snug tracking-[-0.01em] text-foreground">
                             {title}
                           </p>
                           {form.supplier_unavailable ? (
                             <Badge variant="destructive">来源不可用</Badge>
                           ) : null}
                         </div>
+                        {media?.code ? <p className="mt-0.5 truncate text-xs text-muted-foreground">编号：{media.code}</p> : null}
                         {onBindPsd ? (
                           form.supplier_unavailable ? (
                             <ReasonTooltip
@@ -698,6 +713,7 @@ export function CardLibrary({
                           </p>
                         ) : null}
                         {form.supplier_unavailable ? <p className="mt-0.5 text-xs text-muted-foreground">{SOURCE_UNAVAILABLE_HINT}</p> : null}
+                        </div>
                       </div>
                     </TableCell>
                     <TableCell className="py-2.5">
@@ -722,17 +738,22 @@ export function CardLibrary({
                       </div>
                     </TableCell>
                     <TableCell
-                      className="w-28 py-2.5"
+                      className="w-36 py-2.5"
                       onClick={(event) => event.stopPropagation()}
                     >
-                      <CardSalePriceCell
-                        title={title}
-                        label="销售价"
-                        price={form.price}
-                        disabled={dialogOpen || busy || Boolean(form.supplier_unavailable)}
-                        saving={savingPriceId === form.draft_id}
-                        onSave={(price) => onSavePrice(form, price)}
-                      />
+                      <div className="flex items-center gap-1">
+                        <CardSalePriceCell
+                          title={title}
+                          label="销售价"
+                          price={form.price}
+                          disabled={dialogOpen || busy || Boolean(form.supplier_unavailable)}
+                          saving={savingPriceId === form.draft_id}
+                          onSave={(price) => onSavePrice(form, price)}
+                        />
+                        <ProfitQuotePanel cardId={form.draft_id} title={title}
+                          disabled={dialogOpen || busy || Boolean(form.supplier_unavailable) || savingPriceId === form.draft_id}
+                          onApply={onProfitApply ? (input) => onProfitApply(form, input) : undefined} />
+                      </div>
                     </TableCell>
                     <TableCell
                       className="w-28 py-2.5"
@@ -763,23 +784,15 @@ export function CardLibrary({
                           themeSupport[themeCoordinate(form)] !== true &&
                           themeSupport[themeCoordinate(form)] !== null
                         }
-                        onOpen={() => openDefaultEdit(form, "theme")}
+                        onOpen={() => openDefaultEdit(form)}
                       />
                     </TableCell>
-                    <TableCell
-                      className="w-44 py-2.5"
-                      onClick={(event) => event.stopPropagation()}
-                    >
+                    <TableCell className="w-40 py-2.5" onClick={(event) => event.stopPropagation()}>
                       <CardRichContentCell
-                        title={title}
-                        value={cardRichContentText(form)}
-                        disabled={
-                          dialogOpen ||
-                          busy ||
-                          Boolean(form.supplier_unavailable) ||
-                          savingDefaultFieldId === form.draft_id
-                        }
-                        onOpen={() => openDefaultEdit(form, "rich_content")}
+                        form={form}
+                        disabled={dialogOpen || busy || Boolean(form.supplier_unavailable) || Boolean(savingDefaultFieldId)}
+                        onLoadSchema={onLoadCardSchema}
+                        onSave={onSaveDefaultField}
                       />
                     </TableCell>
                     <TableCell className="py-2.5">
@@ -848,76 +861,44 @@ export function CardLibrary({
               })}
             </TableBody>
             </Table>
+            {templates.length > 0 ? <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border px-3 py-2 text-xs text-muted-foreground">
+              <Select value={String(pageSize)} onValueChange={(value) => { if (value) { setPageSize(Number(value)); setPage(0) } }}>
+                <SelectTrigger size="sm" aria-label="每页方案数量"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {[20, 50, 100].map((size) => <SelectItem key={size} value={String(size)}>每页 {size} 条</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <div className="flex items-center gap-2">
+                <span className="tabular-nums">第 {currentPage + 1} / {pageCount} 页</span>
+                <Button type="button" size="icon-sm" variant="outline" aria-label="上一页" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}><ChevronLeft aria-hidden /></Button>
+                <Button type="button" size="icon-sm" variant="outline" aria-label="下一页" disabled={currentPage >= pageCount - 1} onClick={() => setPage(currentPage + 1)}><ChevronRight aria-hidden /></Button>
+              </div>
+            </div> : null}
+            </div>
           </div>
         </div>
-      ) : (
-        <Empty className="min-h-0 flex-1 rounded-xl border border-border bg-card p-6 sm:p-10 justify-center overflow-y-auto shadow-2xs">
-          <div className="flex flex-col items-center w-full max-w-2xl mx-auto space-y-6 my-auto text-center">
-            <EmptyHeader className="max-w-lg gap-2.5">
-              <EmptyMedia
-                variant="default"
-                className="mx-auto mb-1 flex size-12 items-center justify-center rounded-xl bg-brand/10 text-brand ring-1 ring-brand/20 shadow-2xs"
-              >
-                <Layers className="size-6" />
-              </EmptyMedia>
-              <EmptyTitle className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground">
-                还没有上架方案
-              </EmptyTitle>
-              <EmptyDescription className="text-sm/relaxed text-muted-foreground max-w-md mx-auto">
-                从商库选择商品加入列表。同一商品只保留一份引用，配置以在线商库为准。
-              </EmptyDescription>
-            </EmptyHeader>
+      ) : null}
 
-            <EmptyContent className="max-w-none w-full gap-5">
-              <div className="flex flex-col sm:flex-row items-center justify-center gap-3 w-full sm:w-auto">
-                <Button
-                  onClick={onOpenCatalog}
-                  size="lg"
-                  className="w-full sm:w-auto justify-center gap-2 font-medium shadow-2xs active:scale-[0.99] transition-all px-6 has-data-[icon=inline-start]:pl-6"
-                >
-                  <PackageOpen data-icon="inline-start" className="size-4" />
-                  去平台货源选品
-                </Button>
-              </div>
-
-              <p className="text-meta text-muted-foreground/80">
-                商品配置由商库维护，发送前绑定目标店铺即可。
-              </p>
-            </EmptyContent>
-          </div>
-        </Empty>
-      )}
-
-      {defaultEdit?.column === "theme" && themeField && defaultSchema ? (
+      {defaultEdit && themeField && defaultSchema ? (
         <DictionaryPickerDialog
           open
           onClose={closeThemeEdit}
           field={themeField}
           schema={defaultSchema}
           targetStoreId={
-            defaultEdit.form.target_store_id.split(",")[0]?.trim() ?? ""
+            defaultEdit.target_store_id.split(",")[0]?.trim() ?? ""
           }
           value={themeDraft}
           onChange={setThemeDraft}
         />
       ) : null}
-      {defaultEdit?.column === "rich_content" && richContentField ? (
-        <CardRichContentDialog
-          open
-          title={savedFormTitle(defaultEdit.form)}
-          value={richDraft}
-          onClose={closeDefaultEdit}
-          onSave={commitRichContent}
-        />
-      ) : null}
-
       <CardBindDialog
         open={composing}
         onOpenChange={(next) => {
           if (!next && !composeSaving) onCancelCompose()
         }}
         title="新建上架方案"
-        description="名称、搜索类目与提示词。店铺、PSD 与商品视频可稍后绑定"
+        description="名称、搜索类目与商品事实。店铺、PSD 与商品视频可稍后绑定"
         showCloseButton={!composeSaving}
         busy={composeSaving}
         videoPanel={
@@ -1097,7 +1078,7 @@ function CardSalePriceCell({
       title={`写入上架方案默认字段的${label}`}
       value={focused || invalid ? draft : (price ?? "")}
       disabled={disabled || saving}
-      className="h-8 w-full text-right font-mono text-sm tabular-nums"
+      className="text-right"
       onFocus={() => {
         setFocused(true)
         // While invalid, refocusing edits the retained text instead of
@@ -1170,15 +1151,15 @@ export function ListingCardActions({
               size="sm"
               variant="outline"
               disabled={runDisabled || unavailable}
-              aria-label={`上架 ${title}`}
+              aria-label={`进入上架 ${title}`}
               onClick={onRun}
             />
           }
         >
           <Send data-icon="inline-start" aria-hidden />
-          上架
+          进入上架
         </TooltipTrigger>
-        <TooltipContent>{`上架 ${title}`}</TooltipContent>
+        <TooltipContent>{`进入上架 ${title}`}</TooltipContent>
       </Tooltip>
       {!supplierBound ? <Tooltip>
         <TooltipTrigger
@@ -1207,10 +1188,9 @@ export function ListingCardActions({
             <Button
               type="button"
               size="icon-sm"
-              variant="ghost"
+              variant="destructive"
               disabled={disabled}
               aria-label={`删除 ${title}`}
-              className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
               onClick={onDelete}
             />
           }

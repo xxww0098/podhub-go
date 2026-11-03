@@ -19,7 +19,7 @@ test("a Cloud publish-gate refusal reaches the readiness copy mapping", () => {
     code: "VALIDATION", error: "上架前置条件未齐备",
     missing: ["category", "prompt", "ozonConfig"],
   }, "POST")
-  assert.deepEqual(missingFromRefusal(reason), ["类目", "提示词", "Ozon 配置未校验"])
+  assert.deepEqual(missingFromRefusal(reason), ["类目", "识图事实", "Ozon 配置未校验"])
 })
 
 function row(over: Partial<SupplierDbRow> = {}): SupplierDbRow {
@@ -56,7 +56,7 @@ function row(over: Partial<SupplierDbRow> = {}): SupplierDbRow {
     packDepthMm: null,
     packWeightG: null,
     contents: "",
-    gallery: [],
+    gallery: [{ url: "https://cdn.invalid/a.png", w: 100, h: 100 }],
     psd: [],
     productVideos: [],
     promptName: "",
@@ -74,7 +74,7 @@ function row(over: Partial<SupplierDbRow> = {}): SupplierDbRow {
   }
 }
 
-/** 服务端 readiness 的默认值（row() 同款）；提示词项只看这里。 */
+/** 服务端 readiness 的默认值（row() 同款）；识图事实项只看这里。 */
 const SERVER: SupplierDbRow["readiness"] = {
   category: false,
   prompt: false,
@@ -84,11 +84,11 @@ const SERVER: SupplierDbRow["readiness"] = {
 }
 
 /** validate_fixed_tags 契约下的合法 tag：`#` + 西里尔词身 + 数字。 */
-const TAGS = Array.from({ length: 25 }, (_, i) => `#тег${i}`)
+const TAGS = Array.from({ length: 30 }, (_, i) => `#тег${i}`)
 
 /**
  * 四项检查 × 缺失组合的表驱动：每行给出字段覆盖与期望 readiness。
- * 口径照 ADR-0095.7：类目坐标一对、服务端判定提示词（validate_brief）、前端固定 tags 1–25 个、
+ * 口径照 ADR-0095.7：类目坐标一对、服务端判定识图事实（validate_brief）、前端固定 tags 1–25 个、
  * 存在平台价版本。
  */
 const CASES: Array<{
@@ -113,12 +113,12 @@ const CASES: Array<{
     want: { category: false, prompt: false, fixedTags: false, platformPrice: false },
   },
   {
-    name: "提示词读服务端判定：正文非空但服务端未过（旧整篇）不过",
+    name: "识图事实读服务端判定：正文非空但服务端未过（旧整篇）不过",
     over: { promptName: "圣诞通用", promptContent: "识别红白配色" },
     want: { category: false, prompt: false, fixedTags: false, platformPrice: false },
   },
   {
-    name: "提示词读服务端判定：服务端过即过",
+    name: "识图事实读服务端判定：服务端过即过",
     over: { readiness: { ...SERVER, prompt: true } },
     want: { category: false, prompt: true, fixedTags: false, platformPrice: false },
   },
@@ -133,7 +133,7 @@ const CASES: Array<{
     want: { category: false, prompt: false, fixedTags: true, platformPrice: false },
   },
   {
-    name: "26 个（超上限）不过",
+    name: "31 个（超上限）不过",
     over: { fixedTags: [...TAGS, "#лишний"] },
     want: { category: false, prompt: false, fixedTags: false, platformPrice: false },
   },
@@ -187,7 +187,7 @@ test("computeReadiness 表驱动：四项检查 × 缺失组合", () => {
 })
 
 test("missingReadiness 按声明顺序返回中文缺项名", () => {
-  assert.deepEqual(missingReadiness(row({})), ["类目", "提示词", "固定 tags", "平台价"])
+  assert.deepEqual(missingReadiness(row({})), ["类目", "识图事实", "固定 tags", "平台价"])
   assert.deepEqual(
     missingReadiness(row({ descriptionCategoryId: 1, typeId: 2, readiness: { ...SERVER, prompt: true } })),
     ["固定 tags", "平台价"],
@@ -204,6 +204,13 @@ test("missingReadiness 按声明顺序返回中文缺项名", () => {
     ),
     [],
   )
+})
+
+test("无图规格保持待完善，服务端 gallery 拒绝使用同一字段名", () => {
+  const product = row({ descriptionCategoryId: 1, typeId: 2, gallery: [], fixedTags: TAGS, platformPriceCents: 100,
+    readiness: { ...SERVER, prompt: true, ozonConfig: true } })
+  assert.deepEqual(missingReadiness(product), ["图集"])
+  assert.deepEqual(missingFromRefusal({ missing: ["gallery"] }), ["图集"])
 })
 
 test("就绪徽标两态：●就绪 / ◐ 缺 N 项，title 列缺项", () => {
@@ -227,7 +234,7 @@ test("就绪徽标两态：●就绪 / ◐ 缺 N 项，title 列缺项", () => {
     />,
   )
   assert.match(missing, /◐ 缺 3 项/)
-  assert.match(missing, /title="缺：类目、提示词、固定 tags"/)
+  assert.match(missing, /title="缺：类目、识图事实、固定 tags"/)
 })
 
 test("Ozon 配置未校验时，旧字段齐全也不能显示就绪", () => {

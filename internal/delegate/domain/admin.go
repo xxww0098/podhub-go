@@ -29,7 +29,7 @@ func NormalizeLineIDs(raw []string) ([]string, error) {
 	out := make([]string, 0, len(raw))
 	seen := map[string]bool{}
 	for _, id := range raw {
-		norm, ok := NormalizeUUID(id)
+		norm, ok := contract.NormalizeUUID(id)
 		if !ok {
 			return nil, contract.Validation("lineIds 含无效行 id")
 		}

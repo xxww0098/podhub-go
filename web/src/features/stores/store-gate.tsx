@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react"
 import type { ReactNode } from "react"
-import { AlertTriangle, Store } from "lucide-react"
-
+import { AlertTriangle } from "lucide-react"
+import { StoreIcon } from "@/components/store-icon"
 import { Button } from "@/components/ui/button"
 import {
   Empty,
@@ -38,7 +38,7 @@ export function StoreGate({
   onRetry,
   onOpenStores,
   children,
-  icon = <Store />,
+  icon = <StoreIcon />,
 }: StoreGateProps) {
   // Failure copy lives in the toast host, never in the page. The live row
   // carries the retry so the gate needs no in-page banner; it clears itself
@@ -79,7 +79,7 @@ export function StoreGate({
 
   if (error && storeCount === 0) {
     return (
-      <Empty className="min-h-48">
+      <Empty className="min-h-32">
         <EmptyMedia variant="icon"><AlertTriangle /></EmptyMedia>
         <EmptyContent>
           <Button size="sm" variant="outline" onClick={onRetry}>重试</Button>
@@ -90,7 +90,7 @@ export function StoreGate({
 
   if (storeCount === 0) {
     return (
-      <Empty role="status" className="min-h-48">
+      <Empty role="status" className="min-h-32">
         <EmptyHeader>
           <EmptyMedia variant="icon">{icon}</EmptyMedia>
           <EmptyTitle>{hasUnavailableStores ? "已接入的店铺当前不可用" : "还没有已接入的店铺"}</EmptyTitle>

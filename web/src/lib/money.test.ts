@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { formatYuan, topupCentsFromYuan } from "./money"
+import { formatCents, formatYuan, topupCentsFromYuan } from "./money"
 
 test("一笔充值只在这里取整一次，非正数不成为请求", () => {
   assert.equal(topupCentsFromYuan("12.34"), 1234)
@@ -25,4 +25,9 @@ test("显示精度跟着量级走：一次 ¥0.003 的调用不能被抹成 ¥0.
   assert.equal(formatYuan(50_000_000), "¥0.50")
   // ¥1 以上回到两位，余额不会长出 ¥9.9312 这样的尾巴。
   assert.equal(formatYuan(993_120_000), "¥9.93")
+})
+
+test("订单分金额保留到分", () => {
+  assert.equal(formatCents(123), "¥1.23")
+  assert.equal(formatCents(199), "¥1.99")
 })

@@ -515,23 +515,23 @@ func TestMutationValidationJoinAndLeave(t *testing.T) {
 	if fail := ValidateMutation(base(`{"kind":"nope"}`)); fail == nil || fail.Code != contract.CodeNotPorted {
 		t.Fatal(fail)
 	}
-	join := base(`{"kind":"promotion_join","action_id":7,"items":[{"product_id":1,"offer_id":"a","action_price":55,"stock":0},{"product_id":2,"offer_id":"b","action_price":1499.5,"stock":3}]}`)
+	join := base(`{"kind":"promotion_join","action_id":7,"action_type":"PROMOCODE","items":[{"product_id":1,"offer_id":"a","action_price":"55.00","currency_code":"CNY","stock":0},{"product_id":2,"offer_id":"b","action_price":"1499.50","currency_code":"CNY","stock":3}]}`)
 	if ValidateMutation(join) != nil {
 		t.Fatal("join")
 	}
 	var sent string
 	view, fail, unknown := Dispatch(join, func(method, path string, body []byte) Page {
 		sent = string(body)
-		return okPage(`{"result":[]}`)
+		return okPage(`{"active_product_ids":["1","2"],"deactivated_product_ids":[],"rejected":[],"warnings":[]}`)
 	})
-	want := `{"action_id":7,"products":[{"product_id":1,"action_price":{"amount":"55.00","currency":"CNY"}},{"product_id":2,"action_price":{"amount":"1499.50","currency":"CNY"},"stock":3}]}`
+	want := `{"action_id":7,"products":[{"product_id":1,"action_price":{"amount":"55.00","currency":"CNY"},"stock":0},{"product_id":2,"action_price":{"amount":"1499.50","currency":"CNY"},"stock":3}]}`
 	if fail != nil || unknown || sent != want || !json.Valid(view) {
 		t.Fatalf("sent %s fail %v unknown %v", sent, fail, unknown)
 	}
 	leave := base(`{"kind":"promotion_leave","action_id":7,"product_ids":[1,2],"action_type":"PROMOCODE"}`)
 	_, fail, unknown = Dispatch(leave, func(method, path string, body []byte) Page {
 		sent = string(body)
-		return okPage(`{"result":true}`)
+		return okPage(`{"product_ids":["1","2"]}`)
 	})
 	if fail != nil || unknown || sent != `{"action_id":7,"product_ids":["1","2"]}` {
 		t.Fatalf("%s %v", sent, fail)
@@ -542,7 +542,7 @@ func TestMutationValidationJoinAndLeave(t *testing.T) {
 		called = true
 		return okPage(`{}`)
 	})
-	if called || fail != nil || unknown || !strings.Contains(string(view), "该活动类型（未知）不支持") {
+	if called || fail == nil || fail.Code != contract.CodeValidation || unknown || len(view) != 0 {
 		t.Fatalf("called %v %s", called, view)
 	}
 	if fail := ValidateSend(" ", "x"); fail == nil || fail.Message != "会话身份无效" {
@@ -611,19 +611,18 @@ func TestVoicePremiumAndChatSort(t *testing.T) {
 	}
 }
 
-func TestPromotionsEmptyBeforeAnyCall(t *testing.T) {
-	if len(PositiveProducts([]int64{0, -1})) != 0 {
-		t.Fatal("filter")
+func TestPromotionSelectionValidation(t *testing.T) {
+	if f := ValidatePromotions(PromotionsRequest{}); f != nil {
+		t.Fatal(f)
 	}
-	raw := EmptyPromotions()
-	if !strings.Contains(string(raw), `"actions":[]`) || !strings.Contains(string(raw), `"offers":[]`) {
-		t.Fatal(string(raw))
+	if f := ValidatePromotions(PromotionsRequest{ProductIDs: []int64{0, -1}}); f == nil || f.Status != 400 {
+		t.Fatalf("invalid selection accepted: %#v", f)
 	}
 }
 
 func TestChatAndProductKeys(t *testing.T) {
-	if ChatKey("s", "c", "hi") == ChatKey("s", "c", "hj") {
-		t.Fatal("text changes the key")
+	if ChatKey("s", "first") == ChatKey("s", "second") {
+		t.Fatal("independent sends must have different keys")
 	}
 	if !strings.HasPrefix(ProductKey("s", "op"), "ozon.product-mutation:s:") {
 		t.Fatal(ProductKey("s", "op"))

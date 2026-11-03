@@ -34,6 +34,9 @@ func (r *Repo) ErrorWindow(ctx context.Context, start, end time.Time) ([]domain.
 		return nil, domain.Unavailable()
 	}
 	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT set_config('role', 'podhub_digest_platform', true)`); err != nil {
+		return nil, domain.Unavailable()
+	}
 	rows, err := tx.Query(ctx, `
 		SELECT org_id, kind, payload_json, received_at
 		  FROM public.event_inbox_events

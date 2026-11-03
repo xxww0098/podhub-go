@@ -145,7 +145,9 @@ func SnapshotJSON(meta contract.RosterMeta, heads []contract.StoreHead, ledger [
 	type store struct {
 		ID                    string `json:"id"`
 		RefID                 string `json:"ref_id"`
-		Name                  string `json:"name"`
+		Name                  string `json:"label"`
+		CloudStoreUUID        string `json:"cloud_store_uuid"`
+		Configured            bool   `json:"configured"`
 		CreateOrder           int64  `json:"create_order"`
 		ClientID              string `json:"client_id"`
 		CloudStatus           string `json:"cloud_status"`
@@ -176,6 +178,7 @@ func SnapshotJSON(meta contract.RosterMeta, heads []contract.StoreHead, ledger [
 		}
 		stores = append(stores, store{
 			ID: h.UUID, RefID: h.UUID, Name: h.Name, CreateOrder: h.CreateOrder, ClientID: h.ClientID,
+			CloudStoreUUID: h.UUID, Configured: h.Configured,
 			CloudStatus: status, SecretStatus: secret, CanManage: h.CanManage,
 			AssigneeMembershipID: h.AssigneeID, AssigneeName: h.AssigneeName, AssigneeEmail: h.AssigneeEmail,
 		})

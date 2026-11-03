@@ -32,13 +32,13 @@ export function ProductExpand({
 }) {
   const metrics = row.metrics
   return (
-    <section className="grid gap-x-8 gap-y-4 py-3 sm:grid-cols-2">
+    <section className="grid w-[calc(100cqi-1.25rem)] max-w-full gap-x-8 gap-y-4 py-3 @xl:grid-cols-2">
       <div className="grid content-start gap-2">
         <header className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
           <h3 className="text-sm font-medium">销售漏斗</h3>
           {metrics ? (
             <p className="text-xs text-muted-foreground">
-              近 {metrics.period_days} 天 · 至 {metrics.through_day.slice(5, 10).replace("-", "/")}
+              近 {metrics.period_days} 天 · 至 {metrics.through_day.slice(5, 10).replace("-", "/")} · 访客 {formatCount(metrics.session_view)}
             </p>
           ) : null}
           {metrics ? <Verdict metrics={metrics} /> : null}

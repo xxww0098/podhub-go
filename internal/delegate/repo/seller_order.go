@@ -443,13 +443,20 @@ func (r Repo) ListOrders(ctx context.Context, orgID int64, q OrderQuery) (orders
 		}
 		rows, err := tx.Query(ctx, `
 			SELECT `+orderCols+`
-			  FROM delegate_orders
-			 WHERE org_id = $1
-			   AND ($2::uuid[] IS NULL OR store_id = ANY($2::uuid[]))
-			   AND ($3 = '' OR state = $3)
-			   AND ($4::bigint IS NULL OR created_at_ms < $4 OR (created_at_ms = $4 AND order_id < $5::uuid))
-			 ORDER BY created_at_ms DESC, order_id DESC
-			 LIMIT $6`, orgID, stores, q.State, q.CursorMS, cursorID, q.Limit+1)
+			  FROM delegate_orders o
+			 WHERE o.org_id = $1
+			   AND ($2::uuid[] IS NULL OR o.store_id = ANY($2::uuid[]))
+			   AND ($3 = '' OR o.state = $3)
+			   AND ($4::bigint IS NULL OR o.created_at_ms < $4 OR (o.created_at_ms = $4 AND o.order_id < $5::uuid))
+			   AND ($7 = '' OR strpos(lower(o.posting_number), lower($7)) > 0 OR EXISTS (
+			       SELECT 1 FROM delegate_order_lines l
+			       JOIN delegate_bindings b ON b.binding_id = l.binding_id AND b.org_id = l.org_id
+			       JOIN sc_sources s ON s.source_id = b.source_id
+			       WHERE l.order_id = o.order_id AND l.org_id = o.org_id
+			         AND strpos(lower(s.name), lower($7)) > 0
+			   ))
+			 ORDER BY o.created_at_ms DESC, o.order_id DESC
+			 LIMIT $6`, orgID, stores, q.State, q.CursorMS, cursorID, q.Limit+1, q.Search)
 		if err != nil {
 			return err
 		}
@@ -476,7 +483,7 @@ func (r Repo) ListOrders(ctx context.Context, orgID int64, q OrderQuery) (orders
 		}
 		if hasNext && len(page) > 0 {
 			last := page[len(page)-1]
-			cursor = domain.EncodeCursor(last.CreatedAtMS, last.OrderID)
+			cursor = contract.EncodeCursor(last.CreatedAtMS, last.OrderID)
 		}
 		return nil
 	})
@@ -528,7 +535,7 @@ func loadOrderActor(ctx context.Context, tx pgx.Tx, orgID, userID int64, canMana
 		         SELECT 1 FROM organization_stores s
 		           JOIN organization_members m ON m.org_id = s.org_id AND m.user_id = $3 AND `+usableMember+`
 		          WHERE s.org_id = o.org_id AND s.uuid = o.store_id AND s.deleted_at_ms IS NULL
-		            AND ($4 OR s.assignee_membership_id = m.id))
+		            AND (($4 AND m.role IN ('owner', 'manager')) OR s.assignee_membership_id = m.id))
 		 LIMIT 1`, orgID, orderID, userID, canManage)
 	head, err := scanHead(row)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -693,6 +700,20 @@ type CreateInput = contract.CreateInput
 func (r Repo) CreateOrder(ctx context.Context, orgID int64, in CreateInput) (contract.Order, error) {
 	var orderID string
 	err := r.writeTx(ctx, orgID, in.NowMS, func(tx pgx.Tx) error {
+		if _, err := visibleStore(ctx, tx, orgID, in.UserID, in.CanManage, in.StoreID); err != nil {
+			return err
+		}
+		var manual, quota bool
+		if err := tx.QueryRow(ctx, `SELECT manual_disabled,quota_suspended FROM organization_stores
+			WHERE org_id=$1 AND uuid=$2::uuid`, orgID, in.StoreID).Scan(&manual, &quota); err != nil {
+			return err
+		}
+		if manual {
+			return contract.Forbidden("店铺已停用，无法使用")
+		}
+		if quota {
+			return contract.Conflict("店铺配额已挂起，无法使用")
+		}
 		var replayed bool
 		var err error
 		orderID, replayed, err = insertOrder(ctx, tx, orgID, in)
@@ -988,16 +1009,9 @@ func releaseSeller(ctx context.Context, tx pgx.Tx, orgID int64, dispatchID strin
 	if amount <= 0 {
 		return contract.Internal()
 	}
-	var owner int64
-	if err := tx.QueryRow(ctx, `SELECT owner_user_id FROM organizations WHERE id = $1`, orgID).Scan(&owner); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.current_wallet_user_id', $1, true)`, strconvFormat(owner)); err != nil {
-		return err
-	}
 	key := "delegate:" + dispatchID
 	note := "委托未发货，冻结退回"
-	if err := walletRelease(ctx, tx, orgID, owner, key, amount, note); err != nil {
+	if err := walletRelease(ctx, tx, orgID, key, amount, note); err != nil {
 		return mapWallet(err)
 	}
 	return nil
@@ -1035,12 +1049,12 @@ func indexOf(s, part string) int {
 	return -1
 }
 
-func walletRelease(ctx context.Context, tx pgx.Tx, orgID, owner int64, key string, amount int64, note string) error {
-	if _, err := tx.Exec(ctx, `INSERT INTO user_wallets (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`, owner); err != nil {
+func walletRelease(ctx context.Context, tx pgx.Tx, orgID int64, key string, amount int64, note string) error {
+	if _, err := tx.Exec(ctx, `INSERT INTO workspace_wallets (org_id) VALUES ($1) ON CONFLICT (org_id) DO NOTHING`, orgID); err != nil {
 		return err
 	}
 	var balance, held int64
-	if err := tx.QueryRow(ctx, `SELECT balance_microfen, held_microfen FROM user_wallets WHERE user_id = $1 FOR UPDATE`, owner).Scan(&balance, &held); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT balance_microfen, held_microfen FROM workspace_wallets WHERE org_id = $1 FOR UPDATE`, orgID).Scan(&balance, &held); err != nil {
 		return err
 	}
 	var settled int
@@ -1081,9 +1095,9 @@ func walletRelease(ctx context.Context, tx pgx.Tx, orgID, owner int64, key strin
 	}
 	after := held - amount
 	tag, err := tx.Exec(ctx, `
-		UPDATE user_wallets
+		UPDATE workspace_wallets
 		   SET balance_microfen = $2, held_microfen = $3, version = version + 1, updated_at = clock_timestamp()
-		 WHERE user_id = (SELECT owner_user_id FROM organizations WHERE id = $1)`, orgID, balance, after)
+		 WHERE org_id = $1`, orgID, balance, after)
 	if err != nil {
 		return err
 	}
@@ -1092,22 +1106,12 @@ func walletRelease(ctx context.Context, tx pgx.Tx, orgID, owner int64, key strin
 	}
 	_, err = tx.Exec(ctx, `
 		INSERT INTO wallet_ledger
-		    (org_id, user_id, entry_type, idempotency_key, amount_microfen, held_delta_microfen,
+		    (org_id, entry_type, idempotency_key, amount_microfen, held_delta_microfen,
 		     balance_before_microfen, balance_after_microfen, held_before_microfen, held_after_microfen,
 		     ai_request_id, payment_order_id, note)
-		VALUES ($1, (SELECT owner_user_id FROM organizations WHERE id = $1),
-		        'release', $2, 0, $3, $4, $4, $5, $6, NULL, NULL, $7)`,
+		VALUES ($1, 'release', $2, 0, $3, $4, $4, $5, $6, NULL, NULL, $7)`,
 		orgID, key, -amount, balance, held, after, note)
 	return err
-}
-
-func strconvFormat(n int64) string {
-	return jsonNumber(n)
-}
-
-func jsonNumber(n int64) string {
-	b, _ := json.Marshal(n)
-	return string(b)
 }
 
 // LoadMerge reads ready offers and open orders for one store.
@@ -1217,19 +1221,4 @@ func (r Repo) PostingStates(ctx context.Context, orgID int64, storeID string, nu
 		return rows.Err()
 	})
 	return out, err
-}
-
-// StorageRevision is the integration singleton revision, or 0 when the row is absent.
-func (r Repo) StorageRevision(ctx context.Context, orgID int64) (int64, bool, error) {
-	var revision int64
-	var ok bool
-	err := r.readTx(ctx, orgID, func(tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `SELECT revision, octet_length(ciphertext) > 0 FROM platform_integration_config WHERE singleton = true`).Scan(&revision, &ok)
-		if errors.Is(err, pgx.ErrNoRows) {
-			revision, ok = 0, false
-			return nil
-		}
-		return err
-	})
-	return revision, ok, err
 }

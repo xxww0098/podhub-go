@@ -122,62 +122,6 @@ func loadStoreLimit(ctx context.Context, tx pgx.Tx, orgID int64) (int64, *contra
 	return limit, nil
 }
 
-// loadSeatState is load_active_seat_state: live lots set the tier and the
-// purchased seats.
-func loadSeatState(ctx context.Context, tx pgx.Tx, orgID int64) (string, int64, error) {
-	if orgID <= 0 {
-		return "lite", 0, nil
-	}
-	rows, err := tx.Query(ctx, `
-		WITH clock AS (SELECT clock_timestamp() AS now)
-		SELECT tier, COALESCE(SUM(seats), 0)::bigint
-		  FROM public.member_seat_lots
-		 CROSS JOIN clock
-		 WHERE org_id = $1 AND starts_at <= clock.now AND expires_at > clock.now
-		 GROUP BY tier`, orgID)
-	if err != nil {
-		return "", 0, err
-	}
-	defer rows.Close()
-	var seats int64
-	var tiers []string
-	for rows.Next() {
-		var tier string
-		var count int64
-		if err := rows.Scan(&tier, &count); err != nil {
-			return "", 0, err
-		}
-		seats += count
-		tiers = append(tiers, tier)
-	}
-	if err := rows.Err(); err != nil {
-		return "", 0, err
-	}
-	return effectiveTier(tiers), seats, nil
-}
-
-// effectiveTier picks the highest live lot. No lot at all is lite.
-func effectiveTier(tiers []string) string {
-	best := "lite"
-	rank := 0
-	for _, tier := range tiers {
-		r := 0
-		switch tier {
-		case "ultra":
-			r = 3
-		case "max":
-			r = 2
-		case "pro":
-			r = 1
-		}
-		if r > rank {
-			rank = r
-			best = tier
-		}
-	}
-	return best
-}
-
 // countEffectiveStores is count_effective_stores: a store occupies a slot only
 // when neither switch is thrown.
 func countEffectiveStores(ctx context.Context, tx pgx.Tx, orgID int64) (int64, error) {

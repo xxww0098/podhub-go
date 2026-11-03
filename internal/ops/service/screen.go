@@ -10,6 +10,7 @@ import (
 
 	"github.com/xxww0098/podhub-go/internal/ops/contract"
 	"github.com/xxww0098/podhub-go/internal/ops/domain"
+	"github.com/xxww0098/podhub-go/internal/platform/uuidx"
 )
 
 // Actor is the workspace session the HTTP layer already resolved.
@@ -26,6 +27,7 @@ type Screen struct {
 	Console        contract.ConsoleRead
 	Refresh        contract.Refresher
 	Seller         contract.Seller
+	PromotionRead  func(context.Context, contract.Secret) contract.PromotionRead
 	Now            func() time.Time
 	HeartbeatEvery time.Duration
 }
@@ -48,7 +50,7 @@ func (s *Screen) fetch(ctx context.Context, lane contract.Lane, secret contract.
 }
 
 func (s *Screen) admit(ctx context.Context, a Actor, storeID string) (contract.Admitted, *contract.Fail) {
-	id, ok := domain.NormalizeUUID(storeID)
+	id, ok := uuidx.StrictUUID(storeID)
 	if !ok {
 		return contract.Admitted{}, &contract.Fail{Status: 404, Code: contract.CodeNotFound, Message: contract.MsgStoreMissing}
 	}
@@ -74,7 +76,7 @@ func decodeFail(err error) *contract.Fail {
 }
 
 func (s *Screen) Shipping(ctx context.Context, a Actor, raw []byte) (json.RawMessage, *contract.Fail) {
-	if f := domain.RequireStoreRead(a.OrgID, a.Role); f != nil {
+	if f := domain.RequireWorkspace(a.OrgID, a.Role); f != nil {
 		return nil, f
 	}
 	req, err := domain.DecodeShipping(raw)
@@ -89,7 +91,7 @@ func (s *Screen) Shipping(ctx context.Context, a Actor, raw []byte) (json.RawMes
 }
 
 func (s *Screen) Returns(ctx context.Context, a Actor, raw []byte) (json.RawMessage, *contract.Fail) {
-	if f := domain.RequireStoreRead(a.OrgID, a.Role); f != nil {
+	if f := domain.RequireWorkspace(a.OrgID, a.Role); f != nil {
 		return nil, f
 	}
 	req, err := domain.DecodeReturns(raw)
@@ -107,7 +109,7 @@ func (s *Screen) Returns(ctx context.Context, a Actor, raw []byte) (json.RawMess
 }
 
 func (s *Screen) Cancellations(ctx context.Context, a Actor, raw []byte) (json.RawMessage, *contract.Fail) {
-	if f := domain.RequireStoreRead(a.OrgID, a.Role); f != nil {
+	if f := domain.RequireWorkspace(a.OrgID, a.Role); f != nil {
 		return nil, f
 	}
 	req, err := domain.DecodeCancel(raw)
@@ -137,7 +139,7 @@ func (s *Screen) Chats(ctx context.Context, a Actor, raw []byte) (json.RawMessag
 }
 
 func (s *Screen) withCursor(ctx context.Context, a Actor, raw []byte, key string, run func(domain.CursorRequest, domain.Fetch) (json.RawMessage, *contract.Fail)) (json.RawMessage, *contract.Fail) {
-	if f := domain.RequireStoreRead(a.OrgID, a.Role); f != nil {
+	if f := domain.RequireWorkspace(a.OrgID, a.Role); f != nil {
 		return nil, f
 	}
 	req, err := domain.DecodeCursor(raw, key)
@@ -152,7 +154,7 @@ func (s *Screen) withCursor(ctx context.Context, a Actor, raw []byte, key string
 }
 
 func (s *Screen) SupplyOrders(ctx context.Context, a Actor, raw []byte) (json.RawMessage, *contract.Fail) {
-	if f := domain.RequireStoreRead(a.OrgID, a.Role); f != nil {
+	if f := domain.RequireWorkspace(a.OrgID, a.Role); f != nil {
 		return nil, f
 	}
 	req, err := domain.DecodeSupplyList(raw)
@@ -171,7 +173,7 @@ func (s *Screen) SupplyOrders(ctx context.Context, a Actor, raw []byte) (json.Ra
 }
 
 func (s *Screen) SupplyStocks(ctx context.Context, a Actor, raw []byte) (json.RawMessage, *contract.Fail) {
-	if f := domain.RequireStoreRead(a.OrgID, a.Role); f != nil {
+	if f := domain.RequireWorkspace(a.OrgID, a.Role); f != nil {
 		return nil, f
 	}
 	store, err := domain.DecodeSupplyStocks(raw)
@@ -193,7 +195,7 @@ func (s *Screen) History(ctx context.Context, a Actor, raw []byte) (json.RawMess
 	if strings.TrimSpace(m[1]) == "" {
 		return nil, contract.Validation("会话身份无效")
 	}
-	if f := domain.RequireStoreRead(a.OrgID, a.Role); f != nil {
+	if f := domain.RequireWorkspace(a.OrgID, a.Role); f != nil {
 		return nil, f
 	}
 	admitted, f := s.admit(ctx, a, m[0])
@@ -217,7 +219,7 @@ func objectStoreChat(raw []byte) ([2]string, error) {
 }
 
 func (s *Screen) Inbox(ctx context.Context, a Actor, raw []byte) (json.RawMessage, *contract.Fail) {
-	if f := domain.RequireStoreRead(a.OrgID, a.Role); f != nil {
+	if f := domain.RequireWorkspace(a.OrgID, a.Role); f != nil {
 		return nil, f
 	}
 	stores, err := domain.DecodeInbox(raw)
@@ -247,7 +249,7 @@ func (s *Screen) Sync(ctx context.Context, a Actor, raw []byte) (json.RawMessage
 }
 
 func (s *Screen) Metrics(ctx context.Context, a Actor, raw []byte) (json.RawMessage, *contract.Fail) {
-	if f := domain.RequireStoreRead(a.OrgID, a.Role); f != nil {
+	if f := domain.RequireWorkspace(a.OrgID, a.Role); f != nil {
 		return nil, f
 	}
 	req, err := domain.DecodeMetrics(raw)
@@ -268,7 +270,7 @@ func (s *Screen) Metrics(ctx context.Context, a Actor, raw []byte) (json.RawMess
 }
 
 func (s *Screen) monitor(ctx context.Context, a Actor, raw []byte, _ bool) (json.RawMessage, *contract.Fail) {
-	if f := domain.RequireStoreRead(a.OrgID, a.Role); f != nil {
+	if f := domain.RequireWorkspace(a.OrgID, a.Role); f != nil {
 		return nil, f
 	}
 	req, err := domain.DecodeMonitor(raw)
@@ -293,7 +295,7 @@ func (s *Screen) monitor(ctx context.Context, a Actor, raw []byte, _ bool) (json
 }
 
 func (s *Screen) Warehouses(ctx context.Context, a Actor, raw []byte) (json.RawMessage, *contract.Fail) {
-	if f := domain.RequireStoreRead(a.OrgID, a.Role); f != nil {
+	if f := domain.RequireWorkspace(a.OrgID, a.Role); f != nil {
 		return nil, f
 	}
 	req, err := domain.DecodeWarehouses(raw)
@@ -308,22 +310,28 @@ func (s *Screen) Warehouses(ctx context.Context, a Actor, raw []byte) (json.RawM
 }
 
 func (s *Screen) Promotions(ctx context.Context, a Actor, raw []byte) (json.RawMessage, *contract.Fail) {
-	req, err := domain.DecodePromotions(raw)
-	if f := decodeFail(err); f != nil {
+	if f := domain.RequireWorkspace(a.OrgID, a.Role); f != nil {
 		return nil, f
 	}
-	ids := domain.PositiveProducts(req.ProductIDs)
-	if len(ids) == 0 {
-		return domain.EmptyPromotions(), nil
+	req, err := domain.DecodePromotions(raw)
+	if err != nil {
+		return nil, contract.Validation("活动读取请求格式无效")
 	}
-	if f := domain.RequireStoreRead(a.OrgID, a.Role); f != nil {
+	if f := domain.ValidatePromotions(req); f != nil {
 		return nil, f
 	}
 	admitted, f := s.admit(ctx, a, req.StoreID)
 	if f != nil {
 		return nil, f
 	}
-	return domain.Promotions(ids, s.fetch(ctx, contract.LaneInteractiveRead, admitted.Secret))
+	return domain.Promotions(req, s.promotionRead(ctx, admitted.Secret))
+}
+
+func (s *Screen) promotionRead(ctx context.Context, secret contract.Secret) contract.PromotionRead {
+	if s.PromotionRead == nil {
+		return nil
+	}
+	return s.PromotionRead(ctx, secret)
 }
 
 func (s *Screen) Mutate(ctx context.Context, a Actor, raw []byte) (json.RawMessage, *contract.Fail) {
@@ -334,7 +342,7 @@ func (s *Screen) Mutate(ctx context.Context, a Actor, raw []byte) (json.RawMessa
 	if f := domain.ValidateMutation(cmd); f != nil {
 		return nil, f
 	}
-	if f := domain.RequireSubmit(a.OrgID, a.Role); f != nil {
+	if f := domain.RequireWorkspace(a.OrgID, a.Role); f != nil {
 		return nil, f
 	}
 	admitted, f := s.admit(ctx, a, cmd.StoreID)
@@ -355,19 +363,36 @@ func (s *Screen) Mutate(ctx context.Context, a Actor, raw []byte) (json.RawMessa
 	}
 	stop := s.beat(ctx, a.OrgID, admitted.StorePK, key)
 	defer stop()
+	promotion := cmd.Kind == "promotion_join" || cmd.Kind == "promotion_leave"
+	var promotionRead contract.PromotionRead
+	if promotion {
+		promotionRead = s.promotionRead(ctx, admitted.Secret)
+		if fail := domain.PreflightPromotion(cmd, promotionRead, s.now()); fail != nil {
+			return s.finish(ctx, a.OrgID, admitted.StorePK, key, hash, nil, fail, false, contract.ResultUnknownProduct, contract.CodeProducts)
+		}
+	}
 	view, fail, unknown := domain.Dispatch(cmd, s.fetch(ctx, contract.LaneInteractiveWrite, admitted.Secret))
+	if promotion && fail == nil && !unknown {
+		if confirmed := domain.ConfirmPromotion(cmd, view, promotionRead); confirmed != nil {
+			view, fail, unknown = nil, confirmed, true
+		}
+	}
 	return s.finish(ctx, a.OrgID, admitted.StorePK, key, hash, view, fail, unknown, contract.ResultUnknownProduct, contract.CodeProducts)
 }
 
 func (s *Screen) Send(ctx context.Context, a Actor, raw []byte) (json.RawMessage, *contract.Fail) {
-	store, chat, text, err := domain.DecodeSend(raw)
+	operation, store, chat, text, err := domain.DecodeSend(raw)
 	if f := decodeFail(err); f != nil {
 		return nil, f
+	}
+	operation, valid := uuidx.StrictUUID(operation)
+	if !valid {
+		return nil, contract.Validation("消息发送缺少有效 operation ID")
 	}
 	if f := domain.ValidateSend(chat, text); f != nil {
 		return nil, f
 	}
-	if f := domain.RequireSubmit(a.OrgID, a.Role); f != nil {
+	if f := domain.RequireWorkspace(a.OrgID, a.Role); f != nil {
 		return nil, f
 	}
 	admitted, f := s.admit(ctx, a, store)
@@ -383,7 +408,7 @@ func (s *Screen) Send(ctx context.Context, a Actor, raw []byte) (json.RawMessage
 	if err != nil {
 		return nil, contract.Validation(err.Error())
 	}
-	key := domain.ChatKey(admitted.UUID, chat, text)
+	key := domain.ChatKey(admitted.UUID, operation)
 	hash := domain.RequestHash(admitted.UUID, stored)
 	row, f := s.begin(ctx, a.OrgID, admitted.StorePK, key, hash, contract.KindChatSend, stored)
 	if f != nil {
@@ -504,7 +529,7 @@ func (s *Screen) beat(ctx context.Context, org, store int64, key string) func() 
 }
 
 func (s *Screen) Snapshot(ctx context.Context, a Actor) (json.RawMessage, *contract.Fail) {
-	if f := domain.RequireStoreRead(a.OrgID, a.Role); f != nil {
+	if f := domain.RequireWorkspace(a.OrgID, a.Role); f != nil {
 		return nil, f
 	}
 	if s.Console == nil {
@@ -539,7 +564,7 @@ func (s *Screen) Snapshot(ctx context.Context, a Actor) (json.RawMessage, *contr
 }
 
 func (s *Screen) RefreshMetrics(ctx context.Context, a Actor) (json.RawMessage, *contract.Fail) {
-	if f := domain.RequireStoreRead(a.OrgID, a.Role); f != nil {
+	if f := domain.RequireWorkspace(a.OrgID, a.Role); f != nil {
 		return nil, f
 	}
 	if s.Console == nil || s.Refresh == nil {
@@ -608,7 +633,7 @@ func cloudStatus(h contract.StoreHead) string {
 }
 
 func (s *Screen) Reconcile(ctx context.Context, a Actor) (json.RawMessage, *contract.Fail) {
-	if f := domain.RequireReconcile(a.OrgID, a.Role); f != nil {
+	if f := domain.RequireWorkspace(a.OrgID, a.Role); f != nil {
 		return nil, f
 	}
 	if s.Console == nil {
@@ -633,18 +658,31 @@ func (s *Screen) Reconcile(ctx context.Context, a Actor) (json.RawMessage, *cont
 		Outcome  string `json:"outcome"`
 		Reason   string `json:"reason"`
 	}
-	var skipped int64
+	var reconciled, conflicted, stillUnknown, skipped int64
 	entries := make([]entry, 0, len(rows))
+	add := func(e entry) {
+		switch e.Outcome {
+		case "reconciled":
+			reconciled++
+		case "conflict":
+			conflicted++
+		case "still_unknown":
+			stillUnknown++
+		default:
+			skipped++
+		}
+		entries = append(entries, e)
+	}
 	for _, row := range rows {
 		admitted, f := s.admit(ctx, a, row.StoreUUID)
 		if f != nil {
-			skipped++
+			add(entry{IntentID: row.ID, RunID: row.Kind + ":" + itoa(row.StorePK), OfferID: row.Key, Outcome: "skipped", Reason: f.Message})
 			continue
 		}
-		kind, summary := domain.Observe(row.Kind, row.Body, s.fetch(ctx, contract.LaneRead, admitted.Secret))
+		kind, summary := domain.Observe(row.Kind, row.Body, s.fetch(ctx, contract.LaneRead, admitted.Secret), s.promotionRead(ctx, admitted.Secret))
 		verdict := domain.Decide(kind, row.Passes, row.LastObservation, summary)
 		if err := s.Console.ApplyProbe(ctx, a.OrgID, row.ID, verdict.State, summary, verdict.Code, summary, domain.ProbeBackoff(row.Passes)); err != nil {
-			entries = append(entries, entry{IntentID: row.ID, RunID: row.Kind + ":" + itoa(row.StorePK), OfferID: row.Key, Outcome: "skipped", Reason: err.Error()})
+			add(entry{IntentID: row.ID, RunID: row.Kind + ":" + itoa(row.StorePK), OfferID: row.Key, Outcome: "skipped", Reason: err.Error()})
 			continue
 		}
 		outcome := "still_unknown"
@@ -654,12 +692,15 @@ func (s *Screen) Reconcile(ctx context.Context, a Actor) (json.RawMessage, *cont
 		case "conflict":
 			outcome = "conflict"
 		}
-		entries = append(entries, entry{IntentID: row.ID, RunID: row.Kind + ":" + itoa(row.StorePK), OfferID: row.Key, Outcome: outcome, Reason: summary})
+		add(entry{IntentID: row.ID, RunID: row.Kind + ":" + itoa(row.StorePK), OfferID: row.Key, Outcome: outcome, Reason: summary})
 	}
 	raw, _ := json.Marshal(struct {
-		Skipped int64   `json:"skipped"`
-		Entries []entry `json:"entries"`
-	}{Skipped: skipped, Entries: entries})
+		Reconciled   int64   `json:"reconciled"`
+		Conflicted   int64   `json:"conflicted"`
+		StillUnknown int64   `json:"still_unknown"`
+		Skipped      int64   `json:"skipped"`
+		Entries      []entry `json:"entries"`
+	}{Reconciled: reconciled, Conflicted: conflicted, StillUnknown: stillUnknown, Skipped: skipped, Entries: entries})
 	return envelope(raw), nil
 }
 

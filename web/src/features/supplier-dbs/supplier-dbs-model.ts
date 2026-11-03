@@ -56,7 +56,7 @@ export type SupplierDbsState = {
 
 /** `reason` is the raw host reject, so a caller can hand it to `notifyCommandError`. */
 export type MutationResult<T> =
-  | { ok: true; value: T; initialPassword?: string }
+  | { ok: true; value: T }
   | { ok: false; issues: FieldIssue[]; reason?: unknown }
 
 export type FieldIssue = { field: string; message: string }
@@ -74,8 +74,7 @@ export type SupplierDbDraft = {
   /** 接受委托生产 (ADR-0100)：编辑表单开关；缺省不写入。 */
   acceptsDelegate?: boolean
   template?: string | null
-  /** 厂家登录邮箱。创建必填；编辑时换绑，和当前一样则不提交。 */
-  accountEmail?: string
+  factoryId?: string
 }
 
 export const EMPTY_DB_DRAFT: SupplierDbDraft = {
@@ -85,7 +84,6 @@ export const EMPTY_DB_DRAFT: SupplierDbDraft = {
   internalNote: "",
   listed: true,
   icon: "",
-  accountEmail: "",
 }
 
 /** A blank 行 = 新商品; the server fills ids/revision. */
@@ -233,6 +231,8 @@ export type SupplierDbsStore = {
     propId: string,
   ) => Promise<MutationResult<SupplierDbPropDeleteResult>>
   createRow: (sourceId: string, initial?: Partial<Pick<UpsertSupplierDbRowRequest, "title" | "size" | "variantGroup" | "descriptionCategoryId" | "typeId">>) => Promise<MutationResult<SupplierDbRow>>
+  createVariant: (sourceId: string, productId: string, initial: Partial<UpsertSupplierDbRowRequest> & { size: string }) => Promise<MutationResult<DuplicatedRow>>
+  syncProductOzon: (sourceId: string, productId: string) => Promise<MutationResult<void>>
   updateRow: (
     sourceId: string,
     productId: string,

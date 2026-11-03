@@ -9,6 +9,8 @@ import (
 
 	"github.com/xxww0098/podhub-go/internal/admin/contract"
 	"github.com/xxww0098/podhub-go/internal/admin/domain"
+	"github.com/xxww0098/podhub-go/internal/platform/db"
+	"github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
 )
 
 func scanPrice(row pgx.Row) (domain.PriceRow, error) {
@@ -28,21 +30,24 @@ ORDER BY model`
 
 // CurrentPrices lists prices already in effect.
 func (s *Store) CurrentPrices(ctx context.Context) ([]domain.PriceRow, *contract.Fault) {
-	rows, err := s.pool.Query(ctx, priceSelect)
+	out := []domain.PriceRow{}
+	err := db.InTx(ctx, s.pool, db.AppRole(), func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, priceSelect)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			p, err := scanPrice(rows)
+			if err != nil {
+				return err
+			}
+			out = append(out, p)
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		return nil, dbFault(err)
-	}
-	defer rows.Close()
-	var out []domain.PriceRow
-	for rows.Next() {
-		p, err := scanPrice(rows)
-		if err != nil {
-			return nil, dbFault(err)
-		}
-		out = append(out, p)
-	}
-	if out == nil {
-		out = []domain.PriceRow{}
 	}
 	return out, nil
 }
@@ -55,6 +60,9 @@ func (s *Store) PublishPrice(ctx context.Context, actor domain.Actor, model stri
 	}
 	defer tx.Rollback(ctx)
 	defer endLease(tx)
+	if err := tenantx.EnterAppRole(ctx, tx); err != nil {
+		return nil, dbFault(err)
+	}
 	var id int64
 	err = tx.QueryRow(ctx, `
 INSERT INTO ai_price_schedules
@@ -96,11 +104,16 @@ RETURNING id`, model, price.BillingMode, price.Input, price.Cached, price.Output
 
 // UnpublishPrice deletes one model after the caller has checked the default OCR model.
 func (s *Store) UnpublishPrice(ctx context.Context, actor domain.Actor, model string) (bool, []domain.PriceRow, *contract.Fault) {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM ai_price_schedules WHERE model = $1`, model)
+	var removed bool
+	err := db.InTx(ctx, s.pool, db.AppRole(), func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `DELETE FROM ai_price_schedules WHERE model = $1`, model)
+		removed = tag.RowsAffected() > 0
+		return err
+	})
 	if err != nil {
 		return false, nil, dbFault(err)
 	}
-	if tag.RowsAffected() == 0 {
+	if !removed {
 		return false, nil, nil
 	}
 	msg := jsonText(struct {
@@ -119,10 +132,12 @@ func (s *Store) UnpublishPrice(ctx context.Context, actor domain.Actor, model st
 // LoadConfig reads the singleton ciphertext. Found is false when the table is empty.
 func (s *Store) LoadConfig(ctx context.Context) (domain.ConfigBlob, *contract.Fault) {
 	var blob domain.ConfigBlob
-	err := s.pool.QueryRow(ctx, `
+	err := db.InTx(ctx, s.pool, db.AppRole(), func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
 SELECT revision, nonce, ciphertext
 FROM public.platform_integration_config
 WHERE singleton = true`).Scan(&blob.Revision, &blob.Nonce, &blob.Ciphertext)
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.ConfigBlob{}, nil
@@ -139,10 +154,13 @@ func (s *Store) RewriteSnapshot(ctx context.Context, revision int64, nonce, ciph
 	if s == nil || s.pool == nil {
 		return contract.Internal("服务暂不可用")
 	}
-	_, err := s.pool.Exec(ctx, `
+	err := db.InTx(ctx, s.pool, db.AppRole(), func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
 UPDATE public.platform_integration_config
 SET nonce = $2, ciphertext = $3
 WHERE singleton = true AND revision = $1`, revision, nonce, cipher)
+		return err
+	})
 	if err != nil {
 		return dbFault(err)
 	}
@@ -150,7 +168,7 @@ WHERE singleton = true AND revision = $1`, revision, nonce, cipher)
 }
 
 // SaveConfig CAS-inserts the snapshot inside the admin writer gate.
-func (s *Store) SaveConfig(ctx context.Context, actor domain.Actor, expected, next int64, nonce, cipher []byte, aiCount int, bucketRoles []string) *contract.Fault {
+func (s *Store) SaveConfig(ctx context.Context, actor domain.Actor, expected, next int64, nonce, cipher []byte, aiCount int) *contract.Fault {
 	return s.withGate(ctx, "admin", "平台连接配置写入未启用", func(ctx context.Context, tx pgx.Tx) error {
 		var revision int64
 		err := tx.QueryRow(ctx, `
@@ -176,11 +194,10 @@ RETURNING revision`, expected, next, nonce, cipher, s.Now().UnixMilli(), actor.P
 			return err
 		}
 		msg := jsonText(struct {
-			Summary     string   `json:"summary"`
-			AICount     int      `json:"aiCount"`
-			BucketRoles []string `json:"bucketRoles"`
-			Revision    int64    `json:"revision"`
-		}{"更新平台 AI/存储桶连接配置", aiCount, bucketRoles, revision})
+			Summary  string `json:"summary"`
+			AICount  int    `json:"aiCount"`
+			Revision int64  `json:"revision"`
+		}{"更新平台 AI 连接配置", aiCount, revision})
 		return writeAudit(ctx, tx, auditRow{
 			OrgID: orgFloor(actor.OrgID), UserID: actor.ID, Module: "admin",
 			EntityType: "platform_integration_config", EntityID: "singleton",

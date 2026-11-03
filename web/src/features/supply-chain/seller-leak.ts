@@ -74,10 +74,10 @@ export function sellerLeakKeys(value: unknown): string[] {
 }
 
 export function sellerLeakPhrases(text: string): string[] {
-  // 「平台货源」 is the seller-facing name of the new domain (docs/supplier-dbs.md
+  // 「平台商品库」 is the seller-facing name of the new domain (docs/supplier-dbs.md
   // §7.1 rail group); the bare 「供应商」 phrase guards the retired channel
   // catalog's vocabulary, so the legitimate term leaves the text first.
-  const stripped = text.replace(/平台货源/g, "")
+  const stripped = text.replace(/平台商品库/g, "")
   return FORBIDDEN_SELLER_PHRASES.filter((phrase) => stripped.includes(phrase))
 }
 

@@ -103,8 +103,19 @@ func (r Repo) UpdateRow(ctx context.Context, userID int64, sourceID, productID s
 			return err
 		}
 		var skuID string
-		if err := tx.QueryRow(ctx, `SELECT sku_id FROM public.sc_skus WHERE product_id = $1`, productID).Scan(&skuID); err != nil {
+		var published bool
+		if err := tx.QueryRow(ctx, `SELECT s.sku_id, p.published FROM public.sc_skus s
+			JOIN public.sc_products p ON p.product_id=s.product_id
+			WHERE p.product_id=$1 AND p.source_id=$2 FOR UPDATE OF p`, productID, sourceID).Scan(&skuID, &published); err != nil {
 			return constraint(err)
+		}
+		if published && !in.Archived && len(itemsGallery(in.Gallery)) == 0 {
+			return contract.ValidationMissing("已发布规格需保留图集图片，请先停用再清空", []string{"gallery"})
+		}
+		if published && in.Archived {
+			if err := requireSuperAdmin(ctx, tx, userID); err != nil {
+				return err
+			}
 		}
 		tag, err := tx.Exec(ctx, `
 			UPDATE public.sc_products
@@ -172,6 +183,16 @@ func (r Repo) SetPublished(ctx context.Context, userID int64, sourceID, productI
 		if err := r.requireManaged(ctx, tx, userID, sourceID); err != nil {
 			return err
 		}
+		if err := requireSuperAdmin(ctx, tx, userID); err != nil {
+			return err
+		}
+		// Serialize readiness checks with row edits and archival, then read the
+		// current state after any preceding mutation has committed.
+		var lockedProduct string
+		if err := tx.QueryRow(ctx, `SELECT product_id FROM public.sc_products
+			WHERE product_id = $1 AND source_id = $2 FOR UPDATE`, productID, sourceID).Scan(&lockedProduct); err != nil {
+			return constraint(err)
+		}
 		cur, err := loadRow(ctx, tx, sourceID, productID)
 		if err != nil {
 			return err
@@ -180,7 +201,11 @@ func (r Repo) SetPublished(ctx context.Context, userID int64, sourceID, productI
 			if cur.Archived {
 				return contract.Validation("归档商品不能上架")
 			}
-			if missing := contract.MissingKeys(cur.Readiness); len(missing) > 0 {
+			missing := contract.MissingKeys(cur.Readiness)
+			if len(cur.Gallery) == 0 {
+				missing = append(missing, "gallery")
+			}
+			if len(missing) > 0 {
 				return contract.ValidationMissing("商品尚未满足上架条件", missing)
 			}
 		}
@@ -219,8 +244,16 @@ func (r Repo) DeleteRow(ctx context.Context, userID int64, sourceID, productID s
 			return err
 		}
 		var skuID string
-		if err := tx.QueryRow(ctx, `SELECT sku_id FROM public.sc_skus WHERE product_id = $1`, productID).Scan(&skuID); err != nil {
+		var published bool
+		if err := tx.QueryRow(ctx, `SELECT s.sku_id, p.published FROM public.sc_skus s
+			JOIN public.sc_products p ON p.product_id = s.product_id
+			WHERE p.product_id = $1 AND p.source_id = $2 FOR UPDATE OF p`, productID, sourceID).Scan(&skuID, &published); err != nil {
 			return constraint(err)
+		}
+		if published {
+			if err := requireSuperAdmin(ctx, tx, userID); err != nil {
+				return err
+			}
 		}
 		// A delete does not take a revision: the caller may not have a fresh
 		// one, and archiving an unchanged row is still the correct answer. The

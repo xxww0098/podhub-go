@@ -1,5 +1,9 @@
 # H1 出站加固
 
+本文记录 2026-10-17 的 H1 回环出口加固。后续显式官方 Seller 传输有独立授权与路径白名单，见 [Ozon 出站连接](../architecture/ozon-egress-connection.md)；不能从本页推导当前进程从不拨官方地址。
+
+2026-10-29 委托读取已改为 `delegateEdge` → `SellerReadCall` 的受控只读出口，支持固定官方目标；旧回环专用函数已删除。当前委托同步、故障与验证边界见 [delegate 对拍](delegate-parity.md)，下文的回环限制和 3xx 状态描述保留为当时的验收记录。
+
 R4 第 5 项。用户在 2026-10-17 回复「好」，授权实现。不改 AGPL / LICENSE、切换计划和员工 GUC。不改迁移。`OZON_WRITE_KILL_SWITCH` 与 `CLOUD_MEDIA_GC_DELETE` 的解析函数没有动，仍只有 `internal/platform/config` 一处。
 
 合法回环 mock 返回 2xx 时，请求字节、响应字节、状态机和重试语义不变。收掉的是三条缝：跟随 307/308、走 `HTTP_PROXY` / `HTTPS_PROXY`、拨号目标不是回环。
@@ -8,9 +12,9 @@ R4 第 5 项。用户在 2026-10-17 回复「好」，授权实现。不改 AGPL
 
 1. **受限出站客户端** `httpx.Restricted` / `httpx.RestrictedClient`。`Transport.Proxy` 为 nil，不读环境代理。`CheckRedirect` 返回 `http.ErrUseLastResponse`，调用方仍拿到 3xx 的状态和正文，下一个地址不会被请求。拨号前拒绝非回环主机；连上之后若对端地址不是回环，关掉连接并返回 `ErrNotLoopback`。拨号超时 30 秒，与原来的默认传输相同。
 
-   改用它的路径：Seller `Egress`、AI `HTTPUpstream`（`internal/ai/http/relay.go`）、已接受扫描 `postInfoList`、委托 Seller 读 `postDelegateSeller`。这四处不再使用 `httpx.Plain()`。
+   改用它的路径：Seller `Egress`、AI `HTTPUpstream`（`internal/ai/http/relay.go`）、已接受扫描 `postInfoList`、委托 Seller 读（现为 `delegateEdge` → `SellerReadCall`）。这四处不再使用 `httpx.Plain()`。
 
-2. **AI 模型探测默认不拨公网。** 新开关 `CLOUD_AI_EGRESS_ALLOW_PUBLIC` 只在 `config.Load` 解析，只有去掉空白后正好是 `1` 才打开，未设置和其它值都是关。关闭时，公网 IP、公网主机名和私网 IP 都在拨号前返回与「回环未被允许」相同的 `dns refused`（`Fetch` 的第三个返回值仍为 true）。服务层因此仍是 `400 VALIDATION`，正文「接口地址不是允许的公网 https 端点」。不解析公网主机名，也不对它拨号。`CLOUD_AI_EGRESS_ALLOW_LOOPBACK=1` 时，回环 mock 仍可探测。两个开关都不走 `isTruthy`，不碰杀开关和删除开关。
+2. **AI 模型探测默认不拨公网。** 开关是管理端「AI 账号」页的「允许探测公网端点」（加密连接配置快照里的 `aiRuntime.allowPublicEgress`，接口字段 `ai_runtime.allow_public_egress`），不再是环境变量。每次探测时由 `internal/admin/service/probe.go` 读快照：没有配置行就是关，配置行无法读取或解密则探测以 503 `RELAY_UNAVAILABLE` 失败。`Fetch` 带着这个布尔值，客户端按「回环开关（仍是 `CLOUD_AI_EGRESS_ALLOW_LOOPBACK`，只在 `config.Load` 解析）× 公网开关」选一个进程级客户端，拨号钉死逻辑不变。关闭时，公网 IP、公网主机名和私网 IP 都在拨号前返回与「回环未被允许」相同的 `dns refused`（`Fetch` 的第三个返回值仍为 true）。服务层因此仍是 `400 VALIDATION`，正文「接口地址不是允许的公网 https 端点」。不解析公网主机名，也不对它拨号。`CLOUD_AI_EGRESS_ALLOW_LOOPBACK=1` 时，回环 mock 仍可探测。回环开关不走 `isTruthy`；公网开关是快照里的布尔值，两者都不碰杀开关和删除开关。
 
 3. **`CLOUD_SELLER_BASE_URL` 并入 `config.Load`。** `Config.SellerBaseURL()` 是去掉空白后的原文字符串，只在 `Load` 时读一次。`seller/domain.ResolveBaseURL` 仍按原来的回环规则处理：不是 `http` + 回环 + 显式端口 + 路径 `/` + 无用户信息、查询和片段，就换成 `https://api-seller.ozon.ru`，随后拒绝拨号。`Egress`、已接受扫描和委托读都用这次捕获的值，不再各自 `os.Getenv`。
 
@@ -25,7 +29,7 @@ R4 第 5 项。用户在 2026-10-17 回复「好」，授权实现。不改 AGPL
 | AI 探测 | 默认拒绝公网。回环仍要 `CLOUD_AI_EGRESS_ALLOW_LOOPBACK=1` | 已有回环用例仍返回模型列表字节，302 仍不跟随。公网拒绝与回环被拒绝是同一个 `dns refused`，服务层句子不变 |
 | `CLOUD_SELLER_BASE_URL` | 读取点从每次调用改到 `Load` | 同一个字符串的接受或替换结果不变。非回环仍是官方域且不拨号。进程起来之后再改环境变量不会改已经捕获的值，与杀开关相同 |
 
-不在本次：对象存储删除、RelayKit 许可、影子流量、员工 GUC、写租约。
+不在本次：对象存储删除、影子流量、员工 GUC、写租约。
 
 ## 如何验证
 
@@ -35,7 +39,7 @@ R4 第 5 项。用户在 2026-10-17 回复「好」，授权实现。不改 AGPL
 gofmt -l internal/platform/httpx internal/platform/config internal/seller internal/ai/http internal/app internal/admin tests/archtest
 go test -count=1 -timeout 120s \
   ./internal/platform/httpx/ ./internal/platform/config/ \
-  ./internal/seller/ ./internal/seller/domain/ \
+  ./internal/seller/ozon/ ./internal/seller/ozon/domain/ \
   ./internal/ai/http/ ./internal/app/scans/ ./internal/app/ \
   ./internal/admin/http/ ./internal/admin/service/ ./tests/archtest/
 ```
@@ -49,12 +53,12 @@ go test -count=1 -timeout 120s \
 - 回环 mock 返回 307 和 308，`Location` 指向第二个回环 mock。第二个 mock 的请求数是 0，没有 `Client-Id` / `Api-Key` / `Authorization`。
 - `HTTP_PROXY` 指向计数 mock。控制请求（传输上显式设置该代理，目标 `http://example.com`，代理自己返回 599，不转发出去）计 1。随后的 Seller / AI / 扫描 / 委托请求不再增加。
 - 杀开关为 `1` 时 `Write` 是 `ErrWritesDisabled` 且写计数为 0；`Read` 和 `Forward` 的状态与正文等于旧默认客户端对同一 200 mock 的输出。
-- 未设置 `CLOUD_AI_EGRESS_ALLOW_PUBLIC` 时，`Fetch("https://1.2.3.4/models")`、`Fetch("https://example.com/models")`、`Fetch("https://10.1.1.1/models")` 与「回环开关关闭时的回环 URL」一样，`dns refused` 为 true，且回环服务器没有收到连接。
-- `CLOUD_AI_EGRESS_ALLOW_PUBLIC=1` 不改变杀开关和删除开关。`1` 以外的值保持关闭。
+- 快照里公网开关为关（或没有配置行）时，`Fetch("https://1.2.3.4/models")`、`Fetch("https://example.com/models")`、`Fetch("https://10.1.1.1/models")` 与「回环开关关闭时的回环 URL」一样，`dns refused` 为 true，且回环服务器没有收到连接。
+- 公网开关打开不改变杀开关和删除开关。`TestProbePublicDialFollowsStoredSwitch` 断言：无配置行、存储为关、存储为开三种情况下，传给 `Fetch` 的布尔值分别是 false、false、true。
 - 非回环的 `CLOUD_SELLER_BASE_URL` 仍解析成官方域；`Load` 之后再改环境变量，已捕获的值不变。
 
 ## 需要用户决定
 
-1. 公网模型探测何时打开。本 PR 默认关。要探测真实供应商时把 `CLOUD_AI_EGRESS_ALLOW_PUBLIC` 设为 `1`。不设则管理端「验证供应商」对公网 URL 失败，错误句与原来的拒绝相同。
-2. 该开关目前只认 `1`，与 `CLOUD_AI_EGRESS_ALLOW_LOOPBACK` 相同，不用杀开关的 `1/true/yes/on`。若要改成那一套，需要另说；本 PR 不改那两个受保护开关的解析。
+1. 公网模型探测何时打开。默认关。要探测真实供应商时，在管理端「AI 账号」页打开「允许探测公网端点」并保存。关着则管理端「验证供应商」对公网 URL 失败，错误句与原来的拒绝相同。
+2. 回环开关 `CLOUD_AI_EGRESS_ALLOW_LOOPBACK` 只认 `1`，不用杀开关的 `1/true/yes/on`，本地测试专用，仍留在环境变量。本 PR 不改那两个受保护开关的解析。
 3. 委托 Seller 读不再跟随「仍在回环上」的 307/308，改为原来的连接失败。若某个回环 mock 依赖这种跳转才能返回 200，需要明确说；Ozon 正式读路径不依赖它。Seller 代理、AI 补全和已接受扫描则把 3xx 状态交回调用方，不把跳转正文当成 200。

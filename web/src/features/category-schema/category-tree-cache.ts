@@ -1,6 +1,6 @@
 import type { CategoryTreeNodeView } from "@/bindings/commands"
 
-const STORAGE_KEY = "podhub.workflow.category-tree.v1"
+const STORAGE_KEY = "podhub.workflow.category-tree.v2"
 const LANGUAGE = "zh_hans"
 
 /**
@@ -51,6 +51,8 @@ function isCached(value: unknown): value is CachedCategoryTree {
 export function readCategoryTreeCache(): CategoryTreeNodeView[] | null {
   if (typeof window === "undefined") return null
   try {
+    // The old projection lost category branches; discard it instead of serving it for 24h.
+    window.localStorage.removeItem("podhub.workflow.category-tree.v1")
     const raw = window.localStorage.getItem(STORAGE_KEY)
     if (!raw) return null
     const parsed: unknown = JSON.parse(raw)

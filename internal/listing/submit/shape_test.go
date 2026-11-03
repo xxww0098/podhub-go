@@ -3,14 +3,14 @@ package submit
 import "testing"
 
 func TestParseInfoList(t *testing.T) {
-	items, ok := parseInfoList(200, `{"items":[{"id":9,"offer_id":"a","sources":[{"sku":0},{"sku":4}]}]}`, nil)
+	items, ok := parseInfoList(200, `{"items":[{"id":9,"offer_id":"a","sources":[{"sku":0},{"sku":4}]}]}`, nil, []string{"a"})
 	if !ok || len(items) != 1 || items[0].ProductID != 9 || items[0].OfferID != "a" || items[0].SKU != 4 {
 		t.Fatalf("%+v %v", items, ok)
 	}
-	if _, ok := parseInfoList(500, `{"items":[]}`, nil); ok {
+	if _, ok := parseInfoList(500, `{"items":[]}`, nil, []string{"a"}); ok {
 		t.Fatal("non-2xx is unreadable")
 	}
-	if _, ok := parseInfoList(200, `{`, nil); ok {
+	if _, ok := parseInfoList(200, `{`, nil, []string{"a"}); ok {
 		t.Fatal("bad json is unreadable")
 	}
 }

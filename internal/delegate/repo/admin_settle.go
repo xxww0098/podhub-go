@@ -115,26 +115,11 @@ SELECT (SELECT COUNT(*) FROM target)::bigint,
 	return cents, micro, breakdown, err
 }
 
-func walletOwner(ctx context.Context, tx pgx.Tx, orgID int64) (int64, error) {
-	var userID int64
-	if err := tx.QueryRow(ctx, `SELECT owner_user_id FROM organizations WHERE id = $1`, orgID).Scan(&userID); err != nil {
-		return 0, mapDB(err)
-	}
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.current_wallet_user_id', $1, true)`, itoa(userID)); err != nil {
-		return 0, mapDB(err)
-	}
-	if _, err := tx.Exec(ctx, `INSERT INTO user_wallets (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`, userID); err != nil {
-		return 0, mapDB(err)
-	}
-	return userID, nil
-}
-
 func lockWallet(ctx context.Context, tx pgx.Tx, orgID int64) (balance, held int64, err error) {
-	userID, err := walletOwner(ctx, tx, orgID)
-	if err != nil {
-		return 0, 0, err
+	if _, err := tx.Exec(ctx, `INSERT INTO workspace_wallets (org_id) VALUES ($1) ON CONFLICT (org_id) DO NOTHING`, orgID); err != nil {
+		return 0, 0, mapDB(err)
 	}
-	err = tx.QueryRow(ctx, `SELECT balance_microfen, held_microfen FROM user_wallets WHERE user_id = $1 FOR UPDATE`, userID).Scan(&balance, &held)
+	err = tx.QueryRow(ctx, `SELECT balance_microfen, held_microfen FROM workspace_wallets WHERE org_id = $1 FOR UPDATE`, orgID).Scan(&balance, &held)
 	if err != nil {
 		return 0, 0, mapDB(err)
 	}
@@ -216,8 +201,8 @@ func settleSeller(ctx context.Context, tx pgx.Tx, orgID int64, key string, amoun
 
 func applyLedger(ctx context.Context, tx pgx.Tx, orgID int64, entry, key string, amount, heldDelta, balBefore, heldBefore, balAfter, heldAfter int64, note string) error {
 	tag, err := tx.Exec(ctx, `
-		UPDATE user_wallets SET balance_microfen = $2, held_microfen = $3, version = version + 1, updated_at = clock_timestamp()
-		WHERE user_id = (SELECT owner_user_id FROM organizations WHERE id = $1)`, orgID, balAfter, heldAfter)
+		UPDATE workspace_wallets SET balance_microfen = $2, held_microfen = $3, version = version + 1, updated_at = clock_timestamp()
+		WHERE org_id = $1`, orgID, balAfter, heldAfter)
 	if err != nil {
 		return mapDB(err)
 	}
@@ -226,11 +211,10 @@ func applyLedger(ctx context.Context, tx pgx.Tx, orgID int64, entry, key string,
 	}
 	_, err = tx.Exec(ctx, `
 		INSERT INTO wallet_ledger
-		    (org_id, user_id, entry_type, idempotency_key, amount_microfen, held_delta_microfen,
+		    (org_id, entry_type, idempotency_key, amount_microfen, held_delta_microfen,
 		     balance_before_microfen, balance_after_microfen, held_before_microfen, held_after_microfen,
 		     ai_request_id, payment_order_id, note)
-		VALUES ($1, (SELECT owner_user_id FROM organizations WHERE id = $1),
-		        $2, $3, $4, $5, $6, $7, $8, $9, NULL, NULL, $10)`,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULL, NULL, $10)`,
 		orgID, entry, key, amount, heldDelta, balBefore, balAfter, heldBefore, heldAfter, note)
 	return mapDB(err)
 }

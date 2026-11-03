@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/xxww0098/podhub-go/internal/media/contract"
 
 	"github.com/xxww0098/podhub-go/internal/media/domain/storageregistry"
 )
@@ -74,7 +75,7 @@ func (r Registry) Lookup(ctx context.Context, claim storageregistry.Claim) ([]st
 			 WHERE bucket_identity = $1 AND dedupe_scope = $2
 			   AND sha256 = $3::bytea AND extension = $4
 			 ORDER BY created_at`,
-			claim.BucketIdentity, claim.DedupeScope, claim.SHA256Hex, claim.Extension)
+			claim.BucketIdentity, claim.DedupeScope, contract.DigestBytes(claim.SHA256Hex), claim.Extension)
 		if err != nil {
 			return mapErr(err)
 		}
@@ -150,7 +151,7 @@ func (r Registry) BeginUpload(ctx context.Context, row storageregistry.Upload) (
 			RETURNING id::text`,
 			row.ActorID, orgID(row.OrgID), string(row.PurposeKind), row.PurposeID,
 			string(row.Bucket), row.BucketIdentity, row.ObjectKey, row.DedupeScope,
-			row.SHA256Hex, row.ByteLength, row.ContentType, string(row.Extension),
+			contract.DigestBytes(row.SHA256Hex), row.ByteLength, row.ContentType, string(row.Extension),
 			row.MultipartID, row.ExpiresAt.UTC(),
 		).Scan(&id)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -170,7 +171,7 @@ func (r Registry) BeginUpload(ctx context.Context, row storageregistry.Upload) (
 	return id, nil
 }
 
-// Upload reads one pending upload for this actor and org. Another org's row is
+// Upload reads one upload for this actor and org. Another org's row is
 // indistinguishable from a missing one.
 func (r Registry) Upload(ctx context.Context, uploadID string, actorID, orgID int64) (storageregistry.Upload, error) {
 	var out storageregistry.Upload
@@ -202,8 +203,8 @@ func (r Registry) Upload(ctx context.Context, uploadID string, actorID, orgID in
 }
 
 // Confirm inserts or reuses the registry row and marks the upload confirmed.
-// The upload row is locked first, so two confirms of the same upload cannot
-// both insert.
+// The key fence and row locks keep expiry, reuse, and concurrent retries in
+// the same transaction; a confirmed retry must still name the same live object.
 func (r Registry) Confirm(ctx context.Context, uploadID string, decision storageregistry.ConfirmDecision) (string, error) {
 	var objectID string
 	err := r.withTx(ctx, 0, func(tx pgx.Tx) error {
@@ -212,55 +213,82 @@ func (r Registry) Confirm(ctx context.Context, uploadID string, decision storage
 			return mapErr(err)
 		}
 		var orgID *int64
-		var state string
+		var state, confirmedObject string
+		var unexpired bool
 		err := tx.QueryRow(ctx, `
-			SELECT org_id, state FROM public.storage_uploads
-			 WHERE id = $1::uuid FOR UPDATE`, uploadID).Scan(&orgID, &state)
+			SELECT org_id, state, expires_at > clock_timestamp(), COALESCE(object_id::text, '')
+			  FROM public.storage_uploads
+			 WHERE id = $1::uuid FOR UPDATE`, uploadID).Scan(&orgID, &state, &unexpired, &confirmedObject)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return storageregistry.ErrState
 		}
 		if err != nil {
 			return mapErr(err)
 		}
-		if state != string(storageregistry.UploadPending) {
+		if state != string(storageregistry.UploadPending) && state != string(storageregistry.UploadConfirmed) {
 			return storageregistry.ErrState
 		}
-		if decision.Reuse {
-			if _, err := tx.Exec(ctx, `
-				UPDATE public.storage_uploads
-				   SET state = 'confirmed', confirmed_at = clock_timestamp(), object_id = $2::uuid
-				 WHERE id = $1::uuid AND state = 'pending'`, uploadID, decision.ObjectID); err != nil {
-				return mapErr(err)
-			}
-			objectID = decision.ObjectID
-			return nil
+		if !unexpired {
+			return storageregistry.ErrExpired
 		}
-		err = tx.QueryRow(ctx, `
+		if decision.Reuse {
+			objectID = decision.ObjectID
+		} else if state == string(storageregistry.UploadConfirmed) {
+			objectID = confirmedObject
+		} else {
+			err = tx.QueryRow(ctx, `
 			INSERT INTO public.storage_objects
 			    (bucket, bucket_identity, object_key, dedupe_scope, owner_org_id,
 			     sha256, byte_length, content_type, extension, state)
 			VALUES ($1, $2, $3, $4, $5, $6::bytea, $7, $8, $9, 'live')
 			ON CONFLICT (bucket_identity, dedupe_scope, sha256, extension) DO NOTHING
 			RETURNING id::text`,
-			claim.Bucket, claim.BucketIdentity, claim.ObjectKey, claim.DedupeScope,
-			orgID, claim.SHA256Hex, claim.ByteLength, claim.ContentType, claim.Extension).Scan(&objectID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			// A concurrent confirm inserted the same content first. The
-			// unique constraint is the arbiter; read the winner back.
-			err = tx.QueryRow(ctx, `
+				claim.Bucket, claim.BucketIdentity, claim.ObjectKey, claim.DedupeScope,
+				orgID, contract.DigestBytes(claim.SHA256Hex), claim.ByteLength, claim.ContentType, claim.Extension).Scan(&objectID)
+			if errors.Is(err, pgx.ErrNoRows) {
+				// A concurrent confirm inserted the same content first. The
+				// unique constraint is the arbiter; read the winner back.
+				err = tx.QueryRow(ctx, `
 				SELECT id::text FROM public.storage_objects
 				 WHERE bucket_identity = $1 AND dedupe_scope = $2
 				   AND sha256 = $3::bytea AND extension = $4`,
-				claim.BucketIdentity, claim.DedupeScope, claim.SHA256Hex, claim.Extension).Scan(&objectID)
+					claim.BucketIdentity, claim.DedupeScope, contract.DigestBytes(claim.SHA256Hex), claim.Extension).Scan(&objectID)
+			}
+			if err != nil {
+				return mapErr(err)
+			}
+		}
+		var object storageregistry.Object
+		err = tx.QueryRow(ctx, `SELECT `+objectColumns+` FROM public.storage_objects WHERE id=$1::uuid FOR SHARE`, objectID).Scan(
+			&object.ID, &object.Bucket, &object.BucketIdentity, &object.ObjectKey, &object.DedupeScope,
+			&object.SHA256Hex, &object.ByteLength, &object.ContentType, &object.Extension, &object.State)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return storageregistry.ErrNotLive
 		}
 		if err != nil {
 			return mapErr(err)
 		}
-		if _, err := tx.Exec(ctx, `
+		if object.State != storageregistry.StateLive {
+			return storageregistry.ErrNotLive
+		}
+		if !object.SameKey(claim) {
+			return storageregistry.ErrConflict
+		}
+		if state == string(storageregistry.UploadConfirmed) {
+			if confirmedObject != objectID {
+				return storageregistry.ErrConflict
+			}
+			return nil
+		}
+		tag, err := tx.Exec(ctx, `
 			UPDATE public.storage_uploads
 			   SET state = 'confirmed', confirmed_at = clock_timestamp(), object_id = $2::uuid
-			 WHERE id = $1::uuid AND state = 'pending'`, uploadID, objectID); err != nil {
+			 WHERE id = $1::uuid AND state = 'pending' AND expires_at > clock_timestamp()`, uploadID, objectID)
+		if err != nil {
 			return mapErr(err)
+		}
+		if tag.RowsAffected() != 1 {
+			return storageregistry.ErrExpired
 		}
 		return nil
 	})

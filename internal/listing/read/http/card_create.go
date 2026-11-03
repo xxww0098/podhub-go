@@ -41,7 +41,7 @@ func ValidateCreate(body CreateCard) (CreateRefusal, bool) {
 			return refusal, false
 		}
 		if payloadHasSupplier(body.Payload) {
-			return CreateRefusal{"请从平台货源选择规格创建方案"}, false
+			return CreateRefusal{"请从平台商品库选择规格创建方案"}, false
 		}
 		return CreateRefusal{}, true
 	case "copyCard":

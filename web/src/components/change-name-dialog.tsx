@@ -4,6 +4,7 @@ import { PencilLine } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -57,37 +58,37 @@ export function ChangeNameDialog({
         onOpenChange(nextOpen)
       }}
     >
-      <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-sm rounded-xl border border-border/80 shadow-overlay">
-        <DialogHeader className="border-b border-border/60 bg-muted/20 px-5 py-3.5 pr-12">
-          <DialogTitle className="text-base font-semibold">修改名字</DialogTitle>
-          <DialogDescription className="text-xs text-muted-foreground">
+      <DialogContent layout="panel" className="sm:max-w-sm">
+        <DialogHeader variant="panel">
+          <DialogTitle>修改名字</DialogTitle>
+          <DialogDescription>
             每 24 小时可修改一次，最长 {ACCOUNT_NAME_MAX_CHARS} 个字符，不能包含违法违规内容。
           </DialogDescription>
         </DialogHeader>
         <form
-          className="flex flex-col gap-3.5 p-5"
+          className="flex min-h-0 flex-1 flex-col"
           onSubmit={(event) => {
             event.preventDefault()
             submit()
           }}
         >
-          <Field data-invalid={invalid} className="gap-1.5">
-            <FieldLabel htmlFor="account-display-name" className="text-xs">
-              名字
-            </FieldLabel>
-            <Input
-              id="account-display-name"
-              value={name}
-              maxLength={ACCOUNT_NAME_MAX_CHARS}
-              autoComplete="nickname"
-              aria-invalid={invalid}
-              onChange={(event) => {
-                setName(event.target.value)
-                setInvalid(false)
-              }}
-            />
-          </Field>
-          <DialogFooter className="m-0 -mx-5 -mb-5 gap-2 border-t border-border/50 bg-muted/10 px-5 py-3 sm:justify-end">
+          <DialogBody>
+            <Field data-invalid={invalid}>
+              <FieldLabel htmlFor="account-display-name">名字</FieldLabel>
+              <Input
+                id="account-display-name"
+                value={name}
+                maxLength={ACCOUNT_NAME_MAX_CHARS}
+                autoComplete="nickname"
+                aria-invalid={invalid}
+                onChange={(event) => {
+                  setName(event.target.value)
+                  setInvalid(false)
+                }}
+              />
+            </Field>
+          </DialogBody>
+          <DialogFooter variant="panel">
             <Button
               type="button"
               variant="outline"

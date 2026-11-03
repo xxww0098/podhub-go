@@ -2,28 +2,26 @@ package contract
 
 import "testing"
 
-func TestSubscriptionSeatPlansMatchRetentionAndAdmission(t *testing.T) {
-	seats, stores := int64(2), int64(1)
-	state := SeatState{Plan: "lite", PurchasedMembers: &seats, PurchasedStores: &stores,
-		KeepMembers: []int64{1, 3}, KeepStores: []string{"paid"}}
-	target, msg := ResolveSeats(state, SeatIntent{FollowMembers: true, FollowStores: true})
-	if msg != "" {
-		t.Fatal(msg)
+// Members are capped, not sold: the owner always stays and joiners past the
+// cap are suspended in join order.
+func TestMemberCapSuspendsJoinersPastTheCap(t *testing.T) {
+	rows := []MemberRow{{ID: 1, UserID: 1, Role: "owner", JoinOrder: 1}}
+	for i := int64(2); i <= MemberCap+2; i++ {
+		rows = append(rows, MemberRow{ID: i, UserID: i, Role: "member", JoinOrder: i})
 	}
-	members := []MemberRow{{ID: 1, Role: "owner"}, {ID: 2, Role: "member"}, {ID: 3, Role: "member", QuotaSuspended: true}}
-	plan := target.PlanMembers(members)
-	if len(plan.Suspend) != 1 || plan.Suspend[0].MembershipID != 2 || len(plan.Restore) != 1 || plan.Restore[0].MembershipID != 3 {
-		t.Fatalf("paid retained member lost: %+v", plan)
+	plan := PlanMembers(MemberCap, rows)
+	if len(plan.Suspend) != 2 || plan.Suspend[0].MembershipID != MemberCap+1 || plan.Suspend[1].MembershipID != MemberCap+2 {
+		t.Fatalf("members past the cap: %+v", plan.Suspend)
 	}
-	rows := []StoreRow{{ID: 1, UUID: "first", CreateOrder: 1}, {ID: 2, UUID: "paid", CreateOrder: 2, QuotaSuspended: true, LastUsed: 100}}
-	storePlan := target.PlanStores(rows)
-	if len(storePlan.Suspend) != 1 || storePlan.Suspend[0].UUID != "first" || len(storePlan.Restore) != 1 || storePlan.Restore[0].UUID != "paid" {
-		t.Fatalf("paid retained store lost: %+v", storePlan)
+}
+
+func TestSeatRangeIsOneToTheCap(t *testing.T) {
+	for _, over := range []int64{0, MemberCap + 1} {
+		if SeatRange(over) {
+			t.Fatalf("override %d accepted", over)
+		}
 	}
-	// An explicit override uses the same creation order as SQL admission, even with recent activity.
-	target, msg = ResolveSeats(state, SeatIntent{StoreOverride: &stores})
-	storePlan = target.PlanStores(rows)
-	if msg != "" || len(storePlan.Suspend) != 0 || len(storePlan.Restore) != 0 {
-		t.Fatalf("override used a different admission order: %+v %s", storePlan, msg)
+	if !SeatRange(1) || !SeatRange(MemberCap) {
+		t.Fatal("bounds rejected")
 	}
 }

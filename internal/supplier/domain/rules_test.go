@@ -5,16 +5,16 @@ import (
 )
 
 func TestFilterAndCursor(t *testing.T) {
-	if state, err := FilterState("  "); err != nil || state != "" {
-		t.Fatal(state, err)
-	}
-	if _, err := FilterState("rejected"); err == nil {
-		t.Fatal(err)
+	if view, err := FilterView("  "); err != nil || view != "pending" {
+		t.Fatal(view, err)
 	}
 	id := "11111111-1111-4111-8111-111111111111"
-	c, err := DecodeCursor("0|2026-01-02|" + id)
-	if err != nil || c.NoDeadline || c.Deadline != "2026-01-02" || c.ID != id {
+	c, err := DecodeCursor("0|2026-01-02T12:00:00Z|" + id)
+	if err != nil || c.NoDeadline || c.Deadline != "2026-01-02T12:00:00Z" || c.ID != id {
 		t.Fatal(c, err)
+	}
+	if _, err := DecodeCursor("0|not-a-date|" + id); err == nil {
+		t.Fatal("invalid cursor deadline")
 	}
 	if _, err := DecodeCursor("1|x|" + id); err == nil {
 		t.Fatal("deadline on flag 1")
@@ -22,12 +22,26 @@ func TestFilterAndCursor(t *testing.T) {
 	if _, err := DecodeCursor("2||" + id); err == nil {
 		t.Fatal("flag")
 	}
-	deadline := "2026-01-02"
-	if EncodeCursor(&deadline, id) != "0|2026-01-02|"+id {
+	deadline := "2026-01-02T12:00:00Z"
+	if EncodeCursor(&deadline, id) != "0|2026-01-02T12:00:00Z|"+id {
 		t.Fatal(EncodeCursor(&deadline, id))
 	}
 	if EncodeCursor(nil, id) != "1||"+id {
 		t.Fatal("empty deadline")
+	}
+}
+
+func TestOrderViewAndSearchValidation(t *testing.T) {
+	for _, view := range []string{"pending", "producing", "urgent", "shipped"} {
+		if got, err := FilterView(" " + view + " "); err != nil || got != view {
+			t.Fatalf("view %q = %q, %v", view, got, err)
+		}
+	}
+	if _, err := FilterView("rejected"); err == nil {
+		t.Fatal("invalid view accepted")
+	}
+	if _, err := FilterSearch(stringsRepeat('a', 201)); err == nil {
+		t.Fatal("overlong search accepted")
 	}
 }
 

@@ -5,7 +5,7 @@
 // fake bucket). Any other R2_* host is treated as a real bucket: the client
 // is not given delete permission, and no request is sent.
 //
-// aws-sdk-go-v2 performs List, Put, Head, and Delete against that fake
+// aws-sdk-go-v2 performs List, Put, and Delete against that fake
 // endpoint. Browser PUT URLs are signed in internal/media/sign so the
 // canonical request stays the one Rust builds.
 package r2
@@ -15,7 +15,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/url"
 	"strings"
 
@@ -168,60 +167,6 @@ func (c *Client) PutBytes(ctx context.Context, bucket, key, contentType string, 
 		ContentType: aws.String(contentType),
 	})
 	return err
-}
-
-// Head is the metadata a checksum verdict can see.
-type Head struct {
-	ByteLength  *uint64
-	ContentType string
-	HasType     bool
-	SHA256Hex   string
-	HasSHA256   bool
-	ETag        string
-}
-
-// HeadObject reads metadata from the fake bucket.
-func (c *Client) HeadObject(ctx context.Context, bucket, key string) (Head, error) {
-	if err := c.dial(); err != nil {
-		return Head{}, err
-	}
-	out, err := c.api.HeadObject(ctx, &s3.HeadObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
-	})
-	if err != nil {
-		return Head{}, err
-	}
-	head := Head{ETag: aws.ToString(out.ETag)}
-	if out.ContentLength != nil {
-		n := uint64(*out.ContentLength)
-		head.ByteLength = &n
-	}
-	if out.ContentType != nil {
-		head.HasType = true
-		head.ContentType = strings.TrimSpace(strings.Split(*out.ContentType, ";")[0])
-	}
-	if out.ChecksumSHA256 != nil {
-		head.HasSHA256 = true
-		head.SHA256Hex = *out.ChecksumSHA256
-	}
-	return head, nil
-}
-
-// GetBytes reads one object from the fake bucket. Callers bound the size.
-func (c *Client) GetBytes(ctx context.Context, bucket, key string, max int64) ([]byte, error) {
-	if err := c.dial(); err != nil {
-		return nil, err
-	}
-	out, err := c.api.GetObject(ctx, &s3.GetObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
-	})
-	if err != nil {
-		return nil, err
-	}
-	defer out.Body.Close()
-	return io.ReadAll(io.LimitReader(out.Body, max+1))
 }
 
 // CreateBucket creates a bucket on the fake endpoint.

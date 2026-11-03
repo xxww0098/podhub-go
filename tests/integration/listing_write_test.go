@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -18,7 +19,7 @@ import (
 	httpapi "github.com/xxww0098/podhub-go/internal/app/api"
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
 	coremod "github.com/xxww0098/podhub-go/internal/listing/core"
-	listing "github.com/xxww0098/podhub-go/internal/listing/core/contract"
+	corecontract "github.com/xxww0098/podhub-go/internal/listing/core/contract"
 	readhttp "github.com/xxww0098/podhub-go/internal/listing/read/http"
 	platform "github.com/xxww0098/podhub-go/internal/listing/rules"
 )
@@ -28,11 +29,7 @@ func TestListingWriteCatalogSSE(t *testing.T) {
 	defer cancel()
 	pool := migratedPool(t, ctx)
 	platform.InvalidateBannedTags()
-	engine, err := listing.OpenEmbedded(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = engine.Close(context.Background()) })
+	engine := tagsEngine(t)
 
 	owner, orgA := insertWorkspace(t, ctx, pool, "cards-a@example.com", "Cards A")
 	_, orgB := insertWorkspace(t, ctx, pool, "cards-b@example.com", "Cards B")
@@ -54,11 +51,11 @@ func TestListingWriteCatalogSSE(t *testing.T) {
 	memberH := surfaceHandler(pool, engine, access.Principal{UserID: owner, OrgID: orgA, WorkspaceRole: "member", PlatformRole: "user"}, clock)
 
 	expect(t, memberH, http.MethodGet, "/api/listing/cards?limit=1", http.StatusOK,
-		`{"data":{"items":[{"id":"11111111-1111-4111-8111-111111111111","title":"甲","revision":1,"payload":{"descriptionCategoryId":9,"language":"zh_hans","typeId":8},"updatedAtMs":1787333400000}],"nextCursor":"1787333400000000:11111111-1111-4111-8111-111111111111"}}`)
+		`{"data":{"items":[{"id":"11111111-1111-4111-8111-111111111111","title":"甲","revision":1,"payload":{"descriptionCategoryId":9,"language":"zh_hans","typeId":8},"updated_at_ms":1787333400000}],"nextCursor":"1787333400000000:11111111-1111-4111-8111-111111111111"}}`)
 	expect(t, memberH, http.MethodGet, "/api/listing/cards?limit=100", http.StatusOK,
-		`{"data":{"items":[{"id":"11111111-1111-4111-8111-111111111111","title":"甲","revision":1,"payload":{"descriptionCategoryId":9,"language":"zh_hans","typeId":8},"updatedAtMs":1787333400000},{"id":"22222222-2222-4222-8222-222222222222","title":"乙","revision":1,"payload":{},"updatedAtMs":1787333340000}]}}`)
+		`{"data":{"items":[{"id":"11111111-1111-4111-8111-111111111111","title":"甲","revision":1,"payload":{"descriptionCategoryId":9,"language":"zh_hans","typeId":8},"updated_at_ms":1787333400000},{"id":"22222222-2222-4222-8222-222222222222","title":"乙","revision":1,"payload":{},"updated_at_ms":1787333340000}]}}`)
 	expect(t, memberH, http.MethodGet, "/api/listing/cards/"+cardC, http.StatusNotFound, `{"error":"上架方案不存在","code":"not_found"}`)
-	expect(t, viewerH, http.MethodGet, "/api/listing/cards", http.StatusForbidden, `{"error":"当前角色无权执行此操作","code":"forbidden"}`)
+	expect(t, viewerH, http.MethodGet, "/api/listing/cards", http.StatusForbidden, `{"error":"工作空间角色无效","code":"forbidden"}`)
 
 	rec := callJSON(ownerH, http.MethodPatch, "/api/listing/cards/"+cardB, `{"baseRevision":1,"title":"改"}`)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"title":"改"`) || !strings.Contains(rec.Body.String(), `"revision":2`) {
@@ -121,7 +118,7 @@ func TestListingWriteCatalogSSE(t *testing.T) {
 
 	insertTree(t, ctx, pool, clock().UnixMilli())
 	expect(t, memberH, http.MethodGet, "/api/catalog/tree?language=zh_hans", http.StatusOK,
-		`{"language":"zh_hans","fetched_at_ms":1787333400000,"items":[{"description_category_id":1,"category_name":"a","type_id":2,"type_name":"b","disabled":false,"parent_id":null}]}`)
+		`{"language":"zh_hans","fetched_at_ms":1787333400000,"items":[{"description_category_id":1,"category_name":"a","type_id":2,"type_name":"b","disabled":false,"parent_index":null}]}`)
 	expect(t, memberH, http.MethodGet, "/api/catalog/tree?language=en", http.StatusOK, `null`)
 	store := httptest.NewRecorder()
 	memberH.ServeHTTP(store, httptest.NewRequest(http.MethodGet, "/api/catalog/tree?language=zh_hans&store_id="+cardA, nil))
@@ -165,11 +162,7 @@ func TestListingCardEventSSE(t *testing.T) {
 		WHERE id = $1::uuid`, card, sha); err != nil {
 		t.Fatal(err)
 	}
-	engine, err := listing.OpenEmbedded(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = engine.Close(context.Background()) })
+	engine := tagsEngine(t)
 	h := surfaceHandler(pool, engine, access.Principal{UserID: owner, OrgID: org, WorkspaceRole: "owner", PlatformRole: "user"}, time.Now)
 	reqCtx, reqCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer reqCancel()
@@ -196,11 +189,7 @@ func TestListingCardRowRoundTrip(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = mod.Close(context.Background()) })
 	readhttp.BindCore(mod)
-	engine, err := listing.OpenEmbedded(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = engine.Close(context.Background()) })
+	engine := tagsEngine(t)
 
 	owner, orgA := insertWorkspace(t, ctx, pool, "rows-a@example.com", "Rows A")
 	_, orgB := insertWorkspace(t, ctx, pool, "rows-b@example.com", "Rows B")
@@ -243,23 +232,10 @@ func TestListingCardRowRoundTrip(t *testing.T) {
 	}
 	expect(t, otherH, http.MethodGet, "/api/listing/cards/"+card.Data.ID, http.StatusNotFound, `{"error":"上架方案不存在","code":"not_found"}`)
 
-	fields := []byte(`[{"key":"name","label":"name","group":"Attrs","editor":"text","required":false,"collection":false,"attribute_id":"4180","options":[]}]`)
-	var buf bytes.Buffer
-	zw := gzip.NewWriter(&buf)
-	if _, err := zw.Write(fields); err != nil {
-		t.Fatal(err)
-	}
-	if err := zw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO ozon_catalog_schema_cache (description_category_id, type_id, language, payload, fetched_at_ms, byte_size)
-		VALUES (17027906, 91976, 'default', $1, $2, $3)`, buf.Bytes(), clock().UnixMilli(), buf.Len()); err != nil {
-		t.Fatal(err)
-	}
+	fields := []byte(`[{"key":"name","label":"name","group":"Attrs","editor":"text","required":false,"collection":false,"attribute_id":"4180","options":[]},{"key":"attribute_85","label":"Brand","group":"Attrs","editor":"dictionary_search","required":false,"collection":false,"attribute_id":"85","dictionary_id":"5","options":[],"options_truncated":true}]`)
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO ozon_category_current (description_category_id, type_id, language, fields, content_digest, fetched_at_ms)
-		VALUES (17027906, 91976, 'default', '[]'::jsonb, $1, $2)`, "sha256:"+strings.Repeat("ab", 32), clock().UnixMilli()); err != nil {
+		VALUES (17027906, 91976, 'default', $1::jsonb, $2, $3)`, string(fields), "sha256:"+strings.Repeat("ab", 32), clock().UnixMilli()); err != nil {
 		t.Fatal(err)
 	}
 	input, _ := json.Marshal(map[string]any{
@@ -276,6 +252,9 @@ func TestListingCardRowRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO listing_schema_revisions (schema_revision, snapshot) VALUES ($1, $2::jsonb)`, rev.Revision, string(snapshot)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE ozon_category_current SET schema_revision = $1 WHERE description_category_id = 17027906 AND type_id = 91976 AND language = 'default'`, rev.Revision); err != nil {
 		t.Fatal(err)
 	}
 	sha := strings.Repeat("ab", 32)
@@ -310,6 +289,94 @@ func TestListingCardRowRoundTrip(t *testing.T) {
 	if patched.Code != http.StatusOK || !strings.Contains(patched.Body.String(), `"revision":2`) || !strings.Contains(patched.Body.String(), `"value":"n"`) {
 		t.Fatalf("patch row %d %s", patched.Code, patched.Body.String())
 	}
+	t.Run("confirmed dictionary material reaches row validation", func(t *testing.T) {
+		body := strings.ReplaceAll(rowBody, `"k1"`, `"dictionary-k1"`)
+		body = strings.ReplaceAll(body, `"fp1"`, `"dictionary-fp1"`)
+		created := callJSON(ownerH, http.MethodPost, "/api/listing/rows", body)
+		var item struct {
+			Data struct {
+				ID string `json:"id"`
+			} `json:"data"`
+		}
+		if created.Code != http.StatusOK || json.Unmarshal(created.Body.Bytes(), &item) != nil || item.Data.ID == "" {
+			t.Fatalf("dictionary row %d %s", created.Code, created.Body.String())
+		}
+		path := "/api/listing/rows/" + item.Data.ID
+		draft := `"mode":"full","draft":{"values":{"name":{"kind":"text","value":"Confirmed product"},"attribute_85":{"kind":"single_select","value":{"dictionary_value_id":7,"value":"Verified"}}},"complex_values":[]}`
+		before := callJSON(ownerH, http.MethodPatch, path, `{"baseRevision":1,`+draft+`}`)
+		if before.Code != http.StatusOK || !strings.Contains(before.Body.String(), `dictionary_material_required`) {
+			t.Fatalf("unverified dictionary value passed: %d %s", before.Code, before.Body.String())
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO catalog_dictionary_search_material(description_category_id,type_id,language,attribute_id,dictionary_id,option_id,value) VALUES(17027906,91976,'default',85,5,7,'Verified')`); err != nil {
+			t.Fatal(err)
+		}
+		after := callJSON(ownerH, http.MethodPatch, path, `{"baseRevision":2,`+draft+`}`)
+		if after.Code != http.StatusOK || strings.Contains(after.Body.String(), `dictionary_material_required`) || strings.Contains(after.Body.String(), `unknown_dictionary_id`) || !strings.Contains(after.Body.String(), `"dictionary_value_id":7`) {
+			t.Fatalf("confirmed dictionary value was lost: %d %s", after.Code, after.Body.String())
+		}
+	})
+	t.Run("manual media selection persists with CAS and tenant isolation", func(t *testing.T) {
+		path := "/api/listing/rows/" + listed.Data.ID
+		values := `{"name":{"kind":"text","value":"n"},"images":{"kind":"url_list","value":["https://media.example.invalid/second.jpg","https://media.example.invalid/first.jpg"]},"primary_image":{"kind":"text","value":"https://media.example.invalid/second.jpg"}}`
+		body := `{"baseRevision":2,"mode":"full","changes":{"handEditedKeys":["images","primary_image"]},"draft":{"values":` + values + `,"complex_values":[]}}`
+		saved := callJSON(ownerH, http.MethodPatch, path, body)
+		if saved.Code != http.StatusOK {
+			t.Fatalf("save media %d %s", saved.Code, saved.Body.String())
+		}
+		var wantValues map[string]any
+		if err := json.Unmarshal([]byte(values), &wantValues); err != nil {
+			t.Fatal(err)
+		}
+		check := func(raw []byte, wantRevision int64) {
+			t.Helper()
+			var item struct {
+				Data struct {
+					Revision   int64  `json:"revision"`
+					Submission string `json:"submission_state"`
+					Draft      struct {
+						Values map[string]any `json:"values"`
+					} `json:"draft"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(raw, &item); err != nil || item.Data.Revision != wantRevision || item.Data.Submission != "none" || !reflect.DeepEqual(item.Data.Draft.Values, wantValues) {
+				t.Fatalf("media readback: %s, %v", raw, err)
+			}
+		}
+		check(saved.Body.Bytes(), 3)
+		fresh := surfaceHandler(pool, engine, access.Principal{UserID: owner, OrgID: orgA, WorkspaceRole: "owner", PlatformRole: "user"}, clock)
+		read := callJSON(fresh, http.MethodGet, path, "")
+		if read.Code != http.StatusOK {
+			t.Fatalf("read media %d %s", read.Code, read.Body.String())
+		}
+		check(read.Body.Bytes(), 3)
+		var persisted bool
+		if err := pool.QueryRow(ctx, `SELECT payload->'draft'->'values' = $2::jsonb FROM listing_rows WHERE id = $1::uuid`, listed.Data.ID, values).Scan(&persisted); err != nil || !persisted {
+			t.Fatalf("media was not persisted: %v, %v", persisted, err)
+		}
+		stale := callJSON(fresh, http.MethodPatch, path, body)
+		if stale.Code != http.StatusConflict {
+			t.Fatalf("stale media save %d %s", stale.Code, stale.Body.String())
+		}
+		foreign := callJSON(otherH, http.MethodPatch, path, strings.Replace(body, `"baseRevision":2`, `"baseRevision":3`, 1))
+		if foreign.Code != http.StatusNotFound {
+			t.Fatalf("cross-tenant media save %d %s", foreign.Code, foreign.Body.String())
+		}
+		check(callJSON(fresh, http.MethodGet, path, "").Body.Bytes(), 3)
+		for _, value := range []string{`{"kind":"url_list","value":"not-a-list"}`, `{"Kind":"url_list","Value":[]}`, `{"kind":"url_list","value":[null]}`} {
+			bad := callJSON(fresh, http.MethodPatch, path, `{"baseRevision":3,"mode":"full","draft":{"values":{"images":`+value+`},"complex_values":[]}}`)
+			if bad.Code != http.StatusBadRequest {
+				t.Fatalf("malformed media save %d %s", bad.Code, bad.Body.String())
+			}
+			check(callJSON(fresh, http.MethodGet, path, "").Body.Bytes(), 3)
+		}
+		ambiguous := strings.Replace(strings.Replace(body, `"baseRevision":2`, `"baseRevision":3`, 1), `"kind":"url_list"`, `"kind":"text","value":"ignored","kind":"url_list"`, 1)
+		normalized := callJSON(fresh, http.MethodPatch, path, ambiguous)
+		if normalized.Code != http.StatusOK {
+			t.Fatalf("canonical media save %d %s", normalized.Code, normalized.Body.String())
+		}
+		check(normalized.Body.Bytes(), 4)
+		check(callJSON(fresh, http.MethodGet, path, "").Body.Bytes(), 4)
+	})
 
 	bare, err := pool.Acquire(ctx)
 	if err != nil {
@@ -329,10 +396,16 @@ func TestListingCardRowRoundTrip(t *testing.T) {
 	}
 }
 
-func surfaceHandler(pool *pgxpool.Pool, engine listing.Engine, p access.Principal, now func() time.Time) http.Handler {
+func surfaceHandler(pool *pgxpool.Pool, engine corecontract.Engine, p access.Principal, now func() time.Time) http.Handler {
 	router := chi.NewRouter()
-	srv := &httpapi.Server{
-		Pool: pool, Engine: engine, Access: access.FixedResolver{Principal: &p}, Now: now,
+	srv := &httpapi.Server{Pool: pool, Engine: engine, Access: access.FixedResolver{Principal: &p}, Now: now,
+		CatalogSnapshot: func(ctx context.Context, raw []byte) ([]byte, error) {
+			mod, err := coremod.Shared(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return mod.Snapshot(ctx, raw)
+		},
 	}
 	httpapi.HandlerFromMux(srv, router)
 	httpapi.MountDomains(router, srv)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -45,13 +46,8 @@ func TestAdminBillingOps(t *testing.T) {
 	token := "admin-b-session-token"
 	hash := domain.SessionHash(token)
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO account_sessions (token_hash, user_id, expires_at, admin_step_up_until)
-		VALUES ($1, $2, clock_timestamp() + interval '1 day', clock_timestamp() + interval '10 minutes')`, hash, adminID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO account_admin_totp (user_id, secret_nonce, secret_ciphertext, confirmed_at)
-		VALUES ($1, decode('00112233445566778899aabb', 'hex'), decode('00112233445566778899aabbccddeeff00', 'hex'), clock_timestamp())`, adminID); err != nil {
+		INSERT INTO account_sessions (token_hash, user_id, expires_at)
+		VALUES ($1, $2, clock_timestamp() + interval '1 day')`, hash, adminID); err != nil {
 		t.Fatal(err)
 	}
 	seedMatchingLease(t, ctx, pool, "entitlement", "admin billing test")
@@ -61,9 +57,9 @@ func TestAdminBillingOps(t *testing.T) {
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO payment_orders
 		       (public_id, org_id, plan, months, amount_cents, currency, provider, status,
-		        created_by_user_id, created_at, updated_at, product, topup_microfen, credit_cents)
+		        created_by_user_id, created_at, updated_at, product, topup_microfen)
 		VALUES ('ord-88021', $1, 'free', 1, 100, 'CNY', 'manual', 'pending',
-		        $2, clock_timestamp(), clock_timestamp(), 'wallet_topup', 1000000, 0)`, orgID, ownerID); err != nil {
+		        $2, clock_timestamp(), clock_timestamp(), 'wallet_topup', 1000000)`, orgID, ownerID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -71,7 +67,7 @@ func TestAdminBillingOps(t *testing.T) {
 		*adminrepo.Repo
 		*adminbillingrepo.Entitlement
 		*observerepo.Observe
-	}{adminrepo.NewBilling(pool, "integration-test-key-0123456789abcdef"), adminbillingrepo.NewEntitlement(pool), observerepo.NewObserve(pool, func(context.Context, string) (int, []byte, error) {
+	}{adminrepo.NewBilling(pool, "integration-test-key-0123456789abcdef"), entitlementWithBilling(pool), observerepo.NewObserve(pool, func(context.Context, string) (int, []byte, error) {
 		t.Fatal("thumbnail dial")
 		return 0, nil, nil
 	})}
@@ -105,12 +101,11 @@ func TestAdminBillingOps(t *testing.T) {
 		_, err := pool.Exec(ctx, `
 			INSERT INTO payment_orders
 			    (public_id, org_id, plan, months, amount_cents, currency, provider, status,
-			     created_by_user_id, created_at, updated_at, product, member_seats,
-			     list_unit_month_cents, unit_month_cents, duration_days)
+			     created_by_user_id, created_at, updated_at, product)
 			VALUES ('ord-retired-seats', $1, 'pro', 1, 100, 'CNY', 'manual', 'pending',
-			        $2, clock_timestamp(), clock_timestamp(), 'member_seats', 1, 100, 100, 30)`, orgID, ownerID)
+			        $2, clock_timestamp(), clock_timestamp(), 'member_seats')`, orgID, ownerID)
 		var constraint *pgconn.PgError
-		if !errors.As(err, &constraint) || constraint.Code != "23514" || constraint.ConstraintName != "payment_orders_product_shape" {
+		if !errors.As(err, &constraint) || constraint.Code != "23514" || constraint.ConstraintName != "payment_orders_product_known" {
 			t.Fatalf("retired seat order: %v", err)
 		}
 	})
@@ -139,7 +134,7 @@ func TestAdminBillingOps(t *testing.T) {
 
 	seedMatchingLease(t, ctx, pool, "admin", "admin billing redeem")
 	status, body = adminDo(router, http.MethodPost, "/api/admin/redeem-codes", token,
-		`{"product":"wallet_credits","member_seats":0,"quantity":1,"duration_days":30,"wallet_cents":100}`)
+		`{"quantity":1,"wallet_cents":100}`)
 	if status != 201 || !strings.Contains(body, "POD-WALLET-") {
 		t.Fatalf("redeem %d %s", status, body)
 	}
@@ -160,6 +155,42 @@ func TestAdminBillingOps(t *testing.T) {
 	if !strings.Contains(body, `"revision":0`) {
 		t.Fatal(body)
 	}
+	t.Run("payment update retires stored R2 credentials", func(t *testing.T) {
+		key := domain.KeySHA256("integration-test-key-0123456789abcdef")
+		const aad = "platform_integration_config|v1"
+		plain, err := json.Marshal(domain.Snapshot{
+			SchemaVersion: 1,
+			AIAccounts:    []domain.StoredAI{{ID: "ai", APIKey: "ai-kept", Purpose: domain.PurposeOCR}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		plain = append(plain[:len(plain)-1], []byte(`,"storageBuckets":[{"id":"private","role":"private","secretAccessKey":"r2-retired"}]}`)...)
+		nonce, ciphertext, err := domain.Seal(key, []byte(aad), plain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = pool.Exec(ctx, `INSERT INTO platform_integration_config
+			(singleton, revision, nonce, ciphertext, updated_at_ms, updated_by_account_uuid)
+			VALUES (true, 1, $1, $2, 1, 'adm88022')`, nonce, ciphertext); err != nil {
+			t.Fatal(err)
+		}
+		status, body := adminDo(router, http.MethodPut, "/api/admin/payment/config", token, `{"expectedRevision":1,"providers":[]}`)
+		if status != http.StatusOK || strings.Contains(body, "r2-retired") {
+			t.Fatalf("payment update %d %s", status, body)
+		}
+		if err = pool.QueryRow(ctx, `SELECT nonce, ciphertext FROM platform_integration_config WHERE singleton`).Scan(&nonce, &ciphertext); err != nil {
+			t.Fatal(err)
+		}
+		plain, err = domain.Open(key, []byte(aad), nonce, ciphertext)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stored, _, err := domain.ParseStored(plain)
+		if err != nil || strings.Contains(string(plain), "storageBuckets") || strings.Contains(string(plain), "r2-retired") || len(stored.AIAccounts) != 1 || stored.AIAccounts[0].APIKey != "ai-kept" || stored.Payment == nil {
+			t.Fatalf("payment update must remove R2 and retain AI: %v", err)
+		}
+	})
 
 	const ownerB int64 = 88023
 	if _, err := pool.Exec(ctx, `
@@ -173,7 +204,13 @@ func TestAdminBillingOps(t *testing.T) {
 		VALUES ($1, 'org-88023', 'free', clock_timestamp(), clock_timestamp()) RETURNING id`, ownerB).Scan(&orgB); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO user_wallets (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`, ownerB); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO workspace_wallets (org_id) VALUES ($1) ON CONFLICT (org_id) DO NOTHING`, orgB); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO wallet_ledger (org_id, entry_type, idempotency_key, amount_microfen, held_delta_microfen,
+			balance_before_microfen, balance_after_microfen, held_before_microfen, held_after_microfen)
+		VALUES ($1, 'topup', 'rls-org-b', 0, 0, 0, 0, 0, 0)`, orgB); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -191,26 +228,65 @@ func TestAdminBillingOps(t *testing.T) {
 		t.Fatal(err)
 	}
 	var seen int
-	if err := tx.QueryRow(ctx, `SELECT count(*) FROM user_wallets`).Scan(&seen); err != nil {
+	for _, table := range []string{"workspace_wallets", "wallet_ledger"} {
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM `+table).Scan(&seen); err != nil {
+			t.Fatal(err)
+		}
+		if seen != 0 {
+			t.Fatalf("missing org guc saw %d rows in %s", seen, table)
+		}
+	}
+	insertWallet := func(org int64) error {
+		sp, err := tx.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer sp.Rollback(ctx)
+		_, err = sp.Exec(ctx, `INSERT INTO workspace_wallets (org_id) VALUES ($1)`, org)
+		return err
+	}
+	insertLedger := func(org int64) error {
+		sp, err := tx.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer sp.Rollback(ctx)
+		_, err = sp.Exec(ctx, `
+			INSERT INTO wallet_ledger (org_id, entry_type, idempotency_key, amount_microfen, held_delta_microfen,
+				balance_before_microfen, balance_after_microfen, held_before_microfen, held_after_microfen)
+			VALUES ($1, 'topup', 'rls-insert-probe', 0, 0, 0, 0, 0, 0)`, org)
+		return err
+	}
+	if err := insertWallet(orgB); err == nil {
+		t.Fatal("wallet insert without org guc")
+	}
+	if err := insertLedger(orgB); err == nil {
+		t.Fatal("ledger insert without org guc")
+	}
+	if _, err := tx.Exec(ctx, `SELECT set_config($1, $2, true)`, tenantx.GUCCurrentOrgID, strconv.FormatInt(orgID, 10)); err != nil {
 		t.Fatal(err)
 	}
-	if seen != 0 {
-		t.Fatalf("missing wallet guc saw %d rows", seen)
+	for _, table := range []string{"workspace_wallets", "wallet_ledger"} {
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM `+table+` WHERE org_id = $1`, orgB).Scan(&seen); err != nil {
+			t.Fatal(err)
+		}
+		if seen != 0 {
+			t.Fatalf("cross-org %s saw %d rows", table, seen)
+		}
 	}
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.current_wallet_user_id', $1, true), set_config($2, $3, true)`,
-		"88021", tenantx.GUCCurrentOrgID, "1"); err != nil {
-		t.Fatal(err)
-	}
-	if err := tx.QueryRow(ctx, `SELECT count(*) FROM user_wallets WHERE user_id = $1`, ownerB).Scan(&seen); err != nil {
-		t.Fatal(err)
-	}
-	if seen != 0 {
-		t.Fatalf("cross-owner wallet saw %d rows", seen)
-	}
-	if err := tx.QueryRow(ctx, `SELECT count(*) FROM user_wallets WHERE user_id = $1`, ownerID).Scan(&seen); err != nil || seen != 1 {
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM workspace_wallets WHERE org_id = $1`, orgID).Scan(&seen); err != nil || seen != 1 {
 		t.Fatalf("own wallet %d %v", seen, err)
 	}
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.current_wallet_user_id', '', true), set_config('app.platform_observer_id', '', true), set_config($1, '', true)`, tenantx.GUCCurrentOrgID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM wallet_ledger WHERE org_id = $1`, orgID).Scan(&seen); err != nil || seen == 0 {
+		t.Fatalf("own ledger %d %v", seen, err)
+	}
+	if err := insertWallet(orgB); err == nil {
+		t.Fatal("wallet insert for another org")
+	}
+	if err := insertLedger(orgB); err == nil {
+		t.Fatal("ledger insert for another org")
+	}
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.platform_observer_id', '', true), set_config($1, '', true)`, tenantx.GUCCurrentOrgID); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM store_product_sync`).Scan(&seen); err != nil {

@@ -11,7 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	bill "github.com/xxww0098/podhub-go/internal/billing/contract"
 	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
 	"github.com/xxww0098/podhub-go/internal/platform/writer"
 	"github.com/xxww0098/podhub-go/internal/supplier/contract"
@@ -100,7 +99,7 @@ type actFn func(tx pgx.Tx, orgID int64, source string, fulfillerID string) (stri
 func (r Repo) act(ctx context.Context, userID int64, dispatchID, verb string, fn actFn) (contract.ActionData, error) {
 	var out contract.ActionData
 	err := r.withTx(ctx, 0, userID, func(tx pgx.Tx) error {
-		if _, err := r.loadMembers(ctx, tx, userID); err != nil {
+		if _, err := loadFulfillerSources(ctx, tx); err != nil {
 			return err
 		}
 		if err := assertEntitlement(ctx, tx); err != nil {
@@ -188,7 +187,10 @@ func (r Repo) holdOnAccept(ctx context.Context, tx pgx.Tx, dispatchID string) er
 	} else if state != "held" {
 		return errors.New("结算已结束，不能再接单")
 	}
-	_, err = bill.HoldTx(ctx, tx, orgID, "delegate:"+dispatchID, nil, amount)
+	if r.holdTx == nil {
+		return errors.New("结算未装配")
+	}
+	_, err = r.holdTx(ctx, tx, orgID, "delegate:"+dispatchID, nil, amount)
 	return err
 }
 
@@ -197,19 +199,8 @@ func quoteDispatch(ctx context.Context, tx pgx.Tx, dispatchID string) (cents, mi
 	var missing int
 	var total int64
 	err = tx.QueryRow(ctx, `
-		SELECT COUNT(*)::int,
-		       COALESCE(SUM(CASE WHEN priced.unit_cents IS NULL OR priced.unit_cents <= 0 THEN 1 ELSE 0 END), 0)::int,
-		       COALESCE(SUM(CASE WHEN priced.unit_cents > 0 THEN GREATEST(COALESCE(l.quantity, 1), 1) * priced.unit_cents ELSE 0 END), 0)::bigint
-		FROM delegate_dispatches d
-		CROSS JOIN LATERAL jsonb_to_recordset(COALESCE(d.payload->'lines', '[]'::jsonb)) AS l(offer_id text, quantity int)
-		LEFT JOIN LATERAL (
-		    SELECT COALESCE(o.cost_cents, 0) + COALESCE(o.shipping_cost_cents, 0) AS unit_cents
-		    FROM sc_skus k
-		    JOIN sc_source_offers o ON o.sku_id = k.sku_id AND o.source_id = d.source_id
-		    WHERE k.platform_code = l.offer_id
-		    LIMIT 1
-		) priced ON true
-		WHERE d.dispatch_id = $1::uuid`, dispatchID).Scan(&lines, &missing, &total)
+		SELECT line_count, missing_count, total_cents
+		FROM supplier_dispatch_quote($1::uuid)`, dispatchID).Scan(&lines, &missing, &total)
 	if err != nil {
 		return 0, 0, nil, err
 	}
@@ -247,10 +238,13 @@ func (r Repo) settleDispatch(ctx context.Context, tx pgx.Tx, dispatchID string, 
 		if err != nil {
 			return errors.New("结算没有写入")
 		}
-		if _, err := bill.HoldTx(ctx, tx, orgID, "delegate:"+dispatchID, nil, micro); err != nil {
+		if r.holdTx == nil || r.settleTx == nil {
+			return errors.New("结算未装配")
+		}
+		if _, err := r.holdTx(ctx, tx, orgID, "delegate:"+dispatchID, nil, micro); err != nil {
 			return err
 		}
-		if _, err := bill.SettleTx(ctx, tx, orgID, "delegate:"+dispatchID, nil, micro, micro); err != nil {
+		if _, err := r.settleTx(ctx, tx, orgID, "delegate:"+dispatchID, nil, micro, micro); err != nil {
 			return err
 		}
 		return creditDispatch(ctx, tx, dispatchID, nowMs)
@@ -261,7 +255,10 @@ func (r Repo) settleDispatch(ctx context.Context, tx pgx.Tx, dispatchID string, 
 	case state == "released":
 		return errors.New("refunded reservation")
 	case state == "held":
-		if _, err := bill.SettleTx(ctx, tx, orgID, "delegate:"+dispatchID, nil, amount, amount); err != nil {
+		if r.settleTx == nil {
+			return errors.New("结算未装配")
+		}
+		if _, err := r.settleTx(ctx, tx, orgID, "delegate:"+dispatchID, nil, amount, amount); err != nil {
 			return err
 		}
 		if err := creditDispatch(ctx, tx, dispatchID, nowMs); err != nil {

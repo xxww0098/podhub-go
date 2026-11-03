@@ -71,10 +71,11 @@ test("the table shows posting_number, store, cutoff, quantity and actions", () =
   assert.doesNotMatch(html, /awaiting_packaging|awaiting_deliver/)
   assert.match(html, new RegExp(deadlineLabel("deadline_overdue")))
   assert.match(html, new RegExp(deadlineLabel("deadline_approaching")))
-  assert.match(html, /aria-label="打单 33920145-0032-1"/)
-  assert.match(html, /aria-label="打单 51020488-0110-2"/)
-  assert.match(html, /aria-label="发货 51020488-0110-2"/)
-  assert.match(html, /cursor-pointer/)
+  assert.match(html, /aria-label="查看 33920145-0032-1"/)
+  assert.match(html, /aria-label="查看 51020488-0110-2"/)
+  assert.match(html, />委托状态</)
+  assert.match(html, />未知</)
+  assert.doesNotMatch(html, /aria-label="(?:打单|发货) /)
   assert.doesNotMatch(html, /title="posting_awaiting_passport_data"/)
   assert.match(html, /aria-label="子状态 posting_awaiting_passport_data"/)
   assert.match(html, /select-all/)
@@ -86,6 +87,46 @@ const readyView: ShippingListView = {
   has_next: true,
   cursor: "next-page",
 }
+
+test("an empty first page keeps the table headings and reports zero current orders", () => {
+  const html = renderToStaticMarkup(
+    <ShippingResults
+      view={{ ...readyView, postings: [], has_next: false, cursor: "" }}
+      load="empty"
+      page={1}
+      onPrevious={() => {}}
+      onNext={() => {}}
+      onRetry={() => {}}
+    />,
+  )
+  assert.match(html, /<table[^>]*aria-label="订单发货"/)
+  assert.match(html, /<th[^>]*>单号<\/th>/)
+  assert.match(html, /<th[^>]*>备货截止<\/th>/)
+  assert.match(html, /<td[^>]*colSpan="8"[^>]*>[\s\S]*当前筛选没有订单/)
+  assert.match(html, /本页 0 单/)
+  assert.doesNotMatch(html, /51020488-0110-2/)
+  assert.match(html, /<button[^>]*disabled=""[^>]*aria-label="下一页"/)
+})
+
+test("selection is limited to visible orders and reports a partial page accurately", () => {
+  const html = renderToStaticMarkup(
+    <ShippingResults
+      view={{ ...readyView, postings: [overdue, approaching] }}
+      load="ready"
+      page={1}
+      selectedNumbers={new Set([overdue.posting_number, "not-on-page"])}
+      onSelectedNumbersChange={() => {}}
+      onPrevious={() => {}}
+      onNext={() => {}}
+      onRetry={() => {}}
+    />,
+  )
+  assert.match(html, /aria-checked="mixed"[^>]*aria-label="选择本页全部订单"/)
+  assert.match(html, /aria-checked="true"[^>]*aria-label="选择 33920145-0032-1"/)
+  assert.match(html, /已选 1 单/)
+  assert.match(html, /复制单号/)
+  assert.doesNotMatch(html, /not-on-page/)
+})
 
 test("a refresh failure keeps the painted page and stays out of the DOM", () => {
   const html = renderToStaticMarkup(
@@ -118,7 +159,7 @@ test("an empty later page still exposes enabled previous navigation", () => {
   const previous = html.match(/<button[^>]*aria-label="上一页"[^>]*>/)?.[0] ?? ""
   assert.ok(previous)
   assert.doesNotMatch(previous, /\sdisabled(?:=|>)/)
-  assert.doesNotMatch(html, /当前队列没有待发货单/)
+  assert.doesNotMatch(html, /当前筛选没有订单/)
 })
 
 test("a failed empty later page keeps its previous navigation", () => {
@@ -254,13 +295,13 @@ test("deadline and packing chips resolve through the six-tone table", () => {
   assert.equal(toneFor("label_unknown"), "unknown")
 })
 
-test("ShippingScreen mounts and keeps the primary 打单 in the tab order", () => {
+test("ShippingScreen mounts and keeps 查看 in the tab order", () => {
   const source = readFileSync(
     new URL("./shipping-screen.tsx", import.meta.url),
     "utf8",
   )
   assert.match(source, /export function ShippingScreen/)
-  assert.match(source, /aria-label={`\$\{action\.label\} \$\{posting\.posting_number\}`}/)
+  assert.match(source, /label={`查看 \$\{posting\.posting_number\}`}/)
   assert.doesNotMatch(source, /tabIndex=\{-1\}/)
   assert.match(source, /from "@\/components\/ui\/dialog"/)
   assert.doesNotMatch(source, /from "@\/components\/ui\/sheet"/)

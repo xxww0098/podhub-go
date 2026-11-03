@@ -36,9 +36,13 @@ var orgPolicyShapes = map[string]bool{
 	// owner_org_id references organizations, so it cannot be zero.
 	`((owner_org_id IS NULL) OR <ORG:owner_org_id> OR (current_setting('app.staff_access'::text, true) = '1'::text))`: true,
 	`<ORG:org_id>`: true,
-	`((org_id IS NOT NULL) AND <ORG:org_id>)`:                                                                              true,
-	`(set_id IN ( SELECT s.id FROM automation_asset_sets s WHERE <ORG:s.org_id>))`:                                         true,
-	`((user_id = (NULLIF(current_setting('app.current_wallet_user_id'::text, true), ''::text))::bigint) AND <ORG:org_id>)`: true,
+	`((org_id IS NOT NULL) AND <ORG:org_id>)`:                                      true,
+	`(set_id IN ( SELECT s.id FROM automation_asset_sets s WHERE <ORG:s.org_id>))`: true,
+	// 00031: owner checks only narrow tenant equality; false and NULL org
+	// comparisons both reject these writes. Cross-tenant/owner tests cover them.
+	`(<ORG:org_id> AND (EXISTS ( SELECT 1 FROM organizations o WHERE ((o.id = workspace_slice_storage.org_id) AND (o.dissolved_at IS NULL) AND (o.owner_user_id = (NULLIF(current_setting('app.slice_storage_actor_id'::text, true), ''::text))::bigint)))))`:                                                                                                                                                                                                                   true,
+	`(<ORG:org_id> AND (EXISTS ( SELECT 1 FROM organizations o WHERE ((o.id = workspace_slice_provisions.org_id) AND (o.dissolved_at IS NULL) AND (o.owner_user_id = (NULLIF(current_setting('app.slice_storage_actor_id'::text, true), ''::text))::bigint)))))`:                                                                                                                                                                                                                true,
+	`(<ORG:org_id> AND (requested_by = (NULLIF(current_setting('app.slice_storage_actor_id'::text, true), ''::text))::bigint) AND (EXISTS ( SELECT 1 FROM (organizations o JOIN workspace_slice_storage s ON ((s.org_id = o.id))) WHERE ((o.id = workspace_slice_clear_requests.org_id) AND (s.id = workspace_slice_clear_requests.storage_id) AND (s.retired_at IS NULL) AND (o.owner_user_id = workspace_slice_clear_requests.requested_by) AND (o.dissolved_at IS NULL)))))`: true,
 	// 00365: catalog reads keep org equality inside the binding/order EXISTS.
 	`(EXISTS ( SELECT 1 FROM delegate_bindings b WHERE ((b.source_id = sc_sources.source_id) AND <ORG:b.org_id>)))`:                                                                                                            true,
 	`(EXISTS ( SELECT 1 FROM delegate_bindings b WHERE ((b.source_id = sc_source_prop_defs.source_id) AND <ORG:b.org_id>)))`:                                                                                                   true,
@@ -394,7 +398,7 @@ func TestSupplierSessionIsolatesSuppliers(t *testing.T) {
 			{`SELECT coalesce(string_agg(source_id, ',' ORDER BY source_id), '') FROM supplier_wallets`, ""},
 			{`SELECT coalesce(string_agg(source_id, ',' ORDER BY source_id), '') FROM supplier_withdrawals`, ""},
 			{`SELECT string_agg(source_id, ',' ORDER BY source_id) FROM sc_source_fulfillers`, "src-sa"},
-			{`SELECT string_agg(source_id, ',' ORDER BY source_id) FROM sc_source_members`, "src-sa"},
+			{`SELECT string_agg(factory_id, ',' ORDER BY factory_id) FROM sc_factory_members`, "src-sa"},
 			{`SELECT coalesce(string_agg(org_id::text, ','), '') FROM store_rating_snapshots`, ""},
 		} {
 			var got *string
@@ -408,7 +412,7 @@ func TestSupplierSessionIsolatesSuppliers(t *testing.T) {
 		for _, sql := range []string{
 			`UPDATE supplier_wallets SET balance_microfen = 0 WHERE source_id = 'src-sb'`,
 			`DELETE FROM supplier_withdrawals WHERE source_id = 'src-sb'`,
-			`UPDATE sc_source_members SET status = 'removed' WHERE source_id = 'src-sb'`,
+			`UPDATE sc_factory_members SET status = 'removed' WHERE factory_id = 'src-sb'`,
 			`DELETE FROM store_rating_snapshots`,
 		} {
 			tag, err := tx.Exec(ctx, sql)
@@ -527,8 +531,9 @@ func seedSessionSupplier(t *testing.T, ctx context.Context, pool *pgxpool.Pool, 
 			`DELETE FROM supplier_wallet_ledger WHERE source_id = $1`,
 			`DELETE FROM supplier_wallets WHERE source_id = $1`,
 			`DELETE FROM sc_source_fulfillers WHERE source_id = $1`,
-			`DELETE FROM sc_source_members WHERE source_id = $1`,
+			`DELETE FROM sc_factory_members WHERE factory_id = $1`,
 			`DELETE FROM sc_sources WHERE source_id = $1`,
+			`DELETE FROM sc_factories WHERE factory_id = $1`,
 		} {
 			_, _ = pool.Exec(bg, sql, sourceID)
 		}
@@ -541,8 +546,9 @@ func seedSessionSupplier(t *testing.T, ctx context.Context, pool *pgxpool.Pool, 
 		{`INSERT INTO account_users (id, public_id, email, password_hash, role, name, target, supplier_id, account_kind, plan, created_at, updated_at)
 		  VALUES ($1, $2, $3, 'x', 'user', 't', '/supplier', '', 'supplier', 'lite', clock_timestamp(), clock_timestamp())`,
 			[]any{userID, fmt.Sprintf("sup%d", userID), fmt.Sprintf("sup%d@example.invalid", userID)}},
-		{`INSERT INTO sc_sources (source_id, name, created_at_ms, updated_at_ms) VALUES ($1, $1, 1, 1)`, []any{sourceID}},
-		{`INSERT INTO sc_source_members (source_id, user_id, created_by, created_at_ms) VALUES ($1, $2, $2, 1)`, []any{sourceID, userID}},
+		{`INSERT INTO sc_factories (factory_id, name, created_at_ms, updated_at_ms) VALUES ($1, $1, 1, 1)`, []any{sourceID}},
+		{`INSERT INTO sc_sources (source_id, name, factory_id, created_at_ms, updated_at_ms) VALUES ($1, $1, $1, 1, 1)`, []any{sourceID}},
+		{`INSERT INTO sc_factory_members (factory_id, user_id, created_by, created_at_ms) VALUES ($1, $2, $2, 1)`, []any{sourceID, userID}},
 		{`INSERT INTO sc_source_fulfillers (source_id, user_id, created_at_ms) VALUES ($1, $2, 1)`, []any{sourceID, userID}},
 		{`INSERT INTO supplier_wallets (source_id, balance_microfen, held_microfen, updated_at_ms) VALUES ($1, 100, 0, 1)`, []any{sourceID}},
 		{`INSERT INTO supplier_withdrawals

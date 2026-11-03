@@ -1,3 +1,4 @@
+import type { ImageSetMediaEdit } from "../image-sets/image-set-state"
 import type {
   OzonStoreView,
   WorkflowDraftValue,
@@ -27,7 +28,7 @@ import {
 import { fieldLocation } from "../workflow-shared"
 import type { WorkbenchEditableColumn, WorkbenchProseEdit } from "./workbench-cell-editor"
 import { formatTagString } from "./workbench-cell-edit"
-import { typedCellRawText, type WorkbenchColumnFields } from "./workbench-grid-navigation"
+import type { WorkbenchColumnFields } from "./workbench-grid-navigation"
 import { modelText } from "./workbench-model"
 
 export type { WorkbenchColumnFields }
@@ -47,13 +48,6 @@ export function proseCellText(
       return valueAsText(raw).trim()
     }
     return formatTagString(product?.lifecycle.ai_summary?.tags ?? [])
-  }
-  if (column === "rich_content") {
-    // JSON富内容 is a tableInput: only the row's own typed value counts. An
-    // untouched row inherits the card default at send (painted as the cell's
-    // muted placeholder), so it still counts as empty for 「填入 N 行」.
-    if (!product?.draft || !fields.richContent) return ""
-    return typedCellRawText(product, fields.richContent)
   }
   if (column === "model") {
     // 型号 counts as the row's own only when it was actually written: the
@@ -75,6 +69,7 @@ export type WorkbenchRowActions = {
   openProse: (edit: WorkbenchProseEdit) => void
   openTheme: (edit: WorkbenchThemeEdit) => void
   /** 逐行输入列（销售价/划线价）把打完的值写进这一行。 */
+  editMedia?: (draftId: string, edit: ImageSetMediaEdit) => Promise<boolean>
   editField: (
     draftId: string,
     fieldKey: string,

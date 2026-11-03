@@ -155,7 +155,7 @@ func Identity(ctx context.Context, tx pgx.Tx, actor outcome.Actor) (publicID str
 
 // AssertWrite takes the supplier writer lease.
 func AssertWrite(ctx context.Context, tx pgx.Tx) error {
-	const disabled = "平台货源写入未启用"
+	const disabled = "供应商商品库写入未启用"
 	_, err := writer.Assert(ctx, tx, "admin", writer.ProcessIdentity(), time.Now().UnixMilli(), disabled)
 	if writer.IsDisabled(err) {
 		return &outcome.Fail{Kind: outcome.KindWritesDisabled, Message: disabled}
@@ -264,7 +264,7 @@ func IsFK(err error) bool {
 // ListDbs reads supplier sources. only restricts to one source id when set.
 func ListDbs(ctx context.Context, tx pgx.Tx, owner *string, only string) ([]corecontract.SupplierDb, error) {
 	rows, err := tx.Query(ctx, `
-		SELECT s.source_id, s.name, s.country, s.contact, s.internal_note, s.listed, s.icon,
+		SELECT s.source_id, s.factory_id, s.name, s.country, s.contact, s.internal_note, s.listed, s.icon,
 		       s.accepts_delegate, s.view_prefs, s.created_at_ms, s.updated_at_ms,
 		       s.created_by_account_uuid,
 		       (SELECT profile.name FROM public.account_users creator
@@ -278,11 +278,9 @@ func ListDbs(ctx context.Context, tx pgx.Tx, owner *string, only string) ([]core
 		         WHERE p.source_id = s.source_id AND NOT p.archived
 		           AND p.published AND k.published
 		           AND ($1::text IS NULL OR p.created_by_account_uuid = $1)) AS published_count,
-		       (SELECT u.email FROM public.sc_source_members m
-		          JOIN public.account_users u ON u.id = m.user_id
-		         WHERE m.source_id = s.source_id
-		         ORDER BY m.created_at_ms, m.member_id
-		         LIMIT 1) AS account_email
+		       (SELECT u.email FROM public.sc_source_fulfillers f
+		          JOIN public.account_users u ON u.id = f.user_id
+		         WHERE f.source_id = s.source_id AND f.status = 'active') AS fulfiller_email
 		  FROM public.sc_sources s
 		 WHERE ($1::text IS NULL OR s.created_by_account_uuid = $1)
 		   AND ($2::text = '' OR s.source_id = $2)
@@ -295,10 +293,10 @@ func ListDbs(ctx context.Context, tx pgx.Tx, owner *string, only string) ([]core
 	for rows.Next() {
 		var db corecontract.SupplierDb
 		var prefs []byte
-		var creator, email *string
-		if err := rows.Scan(&db.SourceID, &db.Name, &db.Country, &db.Contact, &db.InternalNote, &db.Listed, &db.Icon,
+		var creator *string
+		if err := rows.Scan(&db.SourceID, &db.FactoryID, &db.Name, &db.Country, &db.Contact, &db.InternalNote, &db.Listed, &db.Icon,
 			&db.AcceptsDelegate, &prefs, &db.CreatedAtMs, &db.UpdatedAtMs, &db.CreatedBy,
-			&creator, &db.RowCount, &db.PublishedCount, &email); err != nil {
+			&creator, &db.RowCount, &db.PublishedCount, &db.FulfillerEmail); err != nil {
 			return nil, MapDB(err)
 		}
 		if len(prefs) == 0 {
@@ -306,7 +304,6 @@ func ListDbs(ctx context.Context, tx pgx.Tx, owner *string, only string) ([]core
 		}
 		db.ViewPrefs = prefs
 		db.CreatorName = creator
-		db.AccountEmail = email
 		out = append(out, db)
 	}
 	return out, MapDB(rows.Err())

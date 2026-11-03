@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
 	"github.com/xxww0098/podhub-go/internal/store/contract"
@@ -63,24 +62,4 @@ func (s Service) DeleteTag(ctx context.Context, orgID, userID int64, role, tagUU
 		return domain.TagDeleted{}, contract.ErrUnavailable
 	}
 	return s.tags.Delete(ctx, orgID, userID, tagUUID)
-}
-
-// TagErrorCode is the wire code for a tag failure. It mirrors the Rust
-// WorkspaceStoreErrorCode values the three routes can answer with.
-func TagErrorCode(err error) (status int, code string) {
-	switch {
-	case errors.Is(err, contract.ErrForbidden):
-		return 403, "FORBIDDEN"
-	case errors.Is(err, contract.ErrTagNotFound):
-		return 404, "NOT_FOUND"
-	case errors.Is(err, contract.ErrTagExists):
-		return 409, "CONFLICT"
-	case errors.Is(err, contract.ErrTagName), errors.Is(err, contract.ErrTagNameLength),
-		errors.Is(err, contract.ErrTagUUID):
-		return 400, "VALIDATION"
-	case errors.Is(err, contract.ErrNoTenant):
-		return 401, "AUTH_REQUIRED"
-	default:
-		return 503, "INTERNAL"
-	}
 }

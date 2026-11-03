@@ -27,7 +27,6 @@ export type WorkspaceInvitationView = { id: number, uuid: string, email: string,
 
 export type WorkspaceDirectoryView = { members: Array<WorkspaceMemberView>, invitations: Array<WorkspaceInvitationView>, seats_used: number, pending_used: number, pending_limit: number, permissions: WorkspacePermissions, };
 
-export type CreateWorkspaceInvitationRequest = components["schemas"]["CreateInvitationRequest"];
 
 export type WorkspaceInvitationCreatedView = components["schemas"]["CreateInvitationData"];
 
@@ -48,8 +47,6 @@ export type NotificationReadView = components["schemas"]["NotificationReadData"]
 export type AccountSessionView = components["schemas"]["AccountSessionView"];
 
 /** One account on this browser's session stack, as the switcher prints it. */
-export type StackedAccountView = components["schemas"]["StackedAccountView"];
-
 export type EntitlementFeaturesView = components["schemas"]["EntitlementFeaturesView"];
 
 export type EntitlementLimitsView = components["schemas"]["EntitlementLimitsView"];
@@ -59,30 +56,11 @@ export type EntitlementView = components["schemas"]["EntitlementView"];
 /** `GET /api/view/account-overview` — one reply, the whole signed-in shell. */
 export type AccountOverview = components["schemas"]["AccountOverviewData"];
 
-export type RedeemResultView = { plan_key: string, plan_name: string, member_seats: number, ocr_credits: number, wallet_cents: number, replaced_lots: number, replaced_seats: number, plan_expires_at?: string, ocr_expires_at?: string, };
+export type RedeemResultView = components["schemas"]["RedeemData"];
 
 export type PaymentOrderView = components["schemas"]["PaymentOrderView"];
 
-/** One purchasable tier/term/bound set — Cloud's `billing::seats` projection. */
-export type SeatCatalogData = components["schemas"]["SeatCatalogData"];
-
-export type SeatCatalogTierView = components["schemas"]["SeatCatalogTierView"];
-
-/** One unexpired member-seat lot on the Workspace billing overview. */
-export type MemberSeatLotView = components["schemas"]["MemberSeatLotView"];
-
-/** What an upgrade to one purchasable tier would deduct right now. */
-export type SeatUpgradeCreditView = components["schemas"]["SeatUpgradeCreditView"];
-
-export type EntitlementChangeView = components["schemas"]["EntitlementChangeView"];
-
-/** `GET /api/workspace/billing/overview` — the plans page's per-lot truth. */
-export type WorkspaceBillingOverviewData =
-  components["schemas"]["WorkspaceBillingOverviewData"];
-
 export type AiRechargeOrderView = components["schemas"]["AiRechargeOrderView"];
-
-export type OcrQuotaData = components["schemas"]["OcrQuotaData"];
 
 export type PaymentMethodsData = components["schemas"]["PaymentMethodsData"];
 
@@ -99,7 +77,7 @@ export type SellerRelayData = components["schemas"]["SellerRelayData"];
 export type SellerRelayProbeData = components["schemas"]["SellerRelayProbeData"];
 
 
-export type AccountLoginRequest = { email: string, password: string, totpCode?: string, };
+export type AccountLoginRequest = { email: string, password: string, };
 
 export type AccountChangePasswordRequest = { current_password: string, new_password: string, };
 
@@ -248,10 +226,6 @@ export type AdminUserUuidRequest = { uuid: string, };
 
 export type AdminDissolveWorkspaceRequest = { workspace_uuid: string, name: string, };
 
-export type AdminUserQuotaPreviewRequest = { uuid: string, workspace_id?: number, member_seats_override?: number, follow_plan_member_seats: boolean, store_limit_override?: number, follow_plan_store_limit: boolean, };
-
-export type AdminUserQuotaApplyRequest = { uuid: string } & components["schemas"]["AdminMemberSeatApplyRequest"];
-
 export type AdminWorkspaceWalletTopupRequest = { workspace_uuid: string,
 /**
  * Client-chosen identity of this one grant attempt; a retry of the same
@@ -269,51 +243,6 @@ export type WalletTopupView = { id: string, amount_microfen: number, note: strin
 
 export type WalletTopupsData = { balance_microfen: number, held_microfen: number, available_microfen: number, topups: Array<WalletTopupView>, };
 
-export type AdminMemberSeatPreviewData = { revision: number, plan: string, memberSeats: WorkspaceQuotaView, suspend: Array<MemberSeatMembershipChange>, restore: Array<MemberSeatMembershipChange>,
-/**
- * Store quota projection when the target plan also changes Store slots. The
- * arrays are absent when the apply changes no store quota (server skips
- * empty) — read them as optional or `.length` throws on the common path.
- */
-storeSlots?: WorkspaceQuotaView, storeSuspend?: Array<WorkspaceStoreQuotaChange>, storeRestore?: Array<WorkspaceStoreQuotaChange>, };
-
-export type AdminMemberSeatApplyData = { ok: boolean, revision: number, plan: string, memberSeats: WorkspaceQuotaView, suspend: Array<MemberSeatMembershipChange>, restore: Array<MemberSeatMembershipChange>,
-/**
- * Store quota projection produced by the same atomic plan apply — absent
- * when no store quota changed (server skips empty).
- */
-storeSlots?: WorkspaceQuotaView, storeSuspend?: Array<WorkspaceStoreQuotaChange>, storeRestore?: Array<WorkspaceStoreQuotaChange>, };
-
-export type MemberSeatChangeAction = "SUSPEND" | "RESTORE";
-
-export type MemberSeatMembershipChange = { membership_id: number, user_id: number, join_order: number, action: MemberSeatChangeAction, };
-
-export type WorkspaceQuotaView = {
-/**
- * Plan default for this resource.
- */
-default: number,
-/**
- * Workspace override; null means the plan default applies.
- */
-overrideValue?: number,
-/**
- * Effective quota after applying the Workspace override.
- */
-effective: number,
-/**
- * Currently in-use quantity.
- */
-used: number,
-/**
- * Quantity suspended by quota enforcement.
- */
-suspended: number, };
-
-export type WorkspaceStoreQuotaChange = { uuid: string, createOrder: number, action: WorkspaceStoreQuotaChangeAction, };
-
-export type WorkspaceStoreQuotaChangeAction = "SUSPEND" | "RESTORE";
-
 export type UsageRequestRowView = components["schemas"]["UsageRequestRow"];
 
 export type UsageStatsView = components["schemas"]["UsageStatsData"];
@@ -324,7 +253,11 @@ export type AiThinking = "provider_default" | false | "low" | "medium" | "high";
 
 export type AiThinkingFormat = "none" | "reasoning_effort" | "enable_thinking" | "thinking_type" | "anthropic_budget" | "anthropic_adaptive";
 
-export type AiAccountView = { id: string, label: string, ref_id: string, configured: boolean, active: boolean, base_url: string, api_format: AiApiFormat, model: string, thinking: AiThinking, thinking_format: AiThinkingFormat,
+export type AiPurpose = components["schemas"]["AdminIntegrationAiPurpose"];
+
+export type AiRuntime = components["schemas"]["AdminIntegrationAiRuntime"];
+
+export type AiAccountView = { id: string, label: string, ref_id: string, configured: boolean, active: boolean, base_url: string, api_format: AiApiFormat, model: string, thinking: AiThinking, thinking_format: AiThinkingFormat, purpose: AiPurpose | null,
 /**
  * Pool dispatch preference: higher goes first, ties round-robin.
  */
@@ -345,14 +278,6 @@ billing_mode: string, input_microfen_per_million: number, cached_input_microfen_
  * Flat microfen per settled call; positive only in `per_request` mode.
  */
 per_request_microfen: number, max_request_microfen: number, };
-
-export type IntegrationMediaProvider = "legacy_s3" | "cloudflare" | "qiniu" | "tencent" | "aliyun" | "generic";
-
-export type IntegrationMediaRole = "transit" | "assets" | "private";
-
-export type MediaAccountView = { id: string, label: string, role: IntegrationMediaRole, provider: IntegrationMediaProvider, ref_id: string, configured: boolean, active: boolean, endpoint: string, region: string, bucket: string, key_prefix: string, public_base_url: string, force_path_style: boolean, };
-
-export type MediaConnectionTestResult = { latency_ms: number, };
 
 export type MediaStorageRequest = { id: string, prefix: string, };
 
@@ -382,13 +307,7 @@ export type SupplierDbStorageDeleteData = components["schemas"]["SupplierDbStora
 
 export type SupplierDbStorageUploadTarget = components["schemas"]["SupplierDbUploadTarget"];
 
-export type IntegrationCredentialsOverview = { ai_default_model: string, ai_accounts: Array<AiAccountView>,
-/**
- * 三个桶角色各一个账号：transit（每日 04:00 清空）、assets（公开素材库）、
- * private（组织私有，无公开域名）。服务端逐字校验桶名与公开域名。
- */
-media_accounts: Array<MediaAccountView>,
-};
+export type IntegrationCredentialsOverview = { ai_default_model: string, ai_accounts: Array<AiAccountView>, ai_runtime: AiRuntime | null };
 
 export type OzonStoreView = components["schemas"]["OzonStoreView"];
 
@@ -425,8 +344,6 @@ id: string | null, base_url: string, api_format: AiApiFormat,
  * Draft key override. Empty falls back to the stored key for `id`.
  */
 api_key: string, };
-
-export type UpsertMediaAccountRequest = { role: IntegrationMediaRole, label: string, provider: IntegrationMediaProvider, endpoint: string, region: string, bucket: string, key_prefix: string, public_base_url: string, force_path_style: boolean, access_key_id: string, secret_access_key: string, session_token: string, };
 
 export type AccountIdRequest = { id: string, };
 export type AssignOzonStoreRequest = { id: string, membership_id: number | null, };
@@ -691,18 +608,6 @@ value_origin_kind?: FieldValueOriginKind, value_origin_source_ref?: string,
  */
 queue_claim_token?: string,
 };
-
-export type ListingCardSkuImportPreviewRequest = { draft_id: string, sku: string, };
-
-export type SkuImportSelection = { dictionary_value_id: number, value: string, };
-
-export type SkuImportValue = { "kind": "text", "value": string } | { "kind": "text_list", "value": Array<string> } | { "kind": "integer", "value": number } | { "kind": "integer_list", "value": Array<number> } | { "kind": "decimal", "value": number } | { "kind": "decimal_list", "value": Array<number> } | { "kind": "boolean", "value": boolean } | { "kind": "boolean_list", "value": Array<boolean> } | { "kind": "single_select", "value": SkuImportSelection } | { "kind": "multi_select", "value": Array<SkuImportSelection> } | { "kind": "url", "value": string } | { "kind": "url_list", "value": Array<string> };
-
-export type SkuImportLocation = { "kind": "plain" } | { "kind": "complex", complex_id: number, item_index: number, };
-
-export type SkuImportCandidate = { candidate_id: string, field_key: string, field_name: string, group_name: string, location: SkuImportLocation, value: SkuImportValue, };
-
-export type SkuImportPreview = { source_sku: number, source_product_id: number, source_offer_id: string, source_name: string, source_description_category_id: number, source_type_id: number, category_matches: boolean, candidates: Array<SkuImportCandidate>, skipped_fields: number, };
 
 export type WorkflowAiFieldPolicy = { allowed_field_keys: Array<string>, protected_field_keys: Array<string>, };
 
@@ -1059,11 +964,8 @@ export type WorkflowAiResult = { ru: string, tags: Array<string>, description: s
  */
 cost_microfen: number, candidates: Array<WorkflowAiCandidate>, };
 
-export type WorkflowPromptFile = { file_name: string, content: string, };
 
-export type WorkflowPromptDirEntry = { l1_name: string, l2_name: string, type_name: string, name: string, file_name: string, content: string, };
 
-export type WorkflowPromptDirScan = { root: string, entries: Array<WorkflowPromptDirEntry>, skipped: Array<string>, };
 
 export type WorkflowCategoryPrompt = { prompt_id: string, name: string, file_name: string, content: string, fixed_tags: Array<string>, description_category_id: number, type_id: number, };
 
@@ -1117,4 +1019,4 @@ export type WorkflowVideoValidation = { valid: boolean, reason: string | null, }
 
 export type WorkflowValidationIssueCode = "required" | "type" | "cardinality" | "unknown_option" | "dictionary_id" | "unknown_field" | "range" | "coordinate" | "complex_placement";
 
-export type WorkflowValidationIssue = { field_key: string, code: WorkflowValidationIssueCode, message: string, value_index?: number, complex_id?: number, item_index?: number, };
+export type WorkflowValidationIssue = { field_key: string, code: string, message: string, value_index?: number, complex_id?: number, item_index?: number, };

@@ -116,6 +116,9 @@ test("the orders table shows identity, warehouse, state, window and count", () =
   assert.match(html, /line-clamp-2/)
   assert.match(html, /xl:hidden[^>]*>时间窗 /)
   assert.match(html, /aria-label="详情 00-0001-2489176-001"/)
+  const details = html.match(/<button\b[^>]*>/g)?.find((button) => button.includes('aria-label="详情 00-0001-2489176-001"'))
+  assert.ok(details, "the order detail action must remain a named native button")
+  assert.doesNotMatch(details, /\sdisabled(?:\s|=|>)|\saria-disabled="true"|\stabindex="-1"/)
   assert.doesNotMatch(html, /title="Хоругвино"/)
 })
 
@@ -134,12 +137,28 @@ test("a loading order page says it is reading Ozon", () => {
   assert.match(html, /正在读取供货单/)
 })
 
-test("a failed supply read rides the live toast, never the table", () => {
-  const source = readFileSync(new URL("./supply-screen.tsx", import.meta.url), "utf8")
-  assert.doesNotMatch(source, /role="alert"/)
-  assert.doesNotMatch(source, /\{error\}/)
-  assert.match(source, /notifyLive\(\{/)
-  assert.match(source, /SUPPLY_READ_LIVE = "supply-read"/)
+test("failed initial reads show a retry instead of claiming Ozon returned no data", () => {
+  const orders = renderToStaticMarkup(<SupplyOrdersTable orders={[]} loading={false} failed onRetry={() => {}} />)
+  const warehouses = renderToStaticMarkup(<WarehouseStocksTable warehouses={[]} loading={false} failed onRetry={() => {}} />)
+  assert.match(orders, /读取供货单失败/)
+  assert.match(warehouses, /读取仓库存失败/)
+  for (const html of [orders, warehouses]) {
+    assert.match(html, /role="alert"/)
+    assert.match(html, /<button[^>]*>[\s\S]*?重试<\/button>/)
+    assert.doesNotMatch(html, /没有供货单|当前店铺没有匹配的供货单|没有仓库存|Ozon 未返回任何仓库/)
+  }
+})
+
+test("failed refreshes retain committed rows and mark their current status unconfirmed", () => {
+  const orders = renderToStaticMarkup(<SupplyOrdersTable orders={[transit]} loading={false} failed onRetry={() => {}} />)
+  const warehouses = renderToStaticMarkup(<WarehouseStocksTable warehouses={[horugvino]} loading={false} failed onRetry={() => {}} />)
+  assert.match(orders, /00-0001-2489176-001/)
+  assert.match(warehouses, /12,920/)
+  for (const html of [orders, warehouses]) {
+    assert.match(html, /当前显示上次数据，最新状态未确认/)
+    assert.match(html, /重试/)
+    assert.doesNotMatch(html, /没有供货单|没有仓库存/)
+  }
 })
 
 test("a bundle failure prints Ozon's reason instead of a zero count", () => {
@@ -316,7 +335,6 @@ test("tables expose busy semantics without hiding committed rows", () => {
   assert.match(warehouses, /role="region"/)
   assert.match(warehouses, /aria-label="各仓库存表"/)
   assert.match(warehouses, /tabindex="0"/)
-  assert.match(warehouses, /max-h-\[32rem\]/)
 })
 
 test("leaving Supply fences both Seller reads and keeps a single app title", () => {
@@ -327,7 +345,6 @@ test("leaving Supply fences both Seller reads and keeps a single app title", () 
   assert.doesNotMatch(source, /<h1/)
   assert.match(source, /from "@\/components\/ui\/tabs"/)
   assert.match(source, /from "@\/components\/ui\/table"/)
-  assert.match(source, /aria-label=\{`详情 \$\{orderIdentity\(order\)\}`\}/)
   assert.doesNotMatch(source, /tabIndex=\{-1\}/)
   assert.doesNotMatch(source, /space-y-/)
   assert.match(source, /aria-live="polite"/)

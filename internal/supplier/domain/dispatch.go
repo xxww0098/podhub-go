@@ -2,6 +2,7 @@ package domain
 
 import (
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -18,16 +19,39 @@ const (
 	StateCancelled  = "cancelled"
 )
 
-// FilterState accepts a missing or blank query as "all". Any other value must
-// be one of the three live states, compared exactly.
-func FilterState(raw string) (string, error) {
-	state := strings.TrimSpace(raw)
-	switch state {
-	case "", StateDispatched, StateAccepted, StateShipped:
-		return state, nil
-	default:
-		return "", contract.Fail(400, "validation", "未知的派发包状态")
+func FilterView(raw string) (string, error) {
+	view := strings.TrimSpace(raw)
+	if view == "" {
+		return "pending", nil
 	}
+	switch view {
+	case "pending", "producing", "urgent", "shipped":
+		return view, nil
+	default:
+		return "", contract.Fail(400, "validation", "未知的订单视图")
+	}
+}
+
+func FilterSearch(raw string) (string, error) {
+	search := strings.TrimSpace(raw)
+	if len([]rune(search)) > 200 {
+		return "", contract.Fail(400, "validation", "搜索内容不能超过 200 字")
+	}
+	return search, nil
+}
+
+func UrgentFilters(view, rawStatus, rawReason string) (string, string, error) {
+	status, reason := strings.TrimSpace(rawStatus), strings.TrimSpace(rawReason)
+	if view != "urgent" && (status != "" || reason != "") {
+		return "", "", contract.Fail(400, "validation", "仅加急订单支持状态和原因筛选")
+	}
+	if status != "" && status != StateDispatched && status != StateAccepted {
+		return "", "", contract.Fail(400, "validation", "未知的加急订单状态")
+	}
+	if reason != "" && reason != "deadline" && reason != "nudge" {
+		return "", "", contract.Fail(400, "validation", "未知的加急原因")
+	}
+	return status, reason, nil
 }
 
 // Cursor is the keyset position. Empty means the first page.
@@ -53,7 +77,7 @@ func DecodeCursor(raw string) (Cursor, error) {
 	}
 	switch parts[0] {
 	case "0":
-		if strings.TrimSpace(parts[1]) == "" {
+		if _, err := time.Parse(time.RFC3339Nano, parts[1]); err != nil {
 			return Cursor{}, contract.Fail(400, "validation", "分页游标无效")
 		}
 		return Cursor{Deadline: parts[1], ID: id.String()}, nil

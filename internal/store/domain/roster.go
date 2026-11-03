@@ -41,13 +41,12 @@ type Assignee struct {
 
 // Permissions is the effective rights of one actor over one Store.
 type Permissions struct {
-	ManageStore     bool
-	EditName        bool
-	ManageKeyGrants bool
-	TestKey         bool
-	ManageKey       bool
-	DeleteStore     bool
-	ManageTags      bool
+	ManageStore bool
+	EditName    bool
+	TestKey     bool
+	ManageKey   bool
+	DeleteStore bool
+	ManageTags  bool
 }
 
 // Row is one organization_stores projection: every non-secret fact the roster,
@@ -71,9 +70,9 @@ type Row struct {
 	AssigneeMembershipID        *int64
 	AssigneeName                *string
 	AssigneeEmail               *string
-	AssigneeKeyManage           bool
 	ProductQuota                json.RawMessage
 	FinanceBalance              json.RawMessage
+	CompanyCurrency             string
 	Revision                    int64
 	DeletedAtMS                 *int64
 	Tags                        []TagRef
@@ -108,12 +107,6 @@ func (a Actor) Visible(assigneeMembershipID *int64) bool {
 	return access.StoreVisible(a.Role, assigneeMembershipID, a.MembershipID)
 }
 
-// MayManageKey is AssigneeKeyGrant::may_manage_key: the owner always may; an
-// assignee may only when the grant switch is open.
-func (a Actor) MayManageKey(grantManage bool, assigneeMembershipID *int64) bool {
-	return a.IsOwner() || (a.IsAssigneeOf(assigneeMembershipID) && grantManage)
-}
-
 // Status is store_status: manual disable takes precedence.
 func (r Row) Status() Status {
 	if r.ManualDisabled {
@@ -135,9 +128,7 @@ func (r Row) Live() bool { return !r.ManualDisabled && !r.QuotaSuspended }
 // cannot succeed would be a lie.
 func (r Row) Permissions(a Actor, nowMS int64) Permissions {
 	visible := a.Visible(r.AssigneeMembershipID)
-	owner := a.IsOwner()
-	assigned := r.AssigneeMembershipID != nil
-	manageKey := a.MayManageKey(r.AssigneeKeyManage, r.AssigneeMembershipID)
+	manageKey := a.CanManageAll()
 	expired := r.CredentialKeyExpiresAtMS != nil && *r.CredentialKeyExpiresAtMS <= nowMS
 	manageAll := a.CanManageAll()
 	deleteStore := manageAll || a.IsAssigneeOf(r.AssigneeMembershipID)
@@ -145,20 +136,13 @@ func (r Row) Permissions(a Actor, nowMS int64) Permissions {
 		deleteStore = manageKey
 	}
 	return Permissions{
-		ManageStore:     manageAll,
-		EditName:        visible,
-		ManageKeyGrants: owner && assigned,
-		TestKey:         visible && r.CredentialConfigured && r.Live() && !expired,
-		ManageKey:       manageKey,
-		DeleteStore:     deleteStore,
-		ManageTags:      visible,
+		ManageStore: manageAll,
+		EditName:    visible,
+		TestKey:     visible && r.CredentialConfigured && r.Live() && !expired,
+		ManageKey:   manageKey,
+		DeleteStore: deleteStore,
+		ManageTags:  visible,
 	}
-}
-
-// AssigneeKeyManage is the wire switch: always false for an unassigned store,
-// whatever the column says.
-func (r Row) AssigneeKeyManageVisible() bool {
-	return r.AssigneeMembershipID != nil && r.AssigneeKeyManage
 }
 
 // Assignee returns the embedded assignee, or nil when the store is unassigned.
@@ -241,11 +225,15 @@ type TagView struct {
 }
 
 // ProductQuota is the last successful Ozon product-upload quota snapshot.
+// Like FinanceBalance, the stored jsonb is served to the SPA as-is, so the
+// keys are the WorkspaceStoreProductQuota contract (snake_case). A row stored
+// under the old camelCase spelling decodes with FetchedAtMS 0, which the
+// refresh loop treats as stale and overwrites.
 type ProductQuota struct {
-	FetchedAtMS int64               `json:"fetchedAtMs"`
+	FetchedAtMS int64               `json:"fetched_at_ms"`
 	Total       *ProductQuotaTotal  `json:"total,omitempty"`
-	DailyCreate *ProductQuotaBucket `json:"dailyCreate,omitempty"`
-	DailyUpdate *ProductQuotaBucket `json:"dailyUpdate,omitempty"`
+	DailyCreate *ProductQuotaBucket `json:"daily_create,omitempty"`
+	DailyUpdate *ProductQuotaBucket `json:"daily_update,omitempty"`
 }
 
 // ProductQuotaBucket is one Ozon upload bucket. Limit -1 means no cap.
@@ -264,22 +252,26 @@ type ProductQuotaTotal struct {
 
 // ProductQuotaCategory is one in-demand category's extra quota.
 type ProductQuotaCategory struct {
-	CategoryID int64 `json:"categoryId"`
+	CategoryID int64 `json:"category_id"`
 	Limit      int64 `json:"limit"`
 	Usage      int64 `json:"usage"`
 }
 
 // FinanceBalance is the last Seller Finance → Balance snapshot for a Store.
+// The JSON keys are the wire contract (WorkspaceStoreFinanceBalance): the
+// stored jsonb is served to the SPA as-is, so they are snake_case. A row
+// written under any other spelling decodes with FetchedAtMS 0, which the
+// refresh loop treats as stale and overwrites.
 type FinanceBalance struct {
 	Amount       *string `json:"amount,omitempty"`
-	CurrencyCode *string `json:"currencyCode,omitempty"`
-	FetchedAtMS  int64   `json:"fetchedAtMs"`
+	CurrencyCode *string `json:"currency_code,omitempty"`
+	FetchedAtMS  int64   `json:"fetched_at_ms"`
 	Outcome      string  `json:"outcome"`
-	PeriodTo     string  `json:"periodTo"`
-	FxAsOf       *string `json:"fxAsOf,omitempty"`
-	FxQuote      *string `json:"fxQuote,omitempty"`
-	FxRate       *string `json:"fxRate,omitempty"`
-	FxSource     *string `json:"fxSource,omitempty"`
+	PeriodTo     string  `json:"period_to"`
+	FxAsOf       *string `json:"fx_as_of,omitempty"`
+	FxQuote      *string `json:"fx_quote,omitempty"`
+	FxRate       *string `json:"fx_rate,omitempty"`
+	FxSource     *string `json:"fx_source,omitempty"`
 }
 
 func decodeProductQuota(raw json.RawMessage) *ProductQuota {

@@ -1,6 +1,7 @@
 package seal
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"os"
@@ -91,8 +92,12 @@ func TestCryptoVectors(t *testing.T) {
 		t.Fatalf("decrypt: %v", err)
 	}
 	stored, err := ParseSnapshot(plain)
-	if err != nil || stored.SchemaVersion != 1 || len(stored.Buckets) != 1 || stored.Buckets[0].Role != "private" || !stored.Buckets[0].Active {
-		t.Fatalf("snapshot: %v %+v", err, stored.Buckets)
+	if err != nil || stored.SchemaVersion != 1 {
+		t.Fatalf("snapshot: %v %+v", err, stored)
+	}
+	clean, err := json.Marshal(stored)
+	if err != nil || bytes.Contains(clean, []byte("storageBuckets")) || bytes.Contains(clean, []byte("secretAccessKey")) {
+		t.Fatalf("snapshot retained storage credentials: %v %s", err, clean)
 	}
 	bad := []byte(doc.Integration.Plain)
 	bad[len(`{"schemaVersion":`)] = '2'

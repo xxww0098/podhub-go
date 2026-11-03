@@ -15,7 +15,7 @@ import (
 func TestAdminBRejectsBeforeADatabase(t *testing.T) {
 	anon := mountAdmin(&Server{})
 	rec := callAdmin(anon, http.MethodGet, "/api/admin/listing/packages/official", "")
-	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `"code":"VALIDATION"`) {
+	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("missing query %d %s", rec.Code, rec.Body.String())
 	}
 	rec = callAdmin(anon, http.MethodGet, "/api/admin/listing/packages/official?category_id=cat", "")
@@ -54,7 +54,16 @@ func TestAdminBRejectsBeforeADatabase(t *testing.T) {
 
 func mountAdmin(s *Server) http.Handler {
 	r := chi.NewRouter()
-	adminhttp.Mount(r, adminhttp.Deps{Ported: AdminPorted(s)})
+	adminhttp.Mount(r, adminhttp.Deps{Ported: AdminPorted(s, nil), Resolve: func(r *http.Request) (*adminhttp.Session, *adminhttp.Refusal, error) {
+		if s.Access == nil {
+			return nil, nil, nil
+		}
+		p, refusal, err := s.Access.Resolve(r)
+		if err != nil || p == nil || refusal != nil {
+			return nil, nil, err
+		}
+		return &adminhttp.Session{UserID: p.UserID, OrgID: p.OrgID, PlatformRole: p.PlatformRole, WorkspaceRole: p.WorkspaceRole}, nil, nil
+	}})
 	return r
 }
 

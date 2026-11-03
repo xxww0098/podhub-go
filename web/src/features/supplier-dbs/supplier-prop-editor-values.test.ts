@@ -90,7 +90,7 @@ test("nextCellIndex：Tab 横移越界不动", () => {
 test("missingFromRefusal：服务端 400 的 missing 键翻成中文缺项", () => {
   assert.deepEqual(
     missingFromRefusal({ missing: ["category", "prompt", "unknown_key"] }),
-    ["类目", "提示词", "unknown_key"],
+    ["类目", "识图事实", "unknown_key"],
   )
   assert.deepEqual(missingFromRefusal(new Error("x")), [])
   assert.deepEqual(missingFromRefusal({ missing: "nope" }), [])

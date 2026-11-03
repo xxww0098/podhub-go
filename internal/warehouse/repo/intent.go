@@ -55,18 +55,13 @@ func (r Repo) PrepareGrant(ctx context.Context, in contract.GrantWrite) (contrac
 		if ok {
 			return replay(existing, in.Now)
 		}
-		held, ok, err := inflight(ctx, tx, in.OrgID, in.StoreID, fence)
+		_, ok, err = inflight(ctx, tx, in.OrgID, in.StoreID, fence)
 		if err != nil {
 			return err
 		}
 		if ok {
-			if held.State == domain.StateGranted && held.Granted != nil && domain.Expired(*held.Granted, in.Now) {
-				if err := rejectIntent(ctx, tx, held.ID, "grant_expired"); err != nil {
-					return err
-				}
-			} else {
-				return contract.Busy()
-			}
+			// The browser already received a lasting credential; local TTL cannot prove the write was not sent.
+			return contract.Busy()
 		}
 		if err := r.precheck(ctx, tx, in, warehouseID); err != nil {
 			return err
@@ -129,6 +124,17 @@ func replay(row intentRow, now time.Time) error {
 	}
 }
 
+func (r Repo) RejectUnsentGrant(ctx context.Context, orgID int64, intentID string) error {
+	return r.inTx(ctx, orgID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
+			UPDATE public.ozon_warehouse_intents
+			   SET state='rejected', error_code='credential_unavailable',
+			       revoked_at=clock_timestamp(), updated_at=clock_timestamp()
+			 WHERE org_id=$1 AND id=$2::uuid AND state='granted'`, orgID, intentID)
+		return mapDB(err)
+	})
+}
+
 func (r Repo) AuditRefused(ctx context.Context, orgID, userID int64, storeID, kind string) error {
 	if orgID <= 0 {
 		return nil
@@ -184,26 +190,6 @@ func (r Repo) ApplyReport(ctx context.Context, in contract.ReportWrite) (contrac
 		}
 		if tag.RowsAffected() != 1 {
 			return contract.ReportState()
-		}
-		if next == domain.StateAccepted && row.Warehouse != nil {
-			switch row.Kind {
-			case contract.KindArchive:
-				if _, err := tx.Exec(ctx, `
-				UPDATE public.ozon_warehouses
-				   SET archived_at = $4
-				 WHERE org_id = $1 AND store_id = $2::uuid AND warehouse_id = $3 AND archived_at IS NULL`,
-					in.OrgID, row.StoreID, *row.Warehouse, in.Now); err != nil {
-					return mapDB(err)
-				}
-			case contract.KindUnarchive:
-				if _, err := tx.Exec(ctx, `
-				UPDATE public.ozon_warehouses
-				   SET archived_at = NULL
-				 WHERE org_id = $1 AND store_id = $2::uuid AND warehouse_id = $3`,
-					in.OrgID, row.StoreID, *row.Warehouse); err != nil {
-					return mapDB(err)
-				}
-			}
 		}
 		shop, _ := r.findStore(ctx, tx, in.OrgID, row.StoreID)
 		return r.audit(ctx, tx, in.OrgID, in.UserID, shop, "warehouse_report", "/api/seller/warehouses/report", next, msgReport, in.IntentID)
@@ -271,14 +257,6 @@ func inflight(ctx context.Context, tx pgx.Tx, orgID int64, storeID string, fence
 		return intentRow{}, false, mapDB(err)
 	}
 	return row, true, nil
-}
-
-func rejectIntent(ctx context.Context, tx pgx.Tx, id, code string) error {
-	_, err := tx.Exec(ctx, `
-		UPDATE public.ozon_warehouse_intents
-		   SET state = 'rejected', error_code = $2, revoked_at = clock_timestamp(), updated_at = clock_timestamp()
-		 WHERE id = $1::uuid AND state = 'granted'`, id, code)
-	return mapDB(err)
 }
 
 func lockIntent(ctx context.Context, tx pgx.Tx, orgID int64, id string) (intentRow, error) {

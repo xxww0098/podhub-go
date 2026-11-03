@@ -17,17 +17,17 @@ import { cardBindProps } from "./workflow-fixtures"
 test("card bind prompt refresh reads provisioned prompts without a local import path", () => {
   const html = renderToStaticMarkup(<CardBindForm {...cardBindProps} />)
 
-  assert.match(html, /aria-label="刷新提示词"/)
+  assert.match(html, /aria-label="刷新商品事实"/)
   assert.doesNotMatch(html, /aria-label="导入"/)
 })
 
-test("local prompt files are imported by path, never through a host picker", () => {
+test("上架流程不再导入逐商品商品事实文件", () => {
   const bindings = readFileSync(
     new URL("../../src/features/workflow/workflow-actions.ts", import.meta.url),
     "utf8",
   )
   assert.doesNotMatch(bindings, /workflowPickPrompt/)
-  assert.match(bindings, /workflowImportPromptPath/)
+  assert.doesNotMatch(bindings, /workflowImportPromptPath|workflowScanPromptDir/)
 })
 
 test("card video panel stages videos before manual S3 upload", () => {
@@ -200,7 +200,7 @@ test("refreshing into a cardId URL restores behind a spinner, not a library flas
   try {
     const html = renderToStaticMarkup(<WorkflowScreen />)
     assert.match(html, /aria-label="正在恢复上架方案"/)
-    assert.doesNotMatch(html, /去平台货源选品/)
+    assert.doesNotMatch(html, /去平台商品库选品/)
   } finally {
     if (previousWindow === undefined) {
       Reflect.deleteProperty(globalThis, "window")
@@ -227,7 +227,7 @@ test("listing cards expose a clear primary action and an accessible copy action"
     />,
   )
 
-  assert.match(html, /aria-label="上架 装饰画模板"/)
+  assert.match(html, /aria-label="进入上架 装饰画模板"/)
   assert.match(html, /aria-label="复制 装饰画模板"/)
   assert.doesNotMatch(html, /aria-label="编辑 装饰画模板"/)
   assert.match(html, /aria-label="删除 装饰画模板"/)

@@ -3,19 +3,21 @@ package cataloghttp
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	access "github.com/xxww0098/podhub-go/internal/identity/contract"
 
+	"github.com/xxww0098/podhub-go/internal/platform/httpx/jsonwire"
 	"github.com/xxww0098/podhub-go/internal/suppliercatalog/contract"
 )
 
 // Principal is the account the session resolved.
 type Principal struct {
-	UserID int64
+	UserID       int64
+	PlatformRole string
 }
 
 // Refusal is an authentication answer.
@@ -51,7 +53,7 @@ type Deps struct {
 // Mount registers the routes.
 //
 // There is deliberately no /price route here: platformPriceCents is read-only
-// for a catalog manager (doc 8.2 marks the platform price as staff-only), and
+// for a catalog manager (platform prices are super-admin-only), and
 // a route that does not exist cannot be reached by a future client.
 func Mount(r chi.Router, d Deps) {
 	r.Route("/api/supplier-catalog", func(r chi.Router) {
@@ -87,7 +89,7 @@ func (d Deps) sources(w http.ResponseWriter, r *http.Request) {
 	if data.Sources == nil {
 		data.Sources = []contract.SourceSummary{}
 	}
-	writeData(w, http.StatusOK, data)
+	jsonwire.Write(w, http.StatusOK, data)
 }
 
 func (d Deps) detail(w http.ResponseWriter, r *http.Request) {
@@ -106,7 +108,7 @@ func (d Deps) detail(w http.ResponseWriter, r *http.Request) {
 	if data.Rows == nil {
 		data.Rows = []contract.CatalogRow{}
 	}
-	writeData(w, http.StatusOK, data)
+	jsonwire.Write(w, http.StatusOK, data)
 }
 
 func (d Deps) rows(w http.ResponseWriter, r *http.Request) {
@@ -122,7 +124,7 @@ func (d Deps) rows(w http.ResponseWriter, r *http.Request) {
 	if data.Rows == nil {
 		data.Rows = []contract.CatalogRow{}
 	}
-	writeData(w, http.StatusOK, data)
+	jsonwire.Write(w, http.StatusOK, data)
 }
 
 func (d Deps) row(w http.ResponseWriter, r *http.Request) {
@@ -135,7 +137,7 @@ func (d Deps) row(w http.ResponseWriter, r *http.Request) {
 		d.fail(w, err)
 		return
 	}
-	writeData(w, http.StatusOK, row)
+	jsonwire.Write(w, http.StatusOK, row)
 }
 
 func (d Deps) createRow(w http.ResponseWriter, r *http.Request) {
@@ -153,7 +155,7 @@ func (d Deps) createRow(w http.ResponseWriter, r *http.Request) {
 		d.fail(w, err)
 		return
 	}
-	writeData(w, http.StatusCreated, row)
+	jsonwire.Write(w, http.StatusCreated, row)
 }
 
 func (d Deps) updateRow(w http.ResponseWriter, r *http.Request) {
@@ -171,7 +173,7 @@ func (d Deps) updateRow(w http.ResponseWriter, r *http.Request) {
 		d.fail(w, err)
 		return
 	}
-	writeData(w, http.StatusOK, row)
+	jsonwire.Write(w, http.StatusOK, row)
 }
 
 func (d Deps) deleteRow(w http.ResponseWriter, r *http.Request) {
@@ -194,12 +196,16 @@ func (d Deps) setPublished(w http.ResponseWriter, r *http.Request, on bool) {
 	if !ok {
 		return
 	}
+	if !access.IsSuperAdmin(p.PlatformRole) {
+		d.fail(w, contract.SuperAdminRequired())
+		return
+	}
 	row, err := d.Actions.SetPublished(r.Context(), p.UserID, chi.URLParam(r, "source_id"), chi.URLParam(r, "product_id"), on, d.now())
 	if err != nil {
 		d.fail(w, err)
 		return
 	}
-	writeData(w, http.StatusOK, row)
+	jsonwire.Write(w, http.StatusOK, row)
 }
 
 // rowWire is the request body. costCents and shippingCostCents are writable AND
@@ -287,7 +293,7 @@ func (d Deps) fail(w http.ResponseWriter, err error) {
 	}
 	if f, ok := contract.AsFault(err); ok {
 		if len(f.Missing) > 0 {
-			writeJSON(w, f.Status, map[string]any{
+			jsonwire.Write(w, f.Status, map[string]any{
 				"error": f.Message, "code": f.Code, "missing": f.Missing,
 			})
 			return
@@ -299,17 +305,6 @@ func (d Deps) fail(w http.ResponseWriter, err error) {
 	writeErr(w, http.StatusInternalServerError, contract.MsgUnavailable, "INTERNAL")
 }
 
-func writeData(w http.ResponseWriter, status int, data any) { writeJSON(w, status, data) }
-
-func writeJSON(w http.ResponseWriter, status int, body any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(body)
-}
-
 func writeErr(w http.ResponseWriter, status int, message, code string) {
-	writeJSON(w, status, map[string]string{"error": message, "code": code})
+	jsonwire.Write(w, status, map[string]string{"error": message, "code": code})
 }
-
-var _ = errors.Is

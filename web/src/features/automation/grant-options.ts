@@ -18,23 +18,11 @@ export function availableGrantScopes(overview?: AccountOverview | null): GrantSc
   return ["catalog", ...(overview.active_workspace ? ["workspace" as const] : []), ...(isPlatformStaffRole(overview.session.role) ? ["supplier_catalog" as const] : [])]
 }
 
-/** One token stores one scope. The form does not ask which: platform staff
- * receive supplier authority, a workspace member receives that seat's
- * authority, and any other signed-in account can only read the public catalog. */
+/** Only workspace reads have a working MCP execution path. Other scopes remain
+ * visible in the list so their existing grants can be revoked. */
 export function roleGrantScope(overview?: AccountOverview | null): GrantScopeKind | null {
-  if (!overview?.session.authenticated) return null
-  if (isPlatformStaffRole(overview.session.role)) return "supplier_catalog"
-  if (overview.active_workspace) return "workspace"
-  return "catalog"
+  return overview?.session.authenticated && overview.active_workspace ? "workspace" : null
 }
 export function availableGrantActions(scope: GrantScopeKind, overview?: AccountOverview | null): string[] {
-  if (scope === "catalog") return ["catalog:read"]
-  if (scope === "supplier_catalog") return isPlatformStaffRole(overview?.session.role) ? ["supplier:read", "supplier:write", "supplier:delete", "supplier:publish", "supplier:price"] : []
-  if (!overview?.active_workspace) return []
-  const role = overview.active_workspace.role
-  const canPrepare = ["owner", "manager", "admin", "member", "reviewer"].includes(role)
-  return ["read", "catalog:read", ...(canPrepare ? ["cards:write"] : [])]
-}
-export function defaultGrantActions(scope: GrantScopeKind): string[] {
-  return scope === "workspace" ? ["read", "catalog:read"] : [scope === "catalog" ? "catalog:read" : "supplier:read"]
+  return scope === "workspace" && overview?.active_workspace ? ["read"] : []
 }

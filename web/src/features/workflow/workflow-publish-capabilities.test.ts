@@ -80,7 +80,7 @@ for (const mode of ["account", "permission", "scope", "row", "revision", "stop",
     const fx = await publishRepairFixture()
     const cloud = serve(() => { throw new Error("fenced repair cannot write") })
     fx.afterEdit(() => {
-      if (mode === "account") rememberAccountOverview({ ...fx.account, accounts: [{ ...fx.account.accounts[0]!, uuid: "other" }] })
+      if (mode === "account") rememberAccountOverview({ ...fx.account, session: { ...fx.account.session, uuid: "other" } })
       if (mode === "permission") rememberStoreRoster({ stores: [{ ...fx.store, can_manage: false }] }, 1)
       if (mode === "scope") resetListingWorkbench()
       if (mode === "row") patchListingWorkbench({ rows: [{ ...fx.row, draftId: "other" }] })

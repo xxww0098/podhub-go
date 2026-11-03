@@ -2,12 +2,13 @@ package domain
 
 import "github.com/google/uuid"
 
-// ImportDispatchChunk is one /v3/product/import and one listing.submit.batch
-// job. Source: import_dispatch.rs IMPORT_DISPATCH_CHUNK.
-const ImportDispatchChunk = 20
-
-// ImportV3MaxItems is the user-facing cap named next to that chunk.
+// ImportV3MaxItems is one /v3/product/import's item cap.
 const ImportV3MaxItems = 100
+
+// ImportDispatchChunk is one /v3/product/import and one listing.submit.batch
+// job. Send the largest body Ozon accepts: a 100-row send used to become five
+// tasks on one store, five writes and five receipt probes.
+const ImportDispatchChunk = ImportV3MaxItems
 
 // JobPlan is one chunk. The first chunk keeps the caller's ids so a replay
 // still collides on (org_id, kind, idempotency_key). Later chunks mint ids.

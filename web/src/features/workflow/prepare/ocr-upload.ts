@@ -14,11 +14,11 @@ const STEP_TIMEOUT_MS = 25_000
 export type PreparedOcrImage = { bytes: Uint8Array; mimeType: "image/png" | "image/jpeg" }
 type Spec = { bytes: number; sha256: string; content_type: string }
 type Target = components["schemas"]["DirectUploadTarget"]
-export type OcrPurchaseBody = { uploadTicket: string }
+export type OcrPurchaseBody = { upload_ticket: string }
 export type OcrUploadBudget = { grants: number; puts: number; confirms: number }
 
 /** Kept as the explicit firstparty body builder: no Chat Completions/base64 ingress. */
-export function analyzeImageBody(uploadTicket: string): OcrPurchaseBody { return { uploadTicket } }
+export function analyzeImageBody(upload_ticket: string): OcrPurchaseBody { return { upload_ticket } }
 
 export function prepareOcrImage(bytes: Uint8Array): PreparedOcrImage {
   if (bytes.byteLength === 0 || bytes.byteLength > OCR_MAX_IMAGE_BYTES) {

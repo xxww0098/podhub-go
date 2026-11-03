@@ -5,13 +5,6 @@ import (
 	observecontract "github.com/xxww0098/podhub-go/internal/admin/observe/contract"
 )
 
-// Standing is the TOTP row for this session.
-type Standing struct {
-	Missing  bool
-	Enrolled bool
-	Elevated bool
-}
-
 // PaymentReplace is the decoded replace body after the handler's JSON check.
 type PaymentReplace struct {
 	Expected int64

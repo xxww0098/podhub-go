@@ -7,20 +7,6 @@ import (
 	"github.com/xxww0098/podhub-go/internal/admin/domain"
 )
 
-func (s Service) ListPrompts(ctx context.Context, actor contract.Actor) ([]domain.Prompt, error) {
-	if s.Store == nil {
-		return nil, unavailable(nil)
-	}
-	rows, err := s.Store.ListPrompts(ctx, actor)
-	if err != nil {
-		return nil, err
-	}
-	if rows == nil {
-		rows = []domain.Prompt{}
-	}
-	return rows, nil
-}
-
 func (s Service) ListWithdrawals(ctx context.Context, actor contract.Actor, status string) ([]domain.Withdrawal, error) {
 	filter, err := domain.NormalizeStatus(status)
 	if err != nil {

@@ -2,7 +2,6 @@ import type {
   CategoryFieldOption,
   CategoryFieldView,
   CategorySchemaView,
-  SkuImportCandidate,
   WorkflowCategoryDraft,
   WorkflowDraftValue,
   WorkflowValidationIssue,
@@ -329,6 +328,8 @@ export function humanValidationMessage(issue: WorkflowValidationIssue) {
       return "草稿与当前类目或商品类型不一致。"
     case "complex_placement":
       return "复杂属性没有放在正确的属性组中。"
+    default:
+      return issue.message
   }
 }
 
@@ -344,58 +345,6 @@ function hasValue(value: WorkflowDraftValue | undefined) {
   if (Array.isArray(value.value)) return value.value.length > 0
   if (typeof value.value === "string") return value.value.trim().length > 0
   return true
-}
-
-export function isCategoryDraftBlank(
-  schema: CategorySchemaView,
-  draft: WorkflowCategoryDraft,
-) {
-  const editable = new Set(
-    schema.fields.filter((field) => !field.read_only).map((field) => field.key),
-  )
-  const simpleBlank = Object.entries(draft.values).every(
-    ([key, value]) => !editable.has(key) || isBlankFieldValue(key, value),
-  )
-  const complexBlank = draft.complex_values.every((group) =>
-    group.items.every((item) =>
-      Object.entries(item.values).every(
-        ([key, value]) => !editable.has(key) || isBlankFieldValue(key, value),
-      ),
-    ),
-  )
-  return simpleBlank && complexBlank
-}
-
-export function applySkuImportCandidates(
-  draft: WorkflowCategoryDraft,
-  candidates: SkuImportCandidate[],
-) {
-  let next = draft
-  for (const candidate of candidates) {
-    if (candidate.location.kind === "complex") {
-      next = ensureComplexItem(
-        next,
-        candidate.location.complex_id,
-        candidate.location.item_index,
-      )
-      next = writeWorkflowValue(
-        next,
-        candidate.field_key,
-        candidate.value,
-        {
-          complexId: candidate.location.complex_id,
-          itemIndex: candidate.location.item_index,
-        },
-      )
-    } else {
-      next = writeWorkflowValue(
-        next,
-        candidate.field_key,
-        candidate.value,
-      )
-    }
-  }
-  return next
 }
 
 function ensureComplexItem(
@@ -414,19 +363,4 @@ function ensureComplexItem(
   while (items.length <= itemIndex) items.push({ values: {} })
   complexValues[groupIndex] = { ...group, items }
   return { ...draft, complex_values: complexValues }
-}
-
-function isBlankFieldValue(key: string, value: WorkflowDraftValue) {
-  if (key === "dimension_unit" && value.kind === "text" && value.value === "mm") {
-    return true
-  }
-  if (key === "weight_unit" && value.kind === "text" && value.value === "g") {
-    return true
-  }
-  if (key === "vat" && value.kind === "text" && value.value === "0") {
-    return true
-  }
-  if (Array.isArray(value.value)) return value.value.length === 0
-  if (typeof value.value === "string") return value.value.trim().length === 0
-  return false
 }

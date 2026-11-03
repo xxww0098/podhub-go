@@ -17,11 +17,11 @@ import (
 // roleStore records the grant calls the six source-role handlers make.
 type roleStore struct {
 	fakeStore
-	fulfillers []domain.Fulfiller
-	managers   []domain.CatalogManager
-	granted    int64
-	revoked    string
-	grantSrc   string
+	fulfillers  []domain.Fulfiller
+	managers    []domain.CatalogManager
+	grantedUUID string
+	revoked     string
+	grantSrc    string
 }
 
 func (s *roleStore) ListFulfillers(_ context.Context, _ contract.Actor, sourceID string) ([]domain.Fulfiller, error) {
@@ -29,9 +29,9 @@ func (s *roleStore) ListFulfillers(_ context.Context, _ contract.Actor, sourceID
 	return s.fulfillers, nil
 }
 
-func (s *roleStore) GrantFulfiller(_ context.Context, _ contract.Actor, sourceID string, userID, _ int64) (domain.Fulfiller, error) {
-	s.grantSrc, s.granted = sourceID, userID
-	return domain.Fulfiller{FulfillerID: "f-1", SourceID: sourceID, UserID: userID, Status: "active"}, nil
+func (s *roleStore) GrantFulfiller(_ context.Context, _ contract.Actor, sourceID, accountUUID string, _ int64) (domain.Fulfiller, error) {
+	s.grantSrc, s.grantedUUID = sourceID, accountUUID
+	return domain.Fulfiller{FulfillerID: "f-1", SourceID: sourceID, UserID: 7, Status: "active"}, nil
 }
 
 func (s *roleStore) RevokeFulfiller(_ context.Context, _ contract.Actor, _ string, id string, _ int64) error {
@@ -43,9 +43,9 @@ func (s *roleStore) ListCatalogManagers(_ context.Context, _ contract.Actor, _ s
 	return s.managers, nil
 }
 
-func (s *roleStore) GrantCatalogManager(_ context.Context, _ contract.Actor, sourceID string, userID, _ int64) (domain.CatalogManager, error) {
-	s.grantSrc, s.granted = sourceID, userID
-	return domain.CatalogManager{ManagerID: "m-1", SourceID: sourceID, UserID: userID, Status: "active"}, nil
+func (s *roleStore) GrantCatalogManager(_ context.Context, _ contract.Actor, sourceID, accountUUID string, _ int64) (domain.CatalogManager, error) {
+	s.grantSrc, s.grantedUUID = sourceID, accountUUID
+	return domain.CatalogManager{ManagerID: "m-1", SourceID: sourceID, UserID: 8, Status: "active"}, nil
 }
 
 func (s *roleStore) RevokeCatalogManager(_ context.Context, _ contract.Actor, _ string, id string, _ int64) error {
@@ -57,10 +57,10 @@ func (s *roleStore) RevokeCatalogManager(_ context.Context, _ contract.Actor, _ 
 // tables. The staff case is the important one: these are super-admin only.
 var sourceRoleRoutes = []struct{ method, path, body string }{
 	{http.MethodGet, "/api/admin/supplier-dbs/src/fulfillers", ""},
-	{http.MethodPost, "/api/admin/supplier-dbs/src/fulfillers", `{"userId":7}`},
+	{http.MethodPost, "/api/admin/supplier-dbs/src/fulfillers", `{"account_uuid":"user-7"}`},
 	{http.MethodDelete, "/api/admin/supplier-dbs/src/fulfillers/00000000-0000-0000-0000-000000000001", ""},
 	{http.MethodGet, "/api/admin/supplier-dbs/src/catalog-managers", ""},
-	{http.MethodPost, "/api/admin/supplier-dbs/src/catalog-managers", `{"userId":7}`},
+	{http.MethodPost, "/api/admin/supplier-dbs/src/catalog-managers", `{"account_uuid":"user-7"}`},
 	{http.MethodDelete, "/api/admin/supplier-dbs/src/catalog-managers/00000000-0000-0000-0000-000000000002", ""},
 }
 
@@ -75,7 +75,7 @@ func TestSourceRoleRoutesAreSuperOnly(t *testing.T) {
 			t.Fatalf("%s %s %d %s", rt.method, rt.path, rec.Code, rec.Body.String())
 		}
 	}
-	if store.granted != 0 || store.revoked != "" {
+	if store.grantedUUID != "" || store.revoked != "" {
 		t.Fatal("staff reached the store")
 	}
 }
@@ -97,16 +97,19 @@ func TestSourceRoleEnvelopes(t *testing.T) {
 	if rec.Code != http.StatusOK || rec.Body.String() != `{"data":{"catalogManagers":[{"managerId":"m-1","sourceId":"src","userId":8,"email":"d@e.f","name":"","status":"active","createdAtMs":6}]}}` {
 		t.Fatalf("list managers %d %s", rec.Code, rec.Body.String())
 	}
-	rec = call(super, http.MethodPost, "/api/admin/supplier-dbs/src/fulfillers", `{"userId":7}`)
+	rec = call(super, http.MethodPost, "/api/admin/supplier-dbs/src/fulfillers", `{"account_uuid":"user-7"}`)
 	if rec.Code != http.StatusCreated || rec.Body.String() != `{"data":{"fulfiller":{"fulfillerId":"f-1","sourceId":"src","userId":7,"email":"","name":"","status":"active","createdAtMs":0}}}` {
 		t.Fatalf("grant fulfiller %d %s", rec.Code, rec.Body.String())
 	}
-	if store.grantSrc != "src" || store.granted != 7 {
-		t.Fatalf("grant args %q %d", store.grantSrc, store.granted)
+	if store.grantSrc != "src" || store.grantedUUID != "user-7" {
+		t.Fatalf("grant args %q %q", store.grantSrc, store.grantedUUID)
 	}
-	rec = call(super, http.MethodPost, "/api/admin/supplier-dbs/src/catalog-managers", `{"userId":8}`)
+	rec = call(super, http.MethodPost, "/api/admin/supplier-dbs/src/catalog-managers", `{"account_uuid":"user-8"}`)
 	if rec.Code != http.StatusCreated || rec.Body.String() != `{"data":{"catalogManager":{"managerId":"m-1","sourceId":"src","userId":8,"email":"","name":"","status":"active","createdAtMs":0}}}` {
 		t.Fatalf("grant manager %d %s", rec.Code, rec.Body.String())
+	}
+	if store.grantedUUID != "user-8" {
+		t.Fatalf("catalog account %q", store.grantedUUID)
 	}
 	rec = call(super, http.MethodDelete, "/api/admin/supplier-dbs/src/fulfillers/00000000-0000-0000-0000-000000000001", "")
 	if rec.Code != http.StatusOK || rec.Body.String() != `{"data":{"fulfillerId":"00000000-0000-0000-0000-000000000001","revoked":true}}` {
@@ -125,7 +128,7 @@ func TestSourceRoleBodies(t *testing.T) {
 	svc := service.New(&roleStore{})
 	super := chi.NewRouter()
 	Mount(super, Deps{Resolve: fixed(access.FixedResolver{Principal: &access.Principal{UserID: 1, PlatformRole: "super_admin"}}), Supplier: &svc})
-	for _, body := range []string{`{}`, `{"userId":0}`, `{"userId":-1}`, `{"userId":"7"}`, `{"userId":7,"extra":1}`, `null`} {
+	for _, body := range []string{`{}`, `{"account_uuid":""}`, `{"account_uuid":7}`, `{"userId":0}`, `{"userId":-1}`, `{"userId":"7"}`, `{"userId":7,"extra":1}`, `null`} {
 		rec := call(super, http.MethodPost, "/api/admin/supplier-dbs/src/fulfillers", body)
 		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `"code":"VALIDATION"`) {
 			t.Fatalf("%s -> %d %s", body, rec.Code, rec.Body.String())

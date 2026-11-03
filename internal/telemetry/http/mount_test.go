@@ -64,7 +64,7 @@ func TestClientLogsSwitchBeforeAuth(t *testing.T) {
 	}
 
 	on := chi.NewRouter()
-	Mount(on, Deps{Collect: true, Resolve: fixed(&access.Principal{UserID: 7, OrgID: 3, WorkspaceRole: "viewer"}), Actions: rejectStore{}, Now: func() time.Time {
+	Mount(on, Deps{Collect: true, Resolve: fixed(&access.Principal{UserID: 7, OrgID: 3, WorkspaceRole: "member"}), Actions: rejectStore{}, Now: func() time.Time {
 		return time.Date(2026, 10, 9, 3, 0, 1, 0, time.UTC)
 	}})
 	body := `{"records":[{"id":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee","ts":"2026-10-09T03:00:00Z","level":"info","module":"upload","event":"upload.end","sessionId":"11111111-2222-4333-8444-555555555555","version":"0.0.99"}]}`

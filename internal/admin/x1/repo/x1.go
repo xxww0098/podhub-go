@@ -2,6 +2,7 @@ package x1repo
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -12,27 +13,17 @@ import (
 )
 
 const (
-	pathRowCreate     = "/api/admin/supplier-dbs/{source_id}/rows"
-	pathRow           = "/api/admin/supplier-dbs/{source_id}/rows/{product_id}"
-	pathPrice         = "/api/admin/supplier-dbs/{source_id}/rows/{product_id}/price"
-	pathPublish       = "/api/admin/supplier-dbs/{source_id}/rows/{product_id}/publish"
-	pathUnpublish     = "/api/admin/supplier-dbs/{source_id}/rows/{product_id}/unpublish"
-	pathOzon          = "/api/admin/supplier-dbs/{source_id}/rows/{product_id}/ozon-config"
-	pathPromptPublish = "/api/admin/supplier-dbs/{source_id}/rows/{product_id}/prompt/publish"
-	pathPromptPatch   = "/api/admin/supplier-prompts/{product_id}"
-	pathPromptSync    = "/api/admin/supplier-prompts/sync"
-	rowFrom           = `
+	pathRowCreate = "/api/admin/supplier-dbs/{source_id}/rows"
+	pathRow       = "/api/admin/supplier-dbs/{source_id}/rows/{product_id}"
+	pathPrice     = "/api/admin/supplier-dbs/{source_id}/rows/{product_id}/price"
+	pathPublish   = "/api/admin/supplier-dbs/{source_id}/rows/{product_id}/publish"
+	pathUnpublish = "/api/admin/supplier-dbs/{source_id}/rows/{product_id}/unpublish"
+	pathOzon      = "/api/admin/supplier-dbs/{source_id}/rows/{product_id}/ozon-config"
+	rowFrom       = `
 FROM public.sc_products p
 JOIN public.sc_sources src ON src.source_id = p.source_id
 JOIN public.sc_skus s ON s.product_id = p.product_id
 LEFT JOIN public.supplier_ozon_configs m ON m.product_id = p.product_id
-LEFT JOIN LATERAL (
-    SELECT brief, fixed_tags, revision, ai_output
-    FROM public.prompt_revisions r
-    WHERE r.product_id = p.product_id
-    ORDER BY r.revision DESC
-    LIMIT 1
-) prompt_latest ON TRUE
 LEFT JOIN public.supplier_ozon_configs c
        ON c.product_id = p.product_id
       AND c.description_category_id = p.description_category_id
@@ -45,17 +36,19 @@ LEFT JOIN public.sc_source_offers o
 LEFT JOIN LATERAL (
     SELECT price_cents FROM public.sc_price_versions pv
     WHERE pv.sku_id = s.sku_id ORDER BY pv.id DESC LIMIT 1
-) v ON TRUE`
+) v ON TRUE
+LEFT JOIN LATERAL (
+    SELECT COALESCE(json_agg(json_build_object(
+             'priceCents', pv.price_cents, 'createdAtMs', pv.created_at_ms
+           ) ORDER BY pv.id DESC), '[]'::json) AS versions
+    FROM public.sc_price_versions pv WHERE pv.sku_id = s.sku_id
+) vh ON TRUE`
 )
 
 const rowSelect = `
 SELECT p.product_id, p.source_id, p.title, p.description, p.variant_group,
        p.published, p.revision, p.prompt_name, p.prompt_file_name,
-       COALESCE(prompt_latest.brief, m.prompt_text, '') ,
-       COALESCE(prompt_latest.fixed_tags, m.fixed_tags, '[]'::jsonb),
-       COALESCE(m.prompt_text, ''),
-       COALESCE(m.fixed_tags, '[]'::jsonb),
-       prompt_latest.revision, m.published_revision,
+       COALESCE(m.prompt_text, ''), COALESCE(m.fixed_tags, '[]'::jsonb),
        p.product_videos, p.gallery, p.psd,
        c.state, c.validated_catalog_digest, cat.content_digest, cat.fetched_at_ms,
        src.listed, p.description_category_id, p.type_id, p.internal_note, p.props, p.archived,
@@ -67,7 +60,7 @@ SELECT p.product_id, p.source_id, p.title, p.description, p.variant_group,
          WHERE creator.public_id = p.created_by_account_uuid),
        s.sku_id, s.platform_code, s.lead_time, s.published,
        s.suggested_retail_cents, s.suggested_old_price_cents,
-       o.cost_cents, o.shipping_cost_cents, v.price_cents` + rowFrom
+       o.cost_cents, o.shipping_cost_cents, v.price_cents, vh.versions` + rowFrom
 
 func (r X1) Detail(ctx context.Context, actor contract.Actor, sourceID string, now int64) (x1contract.DbDetail, error) {
 	var out x1contract.DbDetail
@@ -126,7 +119,7 @@ func (r X1) CreateRow(ctx context.Context, actor contract.Actor, sourceID string
 		if err := upsertOffer(ctx, tx, sourceID, skuID, in.CostCents, in.ShippingCents, now); err != nil {
 			return err
 		}
-		if err := writeRowConfig(ctx, tx, actor, sourceID, productID, in.PromptContent, in.FixedTags, publicID, now); err != nil {
+		if err := r.writeRowConfig(ctx, tx, actor, sourceID, productID, in.PromptContent, in.FixedTags, publicID, now); err != nil {
 			return err
 		}
 		if err := corerepo.AuditApplied(ctx, tx, actor, "supplier_dbs", "supplier_db", productID, "POST", pathRowCreate, "sc_source_row_created", x1contract.JSONText(struct {
@@ -154,9 +147,18 @@ func (r X1) UpdateRow(ctx context.Context, actor contract.Actor, sourceID, produ
 		if _, err := corerepo.LockSource(ctx, tx, sourceID); err != nil {
 			return err
 		}
-		sku, _, err := corerepo.LockProduct(ctx, tx, sourceID, productID)
+		sku, published, err := corerepo.LockProduct(ctx, tx, sourceID, productID)
 		if err != nil {
 			return err
+		}
+		if published && in.Archived && actor.Role != "super_admin" {
+			return &contract.Fail{Kind: contract.KindForbidden, Message: "已发布规格需由超级管理员停用后再归档"}
+		}
+		if published && !in.Archived {
+			var gallery []x1contract.GalleryItem
+			if json.Unmarshal(in.Gallery, &gallery) != nil || len(gallery) == 0 {
+				return &contract.Fail{Kind: contract.KindValidation, Message: "已发布规格需保留图集图片，请先停用再清空", Missing: []string{"gallery"}}
+			}
 		}
 		tag, err := tx.Exec(ctx, `
 			UPDATE public.sc_products
@@ -198,7 +200,7 @@ func (r X1) UpdateRow(ctx context.Context, actor contract.Actor, sourceID, produ
 		if err := upsertOffer(ctx, tx, sourceID, sku, in.CostCents, in.ShippingCents, now); err != nil {
 			return err
 		}
-		if err := writeRowConfig(ctx, tx, actor, sourceID, productID, in.PromptContent, in.FixedTags, publicID, now); err != nil {
+		if err := r.writeRowConfig(ctx, tx, actor, sourceID, productID, in.PromptContent, in.FixedTags, publicID, now); err != nil {
 			return err
 		}
 		if err := corerepo.AuditApplied(ctx, tx, actor, "supplier_dbs", "supplier_db", productID, "PUT", pathRow, "sc_source_row_updated", x1contract.JSONText(struct {
@@ -214,6 +216,9 @@ func (r X1) UpdateRow(ctx context.Context, actor contract.Actor, sourceID, produ
 }
 
 func (r X1) AdjustPrice(ctx context.Context, actor contract.Actor, sourceID, productID string, cents int64, note string, now int64) (x1contract.RowData, error) {
+	if actor.Role != "super_admin" {
+		return x1contract.RowData{}, &contract.Fail{Kind: contract.KindForbidden, Message: "需要超级管理员权限"}
+	}
 	var out x1contract.RowData
 	err := r.withWrite(ctx, actor.OrgID, func(tx pgx.Tx) error {
 		publicID, owner, err := r.identity(ctx, tx, actor)
@@ -256,6 +261,9 @@ func (r X1) AdjustPrice(ctx context.Context, actor contract.Actor, sourceID, pro
 }
 
 func (r X1) SetPublished(ctx context.Context, actor contract.Actor, sourceID, productID string, on bool, now int64) (x1contract.RowData, error) {
+	if actor.Role != "super_admin" {
+		return x1contract.RowData{}, &contract.Fail{Kind: contract.KindForbidden, Message: "需要超级管理员权限"}
+	}
 	var out x1contract.RowData
 	err := r.withWrite(ctx, actor.OrgID, func(tx pgx.Tx) error {
 		_, owner, err := r.identity(ctx, tx, actor)
@@ -281,6 +289,9 @@ func (r X1) SetPublished(ctx context.Context, actor contract.Actor, sourceID, pr
 				return &contract.Fail{Kind: contract.KindValidation, Message: "归档商品不能上架"}
 			}
 			missing := x1contract.MissingKeys(cur.Readiness)
+			if len(cur.Gallery) == 0 {
+				missing = append(missing, "gallery")
+			}
 			if len(missing) > 0 {
 				return &contract.Fail{Kind: contract.KindValidation, Message: "商品尚未满足上架条件", Missing: missing}
 			}

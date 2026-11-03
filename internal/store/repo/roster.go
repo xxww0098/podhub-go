@@ -35,7 +35,8 @@ EXISTS (SELECT 1 FROM public.store_seller_credentials c WHERE c.store_id = s.id)
   WHERE c.store_id = s.id AND c.credential_revision = s.credential_revision),
 (SELECT c.key_expires_at_ms FROM public.store_seller_credentials c
   WHERE c.store_id = s.id AND c.credential_revision = s.credential_revision),
-s.assignee_membership_id, s.assignee_key_manage, s.product_quota, s.finance_balance,
+s.assignee_membership_id, s.product_quota, s.finance_balance,
+COALESCE(s.company_currency, ''),
 (SELECT COALESCE(NULLIF(btrim(m.display_name), ''), u.email)
    FROM public.organization_members m
    JOIN public.account_users u ON u.id = m.user_id
@@ -65,8 +66,8 @@ func scanProjection(row pgx.Row) (domain.Row, error) {
 		&out.CredentialConfigured, &out.CredentialAnyConfigured,
 		&out.CredentialVerifiedOperators, &out.CredentialLastVerifiedAtMS,
 		&out.CredentialLastUsedAtMS, &out.CredentialKeyExpiresAtMS,
-		&out.AssigneeMembershipID, &out.AssigneeKeyManage,
-		&out.ProductQuota, &out.FinanceBalance,
+		&out.AssigneeMembershipID,
+		&out.ProductQuota, &out.FinanceBalance, &out.CompanyCurrency,
 		&out.AssigneeName, &out.AssigneeEmail,
 		&out.Revision, &out.DeletedAtMS,
 		&tagsRaw, &groupRaw,
@@ -192,35 +193,6 @@ func (r Repo) LoadMutationRow(ctx context.Context, tx pgx.Tx, orgID int64, uuid 
 		return domain.Row{}, contract.NotFound(contract.MsgStoreDeleted)
 	}
 	return row, nil
-}
-
-// loadStoreForCredential is credential_store::load_store: the narrow row the
-// credential writers need, locked for update.
-func (r Repo) loadStoreForCredential(ctx context.Context, tx pgx.Tx, orgID int64, uuid string) (domain.Row, error) {
-	var out domain.Row
-	var deleted *int64
-	err := tx.QueryRow(ctx, `
-		SELECT s.id, lower(s.uuid::text), s.client_id, s.credential_revision, s.revision,
-		       s.manual_disabled, s.quota_suspended, s.assignee_membership_id,
-		       s.assignee_key_manage, s.deleted_at_ms
-		  FROM public.organization_stores s
-		 WHERE s.org_id = $1 AND s.uuid = $2::uuid
-		 LIMIT 1
-		 FOR UPDATE`, orgID, uuid).Scan(
-		&out.ID, &out.UUID, &out.ClientID, &out.CredentialRevision, &out.Revision,
-		&out.ManualDisabled, &out.QuotaSuspended, &out.AssigneeMembershipID,
-		&out.AssigneeKeyManage, &deleted)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return domain.Row{}, contract.NotFound(contract.MsgStoreMissing)
-	}
-	if err != nil {
-		return domain.Row{}, err
-	}
-	out.DeletedAtMS = deleted
-	if deleted != nil {
-		return domain.Row{}, contract.NotFound(contract.MsgStoreDeleted)
-	}
-	return out, nil
 }
 
 // lockWorkspaceRow takes the Workspace row lock every roster write serialises

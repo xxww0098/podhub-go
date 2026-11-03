@@ -112,9 +112,3 @@ func finishOneDrain(ctx context.Context, pool *pgxpool.Pool, orgID, drainID int6
 		return err
 	})
 }
-
-// ActiveDrain reports whether the workspace is draining now.
-func ActiveDrain(ctx context.Context, tx pgx.Tx, orgID int64) (bool, error) {
-	start, err := DrainStart(ctx, tx, orgID)
-	return start != nil, err
-}

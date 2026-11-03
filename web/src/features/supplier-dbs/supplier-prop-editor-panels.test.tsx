@@ -4,15 +4,28 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { renderToStaticMarkup } from "react-dom/server"
-import { SupplierDbDetailView } from "./supplier-db-table"
+import { SupplierProductsView } from "./supplier-db-table"
+import { CustomPropField } from "./supplier-row-fields"
 import { AdjustPricePanel, CategoryPickerPanel, MultiSelectOptionsPanel, SelectOptionsPanel } from "./supplier-prop-editors"
 import { PropEditorForm, propDraftFrom } from "./supplier-prop-dialog"
 import { createSupplierDbsStore } from "./supplier-dbs-store"
 import { TREE, db, row, propDef, clientWithDetail } from "./supplier-editing-fixtures"
 
-test("商品表是只读摘要：无行内编辑器，行菜单与筛选触发器在", () => {
+test("自定义属性初始即显示输入框、文本域或有占位提示的下拉框", () => {
+  for (const type of ["text", "number", "long_text", "select", "multi_select", "checkbox"] as const) {
+    const html = renderToStaticMarkup(<CustomPropField def={propDef({ type })} row={row("p1")}
+      onPatch={async () => true} />)
+    assert.doesNotMatch(html, /data-cell-display|>—</)
+    assert.match(html, /aria-label="自定义属性 材质"/)
+    if (type === "text" || type === "number") assert.match(html, /<input[^>]*placeholder="请输入/)
+    else if (type === "long_text") assert.match(html, /<textarea[^>]*placeholder="请输入/)
+    else assert.match(html, /请选择/)
+  }
+})
+
+test("商品表仅允许维护内部成本，商品编辑和自定义属性仍在详情", () => {
   const html = renderToStaticMarkup(
-    <SupplierDbDetailView
+    <SupplierProductsView
       store={createSupplierDbsStore(
         clientWithDetail({
           db: db({ rowCount: 1 }),
@@ -35,7 +48,8 @@ test("商品表是只读摘要：无行内编辑器，行菜单与筛选触发�
           ],
         }).client,
       )}
-      detail={{
+      dbs={[db()]}
+      details={[{
         db: db({ rowCount: 1 }),
         propDefs: [
           propDef({
@@ -54,20 +68,19 @@ test("商品表是只读摘要：无行内编辑器，行菜单与筛选触发�
             props: { "prop-sel": "cotton" },
           }),
         ],
-      }}
-      onExit={() => {}}
-      onEditDb={() => {}}
-      onOpenAccounts={() => {}}
+      }]}
+      onManageFactories={() => {}}
       loadCategoryTree={async () => TREE}
     />,
   )
-  // 行内编辑整体移除——表格只剩只读摘要，编辑全在行面板。
+  // 内部成本留在管理表格，公开商品字段仍在详情编辑。
   assert.doesNotMatch(html, /data-cell-display/)
-  assert.doesNotMatch(html, /data-cell-editor/)
+  assert.doesNotMatch(html, /data-cell-editor=/)
+  assert.match(html, /新增规格/)
   assert.doesNotMatch(html, /data-column-menu/)
   assert.doesNotMatch(html, /data-sort-trigger/)
-  // 行「更多」菜单触发器与打开缝仍在（菜单体是 portal，SSR 不出）。
-  assert.match(html, /aria-label="行操作 圣诞帽"/)
+  // 单规格直接读规格名并打开该规格；商品打开缝仍在。
+  assert.match(html, /aria-label="编辑规格 P001"/)
   assert.match(html, /data-supplier-db-open="p1"/)
   // 搜索框带 `/` 快捷键提示；勾选后才显示批量操作条。
   assert.match(html, /aria-label="搜索商品"/)

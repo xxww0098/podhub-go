@@ -5,6 +5,35 @@ import { route } from "@/api/routes"
 
 import { integrationsHttp } from "./http-integrations"
 
+test("文件树上传授权携带实际文件摘要并保留标准直传字段", async () => {
+  const previous = globalThis.fetch
+  const calls: Array<{ url: string; body: unknown }> = []
+  const target = {
+    uploadTicket: "storage-ticket",
+    upload: {
+      url: "https://s3.example.invalid/object",
+      expires_at_ms: Date.now() + 60_000,
+      headers: { content_type: "image/png", if_none_match: "*" },
+    },
+  }
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ url: String(input), body: JSON.parse(String(init?.body)) })
+    return Response.json({ data: { upload: target } })
+  }) as typeof globalThis.fetch
+  try {
+    const file = new File([new Uint8Array([1, 2])], "art.png", { type: "image/png" })
+    const supplier = await integrationsHttp.presignSupplierDbStorageUpload(file, "art.png")
+    assert.deepEqual(supplier, target)
+    await integrationsHttp.presignMediaStorageUpload("media-1", file, "art.png")
+    const body = { path: "art.png", contentType: "image/png", bytes: 2,
+      sha256: "a12871fee210fb8619291eaea194581cbd2531e4b23759d225f6806923f63222" }
+    assert.deepEqual(calls, [
+      { url: route("adminSupplierDbStorageUploads"), body },
+      { url: route("adminMediaUploads"), body: { accountId: "media-1", ...body } },
+    ])
+  } finally { globalThis.fetch = previous }
+})
+
 test("切片媒体文件树请求始终携带所选账号与相对路径", async () => {
   const previous = globalThis.fetch
   const calls: Array<{ url: string; init?: RequestInit }> = []

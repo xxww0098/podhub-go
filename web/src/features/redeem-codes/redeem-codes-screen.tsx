@@ -1,9 +1,14 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import {
   Check,
+  ChevronLeft,
+  ChevronDown,
+  ChevronRight,
   Copy,
   Download,
   KeyRound,
+  Plus,
+  RefreshCw,
   Search,
   ShieldCheck,
   Ticket,
@@ -16,22 +21,18 @@ import type { AdminRedeemCodeCreateRequestView, AdminRedeemCodeView, AdminRedeem
 import { adminHttp } from "@/bindings/http-admin"
 import { IdentityTile } from "@/components/identity-tile"
 import { IdCode } from "@/components/id-code"
-import { PlatformAdminEmpty, PlatformAdminFilter, PlatformAdminRefresh, PlatformAdminSearch, PlatformAdminSurface } from "@/components/platform-admin-surface"
+import { PlatformAdminEmpty, PlatformAdminSearch, PlatformAdminSurface } from "@/components/platform-admin-surface"
 import { PlatformAdminDialog, PlatformAdminDialogFooter } from "@/components/platform-admin-dialog"
 import { useScreenActive } from "@/components/screen-pane"
 import { StateChip } from "@/components/state-chip"
 import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Spinner } from "@/components/ui/spinner"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
+import { Tabs, TabsContent, TabsIndicator, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Table,
   TableBody,
@@ -40,25 +41,16 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { Tabs, TabsIndicator, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Input } from "@/components/ui/input"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { errorMessage } from "@/lib/error-message"
 import { formatDateTimeShort } from "@/lib/format"
 import { MAX_TOPUP_CENTS, MIN_TOPUP_CENTS, formatYuan, topupCentsFromYuan } from "@/lib/money"
 import { clearLive, notifyCommandError, notifyLive, notifySuccess } from "@/lib/notify"
+import { planDisplayName } from "@/features/plans/plan-catalog"
+import { SubscriptionCoupons } from "./subscription-coupons"
 
 const REDEEM_CODES_LIVE = "redeem-codes-load"
-const MAX_MEMBER_SEATS_PER_WORKSPACE = 20
-
-import { PLAN_CATALOG, type PlanKey } from "@/features/plans/plan-catalog"
-
-/** Cloud admits 1–20 成员席位 per code and requires a paid tier (billing::seats). */
-const PAID_TIERS = PLAN_CATALOG.filter(
-  (plan): plan is (typeof plan & { key: Exclude<PlanKey, "free"> }) =>
-    plan.key !== "free",
-)
-
 type CodeStatus = "unused" | "redeemed" | "expired" | "revoked"
 type StatusFilter = "all" | CodeStatus
 
@@ -67,6 +59,12 @@ const STATUS_LABELS: Record<CodeStatus, string> = {
   redeemed: "已兑换",
   expired: "已过期",
   revoked: "已作废",
+}
+const STATUS_STYLES: Record<CodeStatus, string> = {
+  unused: "border-st-good/30 bg-st-good-soft text-st-good-ink [&>span]:bg-st-good",
+  redeemed: "border-st-flight/30 bg-st-flight-soft text-st-flight-ink [&>span]:bg-st-flight",
+  expired: "border-st-idle/25 bg-st-idle-soft bg-none text-st-idle-ink [&>span]:bg-st-idle",
+  revoked: "border-st-attest/30 bg-st-attest-soft text-st-attest-ink [&>span]:bg-st-attest",
 }
 
 const FILTERS: { id: StatusFilter; label: string }[] = [
@@ -77,25 +75,12 @@ const FILTERS: { id: StatusFilter; label: string }[] = [
   { id: "revoked", label: "已作废" },
 ]
 
-type RedeemGrantSource = {
-  product?: string
-  member_seats: number
-  ocr_credits?: number
-  wallet_cents?: number
-  duration_days: number
-  plan_name: string
-}
+type RedeemGrantSource = { wallet_cents: number; plan_key?: string | null; plan_stores?: number | null; plan_months?: number | null }
 
-/** The two display pieces of a code's grant: the amount and its term/label. */
+/** The two display pieces of a code's grant: the amount and its label. */
 function redeemGrantParts(code: RedeemGrantSource) {
-  // A wallet balance never expires, so its code carries an amount and no term.
-  if (code.product === "wallet_credits") {
-    return { amount: formatYuan(centsToMicrofen(code.wallet_cents ?? 0)), detail: "钱包额度" }
-  }
-  if (code.product === "ocr_credits") {
-    return { amount: `${code.ocr_credits ?? 0} 次`, detail: `${code.duration_days} 天` }
-  }
-  return { amount: `${code.member_seats} 席`, detail: `${code.duration_days} 天 · ${code.plan_name}` }
+  if (code.plan_key) return { amount: planDisplayName(code.plan_key), detail: `${code.plan_stores} 家店铺 · ${code.plan_months} 个月` }
+  return { amount: formatYuan(centsToMicrofen(code.wallet_cents)), detail: "钱包额度" }
 }
 
 function redeemGrantLabel(code: RedeemGrantSource) {
@@ -109,6 +94,15 @@ function centsToMicrofen(cents: number) {
 }
 
 export function RedeemCodesScreen() {
+  return <Tabs defaultValue="wallet" className="min-h-0 flex-1">
+    <TabsList className="w-fit max-w-full flex-wrap" aria-label="兑换与优惠"><TabsTrigger value="wallet">钱包兑换码</TabsTrigger><TabsTrigger value="plan">套餐兑换码</TabsTrigger><TabsTrigger value="coupons">订阅优惠码</TabsTrigger><TabsIndicator /></TabsList>
+    <TabsContent value="wallet" className="flex min-h-0 flex-1 flex-col"><RedeemCodeLedger kind="wallet" /></TabsContent>
+    <TabsContent value="plan" className="flex min-h-0 flex-1 flex-col"><RedeemCodeLedger kind="plan" /></TabsContent>
+    <TabsContent value="coupons" className="flex min-h-0 flex-1 flex-col gap-3"><SubscriptionCoupons /></TabsContent>
+  </Tabs>
+}
+
+function RedeemCodeLedger({ kind }: { kind: "wallet" | "plan" }) {
   const active = useScreenActive()
   const [overview, setOverview] = useState<AdminRedeemCodesOverview>()
   const [loading, setLoading] = useState(true)
@@ -116,6 +110,8 @@ export function RedeemCodesScreen() {
   const [error, setError] = useState<unknown>()
   const [query, setQuery] = useState("")
   const [status, setStatus] = useState<StatusFilter>("all")
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
   const [selected, setSelected] = useState<AdminRedeemCodeView>()
   const [pendingDelete, setPendingDelete] = useState<AdminRedeemCodeView>()
   const [copiedId, setCopiedId] = useState<number>()
@@ -123,15 +119,19 @@ export function RedeemCodesScreen() {
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<number>>(new Set())
   const [batchDeleteOpen, setBatchDeleteOpen] = useState(false)
   const [batchDeleting, setBatchDeleting] = useState(false)
+  const loadVersion = useRef(0)
 
   async function load(soft = false) {
+    const version = ++loadVersion.current
     if (soft) setRefreshing(true)
     else setLoading(true)
     setError(undefined)
     clearLive(REDEEM_CODES_LIVE)
     try {
-      setOverview(await adminHttp.adminListRedeemCodes())
+      const next = await adminHttp.adminListRedeemCodes()
+      if (version === loadVersion.current) setOverview(next)
     } catch (reason) {
+      if (version !== loadVersion.current) return
       setError(reason)
       notifyLive({
         id: REDEEM_CODES_LIVE,
@@ -141,35 +141,37 @@ export function RedeemCodesScreen() {
         action: { label: "重试", onClick: () => void load() },
       })
     } finally {
-      setLoading(false)
-      setRefreshing(false)
+      if (version === loadVersion.current) {
+        setLoading(false)
+        setRefreshing(false)
+      }
     }
   }
 
   useEffect(() => {
     if (active) void load()
-    return () => clearLive(REDEEM_CODES_LIVE)
+    return () => { loadVersion.current += 1; clearLive(REDEEM_CODES_LIVE) }
   }, [active])
 
+  const codes = useMemo(() => (overview?.codes ?? []).filter((code) => Boolean(code.plan_key) === (kind === "plan")), [overview, kind])
   const counts: Record<StatusFilter, number> = {
-    all: overview?.total ?? 0,
-    unused: overview?.unused ?? 0,
-    redeemed: overview?.redeemed ?? 0,
-    expired: overview?.expired ?? 0,
-    revoked: overview?.revoked ?? 0,
+    all: codes.length,
+    unused: codes.filter((code) => code.status === "unused").length,
+    redeemed: codes.filter((code) => code.status === "redeemed").length,
+    expired: codes.filter((code) => code.status === "expired").length,
+    revoked: codes.filter((code) => code.status === "revoked").length,
   }
 
   const filteredCodes = useMemo(() => {
     const normalized = query.trim().toLowerCase()
-    return (overview?.codes ?? []).filter((code) => {
+    return codes.filter((code) => {
       const matchesStatus = status === "all" || code.status === status
       const searchable = [
         code.code_preview,
-        String(code.member_seats),
-        String(code.ocr_credits ?? ""),
-        String(code.wallet_cents ?? ""),
-        code.product ?? "",
-        code.plan_name,
+        code.plan_key ?? "",
+        redeemGrantLabel(code),
+        String(code.wallet_cents),
+        formatYuan(centsToMicrofen(code.wallet_cents)),
         code.note ?? "",
         code.batch_id ?? "",
       ]
@@ -177,13 +179,18 @@ export function RedeemCodesScreen() {
         .toLowerCase()
       return matchesStatus && (!normalized || searchable.includes(normalized))
     })
-  }, [overview, query, status])
+  }, [codes, query, status])
 
-  const emptyLedger = !loading && !error && (overview?.total ?? 0) === 0
+  const emptyLedger = !loading && !error && codes.length === 0
+  const pageCount = Math.max(1, Math.ceil(filteredCodes.length / pageSize))
+  const currentPage = Math.min(page, pageCount)
+  const visibleCodes = filteredCodes.slice((currentPage - 1) * pageSize, currentPage * pageSize)
 
-  const visibleIds = filteredCodes.map((code) => code.id)
+  useEffect(() => { setPage((current) => Math.min(current, pageCount)) }, [pageCount])
+
+  const visibleIds = visibleCodes.map((code) => code.id)
   // 活选集 — 只数台账里仍存在的码；刷新或删除后旧 id 自然退出。
-  const liveSelected = (overview?.codes ?? []).filter((code) => selectedIds.has(code.id))
+  const liveSelected = codes.filter((code) => selectedIds.has(code.id))
   const deletableSelected = liveSelected.filter((code) => canDelete(code.status))
   const allVisibleSelected =
     visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id))
@@ -235,41 +242,54 @@ export function RedeemCodesScreen() {
   }
 
   return (
-    <div className="flex w-full flex-col gap-4">
+    <div className="flex min-h-0 w-full flex-1 flex-col gap-2">
       <h1 className="sr-only">兑换</h1>
 
       <PlatformAdminSurface
+        bodyClassName="flex min-h-0 flex-col border-t-0"
         toolbar={
-          <div className="flex w-full flex-col gap-2">
-            <div className="flex flex-wrap items-center gap-2">
+          <div className="flex w-full flex-wrap items-center gap-2">
+            <div className="contents">
               <PlatformAdminSearch
                 value={query}
-                onChange={setQuery}
+                onChange={(value) => {
+                  setQuery(value)
+                  setPage(1)
+                }}
                 label="搜索兑换码"
                 placeholder="搜索尾号、内容、批次或备注"
-                className="w-full sm:flex-1 sm:max-w-sm"
+                className="h-10 min-w-0 flex-1 max-w-none sm:max-w-none max-md:h-11 max-sm:w-full max-sm:flex-none [&_[data-slot=input-group-control]]:h-full max-md:[&_[data-slot=input-group-control]]:min-h-11"
               />
-              <div className="ml-auto flex items-center gap-2">
-                <PlatformAdminRefresh
-                  busy={loading || refreshing}
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  aria-label="刷新"
+                  variant="outline"
+                  size="icon-lg"
+                  disabled={loading || refreshing}
                   onClick={() => void load(true)}
-                />
-                <Button size="sm" onClick={() => setCreateOpen(true)}>
-                  <Ticket data-icon="inline-start" />
-                  创建兑换码
-                </Button>
+                >{loading || refreshing ? <Spinner /> : <RefreshCw aria-hidden />}</Button>
+                <Button type="button" variant="brand" size="lg" aria-label="创建兑换码" onClick={() => setCreateOpen(true)}><Plus data-icon="inline-start" />创建兑换码</Button>
               </div>
             </div>
-            <PlatformAdminFilter
-              label="按状态筛选"
-              value={status}
-              options={FILTERS.map((filter) => ({
-                id: filter.id,
-                label: filter.label,
-                count: counts[filter.id],
-              }))}
-              onValueChange={setStatus}
-            />
+            {overview ? (
+              <div role="group" aria-label="按状态筛选" className="flex basis-full flex-wrap gap-1.5">
+                {FILTERS.map((filter) => (
+                  <Button
+                    key={filter.id}
+                    type="button"
+                    size="lg"
+                    variant={status === filter.id ? "brand" : "outline"}
+                    aria-pressed={status === filter.id}
+                    aria-label={`筛选${filter.label}，${counts[filter.id]} 个`}
+                    onClick={() => { setStatus(filter.id); setPage(1) }}
+                  >
+                    {filter.label}
+                    <span className="tabular-nums opacity-75">{counts[filter.id]}</span>
+                  </Button>
+                ))}
+              </div>
+            ) : null}
           </div>
         }
       >
@@ -279,22 +299,19 @@ export function RedeemCodesScreen() {
         ) : error ? (
           <PlatformAdminEmpty
             icon={XCircle}
-            className="min-h-72"
             action={
               <Button variant="outline" onClick={() => void load()}>
                 重试
               </Button>
             }
           />
-        ) : emptyLedger ? (
-          <EmptyState onCreate={() => setCreateOpen(true)} />
         ) : (
           <>
             {liveSelected.length > 0 ? (
               <div
                 role="toolbar"
                 aria-label="批量操作"
-                className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-2.5 py-2"
+                className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-brand-soft/40 px-4 py-2"
               >
                 <span className="text-compact font-medium tabular-nums">
                   已选 {liveSelected.length} 个
@@ -305,15 +322,12 @@ export function RedeemCodesScreen() {
                   ) : null}
                 </span>
                 <div className="flex items-center gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
+                  <IconButton
+                    icon={X}
+                    label="清除选择"
+                    size="icon-sm"
                     onClick={() => setSelectedIds(new Set())}
-                  >
-                    <X aria-hidden />
-                    清除选择
-                  </Button>
+                  />
                   <Button
                     type="button"
                     size="sm"
@@ -327,43 +341,38 @@ export function RedeemCodesScreen() {
                 </div>
               </div>
             ) : null}
-            <Table>
-              <TableHeader>
-                <TableRow className="hover:bg-transparent">
-                  <TableHead className="w-10 pr-0">
-                    <Checkbox
-                      checked={allVisibleSelected}
-                      indeterminate={!allVisibleSelected && someVisibleSelected}
-                      aria-label="选择当前筛选的全部兑换码"
-                      onCheckedChange={(checked) => toggleSelectAll(checked === true)}
-                    />
-                  </TableHead>
-                  <TableHead>兑换码</TableHead>
-                  <TableHead>类型</TableHead>
-                  <TableHead>状态</TableHead>
-                  <TableHead>兑换人</TableHead>
-                  <TableHead>时间</TableHead>
-                  <TableHead className="sticky right-0 z-10 w-32 bg-popover text-right">
-                    操作
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredCodes.length === 0 ? (
+            <div className="flex min-h-0 flex-1 flex-col overflow-auto rounded-xl border border-border bg-card">
+              <Table
+                containerClassName="shrink-0 overflow-visible"
+                variant="directory"
+                className="min-w-[760px]"
+              >
+                <TableHeader className="sticky top-0 z-20">
                   <TableRow className="hover:bg-transparent">
-                    <TableCell colSpan={7}>
-                      <PlatformAdminEmpty
-                        icon={Search}
-                        className="min-h-36"
-                        title="没有匹配的兑换码"
-                        description="试试清空搜索或切换状态。"
+                    <TableHead className="w-10 pr-0">
+                      <Checkbox
+                        checked={allVisibleSelected}
+                        indeterminate={!allVisibleSelected && someVisibleSelected}
+                        aria-label="选择本页全部兑换码"
+                        disabled={visibleIds.length === 0}
+                        onCheckedChange={(checked) => toggleSelectAll(checked === true)}
                       />
-                    </TableCell>
+                    </TableHead>
+                    <TableHead>兑换码尾号</TableHead>
+                    <TableHead>{kind === "plan" ? "套餐内容" : "钱包额度"}</TableHead>
+                    <TableHead>状态</TableHead>
+                    <TableHead>创建时间</TableHead>
+                    <TableHead>备注</TableHead>
+                    <TableHead className="sticky right-0 z-10 w-36 text-right">
+                      操作
+                    </TableHead>
                   </TableRow>
-                ) : (
-                  filteredCodes.map((code) => (
+                </TableHeader>
+                <TableBody>
+                  {visibleCodes.map((code) => (
                     <TableRow
                       key={code.id}
+                      className="group/row"
                       data-state={selectedIds.has(code.id) ? "selected" : undefined}
                     >
                       <TableCell className="w-10 pr-0">
@@ -376,24 +385,18 @@ export function RedeemCodesScreen() {
                         />
                       </TableCell>
                       <TableCell>
+                      <div className="flex items-center gap-1">
                         <button
                           type="button"
                           onClick={() => setSelected(code)}
-                          className="group flex cursor-pointer items-center gap-3 text-left focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                          className="group cursor-pointer text-left focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
                         >
-                          <IdentityTile icon={Ticket} status={code.status} />
-                          <span className="flex min-w-0 flex-col gap-0.5">
-                            <IdCode
-                              value={code.code_preview}
-                              className="text-sm text-foreground group-hover:underline group-hover:underline-offset-4"
-                            />
-                            {code.note ? (
-                              <span className="max-w-52 truncate text-xs text-muted-foreground">
-                                {code.note}
-                              </span>
-                            ) : null}
-                          </span>
+                          <IdCode value={code.code_preview} className="text-sm text-foreground group-hover:underline group-hover:underline-offset-4" />
                         </button>
+                        <IconButton icon={copiedId === code.id ? Check : Copy} label={`复制 ${code.code_preview}`} tip={copiedId === code.id ? "已复制" : "复制尾号"} size="icon-sm" onClick={() => {
+                          void copyText(code.code_preview, `已复制 ${code.code_preview}`).then((ok) => { if (ok) setCopiedId(code.id) })
+                        }} />
+                      </div>
                       </TableCell>
                       <TableCell>
                         <GrantAmounts code={code} />
@@ -401,45 +404,54 @@ export function RedeemCodesScreen() {
                       <TableCell>
                         <StatusChip status={code.status} />
                       </TableCell>
+                      <TableCell className="whitespace-nowrap font-mono text-meta tabular-nums text-muted-foreground">
+                        {formatDate(code.created_at)}
+                      </TableCell>
                       <TableCell>
-                        <span className="block text-sm">
-                          {code.used_by_email ?? (code.status === "redeemed" ? "—" : "—")}
+                        <span className="block max-w-52 truncate text-compact text-muted-foreground" title={code.note ?? undefined}>
+                          {code.note || "—"}
                         </span>
-                        {code.used_by_workspace ? (
-                          <span className="mt-0.5 block text-xs text-muted-foreground">
-                            {code.used_by_workspace}
-                          </span>
-                        ) : null}
                       </TableCell>
-                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                        {code.used_at
-                          ? formatDate(code.used_at)
-                          : formatDate(code.created_at)}
-                      </TableCell>
-                      <TableCell className="sticky right-0 bg-popover">
+                      <TableCell className="sticky right-0 bg-card group-hover/row:bg-muted group-data-[state=selected]/row:bg-brand-soft">
                         <RowActions
                           code={code}
-                          copied={copiedId === code.id}
-                          onCopy={() => {
-                            void copyText(code.code_preview, `已复制 ${code.code_preview}`).then(
-                              (ok) => {
-                                if (ok) setCopiedId(code.id)
-                              },
-                            )
-                          }}
+                          onDetail={() => setSelected(code)}
                           onDelete={() => setPendingDelete(code)}
                         />
                       </TableCell>
                     </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
+                  ))}
+                </TableBody>
+              </Table>
+              {emptyLedger ? (
+                <EmptyState kind={kind} />
+              ) : filteredCodes.length === 0 ? (
+                <PlatformAdminEmpty icon={Search} className="min-h-36 flex-1" title="没有匹配的兑换码" description="试试清空搜索或切换状态。" />
+              ) : null}
+            </div>
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 px-1 pt-2">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <span>共 {filteredCodes.length.toLocaleString("zh-CN")} 条，每页</span>
+                <Select value={String(pageSize)} onValueChange={(value) => {
+                  const next = Number(value)
+                  if ([10, 20, 50].includes(next)) { setPageSize(next); setPage(1) }
+                }}>
+                  <SelectTrigger aria-label="每页兑换码数"><SelectValue>{(value) => `${value} 条`}</SelectValue></SelectTrigger>
+                  <SelectContent><SelectItem value="10">10 条</SelectItem><SelectItem value="20">20 条</SelectItem><SelectItem value="50">50 条</SelectItem></SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="icon-sm" aria-label="上一页" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}><ChevronLeft aria-hidden /><span className="sr-only">上一页</span></Button>
+                <span aria-current="page" aria-label={`第 ${currentPage} 页，共 ${pageCount} 页`} className="inline-flex size-9 items-center justify-center rounded-md bg-brand text-sm font-medium text-brand-foreground tabular-nums">{currentPage}</span>
+                <Button variant="outline" size="icon-sm" aria-label="下一页" disabled={currentPage >= pageCount} onClick={() => setPage(currentPage + 1)}><ChevronRight aria-hidden /><span className="sr-only">下一页</span></Button>
+              </div>
+            </div>
           </>
         )}
       </PlatformAdminSurface>
 
       <CreateRedeemCodeSheet
+        kind={kind}
         open={createOpen}
         onOpenChange={setCreateOpen}
         onCreated={() => {
@@ -489,107 +501,64 @@ function canDelete(status: string) {
 
 function RowActions({
   code,
-  copied,
-  onCopy,
+  onDetail,
   onDelete,
 }: {
   code: AdminRedeemCodeView
-  copied: boolean
-  onCopy: () => void
+  onDetail: () => void
   onDelete: () => void
 }) {
   return (
-    <div className="flex items-center justify-end gap-1.5">
-      <IconAction
-        label="复制尾号"
-        ariaLabel={`复制 ${code.code_preview}`}
-        onClick={onCopy}
-      >
-        {copied ? <Check aria-hidden className="text-st-good-ink" /> : <Copy aria-hidden />}
-      </IconAction>
+    <div className="flex items-center justify-end gap-1">
+      <Button type="button" variant="link" size="sm" aria-label={`查看 ${code.code_preview} 详情`} onClick={onDetail}>详情</Button>
       {canDelete(code.status) ? (
-        <IconAction
-          label="删除"
-          ariaLabel={`删除 ${code.code_preview}`}
-          destructive
-          onClick={onDelete}
-        >
-          <Trash2 aria-hidden />
-        </IconAction>
+        <DropdownMenu>
+          <DropdownMenuTrigger render={<Button type="button" variant="link" size="sm" aria-label={`${code.code_preview} 的更多操作`} />}>
+            更多<ChevronDown data-icon="inline-end" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem variant="destructive" aria-label={`删除 ${code.code_preview}`} onClick={onDelete}>
+              <Trash2 aria-hidden />删除
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       ) : null}
     </div>
   )
 }
 
-function IconAction({
-  label,
-  ariaLabel,
-  destructive = false,
-  onClick,
-  children,
-}: {
-  label: string
-  ariaLabel: string
-  destructive?: boolean
-  onClick: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            type="button"
-            size="icon-sm"
-            variant={destructive ? "ghost" : "outline"}
-            aria-label={ariaLabel}
-            className={
-              destructive
-                ? "text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                : undefined
-            }
-            onClick={onClick}
-          />
-        }
-      >
-        {children}
-      </TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
-    </Tooltip>
-  )
-}
-
 function StatusChip({ status }: { status: string }) {
-  const normalized = (status in STATUS_LABELS ? status : "unused") as CodeStatus
-  return <StateChip status={normalized} label={STATUS_LABELS[normalized]} />
+  const known = Object.prototype.hasOwnProperty.call(STATUS_LABELS, status)
+  return <StateChip status={status} label={known ? STATUS_LABELS[status as CodeStatus] : "未知"} tone={!known ? "unknown" : status === "expired" ? "idle" : undefined} className={known ? STATUS_STYLES[status as CodeStatus] : undefined} />
 }
 
-function EmptyState({ onCreate }: { onCreate: () => void }) {
+function EmptyState({ kind }: { kind: "wallet" | "plan" }) {
   return (
     <PlatformAdminEmpty
+      className="flex-1"
       icon={KeyRound}
       title="还没有兑换码"
-      description="创建一批兑换码，交付后可兑换钱包额度。"
-      action={<Button onClick={onCreate}>创建第一批兑换码</Button>}
+      description={kind === "plan" ? "创建一批兑换码，交付后可兑换套餐。" : "创建一批兑换码，交付后可兑换钱包额度。"}
     />
   )
 }
 
 function CreateRedeemCodeSheet({
+  kind,
   open,
   onOpenChange,
   onCreated,
 }: {
+  kind: "wallet" | "plan"
   open: boolean
   onOpenChange: (open: boolean) => void
   onCreated: (created: AdminRedeemCodesCreated) => void
 }) {
-  const [product, setProduct] = useState<"member_seats" | "wallet_credits">("wallet_credits")
-  const [memberSeats, setMemberSeats] = useState("1")
-  const [tier, setTier] = useState<Exclude<PlanKey, "free">>("pro")
   const [walletYuan, setWalletYuan] = useState("100")
+  const [planKey, setPlanKey] = useState<"lite" | "pro" | "max">("lite")
+  const [planStores, setPlanStores] = useState("1")
+  const [planMonths, setPlanMonths] = useState<1 | 3 | 6 | 12>(1)
   const [quantity, setQuantity] = useState("10")
-  const [durationDays, setDurationDays] = useState("30")
   const [expiresAt, setExpiresAt] = useState(() => dateInputAfter(30))
   const [note, setNote] = useState("")
   const [saving, setSaving] = useState(false)
@@ -603,23 +572,13 @@ function CreateRedeemCodeSheet({
     }
   }, [open])
 
-  const memberSeatsNumber = Number(memberSeats)
   const quantityNumber = Number(quantity)
-  const durationNumber = Number(durationDays)
-  const isWallet = product === "wallet_credits"
-  const memberSeatsOk =
-    Number.isInteger(memberSeatsNumber) &&
-    memberSeatsNumber >= 1 &&
-    memberSeatsNumber <= MAX_MEMBER_SEATS_PER_WORKSPACE
   // Same floor and ceiling a paid top-up has: ¥1 – ¥10000, in 分.
   const walletCents = topupCentsFromYuan(walletYuan)
   const walletOk = walletCents !== null && walletCents >= MIN_TOPUP_CENTS && walletCents <= MAX_TOPUP_CENTS
-  const grantOk = isWallet ? walletOk : memberSeatsOk
+  const storesNumber = Number(planStores)
+  const planOk = Number.isInteger(storesNumber) && storesNumber >= 1 && storesNumber <= 100
   const quantityOk = Number.isInteger(quantityNumber) && quantityNumber >= 1 && quantityNumber <= 500
-  // A wallet balance never expires, so the term is neither asked for nor sent.
-  const durationOk =
-    isWallet || (Number.isInteger(durationNumber) && durationNumber >= 1 && durationNumber <= 3650)
-  const previewPlan = !isWallet ? PLAN_CATALOG.find((plan) => plan.key === tier) : undefined
 
   /**
    * Implicit dismissal (Escape, backdrop, the corner X) never discards one-time
@@ -632,16 +591,11 @@ function CreateRedeemCodeSheet({
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!grantOk || !quantityOk || !durationOk) return
+    if (!quantityOk || (kind === "wallet" ? !walletOk : !planOk)) return
     setSaving(true)
     const request: AdminRedeemCodeCreateRequestView = {
-      product,
-      member_seats: isWallet ? 0 : memberSeatsNumber,
-      tier: isWallet ? undefined : tier,
-      ocr_credits: 0,
-      wallet_cents: isWallet ? (walletCents ?? 0) : 0,
+      ...(kind === "wallet" ? { wallet_cents: walletCents! } : { plan_key: planKey, plan_stores: storesNumber, plan_months: planMonths }),
       quantity: quantityNumber,
-      duration_days: isWallet ? 1 : durationNumber,
       expires_at: new Date(`${expiresAt}T23:59:59`).toISOString(),
       note: note.trim() || undefined,
     }
@@ -679,97 +633,30 @@ function CreateRedeemCodeSheet({
         <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
             <FieldGroup>
-              <Field>
-                <FieldLabel>兑换内容</FieldLabel>
-                <Tabs
-                  value={product}
-                  onValueChange={(next) =>
-                    setProduct(next === "wallet_credits" ? "wallet_credits" : "member_seats")
-                  }
-                >
-                  <TabsList aria-label="兑换内容" className="h-9 w-full">
-                    <TabsIndicator />
-                    <TabsTrigger value="member_seats" disabled className="h-8 flex-1 text-sm">
-                      成员名额（已停用）
-                    </TabsTrigger>
-                    <TabsTrigger value="wallet_credits" className="h-8 flex-1 text-sm">
-                      钱包额度
-                    </TabsTrigger>
-                  </TabsList>
-                </Tabs>
-                {!isWallet ? (
-                  <FieldDescription>
-                    成员名额码为覆盖式生效：用户兑换后其 Workspace 的原有套餐批次立即终止，剩余时长不结转、不抵扣。
-                  </FieldDescription>
-                ) : null}
-              </Field>
               <div className="grid gap-4 sm:grid-cols-2">
-                {isWallet ? (
-                  <Field>
-                    <FieldLabel htmlFor="redeem-wallet">钱包额度（元）</FieldLabel>
-                    <Input
-                      id="redeem-wallet"
-                      type="number"
-                      min={1}
-                      max={10_000}
-                      step="0.01"
-                      value={walletYuan}
-                      onChange={(event) => setWalletYuan(event.target.value)}
-                      placeholder="1 – 10000"
-                    />
-                  </Field>
+                {kind === "wallet" ? (
+                <Field>
+                  <FieldLabel htmlFor="redeem-wallet">钱包额度（元）</FieldLabel>
+                  <Input
+                    id="redeem-wallet"
+                    type="number"
+                    min={1}
+                    max={10_000}
+                    step="0.01"
+                    value={walletYuan}
+                    onChange={(event) => setWalletYuan(event.target.value)}
+                    placeholder="1 – 10000"
+                  />
+                </Field>
                 ) : (
-                  <>
-                    <Field>
-                      <FieldLabel htmlFor="redeem-seats">成员名额</FieldLabel>
-                      <Input
-                        id="redeem-seats"
-                        type="number"
-                        min={1}
-                        max={MAX_MEMBER_SEATS_PER_WORKSPACE}
-                        value={memberSeats}
-                        onChange={(event) => setMemberSeats(event.target.value)}
-                        placeholder={`1 – ${MAX_MEMBER_SEATS_PER_WORKSPACE} 名成员`}
-                      />
-                    </Field>
-                    <Field>
-                      <FieldLabel htmlFor="redeem-tier">档位</FieldLabel>
-                      <Select
-                        value={tier}
-                        onValueChange={(next) => {
-                          if (next) setTier(next as Exclude<PlanKey, "free">)
-                        }}
-                      >
-                        <SelectTrigger id="redeem-tier" aria-label="成员名额档位">
-                          <SelectValue>
-                            {() => previewPlan?.name ?? tier}
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectContent>
-                          {PAID_TIERS.map((plan) => (
-                            <SelectItem key={plan.key} value={plan.key}>
-                              {plan.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </Field>
-                    <Field className="sm:col-span-2">
-                      <FieldLabel htmlFor="redeem-duration">有效天数</FieldLabel>
-                      <Input
-                        id="redeem-duration"
-                        type="number"
-                        min={1}
-                        max={3650}
-                        value={durationDays}
-                        onChange={(event) => setDurationDays(event.target.value)}
-                        placeholder="天数"
-                      />
-                    </Field>
-                  </>
+                <Field>
+                  <FieldLabel htmlFor="redeem-plan">套餐</FieldLabel>
+                  <Select value={planKey} onValueChange={(value) => { if (value === "lite" || value === "pro" || value === "max") setPlanKey(value) }}>
+                    <SelectTrigger id="redeem-plan"><SelectValue>{() => planDisplayName(planKey)}</SelectValue></SelectTrigger>
+                    <SelectContent><SelectItem value="lite">入门版</SelectItem><SelectItem value="pro">专业版</SelectItem><SelectItem value="max">旗舰版</SelectItem></SelectContent>
+                  </Select>
+                </Field>
                 )}
-              </div>
-              <div className="grid gap-4 sm:grid-cols-2">
                 <Field>
                   <FieldLabel htmlFor="redeem-quantity">兑换码数量</FieldLabel>
                   <Input
@@ -783,6 +670,21 @@ function CreateRedeemCodeSheet({
                   />
                 </Field>
               </div>
+              {kind === "plan" ? (
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field>
+                    <FieldLabel htmlFor="redeem-stores">店铺数量</FieldLabel>
+                    <Input id="redeem-stores" type="number" min={1} max={100} value={planStores} onChange={(event) => setPlanStores(event.target.value)} required />
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="redeem-months">套餐时长</FieldLabel>
+                    <Select value={String(planMonths)} onValueChange={(value) => { const months = Number(value); if (months === 1 || months === 3 || months === 6 || months === 12) setPlanMonths(months) }}>
+                      <SelectTrigger id="redeem-months"><SelectValue>{() => `${planMonths} 个月`}</SelectValue></SelectTrigger>
+                      <SelectContent>{[1, 3, 6, 12].map((months) => <SelectItem key={months} value={String(months)}>{months} 个月</SelectItem>)}</SelectContent>
+                    </Select>
+                  </Field>
+                </div>
+              ) : null}
               <Field>
                 <FieldLabel htmlFor="redeem-expires">兑换截止日期</FieldLabel>
                 <Input
@@ -807,30 +709,15 @@ function CreateRedeemCodeSheet({
                 将生成{" "}
                 <span className="font-mono tabular-nums">{quantityOk ? quantityNumber : "—"}</span>{" "}
                 个兑换码，每个{" "}
-                {isWallet ? (
-                  <>
-                    <span className="font-mono tabular-nums">
-                      {walletOk ? formatYuan(centsToMicrofen(walletCents ?? 0)) : "—"}
-                    </span>{" "}
-                    · 钱包额度
-                  </>
-                ) : (
-                  <>
-                    <span className="font-mono tabular-nums">
-                      {memberSeatsOk ? memberSeatsNumber : "—"}
-                    </span>{" "}
-                    名成员 /{" "}
-                    <span className="font-mono tabular-nums">
-                      {durationOk ? durationNumber : "—"}
-                    </span>{" "}
-                    天{previewPlan ? " · " + previewPlan.name : ""}
-                  </>
-                )}
+                <span className="font-mono tabular-nums">
+                  {kind === "plan" ? `${planDisplayName(planKey)} · ${planOk ? storesNumber : "—"} 家店铺 · ${planMonths} 个月` : walletOk ? formatYuan(centsToMicrofen(walletCents ?? 0)) : "—"}
+                </span>{" "}
+                {kind === "wallet" ? "· 钱包额度" : ""}
               </p>
             </FieldGroup>
           </div>
           <PlatformAdminDialogFooter>
-            <Button type="submit" disabled={saving || !grantOk || !quantityOk || !durationOk}>
+            <Button type="submit" disabled={saving || !quantityOk || (kind === "wallet" ? !walletOk : !planOk)}>
               {saving ? <Spinner data-icon="inline-start" /> : <ShieldCheck data-icon="inline-start" />}
               {saving ? "创建中…" : "生成兑换码"}
             </Button>
@@ -987,15 +874,14 @@ function RedeemCodeDetailSheet({
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <IdCode value={code.code_preview} className="text-base text-foreground" />
-                    <Button
-                      type="button"
+                    <IconButton
+                      icon={Copy}
+                      label={`复制 ${code.code_preview}`}
+                      tip="复制尾号"
                       size="icon-sm"
                       variant="ghost"
-                      aria-label={`复制 ${code.code_preview}`}
                       onClick={() => void copyText(code.code_preview, `已复制 ${code.code_preview}`)}
-                    >
-                      <Copy aria-hidden />
-                    </Button>
+                    />
                   </div>
                   <p className="mt-1 text-sm">
                     {redeemGrantLabel(code)}
@@ -1070,14 +956,7 @@ function DeleteCodeDialog({
 
 function GrantAmounts({ code }: { code: AdminRedeemCodeView }) {
   const { amount, detail } = redeemGrantParts(code)
-  return (
-    <span className="inline-flex flex-wrap items-baseline gap-x-2">
-      <span className="font-medium">{amount}</span>
-      <span className="font-mono text-xs whitespace-nowrap tabular-nums text-muted-foreground">
-        {detail}
-      </span>
-    </span>
-  )
+  return <span className="font-medium tabular-nums text-brand">{amount}{code.plan_key ? ` · ${detail}` : ""}</span>
 }
 
 function Detail({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
@@ -1110,8 +989,6 @@ function redeemExportBody(created: AdminRedeemCodesCreated) {
   const first = created.codes[0]
   return [
     "grant: " + (first ? redeemGrantLabel(first) : ""),
-    "product: " + (first?.product ?? ""),
-    "duration_days: " + String(first?.duration_days ?? ""),
     "expires_at: " + (first?.expires_at ?? ""),
     "batch_id: " + (first?.batch_id ?? ""),
     "",

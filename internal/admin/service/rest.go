@@ -2,12 +2,12 @@ package service
 
 import (
 	"context"
-	"crypto/rand"
 	"strings"
 	"time"
 
 	"github.com/xxww0098/podhub-go/internal/admin/contract"
 	"github.com/xxww0098/podhub-go/internal/admin/domain"
+	billing "github.com/xxww0098/podhub-go/internal/billing/contract"
 )
 
 func (a *API) ListGrants(ctx context.Context, actor domain.Actor, orgID *int64) (any, *contract.Fault) {
@@ -220,7 +220,6 @@ func leaseGrantBody(row domain.LeaseRow, released bool) any {
 }
 
 func (a *API) ListUsage(ctx context.Context, actor domain.Actor, q, status, format, operation, since, pageRaw, sizeRaw string) (any, *contract.Fault) {
-	_ = actor
 	filter, msg := domain.ParseUsageFilter(q, status, format, operation, since, a.now())
 	if msg != "" {
 		return nil, contract.Validation(msg)
@@ -233,12 +232,12 @@ func (a *API) ListUsage(ctx context.Context, actor domain.Actor, q, status, form
 	if msg != "" {
 		return nil, contract.Validation(msg)
 	}
-	total, _, fault := a.DB.ListUsage(ctx, filter, int64(size), 0)
+	total, _, fault := a.DB.ListUsage(ctx, actor.ID, filter, int64(size), 0)
 	if fault != nil {
 		return nil, fault
 	}
 	resolved, pages, limit, offset := domain.PageWindow(page, size, total)
-	_, rows, fault := a.DB.ListUsage(ctx, filter, limit, offset)
+	_, rows, fault := a.DB.ListUsage(ctx, actor.ID, filter, limit, offset)
 	if fault != nil {
 		return nil, fault
 	}
@@ -249,7 +248,7 @@ func (a *API) ListUsage(ctx context.Context, actor domain.Actor, q, status, form
 			Channel: row.Channel, Thinking: row.Thinking, APIFormat: row.APIFormat, Operation: row.Operation,
 			Status: row.Status, Input: row.Input, Output: row.Output, Cached: row.Cached, Reasoning: row.Reasoning,
 			Total: row.Total, Charged: row.Charged, Absorbed: row.Absorbed, ErrorClass: row.ErrorClass,
-			Upstream: row.Upstream, CreatedAt: rfc3339Millis(row.CreatedAt), Latency: row.Latency, Speed: row.Speed,
+			Upstream: row.Upstream, CreatedAt: billing.RFC3339Millis(row.CreatedAt), Latency: row.Latency, Speed: row.Speed,
 		})
 	}
 	return struct {
@@ -293,12 +292,12 @@ type usageView struct {
 	Speed      *int64  `json:"generation_speed_milli_tps,omitempty"`
 }
 
-func (a *API) SummarizeUsage(ctx context.Context, q, status, format, operation, since string) (any, *contract.Fault) {
+func (a *API) SummarizeUsage(ctx context.Context, actor domain.Actor, q, status, format, operation, since string) (any, *contract.Fault) {
 	filter, msg := domain.ParseUsageFilter(q, status, format, operation, since, a.now())
 	if msg != "" {
 		return nil, contract.Validation(msg)
 	}
-	sum, fault := a.DB.SummarizeUsage(ctx, filter)
+	sum, fault := a.DB.SummarizeUsage(ctx, actor.ID, filter)
 	if fault != nil {
 		return nil, fault
 	}
@@ -345,6 +344,14 @@ type usageSummary struct {
 		ErrorClass string `json:"error_class"`
 		Count      int64  `json:"count"`
 	} `json:"failure_classes"`
+}
+
+func (a *API) Prices(ctx context.Context) (any, *contract.Fault) {
+	rows, fault := a.DB.CurrentPrices(ctx)
+	if fault != nil {
+		return nil, fault
+	}
+	return priceBody(rows), nil
 }
 
 func (a *API) PublishPrice(ctx context.Context, actor domain.Actor, model, mode string, in, cached, out, reasoning, per, max int64) (any, *contract.Fault) {
@@ -400,7 +407,7 @@ func priceBody(rows []domain.PriceRow) any {
 	}
 	out := make([]view, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, view{row.Model, row.BillingMode, row.Input, row.Cached, row.Output, row.Reasoning, row.PerRequest, row.Max, rfc3339Millis(row.Effective)})
+		out = append(out, view{row.Model, row.BillingMode, row.Input, row.Cached, row.Output, row.Reasoning, row.PerRequest, row.Max, billing.RFC3339Millis(row.Effective)})
 	}
 	return struct {
 		Data struct {
@@ -409,111 +416,6 @@ func priceBody(rows []domain.PriceRow) any {
 	}{Data: struct {
 		Prices []view `json:"prices"`
 	}{out}}
-}
-
-func (a *API) Enroll(ctx context.Context, actor domain.Actor) (any, *contract.Fault) {
-	key, fault := a.totpKey()
-	if fault != nil {
-		return nil, fault
-	}
-	secret := make([]byte, domain.SecretSize())
-	if _, err := rand.Read(secret); err != nil {
-		return nil, contract.Internal("验证器不可用")
-	}
-	codes := make([]string, 0, domain.RecoveryN())
-	hashes := make([]string, 0, domain.RecoveryN())
-	for i := 0; i < domain.RecoveryN(); i++ {
-		raw := make([]byte, 10)
-		if _, err := rand.Read(raw); err != nil {
-			return nil, contract.Internal("验证器不可用")
-		}
-		code := domain.RecoveryCode(raw)
-		codes = append(codes, code)
-		hashes = append(hashes, domain.HashRecovery(code))
-	}
-	nonce, cipher, err := domain.Seal(key, []byte("admin_totp|v1|"+itoa(actor.ID)), secret)
-	if err != nil {
-		return nil, contract.Internal("验证器不可用")
-	}
-	if fault := a.DB.EnrollTotp(ctx, actor, nonce, cipher, hashes); fault != nil {
-		if fault.Status == 500 {
-			return nil, contract.Internal("服务暂不可用")
-		}
-		return nil, fault
-	}
-	return struct {
-		Data struct {
-			URL    string   `json:"otpauthUrl"`
-			Secret string   `json:"secretBase32"`
-			Codes  []string `json:"recoveryCodes"`
-		} `json:"data"`
-	}{Data: struct {
-		URL    string   `json:"otpauthUrl"`
-		Secret string   `json:"secretBase32"`
-		Codes  []string `json:"recoveryCodes"`
-	}{domain.OTPAuthURL(actor.Email, actor.ID, secret), domain.SecretBase32(secret), codes}}, nil
-}
-
-func (a *API) Confirm(ctx context.Context, actor domain.Actor, code string) (any, *contract.Fault) {
-	return a.finishTotp(ctx, actor, code, true)
-}
-
-func (a *API) StepUp(ctx context.Context, actor domain.Actor, code string) (any, *contract.Fault) {
-	return a.finishTotp(ctx, actor, code, false)
-}
-
-func (a *API) finishTotp(ctx context.Context, actor domain.Actor, code string, confirm bool) (any, *contract.Fault) {
-	row, fault := a.DB.LoadTotp(ctx, actor.ID)
-	if fault != nil {
-		return nil, fault
-	}
-	if confirm {
-		if row == nil {
-			return nil, contract.Validation("请先开始绑定验证器")
-		}
-		if row.Confirmed {
-			return nil, contract.Coded(409, "VALIDATION", "验证器已绑定")
-		}
-	} else if row == nil || !row.Confirmed {
-		return nil, contract.Forbidden("请先绑定验证器")
-	}
-	if strings.TrimSpace(code) == "" {
-		return nil, contract.Coded(401, "TOTP_REQUIRED", "需要验证器验证码")
-	}
-	key, fault := a.totpKey()
-	if fault != nil {
-		return nil, fault
-	}
-	outcome, fault := a.DB.VerifyTotp(ctx, actor.ID, a.now(), key, code)
-	if fault != nil {
-		return nil, fault
-	}
-	switch outcome {
-	case "missing":
-		return nil, contract.Coded(401, "TOTP_REQUIRED", "请先绑定验证器")
-	case "locked":
-		return nil, contract.Coded(429, "RATE_LIMITED", "验证器尝试过多，请稍后再试")
-	case "bad":
-		return nil, contract.Coded(401, "TOTP_REQUIRED", "验证器验证码错误")
-	}
-	until := a.now().Add(15 * time.Minute)
-	if confirm {
-		fault = a.DB.ConfirmTotp(ctx, actor, until)
-	} else {
-		fault = a.DB.StepUp(ctx, actor, until)
-	}
-	if fault != nil {
-		return nil, fault
-	}
-	return okBody(), nil
-}
-
-func (a *API) totpKey() ([]byte, *contract.Fault) {
-	raw := strings.TrimSpace(a.TotpKey)
-	if raw == "" || len(raw) < 32 {
-		return nil, contract.Coded(503, "INTERNAL", "管理验证器未配置")
-	}
-	return domain.KeySHA256(raw), nil
 }
 
 func itoa(n int64) string {

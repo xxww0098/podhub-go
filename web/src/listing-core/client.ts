@@ -30,6 +30,7 @@ import type {
   FreezeListingInput,
   FreezeListingOutput,
   ParsedOcrAnswer,
+  OcrAnswerInput,
   RecordRenderInput,
   RecordRenderOutput,
   RevalidateInput,
@@ -200,8 +201,8 @@ export class ListingCoreClient {
     return (await this.core).core.planStage(input)
   }
 
-  async parseOcrAnswer(completion: unknown): Promise<ParsedOcrAnswer> {
-    return (await this.core).core.parseOcrAnswer(completion)
+  async parseOcrAnswer(input: OcrAnswerInput): Promise<ParsedOcrAnswer> {
+    return (await this.core).core.parseOcrAnswer(input)
   }
 
   async validateVariantGroup(input: ValidateVariantGroupInput): Promise<VariantProblem[]> {

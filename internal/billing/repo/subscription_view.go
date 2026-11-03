@@ -27,68 +27,50 @@ func SubscriptionView(ctx context.Context, pool *pgxpool.Pool, orgID int64, now 
 		if err != nil {
 			return err
 		}
-		stores, members, err := liveCapacity(ctx, tx, orgID)
+		stores, err := liveStoreCount(ctx, tx, orgID)
 		if err != nil {
 			return err
 		}
+		var members int
+		if err = tx.QueryRow(ctx, `SELECT count(*) FROM organization_members WHERE org_id=$1 AND status='active' AND NOT manual_disabled`, orgID).Scan(&members); err != nil {
+			return err
+		}
 		out = contract.View{PlanKey: domain.PlanFree, Status: sub.Status, Revision: sub.Revision, TermStart: sub.CurrentStart, TermEnd: sub.TermEnd, CurrentEnd: sub.CurrentEnd,
-			Stores: contract.Capacity{Used: stores, Limit: 1}, Members: contract.Capacity{Used: members, Limit: 1}, Periods: []contract.Period{}, StoreChoices: []contract.StoreChoice{}, Plans: []contract.Plan{},
-			StoreMonthlyCents: cat.StoreMonthlyCents, MemberMonthlyCents: cat.MemberMonthlyCents}
+			Stores: contract.Capacity{Used: stores, Limit: 1}, Members: contract.Capacity{Used: members, Limit: 1}, Periods: []contract.Period{}, StoreChoices: []contract.StoreChoice{}, Plans: []contract.Plan{}}
 		for _, key := range []string{domain.PlanFree, domain.PlanLite, domain.PlanPro, domain.PlanMax} {
 			p := cat.Plans[key]
-			out.Plans = append(out.Plans, contract.Plan{Key: key, MonthlyCents: p.MonthlyCents, Stores: p.Stores, Members: p.Members})
+			out.Plans = append(out.Plans, contract.Plan{Key: key, StoreMonthlyCents: p.StoreMonthlyCents})
 		}
 		for _, p := range sub.Periods {
-			out.Periods = append(out.Periods, contract.Period{ID: p.ID, StartsAt: p.Start, EndsAt: p.End, Target: contract.Target(p.Target), Stores: p.PlanStores + p.ExtraStores, Members: p.PlanMembers + p.ExtraMembers, KeepStores: p.KeepStores, KeepMembers: p.KeepMembers})
+			out.Periods = append(out.Periods, contract.Period{ID: p.ID, StartsAt: p.Start, EndsAt: p.End, PlanKey: p.PlanKey, Stores: p.Stores, KeepStores: p.KeepStores})
 			if !p.Start.After(now) {
 				out.PlanKey = p.PlanKey
-				out.ExtraStores = p.ExtraStores
-				out.ExtraMembers = p.ExtraMembers
 			}
 		}
 		if err = tx.QueryRow(ctx, `SELECT stores,members FROM public.subscription_capacity($1,$2)`, orgID, now).Scan(&out.Stores.Limit, &out.Members.Limit); err != nil {
 			return err
 		}
-		var nextStores []string
-		var nextMembers []int64
-		if err = tx.QueryRow(ctx, `SELECT next_keep_store_ids,next_keep_member_ids FROM subscriptions WHERE org_id=$1`, orgID).Scan(&nextStores, &nextMembers); err != nil {
-			return err
-		}
-		target := sub.Snapshot().RenewalTarget()
+		// A renewal defaults to the capacity the workspace holds right now.
+		target := domain.Target{PlanKey: sub.PlanKey, Stores: sub.Stores}
 		if target.PlanKey == "" || target.PlanKey == domain.PlanFree {
-			target = domain.Target{PlanKey: domain.PlanLite}
+			target = domain.Target{PlanKey: domain.PlanLite, Stores: 1}
 		}
-		p := cat.Plans[target.PlanKey]
-		out.Next = &contract.NextTerm{PlanKey: target.PlanKey, ExtraStores: target.ExtraStores, ExtraMembers: target.ExtraMembers, Stores: p.Stores + target.ExtraStores, Members: p.Members + target.ExtraMembers, EffectiveAt: sub.TermEnd, KeepStores: nextStores, KeepMembers: nextMembers}
-		base, err := cat.Base(target.PlanKey, target.ExtraStores, target.ExtraMembers)
+		base, err := cat.Plans[target.PlanKey].Monthly(target.Stores)
 		if err != nil {
 			return err
 		}
-		out.NextRenewal = &contract.Renewal{Months: 1, AmountCents: base}
-		err = tx.QueryRow(ctx, `SELECT public_id FROM payment_orders WHERE org_id=$1 AND product='subscription' AND status='pending'`, orgID).Scan(&out.PendingPublicID)
+		out.NextRenewal = &contract.Renewal{Months: 1, AmountCents: base, PlanKey: target.PlanKey, Stores: target.Stores}
+		err = tx.QueryRow(ctx, `SELECT public_id,provider,amount_cents,payment_deadline_at FROM payment_orders WHERE org_id=$1 AND product='subscription' AND status='pending'`, orgID).
+			Scan(&out.PendingPublicID, &out.PendingProvider, &out.PendingAmountCents, &out.PendingDeadlineAt)
 		if err != nil && err != pgx.ErrNoRows {
 			return err
 		}
 		out.PendingOrder = out.PendingPublicID != ""
-		memberRows, err := tx.Query(ctx, `SELECT id,display_name,role='owner' FROM organization_members WHERE org_id=$1 AND status='active' AND NOT manual_disabled ORDER BY (role='owner') DESC,join_order,id`, orgID)
-		if err != nil {
+		out.StoreCap = domain.StoreCap
+		out.Frozen = out.Stores.Limit == 0
+		if err = tx.QueryRow(ctx, `SELECT auto_renew FROM subscriptions WHERE org_id=$1`, orgID).Scan(&out.AutoRenew); err != nil {
 			return err
 		}
-		out.MemberChoices = []contract.MemberChoice{}
-		for memberRows.Next() {
-			var m contract.MemberChoice
-			if err = memberRows.Scan(&m.ID, &m.Name, &m.Owner); err != nil {
-				memberRows.Close()
-				return err
-			}
-			out.MemberChoices = append(out.MemberChoices, m)
-		}
-		err = memberRows.Err()
-		memberRows.Close()
-		if err != nil {
-			return err
-		}
-
 		rows, err := tx.Query(ctx, `SELECT uuid::text,COALESCE(name,''),manual_disabled,public.subscription_store_allowed(org_id,uuid,$2)
    FROM organization_stores WHERE org_id=$1 AND deleted_at_ms IS NULL ORDER BY create_order,id`, orgID, now)
 		if err != nil {

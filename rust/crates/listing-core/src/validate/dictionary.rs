@@ -216,7 +216,7 @@ pub(super) fn audit_dictionary(
                     issues,
                 ),
             }
-        } else if !field.options.is_empty() {
+        } else {
             push_dictionary_issue(
                 field,
                 address,

@@ -50,20 +50,22 @@ func RequeueRetryable(ctx context.Context, tx pgx.Tx, orgID int64, intentID stri
 
 // StampAcceptRows runs stamp_accept. A row that is not unknown updates 0 rows.
 func StampAcceptRows(ctx context.Context, tx pgx.Tx, orgID int64, intentID string, productID, sku int64) (int64, error) {
-	tag, err := tx.Exec(ctx, stampAcceptSQL, orgID, intentID, productID, sku)
+	var count int64
+	err := tx.QueryRow(ctx, stampAcceptSQL, orgID, intentID, productID, sku).Scan(&count)
 	if err != nil {
 		return 0, err
 	}
-	return tag.RowsAffected(), nil
+	return count, nil
 }
 
 // StampReleaseRows runs stamp_release.
 func StampReleaseRows(ctx context.Context, tx pgx.Tx, orgID int64, intentID string, atMs int64, passes int32) (int64, error) {
-	tag, err := tx.Exec(ctx, stampReleaseSQL, orgID, intentID, atMs, passes)
+	var count int64
+	err := tx.QueryRow(ctx, stampReleaseSQL, orgID, intentID, atMs, passes).Scan(&count)
 	if err != nil {
 		return 0, err
 	}
-	return tag.RowsAffected(), nil
+	return count, nil
 }
 
 // StampRetryRows runs stamp_retry.

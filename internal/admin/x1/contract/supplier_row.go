@@ -37,6 +37,12 @@ type VideoItem struct {
 	DurationMS int64  `json:"durationMs"`
 }
 
+// PriceVersion is one append-only platform price entry, newest first.
+type PriceVersion struct {
+	PriceCents  int64 `json:"priceCents"`
+	CreatedAtMS int64 `json:"createdAtMs"`
+}
+
 // RowData is SupplierDbRowData. Omitted options use omitempty.
 // Null money and category ids are pointers without omitempty.
 type RowData struct {
@@ -56,6 +62,7 @@ type RowData struct {
 	CostCents             *int64                     `json:"costCents"`
 	ShippingCostCents     *int64                     `json:"shippingCostCents"`
 	PlatformPriceCents    *int64                     `json:"platformPriceCents"`
+	PriceHistory          []PriceVersion             `json:"priceHistory"`
 	SuggestedRetailCents  *int64                     `json:"suggestedRetailCents"`
 	SuggestedOldPrice     *int64                     `json:"suggestedOldPriceCents"`
 	LeadTime              string                     `json:"leadTime"`
@@ -76,8 +83,6 @@ type RowData struct {
 	PromptFileName        string                     `json:"promptFileName"`
 	PromptContent         string                     `json:"promptContent"`
 	FixedTags             []string                   `json:"fixedTags"`
-	DraftPromptRevision   *int32                     `json:"draftPromptRevision,omitempty"`
-	PublishedPromptRev    *int32                     `json:"publishedPromptRevision,omitempty"`
 	Description           string                     `json:"description"`
 	InternalNote          string                     `json:"internalNote"`
 	Props                 map[string]json.RawMessage `json:"props"`
@@ -102,8 +107,8 @@ type RowFacts struct {
 	SKUPublished     bool
 	CategoryID       *int64
 	TypeID           *int64
-	PublishedPrompt  string
-	PublishedTags    []string
+	Profile          string
+	FixedTags        []string
 	PlatformPrice    *int64
 	ConfigState      *string
 	ValidatedDigest  *string
@@ -151,7 +156,7 @@ func (f RowFacts) fresh() string {
 
 // ProductDenial is product_listability. Empty means the key is omitted.
 func (f RowFacts) ProductDenial() string {
-	return denial(f.SourceListed, f.Archived, f.SKUPublished, BriefValid(f.PublishedPrompt), f)
+	return denial(f.SourceListed, f.Archived, f.SKUPublished, BriefValid(f.Profile), f)
 }
 
 // ConfigDenial forces source, archive, sku and prompt to pass, then the same predicate.
@@ -196,8 +201,8 @@ func (r *RowData) FillReadiness(f RowFacts) {
 		configDenial != "config_needs_reconfiguration" && configDenial != "catalog_digest_mismatch"
 	r.Readiness = RowReadiness{
 		Category:      f.CategoryID != nil && f.TypeID != nil,
-		Prompt:        BriefValid(f.PublishedPrompt),
-		FixedTags:     FixedTags(f.PublishedTags) == nil,
+		Prompt:        BriefValid(f.Profile),
+		FixedTags:     FixedTags(f.FixedTags) == nil,
 		PlatformPrice: f.PlatformPrice != nil,
 		OzonConfig:    ozonOK,
 	}
@@ -245,5 +250,8 @@ func (r *RowData) EmptyRowSlices() {
 	}
 	if r.Props == nil {
 		r.Props = map[string]json.RawMessage{}
+	}
+	if r.PriceHistory == nil {
+		r.PriceHistory = []PriceVersion{}
 	}
 }

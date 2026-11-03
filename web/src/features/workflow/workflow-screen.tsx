@@ -34,6 +34,7 @@ import { useWorkflowScreenLibrary } from "./workflow-screen-library"
 import { useWorkflowScreenStream } from "./workflow-screen-stream"
 import { useWorkflowScreenEdits } from "./workflow-screen-edits"
 import { useWorkflowScreenLifecycle } from "./workflow-screen-lifecycle"
+import { useMozaAutomation } from "./moza-automation"
 
 export { resolveRunnerEntry } from "./product-instances"
 export { copyListingCardTemplate } from "./workflow-shared"
@@ -59,7 +60,7 @@ export function WorkflowScreen({
     draftId, setDraftId, supplierProductId, supplierBound, cardTemplateId, formName,
     issues, setIssues, busy, setBusy, psdAsset, setPsdAsset,
     psdAssetTemplateIdRef, psdTemplateAssetId, psdTemplateFileName, aiPromptId, aiPrompt, aiPromptFileName,
-    savedForms, setSavedForms, libraryBusy, setLibraryBusy, streamHealthy, cardFieldOrigins,
+    savedForms, setSavedForms, libraryBusy, setLibraryBusy, libraryLoadError, streamHealthy, cardFieldOrigins,
     setCardFieldOrigins, targetStoreId, aiAllowedFieldKeys, videoUploads, setVideoUploads, aiProtectedFieldKeys,
     ozonStores, storeAvailability, storeConfigured, storeLabel, preparationTracks, guidedPreparationLock,
     rowClearLock, runnerOpenLock, runnerGeneration
@@ -102,6 +103,7 @@ export function WorkflowScreen({
   const {
     editRowCell,
     editRowField,
+    editRowMedia,
     retryRowSave,
     flushRowAutosavesNow,
     flushRowAutosaves,
@@ -199,7 +201,7 @@ export function WorkflowScreen({
   const { refreshSavedForms, reloadOzonStores, openRunner } = useWorkflowScreenLibrary({
     state, workspaceId, skipNextAutosave, setCustomStoreQuotas, resetRowAutosaves, projectQueueState, restoreProductInstances, leaveRunner,
   })
-  const { updateValue, refreshCategorySchema, previewSkuImport, applySkuImport, clearGeneratedRows } = useWorkflowScreenEdits({
+  const { updateValue, refreshCategorySchema, clearGeneratedRows } = useWorkflowScreenEdits({
     state, pendingValueOriginRef, flushAutosave, flushRowsFor,
   })
   const addressCardId = readWorkflowCardId(address.search)
@@ -242,13 +244,25 @@ export function WorkflowScreen({
     await refreshSavedForms()
   }
 
+  const templateReady = Boolean(
+    psdAsset && psdAssetTemplateIdRef.current &&
+    (psdAssetTemplateIdRef.current === psdTemplateAssetId || (supplierBound && !psdTemplateAssetId)),
+  )
+  useMozaAutomation({
+    active: active && mode === "runner" && Boolean(schema && draft) && !restoringCard,
+    cardId: cardTemplateId,
+    busy: busy || repairInFlight || releaseInFlight || runnerOpenLock.current || rowClearLock.current ||
+      preparationRunning(preparationTracks.current.snapshot()),
+    templateReady,
+    storeConfigured,
+    workbench: peekListingWorkbench,
+    prepare: runGuidedPreparation,
+    send: (ids, expected) => startPublish(ids, new Map([[expected.rowId, expected]])),
+  })
+
   if (restoringCard) return <WorkflowRestoreSkeleton />
 
   if (mode === "runner" && schema && draft) {
-    const templateReady = Boolean(
-      psdAsset && psdAssetTemplateIdRef.current &&
-      (psdAssetTemplateIdRef.current === psdTemplateAssetId || (supplierBound && !psdTemplateAssetId)),
-    )
     return (
       <PublishDiagnosticReporterContext.Provider value={diagnosticRoute.report}>
       <Suspense fallback={<WorkflowRestoreSkeleton />}>
@@ -278,6 +292,7 @@ export function WorkflowScreen({
         onClearRows={(ids) => void clearGeneratedRows(ids)}
         onRemoveRows={(ids) => void removeWorkbenchRows(ids, { flushRowsFor, forgetRows })}
         onEditCell={editRowCell}
+        onEditMedia={editRowMedia}
         onEditField={editRowField}
         onRetryRowSave={retryRowSave}
         onFlushRows={flushRowsFor}
@@ -331,8 +346,6 @@ export function WorkflowScreen({
         fieldOrigins={cardFieldOrigins}
         aiAllowedFieldKeys={aiAllowedFieldKeys}
         aiProtectedFieldKeys={aiProtectedFieldKeys}
-        onPreviewSkuImport={previewSkuImport}
-        onApplySkuImport={applySkuImport}
         onFetchCategorySchema={refreshCategorySchema}
         stores={ozonStores}
         storeQuotas={customStoreQuotas}
@@ -367,6 +380,7 @@ export function WorkflowScreen({
       forms={savedForms}
       setForms={setSavedForms}
       busy={libraryBusy}
+      loadError={libraryLoadError}
       setBusy={setLibraryBusy}
       refreshForms={refreshSavedForms}
       videoUploads={videoUploads}

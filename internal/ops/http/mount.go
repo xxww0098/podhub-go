@@ -14,7 +14,6 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/xxww0098/podhub-go/internal/ops/contract"
-	"github.com/xxww0098/podhub-go/internal/ops/domain"
 	"github.com/xxww0098/podhub-go/internal/ops/service"
 )
 
@@ -71,12 +70,6 @@ func (h handler) serve(w http.ResponseWriter, r *http.Request, rt Route) {
 	if tooBig {
 		writeOps(w, contract.NotPorted())
 		return
-	}
-	if rt.Path == "/api/ops/products/promotions" {
-		if req, err := domain.DecodePromotions(body); err == nil && len(domain.PositiveProducts(req.ProductIDs)) == 0 {
-			writeRaw(w, http.StatusOK, domain.EmptyPromotions())
-			return
-		}
 	}
 	p, ok := principal(w, r, h.Resolve)
 	if !ok {

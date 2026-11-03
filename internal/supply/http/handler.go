@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
+	"github.com/xxww0098/podhub-go/internal/platform/httpx/jsonwire"
 	"github.com/xxww0098/podhub-go/internal/supply/contract"
 	"github.com/xxww0098/podhub-go/internal/supply/domain"
 )
@@ -236,7 +237,7 @@ type envelope struct {
 }
 
 func writeData(w http.ResponseWriter, status int, data any) {
-	writeJSON(w, status, envelope{Data: data}, false)
+	jsonwire.Write(w, status, envelope{Data: data})
 }
 
 type apiError struct {
@@ -261,22 +262,6 @@ func writeFailure(w http.ResponseWriter, err error) {
 }
 
 func writeErr(w http.ResponseWriter, status int, message, code string) {
-	writeJSON(w, status, apiError{Error: message, Code: code}, true)
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any, nosniff bool) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(v); err != nil {
-		slog.Error("json encode", "err", err)
-		http.Error(w, msgUnavailable, http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	if nosniff {
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-	}
-	w.WriteHeader(status)
-	_, _ = w.Write(bytes.TrimRight(buf.Bytes(), "\n"))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	jsonwire.Write(w, status, apiError{Error: message, Code: code})
 }

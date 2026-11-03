@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  lazy,
   useMemo,
   useState,
 } from "react"
@@ -35,12 +36,9 @@ import { invalidateStoreRoster } from "@/features/stores/store-roster-cache"
 import { invalidateWallet } from "@/features/usage/wallet-cache"
 import { invalidateUsageStats } from "@/features/usage/usage-cache"
 import { invalidateUsageSummary } from "@/features/usage/usage-summary-cache"
-import { invalidateAllSessionCaches } from "@/lib/session-cache"
 import { ScreenCatalog } from "@/app/screen-catalog"
-import { SupplierApp } from "@/features/supplier/supplier-app"
 import { runViewTransition } from "@/lib/view-transition"
 import { notifyCommandError, notifySuccess } from "@/lib/notify"
-import { EmailVerifyNotice } from "@/features/account/email-verify-notice"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -52,8 +50,11 @@ import {
 import { Spinner } from "@/components/ui/spinner"
 import { inviteCodeFromSearch } from "@/features/account/login-screen"
 import { mountAutomationRuntime } from "@/features/automation/runtime"
-import { isObservationScreen } from "@/lib/app-screens"
 import { mountWorkbenchRuntime } from "@/app/automation-surface"
+
+const FactoryApp = lazy(async () => ({
+  default: (await import("@/factory/factory-app")).FactoryApp,
+}))
 
 /**
  * `/login?invite=CODE` opened by an already signed-in visitor is a late claim
@@ -124,12 +125,10 @@ export function AuthenticatedApp({
   overview: overviewProp,
   onOverviewChange,
   onSignedOut,
-  onAddAccount,
 }: {
   overview: AccountOverview
   onOverviewChange: (next: AccountOverview) => void
   onSignedOut: () => void
-  onAddAccount: () => void
 }) {
   // The address picks the surface, the screen and the admin settings page: what is
   // painted and what the address claims are two readings of one resolver run,
@@ -145,15 +144,16 @@ export function AuthenticatedApp({
         role: overview.session.role,
         accountMode: overview.account_mode,
         isAgent: overview.is_agent,
+        isCatalogManager: overview.is_catalog_manager,
       }),
-    [overview.session.role, overview.account_mode, overview.is_agent],
+    [overview.session.role, overview.account_mode, overview.is_agent, overview.is_catalog_manager],
   )
   const route = resolveRoute(address, audience)
   const adminSurface = route.kind === "admin" || route.kind === "admin-denied"
   const surface: Surface = adminSurface ? "admin" : "workbench"
   const routeScreen: AppScreen | null =
     route.kind === "admin" || route.kind === "workbench" ? route.screen : null
-  // The admin settings page is URL state: `/admin?settings=media` opens, reloads and
+  // The admin settings page is URL state: `/admin?settings=payment` opens, reloads and
   // stays shareable, while the workbench sheet keeps its ephemeral behaviour.
   const routeSettings: SettingsSection | null =
     route.kind === "admin" ? route.settings : null
@@ -184,7 +184,7 @@ export function AuthenticatedApp({
   // A deep link that names something this surface does not address is rewritten
   // once, to what is actually painted: an address must not keep claiming a
   // screen the surface never had, nor one this audience may not reach. Leftover
-  // module params (`product=` from 平台货源, gallery filters, `pick=`) are
+  // module params (`product=` from 平台商品库, gallery filters, `pick=`) are
   // stripped the same way, so 批量上架's homepage stays `?screen=listing`.
   // The rewritten value is addressable, so this cannot loop, and `/` with no
   // `screen` stays clean.
@@ -236,40 +236,6 @@ export function AuthenticatedApp({
     }
   }, [onOverviewChange, recoverAccountContext])
 
-  // Account switching swaps `sid` — the whole authenticated identity. A
-  // reload is the honest repaint: no account-scoped store, keep-alive pane or
-  // in-flight cache can leak across the boundary.
-  const switchAccount = useCallback(async (uuid: string) => {
-    try {
-      await accountHttp.accountSwitchAccount(uuid)
-    } catch (reason) {
-      await recoverAccountContext()
-      notifyCommandError(reason, "无法切换账号，请稍后重试。")
-      return
-    }
-    invalidateAllSessionCaches()
-    window.location.reload()
-  }, [recoverAccountContext])
-
-  const removeAccount = useCallback(async (uuid: string) => {
-    const wasActive = overview.accounts?.some(
-      (account) => account.uuid === uuid && account.active,
-    )
-    try {
-      await accountHttp.accountLogoutAccount(uuid)
-    } catch (reason) {
-      await recoverAccountContext()
-      notifyCommandError(reason, "无法退出该账号，请稍后重试。")
-      return
-    }
-    if (wasActive) {
-      invalidateAllSessionCaches()
-      window.location.reload()
-      return
-    }
-    onSignedOut()
-  }, [overview, onSignedOut, recoverAccountContext])
-
   const refreshOverview = useCallback(async () => {
     try {
       await loadAccountOverview({ force: true })
@@ -288,7 +254,7 @@ export function AuthenticatedApp({
       // `withScreen` 的键表负责，这里只盯这个意图自己的生命周期。
       const nextSearch = (search: string) =>
         next === "catalog" ? search : withoutCatalogPick(search)
-      if (!adminSurface && isObservationScreen(next)) {
+      if (!adminSurface && isAdminScreen(next)) {
         if (!isAddressableScreen(next, "admin", audience)) return
         window.location.assign(`/admin${withScreen(window.location.search, next)}`)
         return
@@ -345,8 +311,7 @@ export function AuthenticatedApp({
   if (route.kind === "workspace-required") {
     return (
       <NotificationsProvider onAccepted={onInvitationAccepted}>
-        <EmailVerifyNotice overview={overview} />
-        <SupplierApp
+        <FactoryApp
           overview={overview}
           onSignedOut={onSignedOut}
           fallback={
@@ -355,9 +320,6 @@ export function AuthenticatedApp({
               onCreated={() => {
                 void refreshOverview()
               }}
-              onSwitchAccount={switchAccount}
-              onLogoutAccount={removeAccount}
-              onAddAccount={onAddAccount}
               onSignedOut={onSignedOut}
             />
           }
@@ -367,9 +329,8 @@ export function AuthenticatedApp({
     )
   }
 
-  return (
+  const content = (
     <NotificationsProvider onAccepted={onInvitationAccepted}>
-      <EmailVerifyNotice overview={overview} />
       <AppShell
         screen={screen}
         onScreenChange={goTo}
@@ -378,9 +339,6 @@ export function AuthenticatedApp({
         onSettingsRequestChange={changeAdminSettings}
         overview={overview}
         onSwitchWorkspace={switchWorkspace}
-        onSwitchAccount={switchAccount}
-        onLogoutAccount={removeAccount}
-        onAddAccount={onAddAccount}
         onOverviewChange={onOverviewChange}
         onSignedOut={onSignedOut}
         onWorkspaceCreated={refreshOverview}
@@ -398,4 +356,5 @@ export function AuthenticatedApp({
       <InviteClaimPrompt />
     </NotificationsProvider>
   )
+  return content
 }

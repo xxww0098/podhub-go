@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	queuerepo "github.com/xxww0098/podhub-go/internal/queue/repo"
 	"os"
 	"strings"
 	"sync"
@@ -19,8 +20,7 @@ import (
 	"github.com/xxww0098/podhub-go/internal/platform/config"
 	"github.com/xxww0098/podhub-go/internal/platform/db"
 	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
-	queue "github.com/xxww0098/podhub-go/internal/platform/jobsched"
-	_ "github.com/xxww0098/podhub-go/internal/queue"
+	queue "github.com/xxww0098/podhub-go/internal/queue/contract"
 	"github.com/xxww0098/podhub-go/tests/testkit"
 )
 
@@ -125,7 +125,7 @@ func TestEnqueueDraftsBatchMatchesSequential(t *testing.T) {
 		}
 		tr.sql = nil
 		tr.batches = 0
-		views, err := enqueueDrafts(ctx, tx, orgID, userID, storeID, ready, time.Now())
+		views, err := testSubmit().enqueueDrafts(ctx, tx, orgID, userID, storeID, ready, time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -143,8 +143,8 @@ func TestEnqueueDraftsBatchMatchesSequential(t *testing.T) {
 		if inserts != 30 || reads != 30 || states != 10 {
 			t.Fatalf("inserts %d reads %d states %d batches %d\n%v", inserts, reads, states, tr.batches, tr.sql)
 		}
-		// 30 insert+read, 10 state reads, subscription gate, worker, head+3 locks, exists+admit+insert+reset, app.
-		if len(tr.sql) != 1+60+10+1+4+4+1 || tr.batches != 4 {
+		// 30 insert+read, 10 state reads, subscription gate, currency gate, head+3 locks, exists+admit+insert+reset.
+		if len(tr.sql) != 1+1+60+10+4+4 || tr.batches != 4 {
 			t.Fatalf("statements %d batches %d\n%v", len(tr.sql), tr.batches, tr.sql)
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -221,10 +221,9 @@ func seedDraftPeriod(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgI
 	}
 	if _, err := pool.Exec(ctx, `
 			INSERT INTO subscription_periods (
-				org_id, starts_at, ends_at, plan_key, plan_stores, plan_members,
-				plan_monthly_cents, store_monthly_cents, member_monthly_cents,
-				extra_stores, extra_members, keep_store_ids
-			) VALUES ($1, $2, $3, 'lite', 5, 1, 10000, 2000, 3000, 0, 0, $4)`,
+				org_id, starts_at, ends_at, plan_key, stores,
+				store_monthly_cents, keep_store_ids
+			) VALUES ($1, $2, $3, 'lite', 5, 2000, $4)`,
 		orgID, start, end, keepArg); err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +240,7 @@ func refuseDraftEnqueue(t *testing.T, ctx context.Context, pool *pgxpool.Pool, o
 	if err := tenant.EnterApp(ctx, tx, orgID); err != nil {
 		t.Fatal(err)
 	}
-	_, err = enqueueDrafts(ctx, tx, orgID, userID, storeID, ready, now)
+	_, err = testSubmit().enqueueDrafts(ctx, tx, orgID, userID, storeID, ready, now)
 	var st Status
 	if !errors.As(err, &st) || st.Code != 402 || st.Kind != "SUBSCRIPTION_STORE_PAUSED" {
 		t.Fatalf("got code %d kind %s err %v", st.Code, st.Kind, err)
@@ -274,7 +273,7 @@ func compareDrafts(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID,
 	// Keep the old single-card sequential oracle unchanged. The production
 	// enqueue now takes each row's card rather than a batch-wide card.
 	batched := func(ctx context.Context, tx pgx.Tx, orgID, userID int64, storeID, _ string, ready []frozen) ([]DraftItem, error) {
-		return enqueueDrafts(ctx, tx, orgID, userID, storeID, ready, time.Now())
+		return testSubmit().enqueueDrafts(ctx, tx, orgID, userID, storeID, ready, time.Now())
 	}
 	reset := pinDraftIDs(t)
 	seq = runDrafts(t, ctx, pool, orgID, userID, storeID, cardID, ready, enqueueDraftsSequential, reset)
@@ -401,7 +400,7 @@ func runDraftPayloads(t *testing.T, ctx context.Context, pool *pgxpool.Pool, org
 }
 
 func enqueueDraftsNow(ctx context.Context, tx pgx.Tx, orgID, userID int64, storeID, _ string, ready []frozen) ([]DraftItem, error) {
-	return enqueueDrafts(ctx, tx, orgID, userID, storeID, ready, time.Now())
+	return testSubmit().enqueueDrafts(ctx, tx, orgID, userID, storeID, ready, time.Now())
 }
 
 func enqueueDraftsSequential(ctx context.Context, tx pgx.Tx, orgID, userID int64, storeID, cardID string, ready []frozen) ([]DraftItem, error) {
@@ -416,7 +415,7 @@ func enqueueDraftsSequential(ctx context.Context, tx pgx.Tx, orgID, userID int64
 		id := newID()
 		var updated int64
 		err := tx.QueryRow(ctx, insertIntentSQL,
-			id, orgID, storeID, row.rowID, row.revision, row.clientOp, row.digest, row.offerID, cardID).Scan(&updated)
+			id, orgID, storeID, row.rowID, row.revision, row.clientOp, row.digest, row.offerID, cardID, sliceImageURLs(row.importBody)).Scan(&updated)
 		outcome := "created"
 		if errors.Is(err, pgx.ErrNoRows) {
 			err = tx.QueryRow(ctx, readIntentSQL, orgID, storeID, row.clientOp).Scan(&id, &updated)
@@ -481,7 +480,7 @@ func enqueueDraftsSequential(ctx context.Context, tx pgx.Tx, orgID, userID int64
 	if err := tenant.EnterWorker(ctx, tx); err != nil {
 		return nil, err
 	}
-	if _, err := queue.EnqueueOn(ctx, tx, jobs, 0); err != nil {
+	if _, err := testSubmit().Queue.EnqueueOn(ctx, tx, jobs, 0); err != nil {
 		return nil, err
 	}
 	if err := tenant.EnterApp(ctx, tx, orgID); err != nil {
@@ -699,4 +698,8 @@ func startDraftPostgres(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return container.ConnectionString(ctx, "sslmode=disable")
+}
+
+func testSubmit() Service {
+	return Service{Queue: Queue{EnqueueOn: queuerepo.EnqueueOn, MutateRunning: queuerepo.MutateRunning}}
 }

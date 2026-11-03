@@ -12,6 +12,7 @@ import (
 
 	"github.com/xxww0098/podhub-go/internal/mcp/domain"
 	"github.com/xxww0098/podhub-go/internal/mcp/service"
+	"github.com/xxww0098/podhub-go/internal/platform/httpx/jsonwire"
 )
 
 const unauthorizedBody = `{"error":"invalid or expired automation grant token"}`
@@ -79,7 +80,7 @@ func (h handler) serveGrant(w http.ResponseWriter, r *http.Request, token string
 		return
 	}
 	status, payload := h.Handler.Handle(r.Context(), hash, body)
-	writeJSON(w, status, payload)
+	jsonwire.WritePayload(w, status, payload)
 }
 
 func (h handler) serveSession(w http.ResponseWriter, r *http.Request) {
@@ -109,7 +110,7 @@ func (h handler) serveSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	status, payload := h.Handler.HandleSession(r.Context(), *caller, body)
-	writeJSON(w, status, payload)
+	jsonwire.WritePayload(w, status, payload)
 }
 
 func (h handler) allow(w http.ResponseWriter, r *http.Request) bool {
@@ -122,12 +123,6 @@ func (h handler) allow(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	return true
-}
-
-func writeJSON(w http.ResponseWriter, status int, payload []byte) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_, _ = w.Write(payload)
 }
 
 func writeUnauthorized(w http.ResponseWriter) {

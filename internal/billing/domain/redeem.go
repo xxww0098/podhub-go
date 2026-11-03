@@ -2,15 +2,14 @@ package domain
 
 import "time"
 
-// RedeemResult is the grant response. OcrCredits is always zero.
+// RedeemResult identifies the grant applied to the workspace.
 type RedeemResult struct {
-	PlanKey       string
-	PlanName      string
-	MemberSeats   int64
-	WalletCents   int64
-	ReplacedLots  int64
-	ReplacedSeats int64
-	PlanExpiresAt *time.Time
+	WalletCents int64
+	PlanKey     string
+	PlanStores  int
+	PlanMonths  int
+	StartsAt    *time.Time
+	EndsAt      *time.Time
 }
 
 // RedeemError is a client refusal with an HTTP status and a screaming code.

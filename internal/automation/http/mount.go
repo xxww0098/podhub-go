@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/xxww0098/podhub-go/internal/automation/contract"
+	"github.com/xxww0098/podhub-go/internal/automation/domain"
 	"github.com/xxww0098/podhub-go/internal/automation/service"
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
 )
@@ -135,17 +136,22 @@ func (h handler) serve(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if p.OrgID <= 0 || strings.TrimSpace(p.WorkspaceRole) == "" {
+	catalog := strings.HasPrefix(r.URL.Path, "/api/me/catalog-automation/grants")
+	if !catalog && (p.OrgID <= 0 || strings.TrimSpace(p.WorkspaceRole) == "") {
 		writeErr(w, http.StatusForbidden, msgNoWorkspace, "FORBIDDEN", 0)
 		return
 	}
-	if _, parsed := access.ParseWorkspace(p.WorkspaceRole); !parsed {
+	if _, parsed := access.ParseWorkspace(p.WorkspaceRole); !catalog && !parsed {
 		writeErr(w, http.StatusForbidden, msgBadRole, "FORBIDDEN", 0)
 		return
 	}
 	if h.Actions == nil {
 		writeFault(w, contract.Unavailable())
 		return
+	}
+	scope := domain.ScopeWorkspace
+	if catalog {
+		scope, p.OrgID = domain.ScopeCatalog, 0
 	}
 	switch r.Method + " " + chi.RouteContext(r.Context()).RoutePattern() {
 	case "GET /api/automation/asset-sets":
@@ -160,12 +166,12 @@ func (h handler) serve(w http.ResponseWriter, r *http.Request) {
 		h.progress(w, r, p)
 	case "POST /api/automation/commands/{id}/settle":
 		h.settle(w, r, p)
-	case "GET /api/automation/grants":
-		h.listGrants(w, r, p)
-	case "POST /api/automation/grants":
-		h.createGrant(w, r, p)
-	case "POST /api/automation/grants/{id}/revoke":
-		h.revokeGrant(w, r, p)
+	case "GET /api/automation/grants", "GET /api/me/catalog-automation/grants":
+		h.listGrants(w, r, p, scope)
+	case "POST /api/automation/grants", "POST /api/me/catalog-automation/grants":
+		h.createGrant(w, r, p, scope)
+	case "POST /api/automation/grants/{id}/revoke", "POST /api/me/catalog-automation/grants/{id}/revoke":
+		h.revokeGrant(w, r, p, scope)
 	case "GET /api/automation/runtimes":
 		h.listRuntimes(w, r, p)
 	case "POST /api/automation/runtimes":

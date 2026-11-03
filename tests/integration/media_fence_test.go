@@ -32,6 +32,7 @@ func TestMediaFenceAndIsolation(t *testing.T) {
 
 	t.Run("sql extractors", func(t *testing.T) { testSQLExtractors(t, ctx, pool) })
 	t.Run("retired upload is P0M01", func(t *testing.T) { testRetiredUpload(t, ctx, pool) })
+	t.Run("slice identity and retirement fence", func(t *testing.T) { testSliceFence(t, ctx, pool) })
 	t.Run("media blob rls", func(t *testing.T) { testMediaBlobRLS(t, ctx, pool) })
 	t.Run("cleanup receipt", func(t *testing.T) { testCleanupReceipt(t, ctx, pool) })
 }
@@ -45,6 +46,7 @@ func testSQLExtractors(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 		"videos/teams/" + workspaceA + "/sha256/" + imageHash + ".mp4",
 		"images/teams/" + workspaceA + "/sha256/" + probeHash + ".png",
 		"images/./teams/" + workspaceA + "/sha256/" + imageHash + ".jpg",
+		"podhub-slices/11111111-1111-4111-8111-111111111111/uploads/2026-10-15/1792094400000-22222222-2222-4222-8222-222222222222/" + imageHash + ".jpg",
 		"see teams/" + workspaceA + "/sha256/" + imageHash + ".jpg and workspaces/" + workspaceB + "/sha256/" + other + ".png?x=1",
 		"ordinary text",
 	}
@@ -93,6 +95,45 @@ func testSQLExtractors(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 				t.Fatalf("candidates %q sql %+v go %+v", sample, sqlCandidates, goCandidates)
 			}
 		}
+	}
+}
+
+func testSliceFence(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+	orgID := insertMediaOrg(t, ctx, pool, mediaUserA, "media-a@example.invalid", "Media A", workspaceA)
+	storage := "11111111-1111-4111-8111-111111111111"
+	batch := "1792094400000-22222222-2222-4222-8222-222222222222"
+	key := "podhub-slices/" + storage + "/uploads/2026-10-15/" + batch + "/" + imageHash + ".jpg"
+	lock, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Rollback(ctx)
+	if _, err = lock.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('podhub:media-reference:v1:'||$1||':'||$2, 0))`, storage, imageHash); err != nil {
+		t.Fatal(err)
+	}
+	_, err = pool.Exec(ctx, `INSERT INTO public.media_object_leases(workspace_uuid,batch_id,content_hash,org_id,object_key,media_account_id,first_seen_at,last_hit_at,expires_at)
+		VALUES($1::uuid,$2,$3,$4,$5,$6,clock_timestamp(),clock_timestamp(),clock_timestamp()+interval '1 hour')`, workspaceA, batch, imageHash, orgID, key, storage)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "55P03" {
+		t.Fatalf("concurrent slice retirement must fence new leases, got %v", err)
+	}
+	if err := lock.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `INSERT INTO public.media_object_leases(workspace_uuid,batch_id,content_hash,org_id,object_key,media_account_id,first_seen_at,last_hit_at,expires_at,retired_at)
+		VALUES($1::uuid,$2,$3,$4,$5,$6,clock_timestamp(),clock_timestamp(),clock_timestamp(),clock_timestamp())`, workspaceA, batch, imageHash, orgID, key, storage); err != nil {
+		t.Fatal(err)
+	}
+	_, err = pool.Exec(ctx, `INSERT INTO public.media_uploads(id,org_id,idempotency_key,expected_sha256,expected_size,expected_mime,storage_key,state,expires_at)
+		VALUES(gen_random_uuid(),$1,'retired-slice',$2,12,'image/jpeg',$3,'pending',clock_timestamp()+interval '1 hour')`, orgID, imageHash, key)
+	if !errors.As(err, &pgErr) || pgErr.Code != "P0M01" {
+		t.Fatalf("retired slice accepted as a new upload: %v", err)
+	}
+	other := strings.Replace(key, storage, "33333333-3333-4333-8333-333333333333", 1)
+	if _, err = pool.Exec(ctx, `INSERT INTO public.media_uploads(id,org_id,idempotency_key,expected_sha256,expected_size,expected_mime,storage_key,state,expires_at)
+		VALUES(gen_random_uuid(),$1,'other-slice',$2,12,'image/jpeg',$3,'pending',clock_timestamp()+interval '1 hour')`, orgID, imageHash, other); err != nil {
+		t.Fatalf("a different storage configuration should have its own identity: %v", err)
 	}
 }
 

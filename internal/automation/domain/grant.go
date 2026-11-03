@@ -2,8 +2,8 @@ package domain
 
 import "github.com/xxww0098/podhub-go/internal/automation/contract"
 
-// Grant scopes and actions are the CHECK constraints added by
-// db/migrations/00263_automation_grant_scopes.sql.
+// Grant scopes and actions are the CHECK constraints in the baseline
+// schema.
 const (
 	ScopeWorkspace       = "workspace"
 	ScopeCatalog         = "catalog"

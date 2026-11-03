@@ -33,8 +33,8 @@ function setInput(input: HTMLInputElement, value: string) {
   input.dispatchEvent(new Event("input", { bubbles: true }))
 }
 
-const mounts: Record<string, number> = { console: 0, listing: 0 }
-const unmounts: Record<string, number> = { console: 0, listing: 0 }
+const mounts: Record<string, number> = { home: 0, listing: 0 }
+const unmounts: Record<string, number> = { home: 0, listing: 0 }
 function resetCounters() {
   for (const name of Object.keys(mounts)) { mounts[name] = 0; unmounts[name] = 0 }
 }
@@ -48,11 +48,11 @@ function TestScreen({ name, label, withInput = false }: { name: string; label: s
   return <section data-screen={name}><strong>{label}</strong>{withInput && <input aria-label={`${name} draft`} value={value} onChange={(event) => setValue(event.target.value)} />}</section>
 }
 
-function ConsoleScreen() { return <TestScreen name="console" label="Console" withInput /> }
+function HomeScreen() { return <TestScreen name="home" label="Home" withInput /> }
 function ListingScreen() { return <TestScreen name="listing" label="Listing" withInput /> }
 const originalScreenLoaders = { ...SCREEN_LOADERS }
 Object.assign(SCREEN_LOADERS as unknown as Record<AppScreen, typeof SCREEN_LOADERS[AppScreen]>, {
-  console: async () => ({ ConsoleScreen }),
+  home: async () => ({ HomeScreen }),
   listing: async () => ({ WorkflowScreen: ListingScreen }),
 })
 
@@ -73,15 +73,15 @@ async function mounted(action: (root: Root) => Promise<void>) {
 
 async function pageStateSurvivesSwitch() {
   await mounted(async (root) => {
-    renderCatalog(root, "console", ["console"], overview(1))
-    const input = await waitFor<HTMLInputElement>('[aria-label="console draft"]', "console screen did not load")
+    renderCatalog(root, "home", ["home"], overview(1))
+    const input = await waitFor<HTMLInputElement>('[aria-label="home draft"]', "home screen did not load")
     setInput(input, "kept")
-    renderCatalog(root, "listing", ["console", "listing"], overview(1))
+    renderCatalog(root, "listing", ["home", "listing"], overview(1))
     await waitFor<HTMLInputElement>('[aria-label="listing draft"]', "listing screen did not load")
-    renderCatalog(root, "console", ["console", "listing"], overview(1))
-    await waitFor<HTMLInputElement>('[aria-label="console draft"]', "console screen did not return")
-    check(fixture.querySelector<HTMLInputElement>('[aria-label="console draft"]')?.value === "kept", "switching panes lost input state")
-    check(mounts.console === 1, `console remounted during pane switch (${mounts.console})`)
+    renderCatalog(root, "home", ["home", "listing"], overview(1))
+    await waitFor<HTMLInputElement>('[aria-label="home draft"]', "home screen did not return")
+    check(fixture.querySelector<HTMLInputElement>('[aria-label="home draft"]')?.value === "kept", "switching panes lost input state")
+    check(mounts.home === 1, `home remounted during pane switch (${mounts.home})`)
   })
 }
 
@@ -90,14 +90,14 @@ async function workspaceChangeRemountsOnReactivation() {
     renderCatalog(root, "listing", ["listing"], overview(1))
     const input = await waitFor<HTMLInputElement>('[aria-label="listing draft"]', "listing screen did not load")
     setInput(input, "old workspace")
-    renderCatalog(root, "console", ["listing", "console"], overview(1))
-    await waitFor<HTMLElement>('[data-screen="console"]', "console screen did not load")
+    renderCatalog(root, "home", ["listing", "home"], overview(1))
+    await waitFor<HTMLElement>('[data-screen="home"]', "home screen did not load")
     const mountsBeforeWorkspaceUpdate = mounts.listing
-    renderCatalog(root, "console", ["listing", "console"], overview(2))
+    renderCatalog(root, "home", ["listing", "home"], overview(2))
     await settle()
     check(fixture.querySelector('[data-screen="listing"]')?.closest('[hidden]'), "listing should remain hidden while changing Workspace")
     check(mounts.listing === mountsBeforeWorkspaceUpdate, "hidden listing remounted before reactivation")
-    renderCatalog(root, "listing", ["listing", "console"], overview(2))
+    renderCatalog(root, "listing", ["listing", "home"], overview(2))
     const nextInput = await waitFor<HTMLInputElement>('[aria-label="listing draft"]', "listing screen did not reactivate")
     check(nextInput.value === "", "workspace switch retained old workspace's screen state")
     check(mounts.listing === mountsBeforeWorkspaceUpdate + 1, `workspace switch remounted listing ${mounts.listing - mountsBeforeWorkspaceUpdate} times`)

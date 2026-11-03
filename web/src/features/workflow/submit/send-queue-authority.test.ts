@@ -75,7 +75,7 @@ test("exact unknown release plus current read only unlocks locally; explicit ret
 })
 
 test("exact release/readback keeps the offer locked until real native validation succeeds, with zero release submits", async () => {
-  const { createOzonSendCapability } = await import("../platforms/ozon")
+  const { createOzonSendCapability } = await import("../platforms/ozon/adapter")
   const { wasmCore, golden, goldenSchema, nativePayload } = await import("./send-test-support")
   const { route } = await import("@/api/routes")
   const core = await wasmCore()

@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	access "github.com/xxww0098/podhub-go/internal/identity/contract"
 	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
 	"github.com/xxww0098/podhub-go/internal/platform/seal"
 )
@@ -103,6 +104,9 @@ func Grant(ctx context.Context, pool *pgxpool.Pool, in GrantInput, reserve Reser
 		return GrantResult{}, statusErr(503, "服务暂不可用", "internal")
 	}
 	defer tx.Rollback(ctx)
+	if err := requireCredentialManager(ctx, tx, in.OrgID, in.UserID); err != nil {
+		return GrantResult{}, err
+	}
 	var storePK int64
 	err = tx.QueryRow(ctx, `
 		SELECT id FROM public.organization_stores
@@ -243,6 +247,9 @@ func openGrantSecret(ctx context.Context, pool *pgxpool.Pool, in GrantInput, ope
 		return seal.Secret{}, statusErr(503, "店铺密钥不可用", "credential_unavailable")
 	}
 	defer tx.Rollback(ctx)
+	if err := requireCredentialManager(ctx, tx, in.OrgID, in.UserID); err != nil {
+		return seal.Secret{}, err
+	}
 	var env seal.Store
 	var clientID *string
 	var expires *int64
@@ -275,6 +282,20 @@ func openGrantSecret(ctx context.Context, pool *pgxpool.Pool, in GrantInput, ope
 		return seal.Secret{}, statusErr(503, "店铺密钥不可用", "credential_unavailable")
 	}
 	return secret, nil
+}
+
+func requireCredentialManager(ctx context.Context, tx pgx.Tx, orgID, userID int64) error {
+	var role string
+	err := tx.QueryRow(ctx, `SELECT role FROM public.organization_members
+		WHERE org_id=$1 AND user_id=$2 AND status='active' AND NOT manual_disabled AND NOT quota_suspended
+		FOR SHARE`, orgID, userID).Scan(&role)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !access.CanManage(role)) {
+		return statusErr(403, "只有工作空间所有者或管理员可以获取店铺密钥", "forbidden")
+	}
+	if err != nil {
+		return statusErr(503, "服务暂不可用", "internal")
+	}
+	return nil
 }
 
 // Report settles a submitting or unknown attempt. A positive task id accepts;
@@ -339,18 +360,23 @@ func Report(ctx context.Context, pool *pgxpool.Pool, in ReportInput) (ReportResu
 		(previousTask != nil && (task == nil || *previousTask != *task)) {
 		return ReportResult{}, statusErr(409, "这次报回不能改变提交状态", "conflict")
 	}
+	firstWait := ImportUnknownFirstWait
+	if out.IntentState == Accepted {
+		firstWait = ImportReconcileFirstWait
+	}
 	_, err = tx.Exec(ctx, `
 		UPDATE public.submission_intents
 		   SET state = $3,
 		       last_error_code = NULLIF($4, ''),
 		       external_task_id = COALESCE($5, external_task_id),
 		       reconcile_after = CASE
-		           WHEN $3 = 'unknown' THEN clock_timestamp() + interval '30 seconds'
+		           WHEN $3 = 'unknown' OR ($3 = 'accepted' AND $5::text IS NOT NULL)
+		           THEN clock_timestamp() + ($6::bigint * interval '1 second')
 		           ELSE NULL
 		       END,
 		       updated_at = clock_timestamp()
 		 WHERE org_id = $1 AND id = $2::uuid`,
-		in.OrgID, in.IntentID, out.IntentState, out.IntentError, task)
+		in.OrgID, in.IntentID, out.IntentState, out.IntentError, task, firstWait)
 	if err != nil {
 		return ReportResult{}, statusErr(503, "服务暂不可用", "internal")
 	}

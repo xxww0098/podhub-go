@@ -10,12 +10,12 @@ import (
 func TestQuotedChangePeriods(t *testing.T) {
 	now := time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC)
 	p := domain.Period{ID: 1, Start: now.Add(-time.Hour), End: now.Add(time.Hour),
-		Target: domain.Target{PlanKey: "lite"}, PlanStores: 5, PlanMembers: 1, PlanMonthlyCents: 10000}
+		Target: domain.Target{PlanKey: "lite", Stores: 5}, StoreMonthlyCents: 2000}
 	appended := p
 	appended.ID, appended.Start, appended.End = 2, p.End, p.End.Add(time.Hour)
 	shortened, repriced, relisted := p, p, p
 	shortened.End = p.End.Add(-time.Minute)
-	repriced.PlanMonthlyCents++
+	repriced.StoreMonthlyCents++
 	relisted.KeepStores = []string{"new-retention-choice"}
 	for _, tc := range []struct {
 		name    string

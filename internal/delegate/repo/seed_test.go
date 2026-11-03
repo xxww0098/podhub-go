@@ -24,6 +24,19 @@ func seedUser(t testing.TB, ctx context.Context, pool *pgxpool.Pool, userID int6
 	}
 }
 
+// seedSupplierUser creates the account a source member or fulfiller needs.
+// 00009 requires those grants to point at account_kind 'supplier', and the
+// kind cannot change afterwards, so it must be right at insert time.
+func seedSupplierUser(t testing.TB, ctx context.Context, pool *pgxpool.Pool, userID int64, tag string) {
+	t.Helper()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO account_users (id, public_id, email, password_hash, role, name, target, supplier_id, plan, account_kind, created_at, updated_at)
+		VALUES ($1, $2, $3, 'x', 'user', 't', '/supplier', '', 'lite', 'supplier', clock_timestamp(), clock_timestamp())
+		ON CONFLICT (id) DO NOTHING`, userID, fmt.Sprintf("d%d", userID), fmt.Sprintf("d%d@example.invalid", userID)); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func seedOrg(t testing.TB, ctx context.Context, pool *pgxpool.Pool, userID int64, tag string) int64 {
 	t.Helper()
 	seedUser(t, ctx, pool, userID, tag)
@@ -44,9 +57,12 @@ func seedOrg(t testing.TB, ctx context.Context, pool *pgxpool.Pool, userID int64
 
 func seedSource(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sourceID, name string) {
 	t.Helper()
+	if _, err := pool.Exec(ctx, `INSERT INTO sc_factories (factory_id, name, created_at_ms, updated_at_ms) VALUES ($1, $1, 1, 1)`, sourceID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO sc_sources (source_id, name, created_at_ms, updated_at_ms)
-		VALUES ($1, $2, 1, 1)`, sourceID, name); err != nil {
+		INSERT INTO sc_sources (source_id, name, factory_id, created_at_ms, updated_at_ms)
+		VALUES ($1, $2, $1, 1, 1)`, sourceID, name); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -54,7 +70,7 @@ func seedSource(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sourceID,
 func seedMember(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sourceID string, userID int64, status string) {
 	t.Helper()
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO sc_source_members (source_id, user_id, status, created_by, created_at_ms)
+		INSERT INTO sc_factory_members (factory_id, user_id, status, created_by, created_at_ms)
 		VALUES ($1, $2, $3, $2, 1)`, sourceID, userID, status); err != nil {
 		t.Fatal(err)
 	}
@@ -157,10 +173,11 @@ func cleanupDelegate(t testing.TB, ctx context.Context, pool *pgxpool.Pool, orgI
 		// Fulfillers first: delegate_dispatches carries a composite FK to
 		// (source_id, fulfiller_id), so the packets must already be gone.
 		_, _ = pool.Exec(ctx, `DELETE FROM sc_source_fulfillers WHERE source_id = $1`, sourceID)
-		_, _ = pool.Exec(ctx, `DELETE FROM sc_source_members WHERE source_id = $1`, sourceID)
+		_, _ = pool.Exec(ctx, `DELETE FROM sc_factory_members WHERE factory_id = $1`, sourceID)
 		_, _ = pool.Exec(ctx, `DELETE FROM supplier_wallets WHERE source_id = $1`, sourceID)
 		_, _ = pool.Exec(ctx, `DELETE FROM supplier_withdrawals WHERE source_id = $1`, sourceID)
 		_, _ = pool.Exec(ctx, `DELETE FROM sc_sources WHERE source_id = $1`, sourceID)
+		_, _ = pool.Exec(ctx, `DELETE FROM sc_factories WHERE factory_id = $1`, sourceID)
 	}
 	if userID > 0 {
 		_, _ = pool.Exec(ctx, `DELETE FROM account_users WHERE id = $1`, userID)

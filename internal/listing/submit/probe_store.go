@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
+	sellercontract "github.com/xxww0098/podhub-go/internal/seller/contract"
+	ozoncontract "github.com/xxww0098/podhub-go/internal/seller/ozon/contract"
 )
 
 // ProbeDue is reconcile_due_unknown_imports. The claim SQL is claim_due in
@@ -56,6 +59,7 @@ type claimedIntent struct {
 	Revision    int64
 	Passes      int32
 	Observation string
+	ClaimUntil  time.Time
 }
 
 func claimDue(ctx context.Context, pool *pgxpool.Pool, limit int) ([]claimedIntent, error) {
@@ -76,7 +80,7 @@ func claimDue(ctx context.Context, pool *pgxpool.Pool, limit int) ([]claimedInte
 	for rows.Next() {
 		var row claimedIntent
 		var observation *string
-		if err := rows.Scan(&row.ID, &row.OrgID, &row.StoreID, &row.OfferID, &row.RowID, &row.Revision, &row.Passes, &observation); err != nil {
+		if err := rows.Scan(&row.ID, &row.OrgID, &row.StoreID, &row.OfferID, &row.RowID, &row.Revision, &row.Passes, &observation, &row.ClaimUntil); err != nil {
 			return nil, err
 		}
 		if observation != nil {
@@ -115,7 +119,7 @@ FROM due WHERE current.id = due.id
 RETURNING current.id::text, current.org_id, current.store_id::text,
     current.offer_id, current.listing_row_id::text, current.row_revision,
     COALESCE((current.reconciliation_outcome->'probe'->>'passes')::int, 0),
-    current.reconciliation_outcome->'probe'->>'observation'`
+    current.reconciliation_outcome->'probe'->>'observation', current.reconcile_claim_until`
 
 func readStore(ctx context.Context, pool *pgxpool.Pool, tr Transport, key probeKey, rows []claimedIntent) map[string]sightHit {
 	out := map[string]sightHit{}
@@ -124,7 +128,22 @@ func readStore(ctx context.Context, pool *pgxpool.Pool, tr Transport, key probeK
 			out[row.ID] = sightHit{Sight: sight}
 		}
 	}
-	if tr == nil || !credentialPresent(ctx, pool, key) {
+	if tr == nil {
+		mark(SightUnreadable)
+		return out
+	}
+	if _, scoped := tr.(sellercontract.StoreTransport); scoped {
+		ids := make([]string, len(rows))
+		for i, row := range rows {
+			ids[i] = row.ID
+		}
+		var err error
+		tr, err = bindStoreTransport(ctx, tr, sellercontract.StoreBinding{OrgID: key.org, StoreUUID: key.store, IntentIDs: ids, ReadOnly: true})
+		if err != nil {
+			mark(SightUnreadable)
+			return out
+		}
+	} else if !credentialPresent(ctx, pool, key) {
 		mark(SightUnreadable)
 		return out
 	}
@@ -133,8 +152,8 @@ func readStore(ctx context.Context, pool *pgxpool.Pool, tr Transport, key probeK
 	for _, row := range rows {
 		offers = append(offers, row.OfferID)
 	}
-	for start := 0; start < len(offers); start += 50 {
-		end := start + 50
+	for start := 0; start < len(offers); start += InfoListBatch {
+		end := start + InfoListBatch
 		if end > len(offers) {
 			end = len(offers)
 		}
@@ -144,7 +163,7 @@ func readStore(ctx context.Context, pool *pgxpool.Pool, tr Transport, key probeK
 			return out
 		}
 		status, resp, err := tr.Read(ctx, "/v3/product/info/list", body)
-		items, ok := parseInfoList(status, resp, err)
+		items, ok := parseInfoList(status, resp, err, offers[start:end])
 		if !ok {
 			mark(SightUnreadable)
 			return out
@@ -180,42 +199,11 @@ type sightHit struct {
 	Found Found
 }
 
-type infoItem struct {
-	ProductID int64
-	OfferID   string
-	SKU       int64
-}
-
-func parseInfoList(status int, body string, err error) ([]infoItem, bool) {
+func parseInfoList(status int, body string, err error, offers []string) ([]ozoncontract.ProductInfo, bool) {
 	if err != nil || status < 200 || status >= 300 {
 		return nil, false
 	}
-	var parsed struct {
-		Items []rawProduct `json:"items"`
-	}
-	if json.Unmarshal([]byte(body), &parsed) != nil {
-		return nil, false
-	}
-	out := make([]infoItem, 0, len(parsed.Items))
-	for _, item := range parsed.Items {
-		sku := int64(0)
-		for _, source := range item.Sources {
-			if source.SKU > 0 {
-				sku = source.SKU
-				break
-			}
-		}
-		out = append(out, infoItem{ProductID: item.ID, OfferID: item.OfferID, SKU: sku})
-	}
-	return out, true
-}
-
-type rawProduct struct {
-	ID      int64  `json:"id"`
-	OfferID string `json:"offer_id"`
-	Sources []struct {
-		SKU int64 `json:"sku"`
-	} `json:"sources"`
+	return ozoncontract.ParseProductInfoList([]byte(body), offers)
 }
 
 func applyGroup(ctx context.Context, pool *pgxpool.Pool, orgID int64, rows []claimedIntent, sights map[string]sightHit) error {
@@ -228,6 +216,17 @@ func applyGroup(ctx context.Context, pool *pgxpool.Pool, orgID int64, rows []cla
 		return err
 	}
 	for _, row := range rows {
+		var owned bool
+		err := tx.QueryRow(ctx, `SELECT true FROM submission_intents
+			WHERE org_id=$1 AND id=$2::uuid AND state='unknown'
+			  AND reconcile_claim_until=$3::timestamptz AND reconcile_claim_until>clock_timestamp()
+			FOR UPDATE`, orgID, row.ID, row.ClaimUntil).Scan(&owned)
+		if err == pgx.ErrNoRows {
+			continue
+		}
+		if err != nil {
+			return err
+		}
 		hit, ok := sights[row.ID]
 		if !ok {
 			hit.Sight = SightUnreadable
@@ -235,21 +234,21 @@ func applyGroup(ctx context.Context, pool *pgxpool.Pool, orgID int64, rows []cla
 		action := DecideProbe(ProbeMemory{Passes: row.Passes, Observation: row.Observation}, hit.Sight, hit.Found)
 		switch action.Kind {
 		case "accept":
-			tag, err := tx.Exec(ctx, stampAcceptSQL, orgID, row.ID, action.ProductID, action.SKU)
+			count, err := StampAcceptRows(ctx, tx, orgID, row.ID, action.ProductID, action.SKU)
 			if err != nil {
 				return err
 			}
-			if tag.RowsAffected() > 0 {
+			if count > 0 {
 				if _, err := tx.Exec(ctx, setRowStateSQL, orgID, row.RowID, row.Revision, Accepted); err != nil {
 					return err
 				}
 			}
 		case "release":
-			tag, err := tx.Exec(ctx, stampReleaseSQL, orgID, row.ID, time.Now().UTC().UnixMilli(), action.Passes)
+			count, err := StampReleaseRows(ctx, tx, orgID, row.ID, time.Now().UTC().UnixMilli(), action.Passes)
 			if err != nil {
 				return err
 			}
-			if tag.RowsAffected() > 0 {
+			if count > 0 {
 				if _, err := tx.Exec(ctx, setRowStateSQL, orgID, row.RowID, row.Revision, "none"); err != nil {
 					return err
 				}
@@ -268,10 +267,11 @@ func applyGroup(ctx context.Context, pool *pgxpool.Pool, orgID int64, rows []cla
 }
 
 const stampAcceptSQL = `
+WITH accepted AS (
 UPDATE submission_intents
 SET state = 'accepted',
     last_error_code = NULL,
-    reconcile_after = NULL,
+    reconcile_after = CASE WHEN cardinality(slice_image_urls)>0 THEN clock_timestamp()+interval '5 seconds' ELSE NULL END,
     reconcile_claim_until = NULL,
     reconciliation_outcome = jsonb_set(
       COALESCE(reconciliation_outcome, '{}'::jsonb) - 'probe',
@@ -279,9 +279,25 @@ SET state = 'accepted',
       jsonb_build_object('productId', $3::bigint, 'sku', $4::bigint),
       true),
     updated_at = clock_timestamp()
-WHERE org_id = $1 AND id = $2::uuid AND state = 'unknown'`
+WHERE org_id = $1 AND id = $2::uuid AND state = 'unknown'
+RETURNING id
+), writes AS (
+ UPDATE public.seller_upstream_writes
+ SET state='reconciled', reconcile_after=NULL, error_code=NULL,
+     last_observation=COALESCE(last_observation,'{}'::jsonb) || jsonb_build_object('outcome','found','productId',$3::bigint,'sku',$4::bigint),
+     updated_at=clock_timestamp()
+ WHERE org_id=$1 AND kind='import' AND idempotency_key IN (SELECT id::text FROM accepted)
+   AND state IN ('dispatching','result_unknown')
+), occupancies AS (
+ UPDATE public.seller_resource_occupancies
+ SET state='released',released_at_ms=(extract(epoch from clock_timestamp())*1000)::bigint,release_reason='relationship_confirmed'
+ WHERE org_id=$1 AND owner_kind='store_write' AND resource_kind='offer'
+   AND owner_ref IN (SELECT id::text FROM accepted) AND state='held'
+)
+SELECT count(*) FROM accepted`
 
 const stampReleaseSQL = `
+WITH released AS (
 UPDATE submission_intents
 SET state = 'superseded',
     last_error_code = NULL,
@@ -293,7 +309,22 @@ SET state = 'superseded',
       jsonb_build_object('atMs', $3::bigint, 'passes', $4::int),
       true),
     updated_at = clock_timestamp()
-WHERE org_id = $1 AND id = $2::uuid AND state = 'unknown'`
+WHERE org_id = $1 AND id = $2::uuid AND state = 'unknown'
+RETURNING id
+), writes AS (
+ UPDATE public.seller_upstream_writes
+ SET state='reconciled', reconcile_after=NULL, error_code='probe_absent',
+     last_observation=COALESCE(last_observation,'{}'::jsonb) || '{"outcome":"probe_absent"}'::jsonb,
+     updated_at=clock_timestamp()
+ WHERE org_id=$1 AND kind='import' AND idempotency_key IN (SELECT id::text FROM released)
+   AND state IN ('dispatching','result_unknown')
+), occupancies AS (
+ UPDATE public.seller_resource_occupancies
+ SET state='released',released_at_ms=$3,release_reason='rejected_no_pending'
+ WHERE org_id=$1 AND owner_kind='store_write' AND resource_kind='offer'
+   AND owner_ref IN (SELECT id::text FROM released) AND state='held'
+)
+SELECT count(*) FROM released`
 
 const stampRetrySQL = `
 UPDATE submission_intents

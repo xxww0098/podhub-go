@@ -15,7 +15,6 @@ import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { refreshBannedTags } from "@/lib/banned-tags"
 import { notifyCommandError, notifyError } from "@/lib/notify"
-import { cn } from "@/lib/utils"
 import { ClampedTextTooltip } from "./clamped-text-tooltip"
 import { FieldSourceMarker, type FieldLayerView } from "./field-source-marker"
 import { parseSalePrice } from "../sale-price"
@@ -28,14 +27,11 @@ import {
 } from "./workbench-cell-edit"
 import {
   PROSE_EDITOR,
-  ProseDraftValidation,
   type WorkbenchEditableColumn,
 } from "./workbench-prose-spec"
 
 export {
   PROSE_EDITOR,
-  ProseDraftValidation,
-  validateRichContentJson,
   type WorkbenchEditableColumn,
 } from "./workbench-prose-spec"
 
@@ -156,7 +152,7 @@ export function WorkbenchProseEditor({
         if (!cancelled) setRulesTick((tick) => tick + 1)
       })
       .catch((reason) => {
-        if (!cancelled) notifyCommandError(reason, "无法读取受限标签。")
+        if (!cancelled) notifyCommandError(reason, "无法读取全局受限标签。")
       })
     return () => {
       cancelled = true
@@ -165,7 +161,7 @@ export function WorkbenchProseEditor({
 
   const spec = edit ? PROSE_EDITOR[edit.column] : PROSE_EDITOR.name
   const shown = displayedCellValue(Boolean(edit), draft, edit?.value ?? "")
-  /** 实时格式校验（目前只有 rich_content 配了 validate）：非 null 时阻断提交。 */
+  /** 实时校验：非 null 时阻断提交。 */
   const draftError = useMemo(
     () => (edit ? (PROSE_EDITOR[edit.column].validate?.(draft) ?? null) : null),
     [edit, draft, rulesTick],
@@ -231,19 +227,7 @@ export function WorkbenchProseEditor({
         if (!open) finish(false)
       }}
     >
-      {/* 散文列可长可短：弹窗封顶并可整体滚动，文本框 field-sizing-content
-          只长到 max-h 就在框内滚动 —— 保存 / 填入按钮永远留在视口里。
-          rich_content 的宽弹窗 + 高文本框尺寸在 PROSE_EDITOR 规格里，
-          与 card-defaults 弹窗同源；散文默认值必须写死字面量（shadcn 静态检查）。 */}
-      <DialogContent
-        // 尺寸规格来自 PROSE_EDITOR（rich_content 覆盖），字面量只是散文默认；
-        // 类名按设计是规格驱动的，静态检查在此让位。
-        className={
-          // eslint-disable-next-line shadcn/require-static-classes
-          spec.dialogClassName ??
-          "max-h-[min(42rem,calc(100dvh-2rem))] overflow-y-auto sm:max-w-xl"
-        }
-      >
+      <DialogContent className="max-h-[min(42rem,calc(100dvh-2rem))] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{spec.title}</DialogTitle>
           <DialogDescription>
@@ -252,7 +236,6 @@ export function WorkbenchProseEditor({
         </DialogHeader>
         {edit && spec.singleLine ? (
           <Input
-            autoFocus
             value={shown}
             placeholder={spec.placeholder}
             aria-label={spec.ariaLabel(edit.imageName)}
@@ -262,34 +245,15 @@ export function WorkbenchProseEditor({
           />
         ) : edit ? (
           <Textarea
-            autoFocus
             value={shown}
             placeholder={spec.placeholder}
             aria-label={spec.ariaLabel(edit.imageName)}
             aria-invalid={blocked || undefined}
-            aria-describedby={
-              (edit?.column === "rich_content" && spec.validate && draft.trim()) ||
-              (edit?.column === "tags" && draftError)
-                ? validationId
-                : undefined
-            }
+            aria-describedby={edit.column === "tags" && draftError ? validationId : undefined}
             rows={spec.rows}
-            // 默认字面量 + PROSE_EDITOR 规格覆盖（rich_content 更高的文本框，
-            // 尺寸与 PROSE_EDITOR 同源），动态组合是设计。
-            className={cn(
-              "min-h-24 max-h-72 overflow-y-auto text-compact leading-5",
-              // eslint-disable-next-line shadcn/require-static-classes
-              spec.textareaClassName,
-            )}
+            className="min-h-24 max-h-72 overflow-y-auto"
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={onKeyDown}
-          />
-        ) : null}
-        {edit?.column === "rich_content" && spec.validate ? (
-          <ProseDraftValidation
-            id={validationId}
-            filled={Boolean(edit) && draft.trim().length > 0}
-            error={draftError}
           />
         ) : null}
         {edit?.column === "tags" && draftError ? (

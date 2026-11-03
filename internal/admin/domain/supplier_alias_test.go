@@ -33,10 +33,10 @@ func TestSupplierAliasesMatchContract(t *testing.T) {
 	if string(OptionsJSON(opts)) != string(supcontract.OptionsJSON(opts)) || string(OptionsJSON(nil)) != `[]` {
 		t.Fatalf("%s", OptionsJSON(opts))
 	}
-	rows := []Member{{MemberID: "1", Source: SourceRef{SourceID: "s"}}, {MemberID: "2", Source: SourceRef{SourceID: "s"}}}
+	rows := []Member{{MemberID: "1", Factory: FactoryRef{FactoryID: "f"}}, {MemberID: "2", Factory: FactoryRef{FactoryID: "f"}}}
 	gotGroups := GroupAccounts(rows)
 	wantGroups := supcontract.GroupAccounts(rows)
-	if len(gotGroups) != 1 || len(gotGroups[0].Members) != 2 || gotGroups[0].Source.SourceID != wantGroups[0].Source.SourceID {
+	if len(gotGroups) != 1 || len(gotGroups[0].Members) != 2 || gotGroups[0].Factory.FactoryID != wantGroups[0].Factory.FactoryID {
 		t.Fatalf("%+v", gotGroups)
 	}
 	id, err := NewPublicID()

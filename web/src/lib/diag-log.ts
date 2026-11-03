@@ -128,20 +128,3 @@ export function reportError(prefix: string, reason: unknown, fields: DiagFields 
   }
   return writeError(prefix, "error", reason, fields, diagnostic)
 }
-
-/**
- * The render manifest's `stageTimings` as log fields: `stage=count` per stage,
- * with `/<ms>ms` appended where the renderer had a clock. The wasm boundary
- * supplies `performance.now()` to the renderer, while an unavailable clock
- * still leaves the stage count intact.
- */
-export function stageCountFields(stageTimings: unknown): DiagFields {
-  if (!stageTimings || typeof stageTimings !== "object") return {}
-  const fields: DiagFields = {}
-  for (const [stage, entry] of Object.entries(stageTimings as Record<string, unknown>)) {
-    const { ms, count } = (entry ?? {}) as { ms?: unknown; count?: unknown }
-    if (typeof count !== "number") continue
-    fields[stage] = typeof ms === "number" ? `${count}/${ms.toFixed(1)}ms` : count
-  }
-  return fields
-}

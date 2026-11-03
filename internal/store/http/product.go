@@ -2,14 +2,13 @@ package storehttp
 
 import (
 	"context"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/xxww0098/podhub-go/internal/platform/httpx"
+	"github.com/xxww0098/podhub-go/internal/platform/httpx/jsonwire"
 	"github.com/xxww0098/podhub-go/internal/store/contract"
 	"github.com/xxww0098/podhub-go/internal/store/domain"
 )
@@ -52,7 +51,7 @@ type productRowView struct {
 	ProductID     int64              `json:"product_id"`
 	OfferID       string             `json:"offer_id"`
 	Name          *string            `json:"name,omitempty"`
-	SKU           *int64             `json:"sku,omitempty"`
+	SKU           *string            `json:"sku,omitempty"`
 	ImageURL      *string            `json:"image_url,omitempty"`
 	StatusName    *string            `json:"status_name,omitempty"`
 	State         *string            `json:"state,omitempty"`
@@ -185,7 +184,7 @@ func (h handler) listProducts(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, api)
 		return
 	}
-	writeJSON(w, http.StatusOK, productsListData{
+	jsonwire.Write(w, http.StatusOK, productsListData{
 		Rows: toProductRows(page.Rows), NextCursor: page.NextCursor,
 	})
 }
@@ -201,7 +200,7 @@ func (h handler) productsOverview(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, api)
 		return
 	}
-	writeJSON(w, http.StatusOK, toOverview(overview))
+	jsonwire.Write(w, http.StatusOK, toOverview(overview))
 }
 
 // syncProducts is POST PathProductSync. It answers 202: the work happens on a
@@ -220,7 +219,7 @@ func (h handler) syncProducts(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, api)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, syncNowData{
+	jsonwire.Write(w, http.StatusAccepted, syncNowData{
 		Generation: press.Generation, ManualNextAllowedAtMS: press.ManualNextAllowedAtMS,
 		Attached: press.Attached,
 	})
@@ -246,7 +245,7 @@ func (h handler) verifyProducts(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, api)
 		return
 	}
-	writeJSON(w, http.StatusOK, verifyData{Rows: toProductRows(rows)})
+	jsonwire.Write(w, http.StatusOK, verifyData{Rows: toProductRows(rows)})
 }
 
 // thumbnail is GET PathThumbnail. It fetches an allowlisted Ozon CDN URL and
@@ -285,7 +284,7 @@ func (h handler) thumbnail(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, contract.NotFound(contract.MsgProductMissing))
 		return
 	}
-	h.serveImage(w, r, canonical)
+	h.serveImage(w, r, canonical, thumbnailClient)
 }
 
 // visibleStore asks the roster whether the caller can see this store. It is
@@ -305,58 +304,17 @@ func (h handler) visibleStore(r *http.Request, p Session, uuid string) bool {
 
 // serveImage fetches one allowlisted URL inside a bounded budget and writes the
 // bytes. Redirects stay on the Ozon CDN; a hop that leaves it is refused.
-func (h handler) serveImage(w http.ResponseWriter, r *http.Request, target string) {
-	client := httpx.RestrictedClient()
-	ctx, cancel := context.WithTimeout(r.Context(), 8e9)
-	defer cancel()
-	current := target
-	for hop := 0; hop <= maxRedirects; hop++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, current, nil)
-		if err != nil {
-			writeAPIError(w, contract.Unreachable(contract.MsgImageUnavailable))
-			return
-		}
-		req.Header.Set("User-Agent", "podhub-thumbnail")
-		resp, err := client.Do(req)
-		if err != nil {
-			writeAPIError(w, contract.Unreachable(contract.MsgImageUnavailable))
-			return
-		}
-		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
-			location := resp.Header.Get("Location")
-			_ = resp.Body.Close()
-			next, ok := domain.NextImageHop(current, location)
-			if !ok || hop == maxRedirects {
-				writeAPIError(w, contract.Unreachable(contract.MsgImageUnavailable))
-				return
-			}
-			current = next
-			continue
-		}
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			_ = resp.Body.Close()
-			writeAPIError(w, contract.Unreachable(contract.MsgImageUnavailable))
-			return
-		}
-		raw, err := io.ReadAll(io.LimitReader(resp.Body, maxImageBytes+1))
-		_ = resp.Body.Close()
-		if err != nil || len(raw) > maxImageBytes {
-			writeAPIError(w, contract.Unreachable(contract.MsgImageUnavailable))
-			return
-		}
-		contentType := domain.SniffImage(raw)
-		if contentType == "" {
-			writeAPIError(w, contract.Unreachable(contract.MsgImageUnavailable))
-			return
-		}
-		w.Header().Set("Content-Type", contentType)
-		w.Header().Set("Cache-Control", "private, max-age=86400")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(raw)
+func (h handler) serveImage(w http.ResponseWriter, r *http.Request, target string, client *http.Client) {
+	status, raw, err := fetchOzonThumbnail(r.Context(), target, client)
+	if err != nil || status < 200 || status >= 300 {
+		writeAPIError(w, contract.Unreachable(contract.MsgImageUnavailable))
 		return
 	}
-	writeAPIError(w, contract.Unreachable(contract.MsgImageUnavailable))
+	w.Header().Set("Content-Type", domain.SniffImage(raw))
+	w.Header().Set("Cache-Control", "private, max-age=86400")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(raw)
 }
 
 // toProductRows renders the wire shape. A nil metrics object stays absent: the
@@ -366,11 +324,15 @@ func toProductRows(rows []domain.Product) []productRowView {
 	for _, row := range rows {
 		view := productRowView{
 			StoreID: row.StoreID, StoreName: row.StoreName, ProductID: row.ProductID,
-			OfferID: row.OfferID, Name: row.Name, SKU: row.SKU, ImageURL: row.ImageURL,
+			OfferID: row.OfferID, Name: row.Name, ImageURL: row.ImageURL,
 			StatusName: row.StatusName, State: row.State, ModelID: row.ModelID,
 			ModelCount: row.ModelCount, Price: row.Price, OldPrice: row.OldPrice,
 			StockPresent: row.StockPresent, StockReserved: row.StockReserved,
 			Gone: row.Gone, RefreshedAtMS: row.RefreshedAtMS,
+		}
+		if row.SKU != nil && *row.SKU > 0 {
+			sku := strconv.FormatInt(*row.SKU, 10)
+			view.SKU = &sku
 		}
 		if row.Metrics != nil {
 			view.Metrics = &productMetricView{

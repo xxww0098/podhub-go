@@ -62,6 +62,18 @@ export const LISTABILITY_BADGE: Record<ListabilityClass, string> = {
   delisted: "已停售",
 }
 
+/** 清单与详情直接说明待处理项，避免把平台配置问题误认为店铺或 PSD 未绑定。 */
+export function listabilityExplanation(denial?: SupplierOzonConfigDenial | null): string {
+  switch (denial) {
+    case "catalog_missing": return "商品缺少类目信息，需平台补全后再上架"
+    case "catalog_expired": return "商品类目信息已过期，需平台更新后再上架"
+    case "config_needs_reconfiguration": return "商品的 Ozon 上架配置需平台重新配置"
+    case "catalog_digest_mismatch": return "商品类目信息已变更，需平台重新确认上架配置"
+    case "prompt_invalid": return "商品识别提示词未就绪，需平台补全后再上架"
+    default: return LISTABILITY_EXPLAIN[denial ? listabilityClass(denial) : "platform_pending"]
+  }
+}
+
 /** Cloud `supplier_not_listable` 拒绝到浏览器侧的落名（client.ts 的 cloud_ 前缀口径）。 */
 export const SUPPLIER_NOT_LISTABLE_CODE = "cloud_supplier_not_listable"
 

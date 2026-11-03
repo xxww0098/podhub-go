@@ -10,6 +10,7 @@ import (
 // DB is the tenant store. Implementations open their own tenant transaction.
 type DB interface {
 	PrepareGrant(ctx context.Context, in contract.GrantWrite) (contract.PreparedGrant, error)
+	RejectUnsentGrant(ctx context.Context, orgID int64, intentID string) error
 	AuditRefused(ctx context.Context, orgID, userID int64, storeID, kind string) error
 	ApplyReport(ctx context.Context, in contract.ReportWrite) (contract.ReportDone, error)
 	SaveSnapshot(ctx context.Context, orgID int64, storeID string, snap contract.Snapshot) error

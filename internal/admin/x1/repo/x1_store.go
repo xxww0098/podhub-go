@@ -10,10 +10,11 @@ import (
 	corerepo "github.com/xxww0098/podhub-go/internal/admin/core/repo"
 )
 
-// X1 is the supplier row, ozon-config, and prompt store.
+// X1 is the supplier rows and current Ozon/OCR configuration.
 type X1 struct {
-	pool  *pgxpool.Pool
-	begin corerepo.Begin
+	pool           *pgxpool.Pool
+	begin          corerepo.Begin
+	ValidateConfig ConfigValidator
 }
 
 // NewX1 builds the row store. begin is tenantx.BeginApp. A nil pool fails closed.

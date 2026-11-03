@@ -31,24 +31,21 @@ type Repo struct {
 // New binds the pool.
 func New(pool *pgxpool.Pool) *Repo { return &Repo{pool: pool} }
 
-// S3MonthlyLimit is COALESCE(store_limit_override, plans.max_stores, 0)
-// passed through s3_bytes_for_stores. The entitlement resolver body was not
-// exported; this is the store-count expression already used for seat quota.
+// S3MonthlyLimit is the projected organizations.store_limit passed through
+// s3_bytes_for_stores (store_limit_override already wins inside the billing
+// projection).
 func (r *Repo) S3MonthlyLimit(ctx context.Context, orgID int64) (int64, error) {
 	if r == nil || r.pool == nil {
 		return 0, domain.Unavailable()
 	}
-	tx, err := r.beginAppRole(ctx)
+	tx, err := r.beginAppRole(ctx, orgID)
 	if err != nil {
 		return 0, mapDB(err)
 	}
 	defer tx.Rollback(ctx)
 	var stores int64
 	err = tx.QueryRow(ctx, `
-		SELECT COALESCE(o.store_limit_override, p.max_stores, 0)
-		  FROM organizations o
-		  LEFT JOIN plans p ON p.key = o.plan
-		 WHERE o.id = $1`, orgID).Scan(&stores)
+		SELECT store_limit FROM organizations WHERE id = $1`, orgID).Scan(&stores)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil
 	}
@@ -67,7 +64,7 @@ func (r *Repo) CommitChunk(ctx context.Context, chunk domain.Chunk) (domain.Chun
 	if r == nil || r.pool == nil {
 		return domain.ChunkOutcome{}, domain.Unavailable()
 	}
-	tx, err := r.beginAppRole(ctx)
+	tx, err := r.beginAppRole(ctx, chunk.OrgID)
 	if err != nil {
 		return domain.ChunkOutcome{}, mapDB(err)
 	}
@@ -76,7 +73,7 @@ func (r *Repo) CommitChunk(ctx context.Context, chunk domain.Chunk) (domain.Chun
 	if err := telemetryLease(ctx, tx, chunk.Now); err != nil {
 		return domain.ChunkOutcome{}, err
 	}
-	owner, err := ownerUUID(ctx, tx, chunk.UserID)
+	owner, err := writerIdentity(ctx, tx, chunk.OrgID, chunk.UserID)
 	if err != nil {
 		return domain.ChunkOutcome{}, mapDB(err)
 	}
@@ -126,9 +123,16 @@ func (r *Repo) InsertClientLogs(ctx context.Context, orgID, userID int64, rows [
 	}
 	rows = dedupeClientLogs(userID, rows)
 	err := db.InTx(ctx, r.pool, db.App(orgID), func(tx pgx.Tx) error {
+		if _, err := writerIdentity(ctx, tx, orgID, userID); err != nil {
+			return err
+		}
 		return insertClientLogBatch(ctx, tx, orgID, userID, rows)
 	})
 	if err != nil {
+		var refusal *domain.Fail
+		if errors.As(err, &refusal) {
+			return refusal
+		}
 		return domain.LogsNotWritten()
 	}
 	return nil
@@ -186,12 +190,13 @@ func insertClientLogBatch(ctx context.Context, tx pgx.Tx, orgID, userID int64, r
 	return err
 }
 
-func (r *Repo) beginAppRole(ctx context.Context) (pgx.Tx, error) {
+func (r *Repo) beginAppRole(ctx context.Context, orgID int64) (pgx.Tx, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := tx.Exec(ctx, "SELECT set_config('role', $1, true)", tenantx.RoleApp); err != nil {
+	if _, err := tx.Exec(ctx, `SELECT set_config('role', $1, true), set_config($2, $3, true)`,
+		tenantx.RoleApp, tenantx.GUCCurrentOrgID, strconv.FormatInt(orgID, 10)); err != nil {
 		_ = tx.Rollback(ctx)
 		return nil, err
 	}
@@ -210,11 +215,26 @@ func telemetryLease(ctx context.Context, tx pgx.Tx, now time.Time) error {
 	return mapDB(err)
 }
 
-func ownerUUID(ctx context.Context, tx pgx.Tx, userID int64) (string, error) {
-	var id string
-	err := tx.QueryRow(ctx, `SELECT public_id FROM account_users WHERE id = $1`, userID).Scan(&id)
+func writerIdentity(ctx context.Context, tx pgx.Tx, orgID, userID int64) (string, error) {
+	refusal := &domain.Fail{Status: 403, Code: "FORBIDDEN", Message: "当前账号无法写入此工作空间"}
+	// Match workspace writes: lock the workspace before its actor and membership.
+	var org int64
+	err := tx.QueryRow(ctx, `SELECT id FROM organizations
+		WHERE id=$1 AND dissolved_at IS NULL FOR NO KEY UPDATE`, orgID).Scan(&org)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", nil
+		return "", refusal
+	}
+	if err != nil {
+		return "", err
+	}
+	var id string
+	err = tx.QueryRow(ctx, `SELECT u.public_id FROM account_users u
+		JOIN organization_members m ON m.user_id=u.id AND m.org_id=$1
+		WHERE u.id=$2 AND u.disabled_at IS NULL AND m.status='active'
+		  AND NOT m.manual_disabled AND NOT m.quota_suspended
+		FOR SHARE OF u,m`, orgID, userID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", refusal
 	}
 	return id, err
 }
@@ -460,6 +480,10 @@ func auditMessage(accepted, rejected int) (string, error) {
 func mapDB(err error) error {
 	if err == nil {
 		return nil
+	}
+	var refusal *domain.Fail
+	if errors.As(err, &refusal) {
+		return refusal
 	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {

@@ -1,55 +1,18 @@
-/** 店铺商品表的一行：照片、货号/SKU、名称、状态、价格、库存、促销、销售漏斗与行尾操作。 */
-import type { ReactNode } from "react"
-import { ChevronRight, Pencil } from "lucide-react"
-
+/** A seller product row keeps the draft's compact columns and the real actions. */
+import { PackageSearch, Pencil } from "lucide-react"
+import { StoreIcon } from "@/components/store-icon"
+import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { TableCell, TableRow } from "@/components/ui/table"
+import { formatDateTimeShort } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
-import { ProductMetricCells, ProductPriceReading, ProductSnapshotCells } from "./product-read-cells"
-import { ProductPromotionCell } from "./product-promotion-cell"
+import { ozonProductUrl, ProductPriceReading, ProductStatusCell } from "./product-read-cells"
 import { ProductStockCell } from "./product-stock-cell"
+import { ProductThumb } from "./product-thumb"
 import type { StoreProductRow } from "./products-api"
 import { RowActionsMenu } from "./products-actions"
 import { actionBlockReason, type ProductAction } from "./products-mutation"
-
-/** 价格 / 库存格即编辑入口：可写时整格是按钮，悬停出现铅笔；不可写时是
- * 纯文本并在 title 里说明原因。 */
-function EditableCell({
-  label,
-  blocked,
-  onEdit,
-  children,
-}: {
-  label: string
-  blocked: string | null
-  onEdit: () => void
-  children: ReactNode
-}) {
-  if (blocked) {
-    return (
-      <TableCell className="whitespace-nowrap text-right font-mono tabular-nums" title={blocked}>
-        {children}
-      </TableCell>
-    )
-  }
-  return (
-    <TableCell className="whitespace-nowrap text-right font-mono tabular-nums">
-      <button
-        type="button"
-        aria-label={label}
-        onClick={onEdit}
-        className="group/edit ml-auto flex cursor-pointer items-center gap-1 rounded-md outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-      >
-        <Pencil
-          className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/edit:opacity-100 group-focus-visible/edit:opacity-100"
-          aria-hidden
-        />
-        {children}
-      </button>
-    </TableCell>
-  )
-}
 
 export function ProductRow({
   row,
@@ -61,88 +24,83 @@ export function ProductRow({
   verifyDisabled,
   onAction,
   onOpen,
-  onOpenVariant,
   onApplied,
   expanded = false,
   onToggle,
+  lastFullSyncAt,
 }: {
   row: StoreProductRow
   showStore: boolean
-  /** 行所属店铺的合同币种。标价用它；漏斗销售额另按卢布原值与记录的汇率换算。 */
   currency?: string | null
   selected?: boolean
   onSelect?: (checked: boolean) => void
   verifying: boolean
   verifyDisabled: boolean
   onAction: (action: ProductAction, row: StoreProductRow) => void
-  /** 点商品名打开这一件的促销详情；不传时名字仍是纯文本，行测试不用改。 */
   onOpen?: (row: StoreProductRow) => void
-  /** 点同款格打开这一件的同款规格详情；不传时这一格是纯文本。 */
-  onOpenVariant?: (row: StoreProductRow) => void
-  /** 库存列、促销列写入落地后回读这一行。 */
   onApplied?: (row: StoreProductRow) => void
-  /** 展开这一行的销售详情。不传时行测试仍是单行。 */
   expanded?: boolean
   onToggle?: () => void
+  lastFullSyncAt?: number | null
 }) {
   const name = row.name ?? "未命名商品"
-  const nameClass = cn(
-    "line-clamp-2 text-left font-medium leading-snug",
-    row.gone && "text-muted-foreground",
-    onOpen &&
-      "cursor-pointer rounded-sm underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
-  )
+  const sku = row.sku
+  const priceBlocked = actionBlockReason("price", row)
+  const refreshedAt = validTimestamp(row.refreshed_at_ms)
+  const snapshotAt = validTimestamp(lastFullSyncAt)
+  const timestamp = refreshedAt ?? snapshotAt
   return (
-    <TableRow data-state={selected ? "selected" : undefined}>
+    <TableRow data-state={selected ? "selected" : undefined} className="text-sm">
       <TableCell>
-        {onSelect ? (
-          <Checkbox
-            aria-label={`选择 ${row.offer_id}`}
-            checked={selected ?? false}
-            onCheckedChange={(checked) => onSelect(checked === true)}
-          />
-        ) : null}
+        {onSelect ? <Checkbox aria-label={"选择 " + row.offer_id} checked={selected ?? false}
+          onCheckedChange={(checked) => onSelect(checked === true)} /> : null}
       </TableCell>
       <TableCell>
-        {onToggle ? (
-          <button
-            type="button"
-            aria-expanded={expanded}
-            aria-label={`${expanded ? "收起" : "展开"} ${row.offer_id} 的详情`}
-            onClick={onToggle}
-            className={cn(
-              "grid size-6 cursor-pointer place-items-center rounded-sm outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
-              expanded ? "text-foreground" : "text-muted-foreground",
-            )}
-          >
-            <ChevronRight className={cn("size-3.5 transition-transform", expanded && "rotate-90")} aria-hidden />
-          </button>
-        ) : null}
+        <div className="flex min-w-0 items-center gap-3">
+          {row.image_url ? <ProductThumb src={row.image_url} name={row.name} className="size-12" /> :
+            <span className="grid size-12 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground">
+              <PackageSearch className="size-4" aria-hidden />
+            </span>}
+          <div className="flex min-w-0 flex-col gap-0.5">
+            {onOpen ? <button type="button" title={name} aria-label={"打开 " + name + " 的促销活动"} onClick={() => onOpen(row)}
+              className={cn("truncate text-left font-semibold hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring", row.gone && "text-muted-foreground")}>{name}</button>
+              : <span className="truncate font-semibold" title={name}>{name}</span>}
+            <span className="truncate text-xs text-muted-foreground" title={row.offer_id}>货号：{row.offer_id}</span>
+            {sku ? <a href={ozonProductUrl(sku)} target="_blank" rel="noreferrer"
+              aria-label={"在 Ozon 打开 SKU " + sku} className="w-fit text-xs text-muted-foreground hover:underline">SKU：{sku}</a> :
+              <span className="text-xs text-muted-foreground">SKU：—</span>}
+          </div>
+        </div>
       </TableCell>
-      <ProductSnapshotCells row={row} showStore={showStore} onOpenVariant={onOpenVariant} nameContent={onOpen ? (
-        <button type="button" className={nameClass} title={row.name ?? undefined}
-          aria-label={"打开 " + name + " 的促销活动"} onClick={() => onOpen(row)}>
-          {name}
-        </button>
-      ) : undefined} />
-      <EditableCell
-        label={`修改 ${row.offer_id} 的价格`}
-        blocked={actionBlockReason("price", row)}
-        onEdit={() => onAction("price", row)}
-      >
-        <ProductPriceReading row={row} currency={currency} />
-      </EditableCell>
+      <TableCell><div className="flex min-w-0 items-center gap-1.5" title={row.store_name}>
+        <StoreIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+        <span className="truncate">{row.store_name}</span>
+        {showStore ? <span className="sr-only">，全部店铺视图</span> : null}
+      </div></TableCell>
+      <TableCell className="whitespace-nowrap text-right tabular-nums" title={priceBlocked ?? undefined}>
+        {priceBlocked ? <ProductPriceReading row={row} currency={currency} /> :
+          <button type="button" aria-label={"修改 " + row.offer_id + " 的价格"} onClick={() => onAction("price", row)}
+            className="group/edit ml-auto flex items-center gap-1 rounded-sm hover:text-brand focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
+            <Pencil className="size-3 opacity-0 group-hover/edit:opacity-100 group-focus-visible/edit:opacity-100" aria-hidden />
+            <ProductPriceReading row={row} currency={currency} />
+          </button>}
+      </TableCell>
       <ProductStockCell row={row} onApplied={onApplied ?? (() => {})} />
-      <ProductPromotionCell row={row} currency={currency ?? null} onApplied={onApplied ?? (() => {})} />
-      <ProductMetricCells row={row} currency={currency} />
-      <TableCell className="text-right">
-        <RowActionsMenu
-          row={row}
-          verifying={verifying}
-          verifyDisabled={verifyDisabled}
-          onAction={onAction}
-        />
+      <ProductStatusCell row={row} />
+      <TableCell className="text-xs text-muted-foreground" title={refreshedAt ? "单件核实时间" : snapshotAt ? "整店快照时间" : "更新时间未知"}>
+        {timestamp ? <time dateTime={new Date(timestamp).toISOString()}>{formatDateTimeShort(timestamp)}</time> : "—"}
+      </TableCell>
+      <TableCell>
+        <div className="flex items-center justify-end gap-1">
+          {onToggle ? <Button type="button" variant="outline" size="xs" aria-expanded={expanded}
+            aria-label={(expanded ? "收起 " : "展开 ") + row.offer_id + " 的详情"} onClick={onToggle}>{expanded ? "收起" : "查看"}</Button> : null}
+          <RowActionsMenu row={row} verifying={verifying} verifyDisabled={verifyDisabled} onAction={onAction} />
+        </div>
       </TableCell>
     </TableRow>
   )
+}
+
+function validTimestamp(value: number | null | undefined): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 && !Number.isNaN(new Date(value).getTime()) ? value : null
 }

@@ -8,11 +8,11 @@ import (
 )
 
 func TestGrantAndWithdrawalInput(t *testing.T) {
-	in, err := DecodeGrant([]byte(`{"name":" 夜班 ","actions":["supplier:read","supplier:read","read"],"sourceIds":["b","a","a"]}`))
+	in, err := DecodeGrant([]byte(`{"name":" 夜班 ","actions":["supplier:read","supplier:read","read"],"source_ids":["b","a","a"]}`))
 	if err == nil || !strings.Contains(err.Error(), "动作与授权范围不匹配") {
 		t.Fatalf("mismatch %v", err)
 	}
-	in, err = DecodeGrant([]byte(`{"name":"夜班","actions":["supplier:price","supplier:read"],"expiresInDays":null,"sourceIds":["b","a","a"]}`))
+	in, err = DecodeGrant([]byte(`{"name":"夜班","actions":["supplier:price","supplier:read"],"expires_in_days":null,"source_ids":["b","a","a"]}`))
 	if err != nil || in.Name != "夜班" || len(in.Actions) != 2 || in.Expires != nil || in.Sources == nil || (*in.Sources)[0] != "a" || (*in.Sources)[1] != "b" {
 		t.Fatalf("%+v %v", in, err)
 	}
@@ -68,7 +68,8 @@ func TestDecodeSupplierDb(t *testing.T) {
 		{`{"name":"","country":"","contact":"","internalNote":"","listed":false,"icon":"","template":null,"viewPrefs":{}}`, "名称需为 1–80 个字符"},
 		{`{"name":"A","country":"CHN","contact":"","internalNote":"","listed":false,"icon":"","template":null,"viewPrefs":{}}`, "国家/地区需为空或两位字母代码"},
 		{`{"name":"A","country":"","contact":"","internalNote":"","listed":false,"icon":"","template":"nope","viewPrefs":{}}`, "未知的建库模板"},
-		{`{"name":"A","country":"","contact":"","internalNote":"","listed":false,"icon":"","template":null,"viewPrefs":{},"accountEmail":"not-an-email"}`, "厂家登录邮箱无效"},
+		{`{"name":"A","country":"","contact":"","internalNote":"","listed":false,"icon":"","template":null,"viewPrefs":{},"factoryId":""}`, "请选择工厂"},
+		{`{"name":"A","country":"","contact":"","internalNote":"","listed":false,"icon":"","template":null,"viewPrefs":{},"accountEmail":"a@b.c"}`, "请求格式无效"},
 		{`{"name":"A","country":"","contact":"","internalNote":"","listed":false,"icon":"","template":null,"viewPrefs":{},"extra":1}`, "请求格式无效"},
 	}
 	for _, tc := range cases {
@@ -84,6 +85,24 @@ func TestDecodeSupplierDb(t *testing.T) {
 	f, _ := contract.AsFail(err)
 	if f == nil || f.Message != "名称需为 1–80 个字符" {
 		t.Fatal(err)
+	}
+}
+
+func TestDecodeFactoryRequiresLoginOnCreation(t *testing.T) {
+	base := `{"name":" 印花厂 ","country":"cn","contact":"","internalNote":"","icon":""}`
+	if _, err := DecodeFactory([]byte(base), true); err == nil {
+		t.Fatal("factory creation without a login was accepted")
+	}
+	if _, err := DecodeFactory([]byte(base), false); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"name":" 印花厂 ","country":"cn","contact":"","internalNote":"","icon":"","accountEmail":" Factory@Example.invalid "}`
+	got, err := DecodeFactory([]byte(body), true)
+	if err != nil || got.Name != "印花厂" || got.Country != "CN" || got.AccountEmail != "factory@example.invalid" {
+		t.Fatalf("%+v %v", got, err)
+	}
+	if _, err := DecodeFactory([]byte(body), false); err == nil {
+		t.Fatal("factory edit accepted an account rebind")
 	}
 }
 
@@ -129,16 +148,16 @@ func TestAccountBodies(t *testing.T) {
 	if PatchEmpty([]byte(`{"status":"disabled"}`)) || PatchEmpty([]byte(`not json`)) {
 		t.Fatal("non-empty")
 	}
-	got, err := DecodeAccount([]byte(`{"sourceId":" src ","email":" Fresh@Example.Invalid "}`))
-	if err != nil || got.SourceID != "src" || got.Email != "fresh@example.invalid" || got.Password != nil {
+	got, err := DecodeAccount([]byte(`{"factoryId":" fac ","email":" Fresh@Example.Invalid "}`))
+	if err != nil || got.FactoryID != "fac" || got.Email != "fresh@example.invalid" || got.Password != nil {
 		t.Fatalf("%+v %v", got, err)
 	}
-	_, err = DecodeAccount([]byte(`{"sourceId":"","email":"a@b.c"}`))
+	_, err = DecodeAccount([]byte(`{"factoryId":"","email":"a@b.c"}`))
 	f, _ := contract.AsFail(err)
 	if f == nil || f.Message != "请选择厂家" {
 		t.Fatal(err)
 	}
-	_, err = DecodeAccount([]byte(`{"sourceId":"s","email":"a@b"}`))
+	_, err = DecodeAccount([]byte(`{"factoryId":"f","email":"a@b"}`))
 	f, _ = contract.AsFail(err)
 	if f == nil || f.Message != "邮箱无效" {
 		t.Fatal(err)
@@ -159,12 +178,12 @@ func TestAccountBodies(t *testing.T) {
 
 func TestGroupAccountsAndFactory(t *testing.T) {
 	rows := []Member{
-		{MemberID: "1", Source: SourceRef{SourceID: "a", Name: "A"}, Email: "a@b.c", Status: "active"},
-		{MemberID: "2", Source: SourceRef{SourceID: "a", Name: "A"}, Email: "b@b.c", Status: "active"},
-		{MemberID: "3", Source: SourceRef{SourceID: "b", Name: "B"}, Email: "c@b.c", Status: "disabled"},
+		{MemberID: "1", Factory: FactoryRef{FactoryID: "a", Name: "A"}, Email: "a@b.c", Status: "active"},
+		{MemberID: "2", Factory: FactoryRef{FactoryID: "a", Name: "A"}, Email: "b@b.c", Status: "active"},
+		{MemberID: "3", Factory: FactoryRef{FactoryID: "b", Name: "B"}, Email: "c@b.c", Status: "disabled"},
 	}
 	groups := GroupAccounts(rows)
-	if len(groups) != 2 || len(groups[0].Members) != 2 || groups[1].Source.SourceID != "b" {
+	if len(groups) != 2 || len(groups[0].Members) != 2 || groups[1].Factory.FactoryID != "b" {
 		t.Fatalf("%+v", groups)
 	}
 	if len(GroupAccounts(nil)) != 0 {

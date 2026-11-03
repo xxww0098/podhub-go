@@ -66,8 +66,8 @@ test("the workbench carries every publishable field as its own column and every 
   assert.match(html, /data-slot="table"/)
   assert.equal(
     html.match(/data-slot="table-head"/g)?.length,
-    16,
-    "selection plus the fifteen fields a row carries to Ozon; a value with no column is a value nobody checks",
+    15,
+    "未准入的富内容不显示在表格中",
   )
   for (const column of [
     "原图",
@@ -79,7 +79,6 @@ test("the workbench carries every publishable field as its own column and every 
     "简介",
     "搜索标签",
     "主题",
-    "JSON富内容",
     "商品图片",
     "360° 图片",
     "主图",
@@ -91,12 +90,12 @@ test("the workbench carries every publishable field as its own column and every 
 
   // Selection, the prose cells and the two price inputs are per row; identity and
   // media are read only, because Rust re-injects the first and delivery owns the second.
-  assert.match(html, /aria-label="选择全部商品"/)
+  assert.match(html, /aria-label="选择当前视图全部商品"/)
   assert.equal(html.match(/aria-label="选择 /g)?.length, rows.length)
   assert.equal(html.match(/aria-label="商品名称 /g)?.length, rows.length)
   assert.equal(html.match(/aria-label="商品简介 /g)?.length, rows.length)
   assert.equal(html.match(/aria-label="搜索标签 /g)?.length, rows.length)
-  assert.equal(html.match(/aria-label="JSON富内容 /g)?.length, rows.length)
+  assert.doesNotMatch(html, /JSON富内容/)
   assert.equal(html.match(/aria-label="主题 /g)?.length, rows.length)
   assert.equal(html.match(/aria-label="销售价 /g)?.length, rows.length)
   assert.equal(html.match(/aria-label="划线价 /g)?.length, rows.length)
@@ -135,7 +134,8 @@ test("the workbench carries every publishable field as its own column and every 
   assert.doesNotMatch(html, /共 2 行 · 识别 2\/2 · 媒体 2\/2 · 已上架 0\/2 · 异常 0/)
   assert.match(html, /aria-label="导入图片"/)
   assert.match(html, /aria-label="默认字段"/)
-  assert.doesNotMatch(html, /aria-label="PSD 与提示词"/)
+  assert.doesNotMatch(html, /识图模型|主模型|刷新模型/)
+  assert.doesNotMatch(html, /aria-label="PSD 与商品事实"/)
   // Every lane is already ready, so guided preparation has no work to repeat.
   const uploadStart = html.lastIndexOf("<button", html.indexOf('aria-label="一键准备（0）"'))
   assert.match(

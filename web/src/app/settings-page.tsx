@@ -7,10 +7,9 @@ import {
   useEffect,
   useState,
 } from "react"
-import { Bell, KeyRound, ShieldAlert } from "lucide-react"
+import { ShieldAlert } from "lucide-react"
 
 import type { AccountOverview } from "@/bindings/commands"
-import type { AppScreen } from "@/lib/app-screens"
 import { accountHttp } from "@/bindings/http-account"
 import { ChangePasswordDialog } from "@/components/change-password-dialog"
 import { Button } from "@/components/ui/button"
@@ -31,9 +30,12 @@ import {
 } from "@/lib/settings-sections"
 import {
   loadAccountOverview,
+  peekAccountOverview,
   useAccountOverview,
 } from "@/features/account/account-overview-cache"
-import { AppearanceRows, PaneLoading, SettingRow } from "./settings-controls"
+import { ChangelogPane } from "@/components/changelog-notes"
+import { AppearanceRows, PaneLoading, SettingGroup } from "./settings-controls"
+import { WorkspaceStoragePanel } from "@/features/workspace-storage/workspace-storage-panel"
 import { notifyCommandError, notifySuccess } from "@/lib/notify"
 import { cn } from "@/lib/utils"
 
@@ -65,14 +67,8 @@ const SupplierAccountsScreen = lazy(async () => ({
   default: (await import("@/features/supplier/admin-supplier-accounts-screen"))
     .SupplierAccountsScreen,
 }))
-const PlatformOcrScreen = lazy(async () => ({
-  default: (await import("@/features/platform/ocr-screen")).PlatformOcrScreen,
-}))
 const PlatformAiAccountsScreen = lazy(async () => ({
   default: (await import("@/features/platform/ai-accounts-screen")).PlatformAiAccountsScreen,
-}))
-const PlatformMediaScreen = lazy(async () => ({
-  default: (await import("@/features/platform/media-screen")).PlatformMediaScreen,
 }))
 const PlatformSellerRelayScreen = lazy(async () => ({
   default: (await import("@/features/platform/seller-relay"))
@@ -81,10 +77,6 @@ const PlatformSellerRelayScreen = lazy(async () => ({
 const PlatformPaymentScreen = lazy(async () => ({
   default: (await import("@/features/platform/payment-config"))
     .PlatformPaymentScreen,
-}))
-const PlatformPromptsScreen = lazy(async () => ({
-  default: (await import("@/features/platform/prompts"))
-    .PlatformPromptsScreen,
 }))
 const PlatformBannedTagsScreen = lazy(async () => ({
   default: (await import("@/features/platform/banned-tags-screen"))
@@ -119,21 +111,15 @@ export function SettingsPage({
   overview: overviewProp,
   onOverviewChange,
   onSignedOut,
-  onNavigate,
-  onOpenNotifications,
   section,
-  onSectionChange,
   adminSurface = false,
 }: {
   onBack: () => void
   overview?: AccountOverview
   onOverviewChange?: (overview: AccountOverview) => void
   onSignedOut?: () => void
-  onNavigate?: (screen: AppScreen) => void
   /** The centre floats over the shell; absent, fall back to its screen. */
-  onOpenNotifications?: () => void
   section: SettingsSection
-  onSectionChange: (section: SettingsSection) => void
   /** The `/admin` surface: a URL may name a pane this session may not open. */
   adminSurface?: boolean
 }) {
@@ -151,7 +137,8 @@ export function SettingsPage({
       onSignedOut?.()
       return
     }
-    onOverviewChange?.(next)
+    const current = peekAccountOverview()
+    if (current) onOverviewChange?.(current)
   }, [onBack, onSignedOut, onOverviewChange])
 
   // Refresh standing when settings mounts; a dead session signs out instead
@@ -172,7 +159,9 @@ export function SettingsPage({
   const pane: SettingsSection | "" = refused ? "" : resolution.section
   const active = available.find((item) => item.id === pane) ?? available[0]
   const fullPane = pane === "users" || pane === "supplier-accounts"
-  const description = refused ? "这个设置分区只对超级管理员开放。" : active.description
+  // Detail panes are a form, not a ledger: they hold one reading column with
+  // side margins. Rosters and admin tables (`wide`) keep the full canvas.
+  const measure = active.wide ? undefined : "mx-auto w-full max-w-4xl"
 
   return (
     <>
@@ -181,37 +170,23 @@ export function SettingsPage({
         aria-label="设置内容"
         key={pane}
         className={cn(
-          "min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain outline-none",
-          fullPane && "flex flex-col overflow-hidden",
+          "flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto overscroll-contain outline-none",
+          fullPane && "overflow-hidden",
         )}
       >
+        {refused ? <p role="status" className={cn("px-3 pt-3 text-sm", measure)}>没有权限打开该设置</p> : <h2 className="sr-only">{active.title}</h2>}
         <div
           className={cn(
-            "flex flex-col gap-1.5 px-5 pt-5 pb-5 md:px-8 md:pt-7 md:pb-6",
-            !active.wide && "mx-auto w-full max-w-3xl",
-            fullPane && "shrink-0",
-          )}
-        >
-          <p className="text-meta text-muted-foreground">{refused ? "设置" : active.group}</p>
-          <h2 className="text-xl font-semibold tracking-tight">
-            {refused ? "没有权限打开该设置" : active.title}
-          </h2>
-          {description && (
-            <p className="text-compact text-muted-foreground">{description}</p>
-          )}
-        </div>
-        <div
-          className={cn(
-            "px-5 pb-6 md:px-8 md:pb-8",
-            !active.wide && "mx-auto w-full max-w-3xl",
-            fullPane && "flex min-h-0 flex-1 flex-col overflow-hidden",
+            "flex min-h-0 w-full flex-1 flex-col",
+            fullPane ? "overflow-hidden" : active.wide ? "p-3" : "p-3 sm:p-4",
+            measure,
           )}
         >
           {refused ? (
             /* Refusal is a state, not a failed operation: an icon and the
                way out, while the copy stays in the header. No
                `role="alert"` and no raw error text enter this pane. */
-            <Empty role="status" className="min-h-48">
+            <Empty role="status" className="min-h-32">
               <EmptyHeader>
                 <EmptyMedia variant="icon">
                   <ShieldAlert />
@@ -230,53 +205,28 @@ export function SettingsPage({
             </Empty>
           ) : null}
           {pane === "account" ? (
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-3">
               <AccountProfileSection
                 overview={overview}
                 onOverviewChange={onOverviewChange}
               />
-              <SettingRow
-                title="登录密码"
-                description="修改后其他设备上的登录会失效"
-                control={
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={busy}
-                    onClick={() => setPasswordOpen(true)}
-                  >
-                    <KeyRound data-icon="inline-start" />
+              <SettingGroup>
+                <div className="flex flex-wrap items-center gap-x-7 gap-y-3 p-4 sm:p-6">
+                  <div className="min-w-0 flex-1 basis-40 sm:basis-56">
+                    <h3 className="text-[1.25rem] font-semibold">登录密码</h3>
+                    <p className="mt-1 text-[0.9375rem] text-muted-foreground">修改后其他设备上的登录会失效</p>
+                  </div>
+                  <Button variant="outline" className="h-11 px-5 text-base" disabled={busy} onClick={() => setPasswordOpen(true)}>
                     修改密码
                   </Button>
-                }
-              />
+                </div>
+              </SettingGroup>
             </div>
-          ) : null}
-          {pane === "notifications" ? (
-            <SettingRow
-              title="通知中心"
-              description="查看和处理未读提醒"
-              control={
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    onBack()
-                    if (onOpenNotifications) {
-                      onOpenNotifications()
-                    } else {
-                      onNavigate?.("notifications")
-                    }
-                  }}
-                >
-                  <Bell data-icon="inline-start" />
-                  打开通知中心
-                </Button>
-              }
-            />
           ) : null}
           {pane === "appearance" ? <AppearanceRows /> : null}
           {pane === "storage" ? <DeviceStoragePanel /> : null}
+          {pane === "workspace-storage" ? <WorkspaceStoragePanel key={overview?.active_workspace?.id} /> : null}
+          {pane === "changelog" ? <ChangelogPane /> : null}
           {pane === "mcp" ? (
             <Suspense fallback={<PaneLoading label="MCP 授权" />}>
               <McpGrantPanel key={`${overview?.session.email}:${overview?.session.role}:${overview?.active_workspace?.id}:${overview?.active_workspace?.role}`} overview={overview} />
@@ -307,23 +257,13 @@ export function SettingsPage({
             </Suspense>
           ) : null}
           {pane === "supplier-accounts" && overview ? (
-            <Suspense fallback={<PaneLoading label="厂家账号" />}>
-              <SupplierAccountsScreen overview={overview} embedded />
-            </Suspense>
-          ) : null}
-          {pane === "ocr" ? (
-            <Suspense fallback={<PaneLoading label="OCR" />}>
-              <PlatformOcrScreen onOpenAccounts={() => onSectionChange("ai-accounts")} />
+            <Suspense fallback={<PaneLoading label="工厂管理" />}>
+              <SupplierAccountsScreen key={`${overview.session.uuid ?? overview.session.email}:${overview.session.role}:${overview.active_workspace?.id ?? ""}`} overview={overview} embedded />
             </Suspense>
           ) : null}
           {pane === "ai-accounts" ? (
-            <Suspense fallback={<PaneLoading label="AI 账号池" />}>
-              <PlatformAiAccountsScreen onOpenModels={() => onSectionChange("ocr")} />
-            </Suspense>
-          ) : null}
-          {pane === "media" ? (
-            <Suspense fallback={<PaneLoading label="对象存储" />}>
-              <PlatformMediaScreen />
+            <Suspense fallback={<PaneLoading label="AI 账号" />}>
+              <PlatformAiAccountsScreen />
             </Suspense>
           ) : null}
           {pane === "payment" ? (
@@ -341,13 +281,8 @@ export function SettingsPage({
               <PlatformCategoryFetchScreen />
             </Suspense>
           ) : null}
-          {pane === "prompts" ? (
-            <Suspense fallback={<PaneLoading label="提示词" />}>
-              <PlatformPromptsScreen />
-            </Suspense>
-          ) : null}
           {pane === "banned-tags" ? (
-            <Suspense fallback={<PaneLoading label="受限标签" />}>
+            <Suspense fallback={<PaneLoading label="全局受限标签" />}>
               <PlatformBannedTagsScreen />
             </Suspense>
           ) : null}

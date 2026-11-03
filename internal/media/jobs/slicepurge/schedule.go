@@ -1,10 +1,7 @@
-// Package slicepurge clears the transit bucket once per day.
+// Package slicepurge clears a workspace's saved slice prefix.
 //
-// The clear runs at a fixed 04:00 Asia/Shanghai (UTC+8, no DST) and has no
-// closing window: a PUT signed before the boundary may be deleted by the
-// clear, which is expected. The send window stays below the object lifetime,
-// so nothing a user can still send depends on it. Receipts live in
-// transit_clear_runs.
+// Scheduled clears use each workspace's configured Asia/Shanghai time;
+// manual requests can run at any time. Receipts live in transit_clear_runs.
 package slicepurge
 
 import (
@@ -27,8 +24,7 @@ type Boundary struct {
 	Start time.Time
 }
 
-// BoundaryAt is the most recent 04:00 Shanghai at or before now. Day is the
-// Shanghai calendar date of that boundary.
+// BoundaryAt is the default 04:00 boundary used by the legacy fake-bucket tests.
 func BoundaryAt(now time.Time) Boundary {
 	start := contract.LastClearBoundary(now)
 	local := start.In(shanghai)

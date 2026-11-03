@@ -12,6 +12,7 @@ import {
   type CategorySchemaView,
   type FieldValueOrigin,
   type WorkflowCategoryDraft,
+  type WorkflowComplexDraftItem,
   type WorkflowDraftSelection,
   type WorkflowDraftValue,
   type WorkflowValidationIssue,
@@ -51,9 +52,21 @@ import {
 export function categoryFieldDomId(fieldKey: string, controlKey?: string) {
   return `workflow-${(controlKey ?? fieldKey).replaceAll(/[^a-zA-Z0-9_-]/g, "-")}`
 }
+
+export function focusCategoryField(root: HTMLElement | null, controlId: string) {
+  const control = root?.querySelector<HTMLElement>(`#${CSS.escape(controlId)}`)
+  if (!control) return false
+  for (let parent = control.parentElement; parent && root?.contains(parent); parent = parent.parentElement) {
+    if (parent instanceof HTMLDetailsElement) parent.open = true
+  }
+  control.focus({ preventScroll: true })
+  control.scrollIntoView({ block: "nearest" })
+  return true
+}
 import { DictionaryDrawerField } from "./dictionary-drawer-field"
 import {
   displayFieldName,
+  displayComplexGroupName,
   displayGroupName,
   fieldPlaceholder,
   selection,
@@ -75,12 +88,6 @@ const FIXED_SELECT_OPTIONS: Partial<Record<string, FixedSelectOption[]>> = {
     { value: "g", label: "g" },
     { value: "kg", label: "kg" },
     { value: "lb", label: "lb" },
-  ],
-  currency_code: [
-    { value: "RUB", label: "俄罗斯卢布（RUB）" },
-    { value: "CNY", label: "人民币（CNY）" },
-    { value: "USD", label: "美元（USD）" },
-    { value: "EUR", label: "欧元（EUR）" },
   ],
   vat: [
     { value: "0", label: "不征税（0%）" },
@@ -180,6 +187,7 @@ function DynamicField({
 }) {
   const invalid = issues.length > 0
   const fieldId = categoryFieldDomId(field.key, controlKey)
+  const errorId = invalid ? `${fieldId}-error` : undefined
   const collection = field.constraints.collection
   const description = ozonChineseDescription(field)
   const fieldName = displayFieldName(field)
@@ -196,12 +204,14 @@ function DynamicField({
     <Field
       data-invalid={invalid}
       data-field-key={field.key}
+      data-field-editor={field.editor}
+      data-field-collection={field.constraints.collection || undefined}
       data-control-key={controlKey ?? field.key}
       data-occupancy={occupancy}
     >
       <div className="flex min-h-6 flex-wrap items-center gap-1.5">
         <FieldLabel htmlFor={lockedReason ? undefined : fieldId}>{fieldName}</FieldLabel>
-        {occupancy ? (
+        {occupancy === "cleared" ? (
           <span className="text-meta text-muted-foreground">
             {occupancyLabel(occupancy)}
           </span>
@@ -214,12 +224,11 @@ function DynamicField({
                 <button
                   type="button"
                   aria-label={`查看“${fieldName}”填写说明`}
-                  className="inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-meta text-faint-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                  className="inline-flex size-6 shrink-0 cursor-help items-center justify-center rounded-md text-faint-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring max-md:size-11"
                 />
               }
             >
               <CircleHelp aria-hidden="true" className="size-3.5" />
-              说明
             </TooltipTrigger>
             <TooltipContent
               side="top"
@@ -280,6 +289,7 @@ function DynamicField({
         <div
           id={fieldId}
           role="note"
+          tabIndex={-1}
           className="flex flex-col justify-center rounded-lg border border-dashed border-border/80 bg-muted/25 px-3 py-2 text-xs"
         >
           <div className="flex items-center gap-1.5 font-medium text-foreground">
@@ -292,6 +302,7 @@ function DynamicField({
         <div
           id={fieldId}
           role="note"
+          tabIndex={-1}
           className="rounded-lg border border-dashed border-border/80 bg-muted/25 px-3 py-2 text-xs"
         >
           <p className="font-medium text-foreground">暂不支持此 Ozon 字段类型</p>
@@ -301,9 +312,11 @@ function DynamicField({
         </div>
       ) : isMediaField(field.key) ? (
         <MediaFieldEditor
+          controlId={fieldId}
           field={field}
           value={value}
           invalid={invalid}
+          errorId={errorId}
           onChange={onChange}
           onOpenMedia={onOpenMedia}
           origin={origin}
@@ -316,6 +329,7 @@ function DynamicField({
           value={value}
           onChange={onChange}
           invalid={invalid}
+          errorId={errorId}
         />
       ) : field.editor === "single_select" ? (
         <SingleSelectField
@@ -324,6 +338,7 @@ function DynamicField({
           value={value}
           onChange={onChange}
           invalid={invalid}
+          errorId={errorId}
         />
       ) : field.editor === "multi_select" || field.editor === "dictionary_search" ? (
         <DictionaryDrawerField
@@ -333,19 +348,24 @@ function DynamicField({
           targetStoreId={targetStoreId}
           value={value}
           invalid={invalid}
+          errorId={errorId}
           onChange={onChange}
         />
       ) : field.editor === "boolean" && !collection ? (
         <BooleanField
           controlId={fieldId}
+          required={field.constraints.required}
           value={value}
           onChange={onChange}
           invalid={invalid}
+          errorId={errorId}
         />
       ) : collection || field.editor === "url_list" ? (
         <Textarea
           id={fieldId}
           aria-invalid={invalid}
+          aria-required={field.constraints.required && !field.read_only}
+          aria-describedby={errorId}
           disabled={field.read_only}
           rows={3}
           value={fieldDisplayValueAsText(field, value)}
@@ -356,6 +376,8 @@ function DynamicField({
         <Input
           id={fieldId}
           aria-invalid={invalid}
+          aria-required={field.constraints.required && !field.read_only}
+          aria-describedby={errorId}
           disabled={field.read_only}
           inputMode={field.editor === "integer" || field.editor === "decimal" ? "decimal" : undefined}
           value={fieldDisplayValueAsText(field, value)}
@@ -363,21 +385,26 @@ function DynamicField({
           onChange={(event) => onChange(textValue(field, event.target.value))}
         />
       )}
+      {issues.length ? <ul id={`${fieldId}-error`} role="alert" className="text-compact text-st-bad">{issues.map((issue,index)=><li key={`${issue.code}-${index}`}>{issue.message}</li>)}</ul> : null}
     </Field>
   )
 }
 
 function MediaFieldEditor({
+  controlId,
   field,
   value,
   invalid,
+  errorId,
   origin,
   onChange,
   onOpenMedia,
 }: {
+  controlId: string
   field: CategoryFieldView
   value?: WorkflowDraftValue
   invalid: boolean
+  errorId?: string
   origin?: FieldValueOrigin
   onChange: (value: WorkflowDraftValue | undefined) => void
   onOpenMedia?: () => void
@@ -429,7 +456,8 @@ function MediaFieldEditor({
       </div>
       {field.constraints.collection || field.editor === "url_list" ? (
         <Textarea
-          aria-invalid={invalid}
+          id={controlId}
+          aria-invalid={invalid} aria-required={field.constraints.required && !field.read_only} aria-describedby={errorId}
           disabled={false}
           rows={2}
           value={current}
@@ -438,7 +466,8 @@ function MediaFieldEditor({
         />
       ) : (
         <Input
-          aria-invalid={invalid}
+          id={controlId}
+          aria-invalid={invalid} aria-required={field.constraints.required && !field.read_only} aria-describedby={errorId}
           disabled={false}
           value={current}
           placeholder="也可粘贴已通过认证的公共 HTTPS URL"
@@ -479,6 +508,7 @@ function FixedSelectField({
   value,
   onChange,
   invalid,
+  errorId,
 }: {
   controlId: string
   field: CategoryFieldView
@@ -486,6 +516,7 @@ function FixedSelectField({
   value?: WorkflowDraftValue
   onChange: (value: WorkflowDraftValue | undefined) => void
   invalid: boolean
+  errorId?: string
 }) {
   const current = fixedSelectCurrent(value)
   const optional = !field.constraints.required
@@ -497,7 +528,7 @@ function FixedSelectField({
         onChange(fixedTextValue(next === CLEAR_FIXED_SELECT ? "" : (next ?? "")))
       }
     >
-      <SelectTrigger id={controlId} className="w-full" aria-invalid={invalid}>
+      <SelectTrigger id={controlId} className="w-full" aria-invalid={invalid} aria-required={field.constraints.required && !field.read_only} aria-describedby={errorId}>
         <SelectValue placeholder={optional ? "跟随店铺设置" : "请选择"}>
           {current === null ? undefined : () => displayValue}
         </SelectValue>
@@ -520,12 +551,14 @@ function SingleSelectField({
   value,
   onChange,
   invalid,
+  errorId,
 }: {
   controlId: string
   field: CategoryFieldView
   value?: WorkflowDraftValue
   onChange: (value: WorkflowDraftValue | undefined) => void
   invalid: boolean
+  errorId?: string
 }) {
   const current = value?.kind === "single_select" ? String(value.value.dictionary_value_id) : null
   const displayValue = fieldDisplayValueAsText(field, value)
@@ -537,7 +570,7 @@ function SingleSelectField({
         onChange(option ? singleSelection(option) : undefined)
       }}
     >
-      <SelectTrigger id={controlId} className="w-full" aria-invalid={invalid}>
+      <SelectTrigger id={controlId} className="w-full" aria-invalid={invalid} aria-required={field.constraints.required && !field.read_only} aria-describedby={errorId}>
         <SelectValue placeholder="选择一个 Ozon 选项">
           {current === null ? undefined : () => displayValue}
         </SelectValue>
@@ -558,11 +591,15 @@ function BooleanField({
   value,
   onChange,
   invalid,
+  errorId,
+  required,
 }: {
   controlId: string
   value?: WorkflowDraftValue
   onChange: (value: WorkflowDraftValue | undefined) => void
   invalid: boolean
+  errorId?: string
+  required?: boolean
 }) {
   const current = value?.kind === "boolean" ? String(value.value) : "unset"
   const displayValue = value?.kind === "boolean" ? (value.value ? "是" : "否") : "未设置"
@@ -573,7 +610,7 @@ function BooleanField({
         onChange(next === "unset" ? undefined : { kind: "boolean", value: next === "true" })
       }
     >
-      <SelectTrigger id={controlId} className="w-full" aria-invalid={invalid}>
+      <SelectTrigger id={controlId} className="w-full" aria-invalid={invalid} aria-required={required} aria-describedby={errorId}>
         <SelectValue>{() => displayValue}</SelectValue>
       </SelectTrigger>
       <SelectContent>
@@ -648,7 +685,8 @@ export function SimpleFieldPanels({
                 {group.fields.length} 项
               </span>
             </summary>
-            <div className="grid gap-x-5 gap-y-6 border-t border-border p-4 lg:grid-cols-2">
+            <div className="grid gap-x-5 gap-y-6 border-t border-border p-4 lg:grid-cols-2"
+              data-field-grid="" data-field-source={group.fields.every((field) => field.source === "fixed") ? "fixed" : "attribute"}>
               {group.fields.map((field) => (
                 <DynamicField
                   key={field.key}
@@ -681,6 +719,7 @@ export function ComplexGroups({
   issues,
   visibleFieldKeys,
   forceOpen,
+  compact = false,
   lockedFields,
   onChange,
   onAdd,
@@ -692,6 +731,7 @@ export function ComplexGroups({
   issues: WorkflowValidationIssue[]
   visibleFieldKeys: ReadonlySet<string>
   forceOpen: boolean
+  compact?: boolean
   /** Keys another surface writes, mapped to why they are locked here. */
   lockedFields?: ReadonlyMap<string, string>
   onChange: (
@@ -719,21 +759,25 @@ export function ComplexGroups({
         const groupDraft = draft.complex_values.find(
           (candidate) => candidate.complex_id === group.complex_id,
         )
-        const items = groupDraft?.items.length ? groupDraft.items : [{ values: {} }]
+        const items: WorkflowComplexDraftItem[] = groupDraft?.items.length ? groupDraft.items : [{ values: {} }]
+        const groupName = compact ? displayComplexGroupName(group, schema.fields) : displayGroupName(group.name)
+        const groupIssues = issues.filter((issue) => issue.complex_id === group.complex_id)
         return (
           <details
             key={group.complex_id}
-            open={forceOpen}
+            open={forceOpen || compact && (groupIssues.length > 0 || group.fields.some((field) => field.constraints.required))}
             className="group overflow-hidden rounded-xl border border-border bg-muted/15"
+            data-complex-group={group.complex_id}
           >
             <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
               <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
               <span className="flex-1 text-sm font-semibold">
-                {displayGroupName(group.name)}
+                {groupName}
               </span>
               <span className="text-meta tabular-nums text-faint-foreground">
-                {group.fields.length} 项
+                {compact ? `${groupDraft?.items.length ?? 0} 条` : `${group.fields.length} 项`}
               </span>
+              {compact && groupIssues.length ? <span className="text-meta text-destructive">{groupIssues.length} 处错误</span> : null}
               {group.collection ? (
                 <Tooltip>
                   <TooltipTrigger
@@ -745,9 +789,15 @@ export function ComplexGroups({
                         className="ml-1"
                         onClick={(event) => {
                           event.preventDefault()
+                          const panel = event.currentTarget.closest("details")
+                          if (panel) panel.open = true
                           onAdd(group.complex_id)
+                          if (compact) requestAnimationFrame(() => {
+                            const index = Math.max(1, groupDraft?.items.length ?? 0)
+                            focusCategoryField(panel, categoryFieldDomId(group.fields[0].key, `${group.fields[0].key}-${group.complex_id}-${index}`))
+                          })
                         }}
-                        aria-label="添加一项"
+                        aria-label={compact ? `添加${groupName}` : "添加一项"}
                       />
                     }
                   >
@@ -758,56 +808,65 @@ export function ComplexGroups({
               ) : null}
             </summary>
             <div className="flex flex-col gap-4 border-t border-border p-4">
-              {items.map((item, itemIndex) => (
-                <div
-                  key={`${group.complex_id}-${itemIndex}`}
-                  className="rounded-xl border border-border bg-background p-4"
-                >
+              {items.map((item, itemIndex) => {
+                const itemIssues = groupIssues.filter((issue) => issue.item_index === itemIndex)
+                const itemName = group.field_keys.map((key) => {
+                  const field = schema.fields.find((candidate) => candidate.key === key)
+                  return field?.editor === "text" ? fieldDisplayValueAsText(field, item.values[key]).trim() : ""
+                }).find(Boolean)
+                const removeButton = group.collection && items.length > 1 ? (
+                  <Tooltip>
+                    <TooltipTrigger render={<Button type="button" size="icon-xs" variant="ghost"
+                      aria-label={compact ? `删除${groupName}第 ${itemIndex + 1} 项` : "删除"}
+                      onClick={(event) => {
+                        event.preventDefault()
+                        const panel = event.currentTarget.closest<HTMLElement>("[data-complex-group]")
+                        onRemove(group.complex_id, itemIndex)
+                        if (compact) requestAnimationFrame(() => {
+                          const remaining = panel?.querySelectorAll("[data-complex-item]")
+                          remaining?.[Math.min(itemIndex, remaining.length - 1)]?.querySelector("summary")?.focus()
+                        })
+                      }} />}><Trash2 aria-hidden /></TooltipTrigger>
+                    <TooltipContent>删除</TooltipContent>
+                  </Tooltip>
+                ) : null
+                const controls = <div className="grid gap-x-5 gap-y-6 lg:grid-cols-2" data-field-grid="" data-field-source="attribute">
+                  {group.fields.map((field) => {
+                    const location = { complexId: group.complex_id, itemIndex }
+                    return <DynamicField key={`${field.key}-${itemIndex}`}
+                      controlKey={`${field.key}-${group.complex_id}-${itemIndex}`}
+                      field={field} schema={schema} targetStoreId={targetStoreId}
+                      value={item.values[field.key]} issues={issuesForField(issues, field.key, location)}
+                      lockedReason={lockedFields?.get(field.key)}
+                      onChange={(value) => onChange(field.key, value, location)} />
+                  })}
+                </div>
+                // Blank items gain an ID on first input; keep the editor mounted while typing.
+                if (compact) return <details key={itemIndex}
+                  open={forceOpen || itemIndex === 0 || itemIssues.length > 0}
+                  className="group/item border-b border-border/70 last:border-b-0" data-complex-item={itemIndex}
+                  data-complex-item-id={item.item_id}>
+                  <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 py-2 text-compact outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                    <ChevronRight aria-hidden className="size-3.5 shrink-0 transition-transform group-open/item:rotate-90" />
+                    <span className="min-w-0 flex-1 truncate" title={itemName}>第 {itemIndex + 1} 项{itemName ? ` · ${itemName}` : ""}</span>
+                    {itemIssues.length ? <span className="shrink-0 text-meta text-destructive">{itemIssues.length} 处错误</span> : null}
+                    {removeButton}
+                  </summary>
+                  <div className="pb-4 pt-1">{controls}</div>
+                </details>
+                return <div key={itemIndex}
+                  className="rounded-xl border border-border bg-background p-4">
                   {group.collection || items.length > 1 ? (
                     <div className="mb-4 flex items-center justify-between gap-3">
                       <p className="text-xs font-medium text-muted-foreground">
                         第 {itemIndex + 1} 项
                       </p>
-                      {group.collection && items.length > 1 ? (
-                        <Tooltip>
-                          <TooltipTrigger
-                            render={
-                              <Button
-                                type="button"
-                                size="icon-xs"
-                                variant="ghost"
-                                onClick={() => onRemove(group.complex_id, itemIndex)}
-                                aria-label="删除"
-                              />
-                            }
-                          >
-                            <Trash2 aria-hidden />
-                          </TooltipTrigger>
-                          <TooltipContent>删除</TooltipContent>
-                        </Tooltip>
-                      ) : null}
+                      {removeButton}
                     </div>
                   ) : null}
-                  <div className="grid gap-x-5 gap-y-6 lg:grid-cols-2">
-                    {group.fields.map((field) => {
-                      const location = { complexId: group.complex_id, itemIndex }
-                      return (
-                        <DynamicField
-                          key={`${field.key}-${itemIndex}`}
-                          controlKey={`${field.key}-${group.complex_id}-${itemIndex}`}
-                          field={field}
-                          schema={schema}
-                          targetStoreId={targetStoreId}
-                          value={item.values[field.key]}
-                          issues={issuesForField(issues, field.key, location)}
-                          lockedReason={lockedFields?.get(field.key)}
-                          onChange={(value) => onChange(field.key, value, location)}
-                        />
-                      )
-                    })}
-                  </div>
+                  {controls}
                 </div>
-              ))}
+              })}
             </div>
           </details>
         )

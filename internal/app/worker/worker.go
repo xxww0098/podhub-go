@@ -3,11 +3,12 @@ package worker
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	queuerepo "github.com/xxww0098/podhub-go/internal/queue/repo"
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -15,18 +16,17 @@ import (
 	"github.com/riverqueue/river"
 
 	"github.com/xxww0098/podhub-go/internal/listing/submit"
-	"github.com/xxww0098/podhub-go/internal/media/jobs/slicepurge"
 	"github.com/xxww0098/podhub-go/internal/platform/config"
 	"github.com/xxww0098/podhub-go/internal/platform/db"
-	ozon "github.com/xxww0098/podhub-go/internal/platform/egressgate"
+	"github.com/xxww0098/podhub-go/internal/platform/httpx"
+
 	loadtest "github.com/xxww0098/podhub-go/internal/platform/loadmode"
 	"github.com/xxww0098/podhub-go/internal/platform/observability"
-	storage "github.com/xxww0098/podhub-go/internal/platform/r2"
-	_ "github.com/xxww0098/podhub-go/internal/queue"
+	"github.com/xxww0098/podhub-go/internal/platform/seal"
 	queuecontract "github.com/xxww0098/podhub-go/internal/queue/contract"
 	queuejobs "github.com/xxww0098/podhub-go/internal/queue/jobs"
 	queueservice "github.com/xxww0098/podhub-go/internal/queue/service"
-	"github.com/xxww0098/podhub-go/internal/seller"
+	seller "github.com/xxww0098/podhub-go/internal/seller/ozon"
 	telemetryjobs "github.com/xxww0098/podhub-go/internal/telemetry/jobs"
 )
 
@@ -50,7 +50,7 @@ func SetInstaller(fn func(config.Config)) { install = fn }
 // ListingHook runs after a listing submit job returns nil.
 type ListingHook func(context.Context, *pgxpool.Pool, int64, string)
 
-// ScanHook replaces idle ticks after seller.Attach.
+// ScanHook replaces idle ticks after Attach.
 type ScanHook func([]queueservice.DueScan, *pgxpool.Pool, *seller.Egress)
 
 // ReconcileHook owns delegate.posting_sync after it is claimed.
@@ -83,6 +83,14 @@ func SetProductSyncHook(fn ProductSyncHook) { productSyncHook = fn }
 // Main loads config, refuses non-loopback databases, and does not call Ozon.
 func Main(role string) int {
 	cfg := config.Load()
+	if err := httpx.ConfigureDNS(cfg.DNSServer); err != nil {
+		fmt.Fprintf(os.Stderr, "dns: %v\n", err)
+		return 1
+	}
+	if _, err := cfg.SellerEgressRoutes(); err != nil {
+		fmt.Fprintln(os.Stderr, "seller egress routes: invalid CLOUD_SELLER_EGRESS_ROUTES")
+		return 1
+	}
 	if install != nil {
 		install(cfg)
 	}
@@ -112,32 +120,12 @@ func Main(role string) int {
 }
 
 func runMediaGC(cfg config.Config) int {
-	client, err := storage.New(cfg)
-	if err != nil {
-		slog.Error("r2 client", "err", err)
-		return 1
-	}
-	// Exit 0 only when the Rust parser would leave the purge off.
-	// Unset means enabled: ErrDeleteNotPorted must not look like a purge.
-	// A real R2_* host plus an enabled purge is a hard refusal.
 	if !cfg.MediaDeleteEnabled() {
-		err = client.DeleteObject(context.Background(), "skeleton-not-a-real-key")
-		if errors.Is(err, storage.ErrDeleteDisabled) {
-			slog.Info("media gc idle; CLOUD_MEDIA_GC_DELETE is off")
-			return 0
-		}
-		slog.Error("media gc did not delete", "err", err)
-		return 1
+		slog.Info("media gc idle; CLOUD_MEDIA_GC_DELETE is off")
+		return 0
 	}
-	if !client.LoopbackDelete() {
-		err = client.DeleteObject(context.Background(), "skeleton-not-a-real-key")
-		slog.Error("media gc did not delete", "err", err)
-		return 1
-	}
-	// The clear still needs its receipt table. Deleting without it would
-	// clear the bucket with no durable record of the day's run.
-	if cfg.DatabaseURL == "" {
-		slog.Error("media gc refuses to delete without transit_clear_runs")
+	if cfg.DatabaseURL == "" || len(strings.TrimSpace(cfg.IntegrationConfigKey)) < 32 {
+		slog.Error("media gc requires the database and slice credential encryption key")
 		return 1
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -148,32 +136,10 @@ func runMediaGC(cfg config.Config) int {
 		return 1
 	}
 	defer pool.Close()
-	slog.Info("media gc watching fake bucket", "endpoint", "127.0.0.1", "clear_at", "04:00 Asia/Shanghai")
+	slog.Info("media gc watching workspace slice storage")
 	for {
-		for _, bucket := range slicepurge.Buckets {
-			origin := slicepurge.BucketOrigin{Client: client, Bucket: bucket}
-			// Real R2 endpoints are refused above, so the receipt key is
-			// the sha256 of a fake label; it can never collide with a real
-			// bucket identity.
-			receipt, err := slicepurge.TryClaim(ctx, pool, slicepurge.FakeFingerprint(bucket))
-			if err != nil {
-				slog.Error("transit clear claim", "bucket", bucket, "err", err)
-				continue
-			}
-			if receipt == nil {
-				continue
-			}
-			report := slicepurge.Run(ctx, receipt, origin, nil)
-			slog.Info("transit bucket clear finished",
-				"bucket", bucket,
-				"completed", report.Completed,
-				"api_calls", report.APICalls,
-				"deleted_ack", report.DeletedAck,
-				"failed_items", report.FailedItems,
-				"stop_code", report.StopCode,
-				"state_recorded", report.StateRecorded)
-		}
-		wait := slicepurge.NextCheck(time.Now())
+		RunWorkspaceSliceClears(ctx, pool, seal.DeriveKEK(cfg.IntegrationConfigKey))
+		wait := time.Minute
 		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
@@ -186,7 +152,7 @@ func runMediaGC(cfg config.Config) int {
 
 func runQueue(role string, cfg config.Config) int {
 	if role != RoleListing {
-		if err := ozon.AllowWrite(cfg); err == nil {
+		if !cfg.OzonWritesDisabled() {
 			slog.Warn("Ozon writes are open for this process; the worker still does not send")
 		}
 	}
@@ -253,6 +219,7 @@ func errorDigestAddon(pool *pgxpool.Pool) queuejobs.Addon {
 
 func queueOptions(role string, cfg config.Config, pool *pgxpool.Pool) queueservice.Options {
 	opts := queueservice.Options{
+		Repo:    queueservice.Repository{Claim: queuerepo.Claim, FormatOwner: queuerepo.FormatOwner, ReclaimExpiredRows: queuerepo.ReclaimExpiredRows, RunningOwned: queuerepo.RunningOwned, RequeueJob: queuerepo.RequeueJob},
 		Role:    role,
 		Kinds:   queueservice.KindsForRole(role),
 		Limit:   cfg.InFlight(role),
@@ -262,8 +229,10 @@ func queueOptions(role string, cfg config.Config, pool *pgxpool.Pool) queueservi
 	}
 	if role == RoleListing {
 		eg := seller.New(cfg).WithPool(pool)
+		tr := ListingTransport(eg, pool, ratingRing(cfg), listingKeyID(cfg))
+		svc := submit.Service{Queue: submit.Queue{EnqueueOn: queuerepo.EnqueueOn, MutateRunning: queuerepo.MutateRunning}}
 		opts.Work = func(ctx context.Context, pool *pgxpool.Pool, job queuecontract.Claimed) error {
-			err := submit.Work(ctx, pool, job, eg.Port())
+			err := svc.Work(ctx, pool, job, tr)
 			if err == nil && listingHook != nil {
 				listingHook(ctx, pool, job.OrgID, job.ID.String())
 			}
@@ -280,8 +249,9 @@ func queueOptions(role string, cfg config.Config, pool *pgxpool.Pool) queueservi
 	}
 	if role == RoleReconcile {
 		eg := seller.New(cfg).WithPool(pool)
+		tr := ListingTransport(eg, pool, ratingRing(cfg), listingKeyID(cfg))
 		opts.PrepareScans = func(scans []queueservice.DueScan) {
-			seller.Attach(scans, pool, eg)
+			Attach(scans, pool, eg, tr)
 			if scanHook != nil {
 				scanHook(scans, pool, eg)
 			}
@@ -297,4 +267,11 @@ func queueOptions(role string, cfg config.Config, pool *pgxpool.Pool) queueservi
 		}
 	}
 	return opts
+}
+
+func listingKeyID(cfg config.Config) string {
+	if cfg.SellerCredentialKeyID != "" {
+		return cfg.SellerCredentialKeyID
+	}
+	return seal.DefaultSellerKeyID
 }

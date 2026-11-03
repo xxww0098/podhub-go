@@ -139,7 +139,7 @@ func CleanStatus(status string) (string, *contract.Fault) {
 
 // Delegate keeps the first occurrence of each workspace action the session
 // role may grant. The error message uses the raw element, not the trim.
-func Delegate(role string, raws []string) ([]string, *contract.Fault) {
+func Delegate(scope, role string, raws []string) ([]string, *contract.Fault) {
 	seen := map[string]struct{}{}
 	out := make([]string, 0, len(raws))
 	for _, raw := range raws {
@@ -147,7 +147,11 @@ func Delegate(role string, raws []string) ([]string, *contract.Fault) {
 		if !ok {
 			return nil, contract.Validation(contract.MsgUnknownAction + raw)
 		}
-		if cap == "" || !allows(role, cap, false) {
+		allowed := scope == ScopeCatalog && stored == "catalog:read"
+		if scope == ScopeWorkspace && cap != "" {
+			_, allowed = access.ParseWorkspace(role)
+		}
+		if !allowed {
 			return nil, contract.Validation(contract.MsgCannotDelegate + raw)
 		}
 		if _, dup := seen[stored]; dup {
@@ -163,33 +167,10 @@ func Delegate(role string, raws []string) ([]string, *contract.Fault) {
 }
 
 // LiveAllows is the second check inside the grant transaction.
-// An unknown stored role is viewer, matching WorkspaceRole::from_stored.
 func LiveAllows(storedRole, action string) bool {
 	_, cap, ok := actionCapability(action)
-	if !ok || cap == "" {
-		return false
-	}
-	return allows(storedRole, cap, true)
-}
-
-func allows(role, cap string, unknownIsViewer bool) bool {
-	parsed, ok := access.ParseWorkspace(role)
-	if !ok {
-		if !unknownIsViewer {
-			return false
-		}
-		parsed = "viewer"
-	}
-	switch cap {
-	case "read":
-		return true
-	case "prepare":
-		return parsed != "viewer"
-	case "submit":
-		return parsed == "owner" || parsed == "manager" || parsed == "operator"
-	default:
-		return false
-	}
+	_, validRole := access.ParseWorkspace(storedRole)
+	return ok && cap != "" && validRole
 }
 
 func actionCapability(raw string) (stored, cap string, ok bool) {

@@ -1,4 +1,5 @@
-import { useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react"
+import type { ImageSetMediaEdit } from "../image-sets/image-set-state"
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react"
 import type { WorkflowDraftValue, WorkflowDraftView } from "@/bindings/commands"
 import { notifySuccess } from "@/lib/notify"
 import type { ListingRow } from "../model/listing-row"
@@ -30,6 +31,7 @@ type WorkbenchGridHandlers = {
     column: WorkbenchEditableColumn,
     value: string,
   ) => void
+  onEditMedia?: (draftId: string, edit: ImageSetMediaEdit) => Promise<boolean>
   onEditField: (
     draftId: string,
     fieldKey: string,
@@ -54,6 +56,7 @@ type WorkbenchGridInput = WorkbenchGridHandlers & {
   selectedRowIds: ReadonlySet<string>
   fields: WorkbenchColumnFields
   tableScrollRef: RefObject<HTMLDivElement | null>
+  scopeKey?: string
 }
 
 export type WorkbenchGrid = ReturnType<typeof useWorkbenchGridKeyboard>
@@ -77,6 +80,14 @@ export function useWorkbenchGridKeyboard(input: WorkbenchGridInput) {
   const lastToggledIndex = useRef(-1)
   const [focusedCell, setFocusedCell] = useState<GridCoordinate | null>(null)
   const [ripplingCells, setRipplingCells] = useState<ReadonlySet<string>>(new Set())
+  const visibleOrder = JSON.stringify(rows.map((row) => row.id))
+  useEffect(() => {
+    lastToggledIndex.current = -1
+    shiftRef.current = false
+    setFocusedCell(null)
+    setRipplingCells(new Set())
+    if (tableScrollRef.current) tableScrollRef.current.scrollTop = 0
+  }, [input.scopeKey, tableScrollRef, visibleOrder])
 
   // Row callbacks stay identity-stable across a thousand rows: the memoized row
   // reads the current handlers through this ref instead of taking a new closure
@@ -109,6 +120,7 @@ export function useWorkbenchGridKeyboard(input: WorkbenchGridInput) {
     },
     openProse: (edit) => latestRef.current.openProse(edit),
     openTheme: (edit) => latestRef.current.openTheme(edit),
+    editMedia: (draftId, edit) => latestRef.current.onEditMedia?.(draftId, edit) ?? Promise.resolve(false),
     editField: (draftId, fieldKey, value, location) => {
       latestRef.current.onEditField(draftId, fieldKey, value, location)
     },

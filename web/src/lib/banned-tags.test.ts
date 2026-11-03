@@ -1,7 +1,24 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { bannedTagRejection, setBannedTagRules } from "./banned-tags"
+import { bannedTagRejection, filterBannedTags, setBannedTagRules } from "./banned-tags"
+
+test("combined tags filter fixed and theme tokens without changing order or input", () => {
+  setBannedTagRules([{ term: "табак", matchMode: "stem" }, { term: "вейп", matchMode: "stem" }])
+  const tags = ["#кружка", "#табачный", "#подарок", "#кот_с_вейпом"]
+  assert.deepEqual(filterBannedTags(tags), ["#кружка", "#подарок"])
+  assert.deepEqual(tags, ["#кружка", "#табачный", "#подарок", "#кот_с_вейпом"])
+  assert.deepEqual(filterBannedTags(["#вейпы", "#кот_с_вейпом"]), [])
+  setBannedTagRules([{ term: "кружка", matchMode: "exact" }])
+  assert.deepEqual(filterBannedTags(["#кружка", "#кружки"]), ["#кружки"])
+})
+
+test("combined tags filter phrases across adjacent tokens", () => {
+  setBannedTagRules([{ term: "электронная_сигарета", matchMode: "stem" }])
+  assert.deepEqual(filterBannedTags(["#роза", "#электронная", "#сигарета", "#море"]), ["#роза", "#море"])
+  setBannedTagRules([])
+  assert.deepEqual(filterBannedTags(["#электронная", "#сигарета"]), ["#электронная", "#сигарета"])
+})
 
 test("stem match covers case, hash, inflection and a latin lookalike", () => {
   setBannedTagRules([{ term: "сигарета", matchMode: "stem" }])

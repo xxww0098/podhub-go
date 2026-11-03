@@ -15,9 +15,12 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/xxww0098/podhub-go/internal/billing/contract"
+	"github.com/xxww0098/podhub-go/internal/billing/domain"
 	"github.com/xxww0098/podhub-go/internal/billing/service"
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
 	"github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
+	"github.com/xxww0098/podhub-go/internal/platform/httpx/jsonwire"
 )
 
 // Payments holds loopback verification keys. A nil provider answers 503 and never dials.
@@ -27,6 +30,29 @@ type Payments struct {
 	Stripe     *StripeKey
 	EasyPayPID string
 	EasyPayKey string
+	Airwallex  *AirwallexKey
+}
+
+// Billing is the billing repo surface this package needs. internal/app passes
+// the billingrepo functions; a nil function is an error, never a call.
+type Billing struct {
+	TopupTx                 func(ctx context.Context, tx pgx.Tx, orgID int64, key string, paymentOrderID, amount int64) (contract.WalletRow, error)
+	Redeem                  func(ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, code, expectedWorkspace string) (domain.RedeemResult, error)
+	ConfirmKeep             func(ctx context.Context, pool *pgxpool.Pool, orgID int64, quoteID string, cancelPending bool, now time.Time) error
+	SubscriptionView        func(ctx context.Context, pool *pgxpool.Pool, orgID int64, now time.Time) (contract.View, error)
+	Quote                   func(ctx context.Context, pool *pgxpool.Pool, orgID int64, req contract.QuoteRequest, now time.Time) (contract.Offered, error)
+	CreateSubscriptionOrder func(
+		ctx context.Context, pool *pgxpool.Pool, orgID, userID int64,
+		publicID, provider, currency, quoteID string,
+		agreement []byte, now time.Time) (contract.OrderBrief, error)
+	PayAutoOrder        func(ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, publicID, provider string, agreement []byte, now time.Time) (contract.OrderBrief, error)
+	SetAutoRenew        func(ctx context.Context, pool *pgxpool.Pool, orgID int64, enabled bool, now time.Time) error
+	LoadOrder           func(ctx context.Context, tx pgx.Tx, publicID string) (contract.Order, error)
+	MarkOrderPaid       func(ctx context.Context, tx pgx.Tx, orderID int64, providerRef string, now time.Time) (bool, error)
+	MarkOrderReconciled func(ctx context.Context, tx pgx.Tx, orderID int64, reason string) error
+	FulfillSubscription func(ctx context.Context, tx pgx.Tx, order contract.Order, now time.Time) error
+	// ErrNoSubscription is the repo sentinel rendered as 409 SUBSCRIPTION_MISSING.
+	ErrNoSubscription error
 }
 
 // Deps is the billing HTTP surface. An empty Payments value refuses callbacks.
@@ -34,6 +60,8 @@ type Deps struct {
 	Pool     *pgxpool.Pool
 	Access   access.Resolver
 	Payments Payments
+	Runtime  *service.PaymentRuntime
+	Billing  Billing
 	Now      func() time.Time
 }
 
@@ -46,6 +74,7 @@ func Register(router chi.Router, deps Deps) {
 	router.Get("/api/billing/callback/complete", h.complete)
 	router.Post("/api/redeem", h.redeem)
 	h.registerSubscription(router)
+	h.registerCheckout(router)
 }
 
 type handler struct{ deps Deps }
@@ -110,6 +139,17 @@ func (h handler) dispatch(w http.ResponseWriter, r *http.Request, provider strin
 var errProviderClosed = errors.New("closed")
 
 func (h handler) verify(provider string, r *http.Request, body []byte) (Notice, bool, error) {
+	if h.deps.Runtime != nil {
+		p, err := h.deps.Runtime.Configuration(r.Context(), provider)
+		if err != nil {
+			return Notice{}, false, errProviderClosed
+		}
+		configured, err := paymentsFromConfiguration(p)
+		if err != nil {
+			return Notice{}, false, errProviderClosed
+		}
+		h.deps.Payments = configured
+	}
 	now := h.now()
 	switch provider {
 	case "alipay":
@@ -148,6 +188,12 @@ func (h handler) verify(provider string, r *http.Request, body []byte) (Notice, 
 			return notice, false, nil
 		}
 		return notice, true, nil
+	case "airwallex":
+		if h.deps.Payments.Airwallex == nil {
+			return Notice{}, false, errProviderClosed
+		}
+		notice, err := VerifyAirwallex(*h.deps.Payments.Airwallex, r.Header.Get("x-timestamp"), r.Header.Get("x-signature"), body, now)
+		return notice, err == nil && !notice.Ignored, err
 	default:
 		return Notice{}, false, errProviderClosed
 	}
@@ -202,7 +248,10 @@ func (h handler) apply(ctx context.Context, notice Notice) error {
 	}
 	if !providerMatches(notice.Provider, order.Provider) || order.Amount != notice.AmountCents || !strings.EqualFold(order.Currency, notice.Currency) {
 		if notice.Paid && !notice.Canceled {
-			if err := service.MarkOrderReconciled(ctx, tx, order.ID, "amount_mismatch"); err != nil {
+			if h.deps.Billing.MarkOrderReconciled == nil {
+				return errors.New("billing repo is not wired")
+			}
+			if err := h.deps.Billing.MarkOrderReconciled(ctx, tx, order.ID, "amount_mismatch"); err != nil {
 				return err
 			}
 			return tx.Commit(ctx)
@@ -215,7 +264,7 @@ func (h handler) apply(ctx context.Context, notice Notice) error {
 		}
 		tag, err := tx.Exec(ctx, `
 			UPDATE payment_orders
-			   SET status = 'canceled', canceled_at = clock_timestamp(), updated_at = clock_timestamp()
+			   SET status = 'canceled', canceled_at = clock_timestamp(), qr_code=NULL, pay_url=NULL, launch_state=NULL, updated_at = clock_timestamp()
 			 WHERE id = $1 AND status = 'pending'`, order.ID)
 		if err != nil || tag.RowsAffected() != 1 {
 			return errors.New("cancel")
@@ -227,7 +276,11 @@ func (h handler) apply(ctx context.Context, notice Notice) error {
 		// Marking them paid here would double-book.
 		return errors.New("unfulfilled")
 	}
-	paid, err := service.MarkOrderPaid(ctx, tx, order.ID, notice.ProviderRef, now)
+	billing := h.deps.Billing
+	if billing.MarkOrderPaid == nil {
+		return errors.New("billing repo is not wired")
+	}
+	paid, err := billing.MarkOrderPaid(ctx, tx, order.ID, notice.ProviderRef, now)
 	if err != nil {
 		return err
 	}
@@ -239,15 +292,21 @@ func (h handler) apply(ctx context.Context, notice Notice) error {
 		if order.Topup == nil || *order.Topup <= 0 {
 			return errors.New("topup amount missing")
 		}
-		if _, err := TopupTx(ctx, tx, order.OrgID, notice.PublicID, order.ID, *order.Topup); err != nil {
+		if billing.TopupTx == nil {
+			return errors.New("billing repo is not wired")
+		}
+		if _, err := billing.TopupTx(ctx, tx, order.OrgID, notice.PublicID, order.ID, *order.Topup); err != nil {
 			return err
 		}
 	case "subscription":
-		full, err := service.LoadOrder(ctx, tx, notice.PublicID)
+		if billing.LoadOrder == nil || billing.FulfillSubscription == nil {
+			return errors.New("billing repo is not wired")
+		}
+		full, err := billing.LoadOrder(ctx, tx, notice.PublicID)
 		if err != nil {
 			return err
 		}
-		if err := service.FulfillSubscription(ctx, tx, full, now); err != nil {
+		if err := billing.FulfillSubscription(ctx, tx, full, now); err != nil {
 			return err
 		}
 	}
@@ -307,7 +366,7 @@ func (h handler) redeem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if principal.WorkspaceRole != "owner" {
-		writeAPI(w, http.StatusForbidden, "只有 Workspace 所有者可以加购成员名额", "NOT_WORKSPACE_OWNER")
+		writeAPI(w, http.StatusForbidden, "只有 Workspace 所有者可以兑换", "NOT_WORKSPACE_OWNER")
 		return
 	}
 	var body struct {
@@ -320,7 +379,11 @@ func (h handler) redeem(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, http.StatusBadRequest, "请求格式无效", "VALIDATION")
 		return
 	}
-	result, err := Redeem(r.Context(), h.deps.Pool, principal.OrgID, principal.UserID, body.Code, body.Expected)
+	if h.deps.Billing.Redeem == nil {
+		writeAPI(w, http.StatusInternalServerError, "兑换失败", "INTERNAL")
+		return
+	}
+	result, err := h.deps.Billing.Redeem(r.Context(), h.deps.Pool, principal.OrgID, principal.UserID, body.Code, body.Expected)
 	if err != nil {
 		var refusal *RedeemError
 		if errors.As(err, &refusal) {
@@ -330,16 +393,12 @@ func (h handler) redeem(w http.ResponseWriter, r *http.Request) {
 		writeAPI(w, http.StatusInternalServerError, "兑换失败", "INTERNAL")
 		return
 	}
-	payload := map[string]any{
-		"ok":           true,
-		"plan":         map[string]string{"key": result.PlanKey, "name": result.PlanName},
-		"member_seats": result.MemberSeats, "ocr_credits": int64(0), "wallet_cents": result.WalletCents,
-		"replaced_lots": result.ReplacedLots, "replaced_seats": result.ReplacedSeats,
+	response := map[string]any{"ok": true, "wallet_cents": result.WalletCents}
+	if result.PlanKey != "" {
+		response["plan_key"], response["plan_stores"], response["plan_months"] = result.PlanKey, result.PlanStores, result.PlanMonths
+		response["starts_at"], response["ends_at"] = result.StartsAt, result.EndsAt
 	}
-	if result.PlanExpiresAt != nil {
-		payload["plan_expires_at"] = RFC3339Millis(*result.PlanExpiresAt)
-	}
-	writeJSON(w, http.StatusOK, payload)
+	jsonwire.Write(w, http.StatusOK, response)
 }
 
 func resolve(resolver access.Resolver, r *http.Request) (*access.Principal, *access.Refusal, error) {
@@ -350,16 +409,5 @@ func resolve(resolver access.Resolver, r *http.Request) (*access.Principal, *acc
 }
 
 func writeAPI(w http.ResponseWriter, status int, message, code string) {
-	writeJSON(w, status, map[string]string{"error": message, "code": code})
-}
-
-func writeJSON(w http.ResponseWriter, status int, body any) {
-	raw, err := json.Marshal(body)
-	if err != nil {
-		http.Error(w, "兑换失败", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_, _ = w.Write(raw)
+	jsonwire.Write(w, status, map[string]string{"error": message, "code": code})
 }

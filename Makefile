@@ -1,4 +1,4 @@
-.PHONY: test build fmt vet tidy generate codegen-tools codegen-versions ci listing-wasm wasm web-wasm wasm-check
+.PHONY: test build fmt vet tidy generate codegen-tools codegen-versions ci wasm wasm-check
 
 GOBIN := $(shell go env GOPATH)/bin
 export PATH := $(GOBIN):$(PATH)
@@ -12,11 +12,14 @@ test:
 
 build: wasm-check
 	go build -o bin/api ./cmd/api
+	go build -o bin/migrate ./cmd/migrate
+	go build -o bin/lease-keeper ./cmd/lease-keeper
 	go build -o bin/worker-listing ./cmd/worker-listing
 	go build -o bin/worker-sync ./cmd/worker-sync
 	go build -o bin/worker-reconcile ./cmd/worker-reconcile
 	go build -o bin/worker-media-gc ./cmd/worker-media-gc
 	go build -o bin/writer-lease ./cmd/writer-lease
+	go build -o bin/admin-init ./cmd/admin-init
 
 fmt:
 	gofmt -w .
@@ -27,8 +30,10 @@ vet:
 tidy:
 	go mod tidy
 
-# Every api/codegen/*.yaml is generated; a new domain only adds a file there.
-# Each config writes its own output file, so the order does not matter.
+# Only the 7 kept api/codegen/*.yaml configs generate output (agent, catalog,
+# health, identity, listing, listing-rules, media); the other domains write
+# their http packages by hand (decisions.md D24). Each config writes its own
+# output file, so the order does not matter.
 # CI sets CODEGEN_BIN to its cached directory. A binary that is missing or
 # reports another version is reinstalled.
 generate: codegen-tools
@@ -51,36 +56,23 @@ codegen-versions:
 
 # Go/Web checks consume committed WASM; scheduler tests use the pinned Rust toolchain.
 ci:
-	cd rust && cargo test --locked -p render -p psdx -p render-wasm
+	cd rust && cargo test --locked -p listing-core -p listing-core-wasm -p render -p psdx -p render-wasm
 	test -z "$$(gofmt -l .)"
 	$(MAKE) vet
 	go test ./tests/archtest
 	bash scripts/test-wasm-dist.sh
 	scripts/check-wasm-dist.sh
-	LISTING_TAGS_WASM=wasm/dist/server/listing-tags.wasm \
-	WASM_HOST_PROBE=wasm/dist/test/host-probe.wasm \
-	LISTING_CORE_WASM=wasm/dist/server/listing-core.wasm \
-	LISTING_STATE_WASM=wasm/dist/browser/listing-state.wasm \
 	go test -timeout 25m ./...
 	$(MAKE) generate
 	git diff --exit-code
 
-# Partial local builds do not refresh the shared source manifest.
-listing-wasm:
-	scripts/build-wasm.sh tags --copy
-
 # Rebuild every server and browser artifact locally from rust/, then refresh
-# the manifest. This is the only target that compiles Rust.
+# the manifest. This is the only target that compiles WASM. Use
+# `scripts/build-wasm.sh core|render` for a partial rebuild, then
+# `scripts/check-wasm-dist.sh --update`.
 wasm:
-	scripts/build-wasm.sh all --copy
-	$(MAKE) web-wasm
+	scripts/build-wasm.sh all
 	scripts/check-wasm-dist.sh --update
-
-# Browser render WASM, JS glue, declarations and worker snippets are committed
-# together. The browser listing module comes from scripts/build-wasm.sh, which
-# builds it from the same sources as the server module.
-web-wasm:
-	bash web/scripts/build-render.sh
 
 wasm-check:
 	scripts/check-wasm-dist.sh

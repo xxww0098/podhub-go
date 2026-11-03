@@ -67,22 +67,19 @@ test("AI-filled ru, tags and desc stay editable after recognition, even while me
     "商品名称 SZ-0001.png",
     "商品简介 SZ-0001.png",
     "搜索标签 SZ-0001.png",
-    "JSON富内容 SZ-0001.png",
     "商品名称 SZ-0002.png",
     "商品简介 SZ-0002.png",
     "搜索标签 SZ-0002.png",
-    "JSON富内容 SZ-0002.png",
     "商品名称 SZ-0003.png",
     "商品简介 SZ-0003.png",
     "搜索标签 SZ-0003.png",
-    "JSON富内容 SZ-0003.png",
   ]) {
     assert.doesNotMatch(control(label), /\bdisabled(?:=|\s|$)/, `${label} must stay editable`)
   }
   assert.match(html, /<p[^>]*aria-label="商品名称 SZ-0004\.png"/)
   assert.match(html, /<p[^>]*aria-label="商品简介 SZ-0004\.png"/)
   assert.match(html, /<p[^>]*aria-label="搜索标签 SZ-0004\.png"/)
-  assert.match(html, /<p[^>]*aria-label="JSON富内容 SZ-0004\.png"/)
+  assert.doesNotMatch(html, /JSON富内容/)
   assert.match(html, /#море #постер/)
 })
 
@@ -287,7 +284,7 @@ test("销售价/划线价 are typed per row and show the default fields as the f
   assert.match(input("销售价 SZ-0003.png"), /disabled=""/)
 })
 
-test("JSON富内容 is typed per row and shows the card default as the fallback", () => {
+test("历史富内容不会显示编辑入口，也不影响其他字段", () => {
   const typed = row(1)
   const untouched = row(2)
   // seed_gaps baked the old card rich content into this row at creation; the
@@ -340,22 +337,8 @@ test("JSON富内容 is typed per row and shows the card default as the fallback"
       selectedRowIds={new Set()}
     />,
   )
-  const cell = (image: string) => {
-    const start = html.indexOf(`aria-label="JSON富内容 ${image}"`)
-    assert.notEqual(start, -1, `missing JSON富内容 ${image}`)
-    const next = html.indexOf('aria-label="JSON富内容 ', start + 1)
-    return html.slice(start, next === -1 ? undefined : next)
-  }
-
-  // The row's own paste is the value; the card default is only the muted fallback.
-  assert.match(cell("SZ-0001.png"), /本行粘贴/)
-  assert.doesNotMatch(cell("SZ-0001.png"), /卡默认富内容/)
-
-  // An untouched or seeded row reads empty and shows today's card default.
-  for (const image of ["SZ-0002.png", "SZ-0003.png"]) {
-    assert.match(cell(image), /卡默认富内容/)
-    assert.doesNotMatch(cell(image), /旧卡默认/)
-  }
+  assert.doesNotMatch(html, /JSON富内容|本行粘贴|卡默认富内容|旧卡默认/)
+  assert.match(html, /aria-label="销售价 SZ-0001\.png"/)
 })
 
 test("货号 and 型号 are two cells: a written model never moves the instance identity", () => {

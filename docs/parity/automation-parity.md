@@ -1,6 +1,6 @@
-# 自动化域对照（automation，13 条路由）
+# 自动化域对照
 
-Rust 证据：`docs/rust-evidence/aomt/spec-aomt-automation.md`（v0.0.112，HEAD `7df856a`）与 `fixtures-aomt/automation`。本文件只覆盖 `/api/automation/**`。
+历史 Rust 证据为任务附件 `spec-aomt-automation.md`（v0.0.112，HEAD `7df856a`）与 `fixtures-aomt/automation`；原记录的 `docs/rust-evidence/aomt/` 路径未随本仓库保存，不能作为可本地复核的证据。本文件只覆盖 `/api/automation/**`。
 
 ## 已实现
 
@@ -9,11 +9,11 @@ Rust 证据：`docs/rust-evidence/aomt/spec-aomt-automation.md`（v0.0.112，HEA
 | 路由 | 事务 |
 | --- | --- |
 | 素材集、执行端、命令 | `tenantx.BeginApp`（`SET LOCAL ROLE podhub_app` + `app.current_org_id`） |
-| 授权列表 / 创建 / 吊销 | 普通事务，不 `SET ROLE`。吊销按规格 `set_config` `app.automation_grant_id`，有组织时再设 `app.current_org_id`，然后按顺序删除命令、执行端、回执、执行、授权 |
+| 授权列表 / 创建 / 吊销 | 事务使用 AppRole。吊销设置 `app.automation_grant_id`，有组织时再设 `app.current_org_id`，然后按顺序删除命令、执行端、回执、执行、授权 |
 
 命令状态机与规格 §0.11 的 SQL 谓词一致：`claim`、`renew`、`progress`、`settle_*`、`release`。续期控制为 `continue` / `cancel` / `lost`。`claim` 要求授权与执行端都活着；`progress` / `settle` 不要求授权仍有效。租约 90 秒、执行端 45 秒（含边界）、认领条数 1..8 默认 4，都在 SQL 与领域常量里。
 
-角色矩阵在 `domain.Delegate` / `LiveAllows`：member→operator，admin→manager，live 角色经 `from_stored`。viewer 不能委托备货；viewer 与 reviewer 不能提交。
+`domain.Delegate` / `LiveAllows` 统一使用 `identity/contract.ParseWorkspace`，只接受 owner、manager、member；旧角色和未知值不能获得读取或写入授权。公共目录按 `catalog` 范围仅接受 `catalog:read`，不伪造工作空间角色。
 
 这 13 条路由不读 `OZON_WRITE_KILL_SWITCH` / `CLOUD_MEDIA_GC_DELETE`，不访问 Ozon、对象存储、模型或支付，不写账本，不入队。
 
@@ -54,4 +54,12 @@ PODHUB_PARITY_DSN=postgres://127.0.0.1:5432/podhub?sslmode=disable go test -coun
 6. 交互读 16、普通写 10 的数字预算与现有 identity 中间件（8 与 4）不一致。该中间件被其他域的测试锁住，本任务不改。类别映射本身已与规格一致（仅 heartbeat 为 control）。
 7. `enqueue_automation_command` 的生产调用点仍是未确认，本域没有入队。
 8. `CLOUD_DB_LOGIN_API` 是否 `SET ROLE podhub_app` 未确认。租户表走现有 `BeginApp`；授权三路由按规格明确不 `SET ROLE`。
-9. `organization_members.role` 的 CHECK 只有 owner、manager、member。reviewer / viewer 的能力判断只在领域函数里，集成测插不进这两种库角色。
+9. `organization_members.role` 的 CHECK 与运行时一致，只有 owner、manager、member。reviewer / viewer 等旧角色仅用于拒绝测试，不是可用角色。
+
+## MCP 授权页面接线（2026-10-27）
+
+工作空间授权继续使用 `/api/automation/grants`；公开货盘授权新增 `/api/me/catalog-automation/grants` 的列表、创建和撤销，活账号无需工作空间即可申请 `catalog:read`。供应商商品库授权复用已有 `/api/admin/supplier-automation/grants`，入口与事务均复核当前账号的 `admin` / `super_admin` 权限，不依赖工作空间。
+
+三种范围的授权不会相互列出或撤销。请求与授权视图按 OpenAPI 使用 snake_case；`source_ids: null` 表示全部源库，省略或 `[]` 表示没有源库，指定源库必须存在。完整 token 只在创建成功后返回，列表只返回前缀；撤销清理授权及关联回执、执行，之后实际 MCP 初始化拒绝该 token。账号停用、平台角色撤销同样使对应授权失效。
+
+普通 `podhub_login_api` 单连接集测覆盖创建、持久化回读、来源范围、越权、降权、删除和实际 MCP 初始化/撤销拒绝；原工作空间撤销原子性及执行端并发回归保留。这些验证不表示任何 Seller、支付或其他外部写入通过。

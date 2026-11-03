@@ -1,8 +1,6 @@
 package service
 
 import (
-	"time"
-
 	"github.com/xxww0098/podhub-go/internal/admin/domain"
 )
 
@@ -66,6 +64,7 @@ func accountUserFrom(actor domain.Actor, a domain.Account) accountUser {
 }
 
 type personView struct {
+	AccountKind      string  `json:"account_kind"`
 	Kind             string  `json:"kind"`
 	RoleLabel        string  `json:"role_label"`
 	UUID             string  `json:"uuid"`
@@ -86,7 +85,8 @@ type personView struct {
 func personFrom(actor domain.Actor, p domain.Person) personView {
 	manageable := p.UserID != actor.ID && domain.CanMutate(actor.Role, p.Role)
 	view := personView{
-		Kind: domain.RankFromStored(p.Role), RoleLabel: domain.RankLabel(p.Role),
+		AccountKind: p.AccountKind,
+		Kind:        domain.RankFromStored(p.Role), RoleLabel: domain.RankLabel(p.Role),
 		UUID: p.PublicID, Email: p.Email, Name: p.Name, Role: domain.RankFromStored(p.Role),
 		IsAdmin: domain.Staff(p.Role), CreatedAt: p.CreatedAt, LastLogin: p.LastLogin,
 		Status: domain.AccountStatus(p.Disabled), Disabled: p.Disabled,
@@ -148,110 +148,4 @@ func directoryBody(actor domain.Actor, dir domain.Directory) any {
 		WorkspaceCount int             `json:"workspace_count"`
 		UserCount      int             `json:"user_count"`
 	}{spaces, free, len(spaces), dir.UserCount}}
-}
-
-type quotaView struct {
-	Default       int64  `json:"default"`
-	OverrideValue *int64 `json:"overrideValue,omitempty"`
-	Effective     int64  `json:"effective"`
-	Used          int64  `json:"used"`
-	Suspended     int64  `json:"suspended"`
-}
-
-type memberChange struct {
-	MembershipID int64  `json:"membership_id"`
-	UserID       int64  `json:"user_id"`
-	JoinOrder    int64  `json:"join_order"`
-	Action       string `json:"action"`
-}
-
-type storeChange struct {
-	UUID        string `json:"uuid"`
-	CreateOrder int64  `json:"createOrder"`
-	Action      string `json:"action"`
-}
-
-func changes(in []domain.MemberChange) []memberChange {
-	out := make([]memberChange, 0, len(in))
-	for _, c := range in {
-		out = append(out, memberChange{c.MembershipID, c.UserID, c.JoinOrder, c.Action})
-	}
-	return out
-}
-
-func storeChanges(in []domain.StoreChange) []storeChange {
-	out := make([]storeChange, 0, len(in))
-	for _, c := range in {
-		out = append(out, storeChange{c.UUID, c.CreateOrder, c.Action})
-	}
-	return out
-}
-
-func quota(defaultSeats, effective, used, suspended int64, override *int64, follow bool) quotaView {
-	view := quotaView{Default: defaultSeats, Effective: effective, Used: used, Suspended: suspended}
-	if !follow {
-		view.OverrideValue = override
-	}
-	return view
-}
-
-func previewBody(state domain.SeatState, target domain.SeatTarget, members domain.MemberPlan, stores domain.StorePlan) any {
-	type data struct {
-		Revision     int64          `json:"revision"`
-		Plan         string         `json:"plan"`
-		MemberSeats  quotaView      `json:"memberSeats"`
-		Suspend      []memberChange `json:"suspend"`
-		Restore      []memberChange `json:"restore"`
-		StoreSlots   quotaView      `json:"storeSlots"`
-		StoreSuspend []storeChange  `json:"storeSuspend,omitempty"`
-		StoreRestore []storeChange  `json:"storeRestore,omitempty"`
-	}
-	body := data{
-		Revision: state.Revision, Plan: target.Plan,
-		MemberSeats: quota(target.Purchased, target.SeatLimit, members.Used, members.Suspended, target.MemberOverride, target.FollowMembers),
-		Suspend:     changes(members.Suspend), Restore: changes(members.Restore),
-		StoreSlots: quota(target.PlanDefaultStores, target.StoreLimit, stores.Used, stores.Suspended, target.StoreOverride, target.FollowStores),
-	}
-	if len(stores.Suspend) > 0 {
-		body.StoreSuspend = storeChanges(stores.Suspend)
-	}
-	if len(stores.Restore) > 0 {
-		body.StoreRestore = storeChanges(stores.Restore)
-	}
-	return struct {
-		Data data `json:"data"`
-	}{body}
-}
-
-func applyBody(target domain.SeatTarget, members domain.MemberPlan, stores domain.StorePlan, revision int64) any {
-	type data struct {
-		OK           bool           `json:"ok"`
-		Revision     int64          `json:"revision"`
-		Plan         string         `json:"plan"`
-		MemberSeats  quotaView      `json:"memberSeats"`
-		Suspend      []memberChange `json:"suspend"`
-		Restore      []memberChange `json:"restore"`
-		StoreSlots   quotaView      `json:"storeSlots"`
-		StoreSuspend []storeChange  `json:"storeSuspend,omitempty"`
-		StoreRestore []storeChange  `json:"storeRestore,omitempty"`
-	}
-	body := data{
-		OK: true, Revision: revision, Plan: target.Plan,
-		MemberSeats: quota(target.Purchased, target.SeatLimit, members.Used, members.Suspended, target.MemberOverride, target.FollowMembers),
-		Suspend:     changes(members.Suspend), Restore: changes(members.Restore),
-		StoreSlots: quota(target.PlanDefaultStores, target.StoreLimit, stores.Used, stores.Suspended, target.StoreOverride, target.FollowStores),
-	}
-	if len(stores.Suspend) > 0 {
-		body.StoreSuspend = storeChanges(stores.Suspend)
-	}
-	if len(stores.Restore) > 0 {
-		body.StoreRestore = storeChanges(stores.Restore)
-	}
-	return struct {
-		Data data `json:"data"`
-	}{body}
-}
-
-func rfc3339Millis(t time.Time) string {
-	return t.UTC().Format("2006-01-02T15:04:05.000Z")
 }

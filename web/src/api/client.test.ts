@@ -2,7 +2,7 @@ import { route } from "@/api/routes"
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { UNAUTHENTICATED_EVENT, api, request, retryAfterMs } from "@/api/client"
+import { UNAUTHENTICATED_EVENT, api, getBytes, request, retryAfterMs } from "@/api/client"
 import { errorMessage } from "@/lib/error-message"
 
 type Fetch = typeof globalThis.fetch
@@ -104,6 +104,20 @@ test("a 401 rejects as unauthenticated and announces itself once", async () => {
   }
 })
 
+test("a malformed 401 still retires the session for JSON and binary requests", async () => {
+  const restore = stubFetch(async () => new Response("not-json", { status: 401 }))
+  const observed = stubWindow()
+  try {
+    await assert.rejects(api.get(route("authSession")))
+    assert.equal(observed.events, 1)
+    await assert.rejects(getBytes("/api/admin/media/objects/test"))
+    assert.equal(observed.events, 2)
+  } finally {
+    restore()
+    observed.restore()
+  }
+})
+
 test("a write transport failure keeps its stable code without claiming it can be repeated", async () => {
   const transportError = new TypeError("Failed to fetch")
   const restore = stubFetch(async () => {
@@ -160,7 +174,7 @@ test("a listing writeback pending refusal carries the purchase id for settle rec
     jsonResponse(409, {
       error: "识图已计费，商品尚未写入，请核对后重试写回",
       code: "LISTING_WRITEBACK_PENDING",
-      ocrRecovery: { jobId: "job-1", requestId: "air-pending" },
+      ocr_recovery: { job_id: "job-1", request_id: "air-pending" },
     }),
   )
   try {
@@ -352,7 +366,7 @@ test("caller cancellation covers the body and leaves status/trace separate from 
     controller.abort()
     await assert.rejects(pending, { code: "cloud_unavailable" })
     controller = new AbortController()
-    globalThis.fetch = async () => new Response(JSON.stringify({ code: "AUTH_REQUIRED", ocrRecovery: { requestId: "ocr-1" } }), {
+    globalThis.fetch = async () => new Response(JSON.stringify({ code: "AUTH_REQUIRED", ocr_recovery: { request_id: "ocr-1" } }), {
       status: 401, headers: { "x-request-id": "http-1" },
     })
     await assert.rejects(request("GET", "/api/test", undefined, {}, 1000, undefined, { reportOwner: "caller" }), {
@@ -383,26 +397,20 @@ test("presign grants opt into store checksums and confirm routes do not", async 
   try {
     const presign = route("mediaObjectsByDigestByExtensionPresign", { digest: "abc", extension: "jpg" })
     const presignBatch = route("mediaObjectsPresignBatch")
-    const templates = route("listingTemplates")
     const uploads = route("aiOcrUploads")
     const avatar = route("avatarsWorkspacesByWorkspaceIdUpload", { workspace_id: 1 })
     const confirm = route("aiOcrUploadsConfirm")
-    const templateConfirm = route("listingTemplatesByIdConfirm", { id: "id" })
     await request("POST", presign, { byteLength: 1 })
     await request("POST", presignBatch, { objects: [] })
-    await request("POST", templates, { sha256: "a" })
     await request("POST", uploads, { image: {} })
     await request("POST", avatar, { bytes: 1 })
     await request("POST", confirm, {})
-    await request("POST", templateConfirm)
     assert.deepEqual(seen, [
       `${presign} sha256`,
       `${presignBatch} sha256`,
-      `${templates} sha256`,
       `${uploads} sha256`,
       `${avatar} sha256`,
       `${confirm} `,
-      `${templateConfirm} `,
     ])
   } finally { restore() }
 })

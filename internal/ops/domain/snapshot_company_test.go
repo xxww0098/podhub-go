@@ -16,4 +16,9 @@ func TestSnapshotJSONOmitsCompanyFields(t *testing.T) {
 			t.Fatalf("snapshot contains %s: %s", key, raw)
 		}
 	}
+	for _, value := range []string{`"label":"shop"`, `"cloud_store_uuid":"00000000-0000-4000-8000-000000000001"`, `"configured":false`} {
+		if !bytes.Contains(raw, []byte(value)) {
+			t.Fatalf("snapshot is missing store identity %s: %s", value, raw)
+		}
+	}
 }

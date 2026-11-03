@@ -14,6 +14,7 @@ function person(
   patch: Partial<AdminDirectoryPersonView> & Pick<AdminDirectoryPersonView, "name" | "email" | "uuid">,
 ): AdminDirectoryPersonView {
   return {
+    account_kind: "platform",
     kind: "user",
     role_label: "成员",
     role: "user",

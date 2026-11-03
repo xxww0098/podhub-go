@@ -1,5 +1,5 @@
 /**
- * 店铺商品表的批量写入选取与分组逻辑。
+ * Ozon 商品表的批量写入选取与分组逻辑。
  *
  * 写本身走 `opsHttp.productsMutate` 的写账本（幂等 operation_id + Ozon
  * 逐项回执），这里只回答三件事：哪些行写得进去、跨店勾选归到哪家店、
@@ -26,8 +26,6 @@ export const VERIFY_LIMIT = 50
 
 /**
  * 表格能发起的每一种 Seller 写入；`verify` 是只读核实，同样按店分组。
- * `variant-*` 三个是「同款规格」的合并 / 拆出 / 移入：走 ops 分组端点而不是
- * `products/mutate`，目标型号与生效由服务端核实（见 products-variant-model.ts）。
  */
 export type ProductAction =
   | "price"
@@ -36,13 +34,26 @@ export type ProductAction =
   | "archive"
   | "unarchive"
   | "delete"
-  | "variant-merge"
-  | "variant-split"
-  | "variant-move"
   | "verify"
+
+/** 打开的写入操作只属于当前工作空间和店铺。 */
+export function productScopeKey(workspaceId: number | undefined, storeId: string | null): string {
+  return `${workspaceId ?? "none"}:${storeId ?? "none"}`
+}
+
+export function openInScope<T extends { scope: string }>(open: T | null, scope: string): T | null {
+  return open !== null && open.scope === scope ? open : null
+}
 
 export function rowKey(row: Pick<StoreProductRow, "store_id" | "product_id">): string {
   return `${row.store_id}:${row.product_id}`
+}
+
+/** Numeric stock APIs cannot safely address a SKU outside JavaScript's integer range. */
+export function stockSku(sku: StoreProductRow["sku"]): number {
+  if (!sku || !/^[1-9]\d*$/.test(sku)) return 0
+  const value = Number(sku)
+  return Number.isSafeInteger(value) ? value : 0
 }
 
 /**
@@ -72,7 +83,7 @@ export function archiveBlockReason(row: {
 export function deleteBlockReason(row: StoreProductRow): string | null {
   if (row.gone) return "已下架的商品不能删除"
   if (row.state !== "archived") return "只能删除已归档的商品"
-  if ((row.sku ?? 0) > 0) return "已生成 SKU 的商品 Ozon 不允许删除，只能归档"
+  if (row.sku) return "已生成 SKU 的商品 Ozon 不允许删除，只能归档"
   if (!row.offer_id.trim()) return "缺少货号，不能删除"
   return null
 }
@@ -82,7 +93,8 @@ export function actionBlockReason(action: ProductAction, row: StoreProductRow): 
   switch (action) {
     case "stock":
       if (row.gone) return "已下架的商品不能改库存"
-      return (row.sku ?? 0) > 0 && row.product_id > 0 ? null : "缺少 SKU，不能改库存"
+      if (!row.sku || row.product_id <= 0) return "缺少 SKU，不能改库存"
+      return stockSku(row.sku) > 0 ? null : "此 SKU 暂不支持修改库存"
     case "price": {
       if (row.gone) return "已下架的商品不能改价"
       const price = Number(row.price)
@@ -100,28 +112,9 @@ export function actionBlockReason(action: ProductAction, row: StoreProductRow): 
       return row.state === "archived" ? null : "商品未归档"
     case "delete":
       return deleteBlockReason(row)
-    case "variant-merge":
-    case "variant-split":
-    case "variant-move":
-      return variantBlockReason(action, row)
     case "verify":
       return row.gone ? "已下架的商品无法核实" : null
   }
-}
-
-/**
- * 分组动作只要求这一行有可核实的商品号、且没有下架。
- * 型号所有权、镜像覆盖与「目标组是否可证明」一律由服务端判定——前端不猜
- * 规则，也不因为本地读不到分组事实就把按钮关掉（缺席即未知，不等于不可执行）。
- */
-function variantBlockReason(
-  action: "variant-merge" | "variant-split" | "variant-move",
-  row: StoreProductRow,
-): string | null {
-  const verb =
-    action === "variant-split" ? "拆出规格" : action === "variant-move" ? "移入同款" : "合并为同款"
-  if (row.gone) return `已下架的商品不能${verb}`
-  return row.product_id > 0 ? null : `缺少商品编号，不能${verb}`
 }
 
 /** 按操作把勾选拆成可写与跳过两组。 */

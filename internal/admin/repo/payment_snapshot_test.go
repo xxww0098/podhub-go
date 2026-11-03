@@ -16,12 +16,7 @@ func TestPaymentReadsAdminCamelAndRewrittenSnake(t *testing.T) {
 		SchemaVersion:  1,
 		AIAccounts:     []domain.StoredAI{},
 		AIDefaultModel: "",
-		Buckets: []domain.StoredBucket{{
-			ID: "media", Label: "m", Role: "assets", Provider: "generic", Endpoint: "https://s3.example",
-			Region: "auto", Bucket: "podhub-assets", KeyPrefix: "p", PublicBase: "https://assets.podhub.si",
-			ForcePath: true, AccessKey: "ak", SecretKey: "sk", Active: true,
-		}},
-		Payment: payment,
+		Payment:        payment,
 	}
 	camel, err := json.Marshal(snap)
 	if err != nil {
@@ -51,7 +46,7 @@ func TestPaymentReadsAdminCamelAndRewrittenSnake(t *testing.T) {
 	if _, _, err := domain.ParseStored([]byte(`{"schemaVersion":1,"aiAccounts":[],"aiDefaultModel":"","storageBuckets":[],"payment":{}}`)); err == nil {
 		t.Fatal("payment without providers")
 	}
-	bare, legacy, err := domain.ParseStored([]byte(`{"schemaVersion":1,"aiAccounts":[],"aiDefaultModel":"","storageBuckets":[]}`))
+	bare, legacy, err := domain.ParseStored([]byte(`{"schemaVersion":1,"aiAccounts":[],"aiDefaultModel":"","aiRuntime":{"maxConcurrencyGlobal":0,"maxConcurrencyUser":0,"maxConcurrencyAccount":0,"userRatePerMinute":0,"leaseTtlSeconds":90,"allowPublicEgress":false}}`))
 	if err != nil || legacy || bare.Payment != nil {
 		t.Fatalf("missing payment legacy=%v err=%v %+v", legacy, err, bare.Payment)
 	}

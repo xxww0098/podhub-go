@@ -2,17 +2,12 @@ package integration
 
 import (
 	"context"
-	"database/sql"
-	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/jackc/pgx/v5/stdlib"
-	"github.com/pressly/goose/v3"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 
@@ -22,13 +17,13 @@ import (
 	"github.com/xxww0098/podhub-go/tests/testkit"
 )
 
-// TestResultConsistency compares goose and River output with the Rust head.
-// Without Docker it skips, unless PODHUB_PARITY_DSN names a loopback database.
-// GitHub Actions ubuntu-latest has Docker, so CI runs it.
+// TestResultConsistency checks the queue kernel against the database: the
+// lease, requeue, idempotency and lock-order rules the Go code states must
+// match what SQL actually does. Without Docker it skips, unless
+// PODHUB_PARITY_DSN names a loopback database.
 //
-// This test keeps a private cluster: it creates extra databases, checks goose
-// order on an empty server, and raises max_locks_per_transaction. The shared
-// template is already migrated and uses the image defaults.
+// This test keeps a private cluster: it raises max_locks_per_transaction,
+// which the shared template does not, and it leaves rows behind.
 func TestResultConsistency(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -60,10 +55,6 @@ func TestResultConsistency(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Run("goose declaration order", func(t *testing.T) {
-		testGooseOrder(t, ctx, dsn)
-	})
-
 	cfg := config.Config{DatabaseURL: dsn}
 	_ = os.Setenv("PODHUB_ALLOW_SUPERUSER_DB", "1")
 	pool, err := db.Connect(ctx, cfg)
@@ -74,8 +65,8 @@ func TestResultConsistency(t *testing.T) {
 	if err := db.Migrate(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	// Earlier subtests insert rows. Drop them before the fingerprint so a
-	// rerun on the same database still has the head row counts.
+	// Earlier subtests insert rows. Drop them so a rerun on the same
+	// database starts from the seeded state.
 	if err := purgeParityFixtures(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +78,6 @@ func TestResultConsistency(t *testing.T) {
 	t.Run("idempotency", func(t *testing.T) { testIdempotency(t, ctx, pool) })
 	t.Run("wake notify", func(t *testing.T) { testWake(t, ctx, pool) })
 	t.Run("lock order", func(t *testing.T) { testLockOrder(t, ctx, pool) })
-	t.Run("function and trigger bodies", func(t *testing.T) { testRoutineBodies(t, ctx, pool) })
 	t.Run("jobs kernel rows", func(t *testing.T) { testKernelRows(t, ctx, pool) })
 	t.Run("queue head counters", func(t *testing.T) { testQueueHeadCounters(t, ctx, pool) })
 	t.Run("quota functions", func(t *testing.T) { testQuotaFunctions(t, ctx, pool) })
@@ -97,114 +87,8 @@ func TestResultConsistency(t *testing.T) {
 	t.Run("banned tag rules", func(t *testing.T) { testBannedTagRules(t, ctx, pool) })
 }
 
-func testGooseOrder(t *testing.T, ctx context.Context, dsn string) {
-	t.Helper()
-	admin, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer admin.Close()
-	for _, name := range []string{"goose_version_sort", "goose_declaration"} {
-		if _, err := admin.ExecContext(ctx, "DROP DATABASE IF EXISTS "+name); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := admin.ExecContext(ctx, "CREATE DATABASE "+name); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	versionDir := t.TempDir()
-	writeMigration(t, versionDir, "00054_facts.sql", `
-CREATE TABLE order_log (seq serial PRIMARY KEY, name text NOT NULL);
-INSERT INTO order_log (name) VALUES ('facts');
-`)
-	writeMigration(t, versionDir, "00055_banned.sql", `INSERT INTO order_log (name) VALUES ('banned');`)
-	dupDir := t.TempDir()
-	writeMigration(t, dupDir, "00055_banned.sql", `SELECT 1;`)
-	writeMigration(t, dupDir, "00055_occupancy.sql", `SELECT 1;`)
-	if _, err := goose.NewProvider(goose.DialectPostgres, admin, os.DirFS(dupDir)); err == nil || !strings.Contains(err.Error(), "duplicate migration version 55") {
-		t.Fatalf("shared stamp must be rejected, got %v", err)
-	}
-
-	applyGoose(t, ctx, withDatabase(dsn, "goose_version_sort"), versionDir)
-	got := gooseLog(t, ctx, withDatabase(dsn, "goose_version_sort"))
-	if strings.Join(got, ",") != "facts,banned" {
-		t.Fatalf("version sort ran %v; declaration wants banned before facts", got)
-	}
-
-	declDir := t.TempDir()
-	writeMigration(t, declDir, "00280_banned.sql", `
-CREATE TABLE order_log (seq serial PRIMARY KEY, name text NOT NULL);
-INSERT INTO order_log (name) VALUES ('banned');
-`)
-	writeMigration(t, declDir, "00281_facts.sql", `INSERT INTO order_log (name) VALUES ('facts');`)
-	writeMigration(t, declDir, "00282_occupancy.sql", `INSERT INTO order_log (name) VALUES ('occupancy');`)
-	applyGoose(t, ctx, withDatabase(dsn, "goose_declaration"), declDir)
-	got = gooseLog(t, ctx, withDatabase(dsn, "goose_declaration"))
-	if strings.Join(got, ",") != "banned,facts,occupancy" {
-		t.Fatalf("declaration renumber ran %v", got)
-	}
-}
-
-func writeMigration(t *testing.T, dir, name, body string) {
-	t.Helper()
-	sqlText := "-- +goose Up\n" + body + "\n-- +goose Down\nSELECT 1;\n"
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(sqlText), 0o644); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func applyGoose(t *testing.T, ctx context.Context, dsn, dir string) {
-	t.Helper()
-	sqlDB, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer sqlDB.Close()
-	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, os.DirFS(dir))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := provider.Up(ctx); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func gooseLog(t *testing.T, ctx context.Context, dsn string) []string {
-	t.Helper()
-	sqlDB, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer sqlDB.Close()
-	rows, err := sqlDB.QueryContext(ctx, "SELECT name FROM order_log ORDER BY seq")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	var names []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			t.Fatal(err)
-		}
-		names = append(names, name)
-	}
-	return names
-}
-
-func withDatabase(dsn, name string) string {
-	u, err := url.Parse(dsn)
-	if err != nil {
-		panic(err)
-	}
-	u.Path = "/" + name
-	return u.String()
-}
-
 func testSchemaDiff(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
-	testkit.CompareHeadFingerprint(t, ctx, pool)
 	var rivers int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND c.relname LIKE 'river_%'`).Scan(&rivers); err != nil {
 		t.Fatal(err)
@@ -352,7 +236,7 @@ func testIdempotency(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 
 func testWake(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
-	// The trigger and function come from the goose chain (jobs_wake_notify).
+	// The trigger and function come from the baseline schema (jobs_wake_notify).
 	// Payloads without "/sha256/" pass the media-reference guard.
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO account_users (id, public_id, email, password_hash, role, name, target, supplier_id, plan, created_at, updated_at)
@@ -516,11 +400,6 @@ func testLockOrder(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	}
 }
 
-func testRoutineBodies(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
-	t.Helper()
-	testkit.CompareRoutineBodies(t, ctx, pool)
-}
-
 func queryStrings(t *testing.T, ctx context.Context, pool *pgxpool.Pool, q string) []string {
 	t.Helper()
 	rows, err := pool.Query(ctx, q)
@@ -538,6 +417,3 @@ func queryStrings(t *testing.T, ctx context.Context, pool *pgxpool.Pool, q strin
 	}
 	return out
 }
-
-// Keep stdlib imported for the pgx driver registration used by database/sql.
-var _ = stdlib.OpenDB

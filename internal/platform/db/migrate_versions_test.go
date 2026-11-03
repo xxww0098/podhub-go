@@ -10,7 +10,7 @@ import (
 )
 
 // TestMigrationVersionsUnique rejects two files that share a goose version.
-// Goose refuses the directory before Up runs, allow-missing or not.
+// Goose refuses the directory before Up runs.
 func TestMigrationVersionsUnique(t *testing.T) {
 	entries, err := fs.ReadDir(dbschema.Migrations, "migrations")
 	if err != nil {

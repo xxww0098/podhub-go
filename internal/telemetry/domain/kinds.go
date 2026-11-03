@@ -803,8 +803,13 @@ func decodeErrorFeedback(payload, id string) (string, error) {
 	}
 	m := fieldMap(fields)
 	errorID, ok := jsonString(m["errorId"])
-	if !ok || errorID != id {
+	if !ok || errorID != id || len(errorID) != 13 || errorID[0] > 'F' {
 		return "", kindErr("error feedback 格式无效")
+	}
+	for _, c := range errorID {
+		if !strings.ContainsRune("0123456789ABCDEFGHJKMNPQRSTVWXYZ", c) {
+			return "", kindErr("error feedback 格式无效")
+		}
 	}
 	code, ok := jsonString(m["code"])
 	if !ok || code == "" {
@@ -817,6 +822,15 @@ func decodeErrorFeedback(payload, id string) (string, error) {
 	for _, key := range []string{"traceId", "status", "stage", "rowId", "cardId", "appVersion", "userId", "workspaceId", "userAgent", "requestId", "apiPath", "apiStatus", "refusalReason"} {
 		raw, exists := m[key]
 		if !exists {
+			continue
+		}
+		if key == "status" || key == "apiStatus" {
+			var status int
+			if err := json.Unmarshal(raw, &status); err != nil || status < 100 || status > 599 {
+				return "", kindErr("error feedback 格式无效")
+			}
+			o.keys = append(o.keys, key)
+			o.vals[key] = rawInt(int64(status))
 			continue
 		}
 		s, sok := jsonString(raw)

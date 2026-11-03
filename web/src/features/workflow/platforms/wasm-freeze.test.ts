@@ -4,7 +4,7 @@
  * native Rust pins (`rust/crates/listing-core-wasm/tests/freeze_abi.rs` exports
  * the input), stale/AI-unresolved/invalid rows are refused with actionable
  * issues, and build makes no network call. Rebuild the artifact with
- * `scripts/build-wasm.sh core --copy` after changing the crate.
+ * `scripts/build-wasm.sh core` after changing the crate.
  */
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
@@ -13,8 +13,8 @@ import test from "node:test"
 import type { CardPayload, CategorySchemaSnapshot, LeanRow } from "@/listing-core/types"
 import { createListingCore, type ListingCore } from "@/listing-core/wasm"
 import { createListingPlatforms, createListingSendCapabilities } from "."
-import { createOzonAdapter } from "./ozon"
-import type { OzonFieldRules } from "./ozon-fields"
+import { createOzonAdapter } from "./ozon/adapter"
+import type { OzonFieldRules } from "./ozon/fields"
 import { createSendQueue } from "../submit/send-queue"
 import { finalQueueHarness } from "../submit/send-test-support"
 import { route } from "@/api/routes"

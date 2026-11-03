@@ -1,8 +1,0 @@
-package: gen
-output: internal/supply/http/gen/openapi.gen.go
-generate:
-  models: true
-  chi-server: false
-output-options:
-  include-tags:
-    - platform

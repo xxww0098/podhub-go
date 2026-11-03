@@ -1,9 +1,12 @@
 import { AI_MODEL_CHOICES, type AiModelChoice } from "@/lib/ai-model-presets"
 import type { AiAccountView, AiApiFormat, AiThinking, AiThinkingFormat, ListAiModelsRequest } from "@/bindings/commands"
 
+/** The one image model the generator serves today (Bailian only); image accounts are edited for this id. */
+export const IMAGE_MODEL = "qwen-image-2.1-pro"
+
 /** Pick a matching account for a read-only probe; runtime rotation remains server-owned. */
 export function accountForModel(accounts: AiAccountView[] | undefined, model: string): AiAccountView | undefined {
-  return accounts?.filter((row) => row.active && row.configured && row.api_format === "chat_completions" && row.model === model)
+  return accounts?.filter((row) => row.active && row.configured && row.purpose === "ocr" && row.api_format === "chat_completions" && row.model === model)
     .sort((a, b) => b.priority - a.priority)[0]
 }
 

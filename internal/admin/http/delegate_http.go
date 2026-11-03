@@ -7,6 +7,7 @@ import (
 
 	"github.com/xxww0098/podhub-go/internal/admin/domain"
 	"github.com/xxww0098/podhub-go/internal/admin/service"
+	access "github.com/xxww0098/podhub-go/internal/identity/contract"
 )
 
 func (h handler) delegateAdmin(w http.ResponseWriter, r *http.Request, rt Route, s Session) {
@@ -42,7 +43,7 @@ func gateStaff(s Session) (int, string, string) {
 	if s.UserID == 0 {
 		return http.StatusUnauthorized, "未登录", "auth_invalid"
 	}
-	if !domain.PlatformStaff(s.PlatformRole) {
+	if !access.IsPlatformStaff(s.PlatformRole) {
 		return http.StatusForbidden, "需要平台管理员权限", "forbidden"
 	}
 	return 0, "", ""

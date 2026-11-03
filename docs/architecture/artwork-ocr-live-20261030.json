@@ -1,0 +1,265 @@
+{
+  "model": "qwen3.7-flash",
+  "source_sha256": "0db971bce095d1e9c5a534b3d0d803c4e7a09fe65ff86ff1d2455c46be472d5c",
+  "upload_sha256": "5e740a73306f42416a6215eab0a68a8d064a65137e6876ea4410c01c94805bfa",
+  "image_bytes": 104488,
+  "scope": "live model + private R2 image + local tenant wallet + persistent listing row; six controlled product profiles share the cached painting schema, no Seller publication or category mapping acceptance",
+  "cases": [
+    {
+      "key": "mug",
+      "product": "马克杯",
+      "row_id": "6df582ee-4d11-4c1c-8238-78ed62531c77",
+      "job_id": "584d3e54-fe57-43ef-bf3b-bb87db5111a3",
+      "request_id": "air_8a2e8cf49cc483eacc9ea85800e53e09",
+      "upstream_response_id": "chatcmpl-5cf3978f-e95e-9c6a-bcdd-c4f3494089cf",
+      "title": "Кружка керамическая 330 мл \"Кот с чашкой\"",
+      "description": "Керамическая кружка 330 мл. Сюжет: Кот с чашкой.",
+      "tags": [
+        "#кружка",
+        "#керамика",
+        "#330мл",
+        "#кот_с_чашкой"
+      ],
+      "prompt_tokens": 1287,
+      "completion_tokens": 26,
+      "charged_microfen": 15400,
+      "total_microfen": 55640,
+      "absorbed_microfen": 40240,
+      "independent_db_checks_passed": true,
+      "checks": {
+        "missing_before_upload": true,
+        "private_upload_http": 200,
+        "unsigned_get_http": 400,
+        "unsigned_error": "InvalidArgument: Authorization",
+        "wrong_lease_refused": true,
+        "wallet_delta_exact": true,
+        "held_released": true,
+        "get_post_settle_replay_no_charge": true,
+        "second_purchase_key_refused": true
+      }
+    },
+    {
+      "key": "mousepad",
+      "product": "鼠标垫",
+      "row_id": "623385e7-26fd-490e-95c0-0ab7787ccbac",
+      "job_id": "87496288-ccd0-4a87-8cd7-6e3fc9365f7e",
+      "request_id": "air_16e56c55c736ced32707abd9d266a252",
+      "upstream_response_id": "chatcmpl-9158f638-fe37-9b7c-8a5a-fff4bf6d5d02",
+      "title": "Коврик для мыши 800×300 мм \"Кот с чашкой\"",
+      "description": "Коврик для мыши размером 800×300 мм. Сюжет: Кот с чашкой.",
+      "tags": [
+        "#коврик",
+        "#для_мыши",
+        "#кот_с_чашкой"
+      ],
+      "prompt_tokens": 1286,
+      "completion_tokens": 26,
+      "charged_microfen": 15400,
+      "total_microfen": 55600,
+      "absorbed_microfen": 40200,
+      "independent_db_checks_passed": true,
+      "checks": {
+        "missing_before_upload": true,
+        "private_upload_http": 200,
+        "unsigned_get_http": 400,
+        "confirmed_image": {
+          "bytes": 104488,
+          "sha256": "5e740a73306f42416a6215eab0a68a8d064a65137e6876ea4410c01c94805bfa",
+          "content_type": "image/jpeg"
+        },
+        "wrong_lease_refused": true,
+        "wallet_delta_exact": true,
+        "held_released": true,
+        "get_post_settle_replay_no_charge": true,
+        "second_purchase_key_refused": true
+      }
+    },
+    {
+      "key": "paint",
+      "product": "数字油画",
+      "row_id": "8f08cb7d-34ee-49da-a84b-17c829d4eeab",
+      "job_id": "dd0e0845-d93c-417e-8de1-e5353a7fb790",
+      "request_id": "air_e1a03ad3b73614b51d6806909cc13b4a",
+      "upstream_response_id": "chatcmpl-9f24a61e-2cdd-90f9-8e17-794292587e91",
+      "title": "Картина по номерам 40×50 см на подрамнике \"Кот с чашкой\"",
+      "description": "Картина по номерам 40×50 см на подрамнике. Сюжет: Кот с чашкой.",
+      "tags": [
+        "#картина",
+        "#по_номерам",
+        "#кот_с_чашкой"
+      ],
+      "prompt_tokens": 1285,
+      "completion_tokens": 24,
+      "charged_microfen": 15480,
+      "total_microfen": 55240,
+      "absorbed_microfen": 39760,
+      "independent_db_checks_passed": true,
+      "checks": {
+        "missing_before_upload": true,
+        "private_upload_http": 200,
+        "unsigned_get_http": 400,
+        "confirmed_image": {
+          "bytes": 104488,
+          "sha256": "5e740a73306f42416a6215eab0a68a8d064a65137e6876ea4410c01c94805bfa",
+          "content_type": "image/jpeg"
+        },
+        "wrong_lease_refused": true,
+        "wallet_delta_exact": true,
+        "held_released": true,
+        "get_post_settle_replay_no_charge": true,
+        "second_purchase_key_refused": true
+      }
+    },
+    {
+      "key": "tshirt",
+      "product": "T恤",
+      "row_id": "0e749851-b7e2-4429-a90e-ac4c12f7dca4",
+      "job_id": "0e6306d5-1221-4ebd-9f8f-472696a9b8dc",
+      "request_id": "air_072e13c74e7a7dde6cfb5b62a78d0abe",
+      "upstream_response_id": "chatcmpl-a5f3501f-1101-9ab3-94a0-b64505ac6172",
+      "title": "Футболка хлопковая \"Кот с чашкой\"",
+      "description": "Хлопковая футболка. Сюжет: Кот с чашкой.",
+      "tags": [
+        "#футболка",
+        "#хлопок",
+        "#кот_с_чашкой"
+      ],
+      "prompt_tokens": 1284,
+      "completion_tokens": 26,
+      "charged_microfen": 15320,
+      "total_microfen": 55520,
+      "absorbed_microfen": 40200,
+      "independent_db_checks_passed": true,
+      "checks": {
+        "missing_before_upload": true,
+        "private_upload_http": 200,
+        "unsigned_get_http": 400,
+        "confirmed_image": {
+          "bytes": 104488,
+          "sha256": "5e740a73306f42416a6215eab0a68a8d064a65137e6876ea4410c01c94805bfa",
+          "content_type": "image/jpeg"
+        },
+        "wrong_lease_refused": true,
+        "wallet_delta_exact": true,
+        "held_released": true,
+        "get_post_settle_replay_no_charge": true,
+        "second_purchase_key_refused": true
+      }
+    },
+    {
+      "key": "tote",
+      "product": "帆布袋",
+      "row_id": "ac864110-8889-404d-a6c6-ed0b6ee3d12c",
+      "job_id": "425b1927-8e68-4a36-b572-e7587af9b125",
+      "request_id": "air_63bc24280f5f39ad156f31704b6dff4b",
+      "upstream_response_id": "chatcmpl-b999fb08-f56f-96d1-b4d1-f7c263b45ed2",
+      "title": "Сумка-шоппер хлопковая 35×40 см \"Кот с чашкой\"",
+      "description": "Хлопковая сумка-шоппер 35×40 см. Сюжет: Кот с чашкой.",
+      "tags": [
+        "#шоппер",
+        "#сумка",
+        "#кот_с_чашкой"
+      ],
+      "prompt_tokens": 1287,
+      "completion_tokens": 26,
+      "charged_microfen": 15360,
+      "total_microfen": 55640,
+      "absorbed_microfen": 40280,
+      "independent_db_checks_passed": true,
+      "checks": {
+        "missing_before_upload": true,
+        "private_upload_http": 200,
+        "unsigned_get_http": 400,
+        "confirmed_image": {
+          "bytes": 104488,
+          "sha256": "5e740a73306f42416a6215eab0a68a8d064a65137e6876ea4410c01c94805bfa",
+          "content_type": "image/jpeg"
+        },
+        "wrong_lease_refused": true,
+        "wallet_delta_exact": true,
+        "held_released": true,
+        "get_post_settle_replay_no_charge": true,
+        "second_purchase_key_refused": true
+      }
+    },
+    {
+      "key": "pillowcase",
+      "product": "靠枕套",
+      "row_id": "3b60f49d-8a9e-4550-b035-5fb62d1e2e47",
+      "job_id": "cdb9884c-eb86-4e4d-93d3-3fa309c7b4f6",
+      "request_id": "air_aacace2ec92cf3f5af336bca7fc66b59",
+      "upstream_response_id": "chatcmpl-6e746b7e-b6fa-9caf-b729-5e4151b622df",
+      "title": "Наволочка декоративная 45×45 см \"Кот с чашкой\"",
+      "description": "Декоративная наволочка 45×45 см. Сюжет: Кот с чашкой.",
+      "tags": [
+        "#наволочка",
+        "#декор",
+        "#кот_с_чашкой"
+      ],
+      "prompt_tokens": 1289,
+      "completion_tokens": 26,
+      "charged_microfen": 15480,
+      "total_microfen": 55720,
+      "absorbed_microfen": 40240,
+      "independent_db_checks_passed": true,
+      "checks": {
+        "missing_before_upload": true,
+        "private_upload_http": 200,
+        "unsigned_get_http": 400,
+        "confirmed_image": {
+          "bytes": 104488,
+          "sha256": "5e740a73306f42416a6215eab0a68a8d064a65137e6876ea4410c01c94805bfa",
+          "content_type": "image/jpeg"
+        },
+        "wrong_lease_refused": true,
+        "wallet_delta_exact": true,
+        "held_released": true,
+        "get_post_settle_replay_no_charge": true,
+        "second_purchase_key_refused": true
+      }
+    }
+  ],
+  "totals": {
+    "requests": 6,
+    "distinct_upstream_response_ids": 6,
+    "charged_microfen": 92440,
+    "priced_usage_microfen": 333360,
+    "absorbed_microfen": 240920,
+    "wallet_before_microfen": 496233280,
+    "wallet_after_microfen": 496140840,
+    "held_microfen": 0
+  },
+  "private_storage": {
+    "provider": "Cloudflare R2",
+    "bucket": "podhub-test-delegate",
+    "role": "private",
+    "anonymous_read_refused": true,
+    "server_confirmed_sha256": "5e740a73306f42416a6215eab0a68a8d064a65137e6876ea4410c01c94805bfa"
+  },
+  "cross_workspace_refusals": true,
+  "ui": {
+    "source_id": "src_9433a55db515419f9a88382c8ddc552c",
+    "product_id": "scp_0b36d54c83c841e4967b41420f192c67",
+    "draft_revision": 4,
+    "published_revision": 4,
+    "supplier_product_enabled": false,
+    "save_and_publish_no_ai_charge": true,
+    "desktop_width": 1728,
+    "mobile_width": 390,
+    "mobile_panel_width": 389,
+    "mobile_scroll_width": 389,
+    "supplier_tests_passed": 129,
+    "typescript_and_build_passed": true,
+    "architecture_tests_passed": true
+  },
+  "provider": {
+    "id": "ai_ca11a160ee5e40d5acd9d6bff8262e36",
+    "base_url": "https://llm-opgv3nmovcqi0se7.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+    "api_format": "chat_completions",
+    "model": "qwen3.7-flash",
+    "active": true,
+    "priority": 0,
+    "purpose": "ocr"
+  },
+  "billing_limit": "The current text-only prepay estimate omits visual tokens; the existing per-request ceiling recorded 240920 microfen as absorbed. Pricing and settlement rules were not changed."
+}

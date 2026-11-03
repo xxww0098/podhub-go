@@ -53,3 +53,28 @@ func TestZeroProductIDIsUnreadable(t *testing.T) {
 		t.Fatalf("%+v", got)
 	}
 }
+
+func TestAcceptedProbeUsesTighterBackoffAndStopsAfterTwoAbsences(t *testing.T) {
+	first := DecideAcceptedProbe(ProbeMemory{}, SightAbsent, Found{})
+	if first.Kind != "retry" || first.Passes != 1 || first.Observation != "absent" || first.BackoffSecs != 15 {
+		t.Fatalf("%+v", first)
+	}
+	second := DecideAcceptedProbe(ProbeMemory{Passes: 1, Observation: "absent"}, SightAbsent, Found{})
+	if second.Kind != "stop" || second.Passes != 2 || second.Observation != "absent" {
+		t.Fatalf("%+v", second)
+	}
+}
+
+func TestAcceptedProbeAcceptsAndGivesUp(t *testing.T) {
+	found := DecideAcceptedProbe(ProbeMemory{}, SightFound, Found{ProductID: 9, SKU: 4})
+	if found.Kind != "accept" || found.ProductID != 9 || found.SKU != 4 {
+		t.Fatalf("%+v", found)
+	}
+	unreadable := DecideAcceptedProbe(ProbeMemory{Passes: 7, Observation: "unreadable"}, SightUnreadable, Found{})
+	if unreadable.Kind != "give_up" || unreadable.Passes != 8 {
+		t.Fatalf("%+v", unreadable)
+	}
+	if acceptedProbeBackoffSecs(0) != 15 || acceptedProbeBackoffSecs(1) != 30 || acceptedProbeBackoffSecs(4) != 240 || acceptedProbeBackoffSecs(5) != 300 {
+		t.Fatal(acceptedProbeBackoffSecs(0), acceptedProbeBackoffSecs(1), acceptedProbeBackoffSecs(4), acceptedProbeBackoffSecs(5))
+	}
+}

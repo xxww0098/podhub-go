@@ -192,14 +192,13 @@ function recordedFailure(
   lifecycle: WorkflowProductLifecycle,
   report: WorkflowReadinessReport,
 ): string | undefined {
+  const stage = lifecycle.ai === "failed" || report.blockers.includes("ai_failed") ? "ai"
+    : lifecycle.media === "failed" || report.blockers.includes("media_failed") ? "media"
+    : lifecycle.fields === "invalid" || report.blockers.includes("fields_invalid") ? "validation" : undefined
   const entry = lifecycle.failure_log
     ?.slice()
     .reverse()
-    .find((item) =>
-      (item.stage === "ai" && (lifecycle.ai === "failed" || report.blockers.includes("ai_failed"))) ||
-      (item.stage === "media" && (lifecycle.media === "failed" || report.blockers.includes("media_failed"))) ||
-      (item.stage === "validation" && (lifecycle.fields === "invalid" || report.blockers.includes("fields_invalid"))),
-    )
+    .find((item) => item.stage === stage)
   if (!entry?.message?.trim()) return undefined
   const message = entry.message.trim()
   const remediation = entry.remediation?.trim()
@@ -288,7 +287,9 @@ export function publishStateDetail(
 
   // Structured issues are this validation attempt. A prepare completion line
   // ("准备已完成") must not outrank them or the recorded validation sentence.
-  const fieldIssues = lifecycle.stage === "fields_invalid" || report.blockers.includes("fields_invalid")
+  const preparationFailed = lifecycle.ai === "failed" || lifecycle.media === "failed"
+    || (tracks && preparationFailureCopy(tracks) != null)
+  const fieldIssues = !preparationFailed && (lifecycle.stage === "fields_invalid" || report.blockers.includes("fields_invalid"))
     ? fieldIssueSummary(issues)
     : undefined
   if (fieldIssues) return { text: fieldIssues, fullText: fieldIssues }

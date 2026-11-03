@@ -1,0 +1,1328 @@
+[
+  {
+    "image": "SZ-9BXIE0610-0001.jpg",
+    "category": "mousepad",
+    "source_sha256": "745c4654942b73b1764f0b46bca0fedde407f25e3e957efb400e1a185b1d68fd",
+    "image_sha256": "4ecc19865e7a7e876fd7277aa0af0f7c78b369b7a8d4fe5b33011c398ae62412",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-d098fc4a-5dd0-99cd-b1ba-83ce8a910155",
+    "profile": {
+      "product_type_ru": "Коврик для мыши",
+      "facts_ru": "800×300 мм"
+    },
+    "fixed_tags": [
+      "#коврик"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Геометрические лица\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Коврик для мыши 800×300 мм \"Геометрические лица\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0001.jpg",
+    "category": "mug",
+    "source_sha256": "745c4654942b73b1764f0b46bca0fedde407f25e3e957efb400e1a185b1d68fd",
+    "image_sha256": "4ecc19865e7a7e876fd7277aa0af0f7c78b369b7a8d4fe5b33011c398ae62412",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-d4a66870-74a7-9deb-abb7-921f12fd6897",
+    "profile": {
+      "product_type_ru": "Кружка",
+      "facts_ru": "керамическая 330 мл"
+    },
+    "fixed_tags": [
+      "#кружка"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n\"state\": \"clear\",\n\"theme_ru\": \"Геометрические лица\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Кружка керамическая 330 мл \"Геометрические лица\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0001.jpg",
+    "category": "paint",
+    "source_sha256": "745c4654942b73b1764f0b46bca0fedde407f25e3e957efb400e1a185b1d68fd",
+    "image_sha256": "4ecc19865e7a7e876fd7277aa0af0f7c78b369b7a8d4fe5b33011c398ae62412",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-dfbf7fe4-18db-91ac-befd-89acae08d2a2",
+    "profile": {
+      "product_type_ru": "Картина по номерам",
+      "facts_ru": "40×50 см на подрамнике"
+    },
+    "fixed_tags": [
+      "#картина"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Геометрические лица\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Картина по номерам 40×50 см на подрамнике \"Геометрические лица\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0001.jpg",
+    "category": "pillowcase",
+    "source_sha256": "745c4654942b73b1764f0b46bca0fedde407f25e3e957efb400e1a185b1d68fd",
+    "image_sha256": "4ecc19865e7a7e876fd7277aa0af0f7c78b369b7a8d4fe5b33011c398ae62412",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-2b761e65-5480-9dde-84f9-d06b421b9e89",
+    "profile": {
+      "product_type_ru": "Наволочка декоративная",
+      "facts_ru": "45×45 см"
+    },
+    "fixed_tags": [
+      "#наволочка"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Геометрические лица\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Наволочка декоративная 45×45 см \"Геометрические лица\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0001.jpg",
+    "category": "tote",
+    "source_sha256": "745c4654942b73b1764f0b46bca0fedde407f25e3e957efb400e1a185b1d68fd",
+    "image_sha256": "4ecc19865e7a7e876fd7277aa0af0f7c78b369b7a8d4fe5b33011c398ae62412",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-f8e6ebca-7e8d-9357-a804-65aeeb638d89",
+    "profile": {
+      "product_type_ru": "Сумка-шоппер",
+      "facts_ru": "хлопковая 35×40 см"
+    },
+    "fixed_tags": [
+      "#шоппер"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Геометрические лица\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Сумка-шоппер хлопковая 35×40 см \"Геометрические лица\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0001.jpg",
+    "category": "tshirt",
+    "source_sha256": "745c4654942b73b1764f0b46bca0fedde407f25e3e957efb400e1a185b1d68fd",
+    "image_sha256": "4ecc19865e7a7e876fd7277aa0af0f7c78b369b7a8d4fe5b33011c398ae62412",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-e7630abb-8a39-9a5d-967d-7edd541d7285",
+    "profile": {
+      "product_type_ru": "Футболка",
+      "facts_ru": "хлопковая"
+    },
+    "fixed_tags": [
+      "#футболка"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Геометрические лица\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Футболка хлопковая \"Геометрические лица\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0007.jpg",
+    "category": "mousepad",
+    "source_sha256": "049c765e271df6a9f370fbdb71a92d644c3b117846db8fdbbdcb79a1ac3b047e",
+    "image_sha256": "cf47abef667ad24887ba65147208c2f91e713ab6d841de6e8813980d9425c6d2",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-2a18645c-fc6f-9721-98b9-fffa55adeb10",
+    "profile": {
+      "product_type_ru": "Коврик для мыши",
+      "facts_ru": "800×300 мм"
+    },
+    "fixed_tags": [
+      "#коврик"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Цветы в вазе\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Коврик для мыши 800×300 мм \"Цветы в вазе\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0007.jpg",
+    "category": "mug",
+    "source_sha256": "049c765e271df6a9f370fbdb71a92d644c3b117846db8fdbbdcb79a1ac3b047e",
+    "image_sha256": "cf47abef667ad24887ba65147208c2f91e713ab6d841de6e8813980d9425c6d2",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-ea6ef4b4-475b-979e-a3a5-21d0364c59df",
+    "profile": {
+      "product_type_ru": "Кружка",
+      "facts_ru": "керамическая 330 мл"
+    },
+    "fixed_tags": [
+      "#кружка"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Цветы в вазе\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Кружка керамическая 330 мл \"Цветы в вазе\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0007.jpg",
+    "category": "paint",
+    "source_sha256": "049c765e271df6a9f370fbdb71a92d644c3b117846db8fdbbdcb79a1ac3b047e",
+    "image_sha256": "cf47abef667ad24887ba65147208c2f91e713ab6d841de6e8813980d9425c6d2",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-0124927b-c350-9def-8f69-fc70a29726db",
+    "profile": {
+      "product_type_ru": "Картина по номерам",
+      "facts_ru": "40×50 см на подрамнике"
+    },
+    "fixed_tags": [
+      "#картина"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n\"state\": \"clear\",\n\"theme_ru\": \"Цветы в вазе\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Картина по номерам 40×50 см на подрамнике \"Цветы в вазе\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0007.jpg",
+    "category": "pillowcase",
+    "source_sha256": "049c765e271df6a9f370fbdb71a92d644c3b117846db8fdbbdcb79a1ac3b047e",
+    "image_sha256": "cf47abef667ad24887ba65147208c2f91e713ab6d841de6e8813980d9425c6d2",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-356831dd-fc00-9dbb-a63c-e96de946161e",
+    "profile": {
+      "product_type_ru": "Наволочка декоративная",
+      "facts_ru": "45×45 см"
+    },
+    "fixed_tags": [
+      "#наволочка"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n\"state\": \"clear\",\n\"theme_ru\": \"Цветы в вазе\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Наволочка декоративная 45×45 см \"Цветы в вазе\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0007.jpg",
+    "category": "tote",
+    "source_sha256": "049c765e271df6a9f370fbdb71a92d644c3b117846db8fdbbdcb79a1ac3b047e",
+    "image_sha256": "cf47abef667ad24887ba65147208c2f91e713ab6d841de6e8813980d9425c6d2",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-fba80ff4-03d3-98d5-a969-6a45ec01ef7c",
+    "profile": {
+      "product_type_ru": "Сумка-шоппер",
+      "facts_ru": "хлопковая 35×40 см"
+    },
+    "fixed_tags": [
+      "#шоппер"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Цветы в вазе\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Сумка-шоппер хлопковая 35×40 см \"Цветы в вазе\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0007.jpg",
+    "category": "tshirt",
+    "source_sha256": "049c765e271df6a9f370fbdb71a92d644c3b117846db8fdbbdcb79a1ac3b047e",
+    "image_sha256": "cf47abef667ad24887ba65147208c2f91e713ab6d841de6e8813980d9425c6d2",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-898075c3-a9be-9b02-b5a3-c6e609c9dcaa",
+    "profile": {
+      "product_type_ru": "Футболка",
+      "facts_ru": "хлопковая"
+    },
+    "fixed_tags": [
+      "#футболка"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Цветы в вазе\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Футболка хлопковая \"Цветы в вазе\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0016.jpg",
+    "category": "mousepad",
+    "source_sha256": "3cb06a95d2b5ef463f51059bf68ca3d7f41119cf3ba1300866a135614f62f0cb",
+    "image_sha256": "8247790a83a8b0040a788b6e47f4a008ad0b0bf5f9cb59e231b9d6e0fe5b5202",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-68da1975-0c74-96a0-856f-fd1c28139356",
+    "profile": {
+      "product_type_ru": "Коврик для мыши",
+      "facts_ru": "800×300 мм"
+    },
+    "fixed_tags": [
+      "#коврик"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Собака с газетой\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Коврик для мыши 800×300 мм \"Собака с газетой\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0016.jpg",
+    "category": "mug",
+    "source_sha256": "3cb06a95d2b5ef463f51059bf68ca3d7f41119cf3ba1300866a135614f62f0cb",
+    "image_sha256": "8247790a83a8b0040a788b6e47f4a008ad0b0bf5f9cb59e231b9d6e0fe5b5202",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-cafec2fb-6839-93e4-837a-63695c38eb25",
+    "profile": {
+      "product_type_ru": "Кружка",
+      "facts_ru": "керамическая 330 мл"
+    },
+    "fixed_tags": [
+      "#кружка"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Собака с газетой\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Кружка керамическая 330 мл \"Собака с газетой\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0016.jpg",
+    "category": "paint",
+    "source_sha256": "3cb06a95d2b5ef463f51059bf68ca3d7f41119cf3ba1300866a135614f62f0cb",
+    "image_sha256": "8247790a83a8b0040a788b6e47f4a008ad0b0bf5f9cb59e231b9d6e0fe5b5202",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-40802fa2-f11d-9832-ba64-c45893ac8549",
+    "profile": {
+      "product_type_ru": "Картина по номерам",
+      "facts_ru": "40×50 см на подрамнике"
+    },
+    "fixed_tags": [
+      "#картина"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Собака с газетой\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Картина по номерам 40×50 см на подрамнике \"Собака с газетой\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0016.jpg",
+    "category": "pillowcase",
+    "source_sha256": "3cb06a95d2b5ef463f51059bf68ca3d7f41119cf3ba1300866a135614f62f0cb",
+    "image_sha256": "8247790a83a8b0040a788b6e47f4a008ad0b0bf5f9cb59e231b9d6e0fe5b5202",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-7f57cba0-0b0a-9b6e-8479-f8e92da70155",
+    "profile": {
+      "product_type_ru": "Наволочка декоративная",
+      "facts_ru": "45×45 см"
+    },
+    "fixed_tags": [
+      "#наволочка"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Собака с газетой\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Наволочка декоративная 45×45 см \"Собака с газетой\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0016.jpg",
+    "category": "tote",
+    "source_sha256": "3cb06a95d2b5ef463f51059bf68ca3d7f41119cf3ba1300866a135614f62f0cb",
+    "image_sha256": "8247790a83a8b0040a788b6e47f4a008ad0b0bf5f9cb59e231b9d6e0fe5b5202",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-3f9b81d2-3890-9d68-8639-0b24655058ae",
+    "profile": {
+      "product_type_ru": "Сумка-шоппер",
+      "facts_ru": "хлопковая 35×40 см"
+    },
+    "fixed_tags": [
+      "#шоппер"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Собака с газетой\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Сумка-шоппер хлопковая 35×40 см \"Собака с газетой\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0016.jpg",
+    "category": "tshirt",
+    "source_sha256": "3cb06a95d2b5ef463f51059bf68ca3d7f41119cf3ba1300866a135614f62f0cb",
+    "image_sha256": "8247790a83a8b0040a788b6e47f4a008ad0b0bf5f9cb59e231b9d6e0fe5b5202",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-e5da7653-f718-9c86-a26e-3312690a11f9",
+    "profile": {
+      "product_type_ru": "Футболка",
+      "facts_ru": "хлопковая"
+    },
+    "fixed_tags": [
+      "#футболка"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Собака с газетой\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Футболка хлопковая \"Собака с газетой\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0031.jpg",
+    "category": "mousepad",
+    "source_sha256": "fbceae7a726bd0299f5fe2fa79a843fd8fd84a40a176525f6954d513a9d1c87c",
+    "image_sha256": "f47c698ede1c46b3682a222db11001d5a5de04dd2bb421c185790ae0667bb234",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-68123ce3-5acb-9913-a66d-f866f56809e3",
+    "profile": {
+      "product_type_ru": "Коврик для мыши",
+      "facts_ru": "800×300 мм"
+    },
+    "fixed_tags": [
+      "#коврик"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Гора и фонари на закате\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Коврик для мыши 800×300 мм \"Гора и фонари на закате\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0031.jpg",
+    "category": "mug",
+    "source_sha256": "fbceae7a726bd0299f5fe2fa79a843fd8fd84a40a176525f6954d513a9d1c87c",
+    "image_sha256": "f47c698ede1c46b3682a222db11001d5a5de04dd2bb421c185790ae0667bb234",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-bed51bb6-c410-9c75-8668-0e50eb571794",
+    "profile": {
+      "product_type_ru": "Кружка",
+      "facts_ru": "керамическая 330 мл"
+    },
+    "fixed_tags": [
+      "#кружка"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n\"state\": \"clear\",\n\"theme_ru\": \"Гора и японская деревня\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": null,
+    "expected_reason": "unsupported_theme"
+  },
+  {
+    "image": "SZ-9BXIE0610-0031.jpg",
+    "category": "paint",
+    "source_sha256": "fbceae7a726bd0299f5fe2fa79a843fd8fd84a40a176525f6954d513a9d1c87c",
+    "image_sha256": "f47c698ede1c46b3682a222db11001d5a5de04dd2bb421c185790ae0667bb234",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-e80849d3-fb22-9791-9933-4fac1c2901db",
+    "profile": {
+      "product_type_ru": "Картина по номерам",
+      "facts_ru": "40×50 см на подрамнике"
+    },
+    "fixed_tags": [
+      "#картина"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Гора и фонари на закате\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Картина по номерам 40×50 см на подрамнике \"Гора и фонари на закате\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0031.jpg",
+    "category": "pillowcase",
+    "source_sha256": "fbceae7a726bd0299f5fe2fa79a843fd8fd84a40a176525f6954d513a9d1c87c",
+    "image_sha256": "f47c698ede1c46b3682a222db11001d5a5de04dd2bb421c185790ae0667bb234",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-e1fa75b2-3fbc-92bd-9fac-0a1c569b62a0",
+    "profile": {
+      "product_type_ru": "Наволочка декоративная",
+      "facts_ru": "45×45 см"
+    },
+    "fixed_tags": [
+      "#наволочка"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Гора и традиционный город\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Наволочка декоративная 45×45 см \"Гора и традиционный город\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0031.jpg",
+    "category": "tote",
+    "source_sha256": "fbceae7a726bd0299f5fe2fa79a843fd8fd84a40a176525f6954d513a9d1c87c",
+    "image_sha256": "f47c698ede1c46b3682a222db11001d5a5de04dd2bb421c185790ae0667bb234",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-26bd3275-8040-94f4-93d3-3b36748df0fe",
+    "profile": {
+      "product_type_ru": "Сумка-шоппер",
+      "facts_ru": "хлопковая 35×40 см"
+    },
+    "fixed_tags": [
+      "#шоппер"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Гора и традиционный город\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Сумка-шоппер хлопковая 35×40 см \"Гора и традиционный город\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0031.jpg",
+    "category": "tshirt",
+    "source_sha256": "fbceae7a726bd0299f5fe2fa79a843fd8fd84a40a176525f6954d513a9d1c87c",
+    "image_sha256": "f47c698ede1c46b3682a222db11001d5a5de04dd2bb421c185790ae0667bb234",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-ced0797f-0ddd-9d45-a3fd-6477de0989dc",
+    "profile": {
+      "product_type_ru": "Футболка",
+      "facts_ru": "хлопковая"
+    },
+    "fixed_tags": [
+      "#футболка"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Гора и фонари на закате\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Футболка хлопковая \"Гора и фонари на закате\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0052.jpg",
+    "category": "mousepad",
+    "source_sha256": "bc4849ea2ff08ee4953e3af4cd9ea590804b850a16ca341e6ec0571411549f0f",
+    "image_sha256": "ed4b97dea066dd91f66bbefcaa793ef68d55eaed489f253e851afb106ba704ab",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-f68e14ca-0659-9e91-bc25-057626795ada",
+    "profile": {
+      "product_type_ru": "Коврик для мыши",
+      "facts_ru": "800×300 мм"
+    },
+    "fixed_tags": [
+      "#коврик"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Геометрия и листья\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Коврик для мыши 800×300 мм \"Геометрия и листья\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0052.jpg",
+    "category": "mug",
+    "source_sha256": "bc4849ea2ff08ee4953e3af4cd9ea590804b850a16ca341e6ec0571411549f0f",
+    "image_sha256": "ed4b97dea066dd91f66bbefcaa793ef68d55eaed489f253e851afb106ba704ab",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-d2e548a2-3e4d-9399-9ff0-87d6d11dbdc7",
+    "profile": {
+      "product_type_ru": "Кружка",
+      "facts_ru": "керамическая 330 мл"
+    },
+    "fixed_tags": [
+      "#кружка"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Геометрия и листья\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Кружка керамическая 330 мл \"Геометрия и листья\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0052.jpg",
+    "category": "paint",
+    "source_sha256": "bc4849ea2ff08ee4953e3af4cd9ea590804b850a16ca341e6ec0571411549f0f",
+    "image_sha256": "ed4b97dea066dd91f66bbefcaa793ef68d55eaed489f253e851afb106ba704ab",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-d884881a-0ea4-9c0e-a126-f5a7cf7dce02",
+    "profile": {
+      "product_type_ru": "Картина по номерам",
+      "facts_ru": "40×50 см на подрамнике"
+    },
+    "fixed_tags": [
+      "#картина"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Геометрия и листья\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Картина по номерам 40×50 см на подрамнике \"Геометрия и листья\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0052.jpg",
+    "category": "pillowcase",
+    "source_sha256": "bc4849ea2ff08ee4953e3af4cd9ea590804b850a16ca341e6ec0571411549f0f",
+    "image_sha256": "ed4b97dea066dd91f66bbefcaa793ef68d55eaed489f253e851afb106ba704ab",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-c37b992b-81ef-9333-a333-38174b7ff4ba",
+    "profile": {
+      "product_type_ru": "Наволочка декоративная",
+      "facts_ru": "45×45 см"
+    },
+    "fixed_tags": [
+      "#наволочка"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n\"state\": \"clear\",\n\"theme_ru\": \"Геометрия и листья\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Наволочка декоративная 45×45 см \"Геометрия и листья\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0052.jpg",
+    "category": "tote",
+    "source_sha256": "bc4849ea2ff08ee4953e3af4cd9ea590804b850a16ca341e6ec0571411549f0f",
+    "image_sha256": "ed4b97dea066dd91f66bbefcaa793ef68d55eaed489f253e851afb106ba704ab",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-19216f57-af45-9620-880e-9330ad4fd054",
+    "profile": {
+      "product_type_ru": "Сумка-шоппер",
+      "facts_ru": "хлопковая 35×40 см"
+    },
+    "fixed_tags": [
+      "#шоппер"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Геометрия и листья\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Сумка-шоппер хлопковая 35×40 см \"Геометрия и листья\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0052.jpg",
+    "category": "tshirt",
+    "source_sha256": "bc4849ea2ff08ee4953e3af4cd9ea590804b850a16ca341e6ec0571411549f0f",
+    "image_sha256": "ed4b97dea066dd91f66bbefcaa793ef68d55eaed489f253e851afb106ba704ab",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-22df333f-b223-943e-90d8-b41ca1ffd2e0",
+    "profile": {
+      "product_type_ru": "Футболка",
+      "facts_ru": "хлопковая"
+    },
+    "fixed_tags": [
+      "#футболка"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Геометрия и листья\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Футболка хлопковая \"Геометрия и листья\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0071.jpg",
+    "category": "mousepad",
+    "source_sha256": "0db971bce095d1e9c5a534b3d0d803c4e7a09fe65ff86ff1d2455c46be472d5c",
+    "image_sha256": "5e740a73306f42416a6215eab0a68a8d064a65137e6876ea4410c01c94805bfa",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-493d68c2-8a20-9728-b3f0-42f323c75371",
+    "profile": {
+      "product_type_ru": "Коврик для мыши",
+      "facts_ru": "800×300 мм"
+    },
+    "fixed_tags": [
+      "#коврик"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Кот с чашкой\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Коврик для мыши 800×300 мм \"Кот с чашкой\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0071.jpg",
+    "category": "mug",
+    "source_sha256": "0db971bce095d1e9c5a534b3d0d803c4e7a09fe65ff86ff1d2455c46be472d5c",
+    "image_sha256": "5e740a73306f42416a6215eab0a68a8d064a65137e6876ea4410c01c94805bfa",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-a8dc1b29-86a6-980a-88b4-32eb93f3acb3",
+    "profile": {
+      "product_type_ru": "Кружка",
+      "facts_ru": "керамическая 330 мл"
+    },
+    "fixed_tags": [
+      "#кружка"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Кот с чашкой\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Кружка керамическая 330 мл \"Кот с чашкой\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0071.jpg",
+    "category": "paint",
+    "source_sha256": "0db971bce095d1e9c5a534b3d0d803c4e7a09fe65ff86ff1d2455c46be472d5c",
+    "image_sha256": "5e740a73306f42416a6215eab0a68a8d064a65137e6876ea4410c01c94805bfa",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-061354a3-1241-9a53-b983-f88792f62295",
+    "profile": {
+      "product_type_ru": "Картина по номерам",
+      "facts_ru": "40×50 см на подрамнике"
+    },
+    "fixed_tags": [
+      "#картина"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Кот с чашкой\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Картина по номерам 40×50 см на подрамнике \"Кот с чашкой\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0071.jpg",
+    "category": "pillowcase",
+    "source_sha256": "0db971bce095d1e9c5a534b3d0d803c4e7a09fe65ff86ff1d2455c46be472d5c",
+    "image_sha256": "5e740a73306f42416a6215eab0a68a8d064a65137e6876ea4410c01c94805bfa",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-3d863183-16e6-9c09-a004-49698dab4156",
+    "profile": {
+      "product_type_ru": "Наволочка декоративная",
+      "facts_ru": "45×45 см"
+    },
+    "fixed_tags": [
+      "#наволочка"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n\"state\": \"clear\",\n\"theme_ru\": \"Кот с чашкой\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Наволочка декоративная 45×45 см \"Кот с чашкой\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0071.jpg",
+    "category": "tote",
+    "source_sha256": "0db971bce095d1e9c5a534b3d0d803c4e7a09fe65ff86ff1d2455c46be472d5c",
+    "image_sha256": "5e740a73306f42416a6215eab0a68a8d064a65137e6876ea4410c01c94805bfa",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-7072cde6-86dd-9b58-b361-b7dc32417d4f",
+    "profile": {
+      "product_type_ru": "Сумка-шоппер",
+      "facts_ru": "хлопковая 35×40 см"
+    },
+    "fixed_tags": [
+      "#шоппер"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Кот с чашкой\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Сумка-шоппер хлопковая 35×40 см \"Кот с чашкой\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0071.jpg",
+    "category": "tshirt",
+    "source_sha256": "0db971bce095d1e9c5a534b3d0d803c4e7a09fe65ff86ff1d2455c46be472d5c",
+    "image_sha256": "5e740a73306f42416a6215eab0a68a8d064a65137e6876ea4410c01c94805bfa",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-2a2db33f-3088-9f49-948c-d8bbab9a7c53",
+    "profile": {
+      "product_type_ru": "Футболка",
+      "facts_ru": "хлопковая"
+    },
+    "fixed_tags": [
+      "#футболка"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Кот с чашкой\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Футболка хлопковая \"Кот с чашкой\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0003.jpg",
+    "category": "paint",
+    "source_sha256": "e0419f2564193129131d13e56758d8668d36ee3327d09414dd89e95d29282e2d",
+    "image_sha256": "f0658ff22848ecf832cc9222a9976f98d2981032971a740636fc077688aaf0f9",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-07a35bfd-99bd-9296-8ca2-ade37fc2cdf7",
+    "profile": {
+      "product_type_ru": "Картина по номерам",
+      "facts_ru": "40×50 см на подрамнике"
+    },
+    "fixed_tags": [
+      "#картина"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Геометрические лица\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Картина по номерам 40×50 см на подрамнике \"Геометрические лица\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0008.jpg",
+    "category": "mug",
+    "source_sha256": "2854b33cdd714b720844b623b29b40b1c7ae29f9830cc101225a0cd1b4379dd0",
+    "image_sha256": "5c60a332177a3cd3d79c2a788b812fe29d0d970cc9f9e46eaff1f876f02fa4dd",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-03152af1-5f92-9229-a191-76d7789ddc91",
+    "profile": {
+      "product_type_ru": "Кружка",
+      "facts_ru": "керамическая 330 мл"
+    },
+    "fixed_tags": [
+      "#кружка"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n\"state\": \"clear\",\n\"theme_ru\": \"Цветы в вазе\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Кружка керамическая 330 мл \"Цветы в вазе\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0013.jpg",
+    "category": "mousepad",
+    "source_sha256": "b6281aa7df91e17c6f3c5a41c8b3b89895f86af1afd926c96473e710182bb939",
+    "image_sha256": "6c4fb2ef15c2d091ff43c81cba405cf220844be133ec4b2903d5bcf0d379daec",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-cd54ad48-56ca-9537-ad5b-54bdf1d26d12",
+    "profile": {
+      "product_type_ru": "Коврик для мыши",
+      "facts_ru": "800×300 мм"
+    },
+    "fixed_tags": [
+      "#коврик"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Собаки в машине\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Коврик для мыши 800×300 мм \"Собаки в машине\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0018.jpg",
+    "category": "tshirt",
+    "source_sha256": "4eb25b7e2a68bc5cbb4830a164959346a8ced2c0f3c084baac993dbb2b1223fe",
+    "image_sha256": "8e0c637d54adf8c68e824c0014a26de483282b800d87bc91c3fa0574e2cd77d9",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-ca528010-efc8-9fdb-ba34-23ddda5c212c",
+    "profile": {
+      "product_type_ru": "Футболка",
+      "facts_ru": "хлопковая"
+    },
+    "fixed_tags": [
+      "#футболка"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n\"state\": \"clear\",\n\"theme_ru\": \"Собака с газетой\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Футболка хлопковая \"Собака с газетой\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0023.jpg",
+    "category": "tote",
+    "source_sha256": "62e3f9c82f8dd8f3b660d765d17f4be6008c396f768a5186ff131a042b4484f8",
+    "image_sha256": "36da151409bc29f398e6a0881bf019d9a6a2105cafb9cf42090d2461d1355ac7",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-ca3bbcef-a389-9e5b-8dc7-aaab784ed96f",
+    "profile": {
+      "product_type_ru": "Сумка-шоппер",
+      "facts_ru": "хлопковая 35×40 см"
+    },
+    "fixed_tags": [
+      "#шоппер"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n\"state\": \"clear\",\n\"theme_ru\": \"Цветы на абстрактном фоне\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Сумка-шоппер хлопковая 35×40 см \"Цветы на абстрактном фоне\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0028.jpg",
+    "category": "pillowcase",
+    "source_sha256": "298dcd8034e3ef63ab700d8a8bb5d00c251e618c10e6c12170dab05cb9b0d068",
+    "image_sha256": "efe9af9c1f396220cc421cc147e3411962b1ded39353eaf43b737564fb1cb2fa",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-c120c39a-a6b2-9d7e-a25e-70f163e06614",
+    "profile": {
+      "product_type_ru": "Наволочка декоративная",
+      "facts_ru": "45×45 см"
+    },
+    "fixed_tags": [
+      "#наволочка"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Бабочки и мотыльки\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Наволочка декоративная 45×45 см \"Бабочки и мотыльки\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0033.jpg",
+    "category": "paint",
+    "source_sha256": "0a4fa23583ebd52f30c74e96a7fda3cf5e20abb8485ceeed716015b5d79fcc9b",
+    "image_sha256": "3b63ca5fa7887a6de4b3397ee8c513112f88130c6c8c733d421186b09f784cbb",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-e3f2e3eb-d88b-9054-a8c1-ff25a07a7de0",
+    "profile": {
+      "product_type_ru": "Картина по номерам",
+      "facts_ru": "40×50 см на подрамнике"
+    },
+    "fixed_tags": [
+      "#картина"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n\"state\": \"clear\",\n\"theme_ru\": \"Гора на фоне города\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Картина по номерам 40×50 см на подрамнике \"Гора на фоне города\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0038.jpg",
+    "category": "mug",
+    "source_sha256": "42d839742ce912236320f43543f4f0d56e82b81856f3fca50beb85a49815892a",
+    "image_sha256": "9c46cd7826a1dcbed29d69f9384e11d4cf532db2d43ed5e9619ea2fbc63300e7",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-e3ca4baa-b1d6-9141-84d2-d9629a2305c1",
+    "profile": {
+      "product_type_ru": "Кружка",
+      "facts_ru": "керамическая 330 мл"
+    },
+    "fixed_tags": [
+      "#кружка"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Цветы на фоне гор\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Кружка керамическая 330 мл \"Цветы на фоне гор\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0043.jpg",
+    "category": "mousepad",
+    "source_sha256": "cb8681bce2ad9821784981bd144287331a3d5c01150acbe37ceef5a25f90e32c",
+    "image_sha256": "e05869b0c9bcee93596e2589bdcde10ed0579999589dc7bf555542252cfb5b4b",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-cac5bc72-94f0-93b4-b4d7-a5f3d374e50f",
+    "profile": {
+      "product_type_ru": "Коврик для мыши",
+      "facts_ru": "800×300 мм"
+    },
+    "fixed_tags": [
+      "#коврик"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Собака в полотенце за шторкой\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Коврик для мыши 800×300 мм \"Собака в полотенце за шторкой\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0048.jpg",
+    "category": "tshirt",
+    "source_sha256": "1679280cdc9e09a44c45e601ffe44a155d59dddf47967c57cf376cc7376bf379",
+    "image_sha256": "ee87b3c5f79289be14b4adc970ba63c93be710b7e095bfc2e944839c912c696f",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-830850f2-e32f-9816-9aba-c85dc914dc47",
+    "profile": {
+      "product_type_ru": "Футболка",
+      "facts_ru": "хлопковая"
+    },
+    "fixed_tags": [
+      "#футболка"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Вазы и дерево\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Футболка хлопковая \"Вазы и дерево\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0053.jpg",
+    "category": "tote",
+    "source_sha256": "03366fb3bad449726b3a075bdae41a43373f823225bb6b6d4afb2a885a1b9159",
+    "image_sha256": "06c8c025a6612fe1b7582152e2a3be5a40ca6463e78cdf41be4a9c5d033a348a",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-4c2aef26-3053-96bc-9ec7-632c0a5af451",
+    "profile": {
+      "product_type_ru": "Сумка-шоппер",
+      "facts_ru": "хлопковая 35×40 см"
+    },
+    "fixed_tags": [
+      "#шоппер"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n\"state\": \"clear\",\n\"theme_ru\": \"Геометрия и листья\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Сумка-шоппер хлопковая 35×40 см \"Геометрия и листья\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0058.jpg",
+    "category": "pillowcase",
+    "source_sha256": "c79e61284e8f83b9b07be96ec3b0509a9c799236db9331784dd9dbfe3336ca85",
+    "image_sha256": "841ba4febdb87856062703b5b4dee2cf15b5600b99117f8710613d704e6abc2c",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-28eef249-eb4f-992e-ac42-dc395298b1b2",
+    "profile": {
+      "product_type_ru": "Наволочка декоративная",
+      "facts_ru": "45×45 см"
+    },
+    "fixed_tags": [
+      "#наволочка"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Девушка на ките\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Наволочка декоративная 45×45 см \"Девушка на ките\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0063.jpg",
+    "category": "paint",
+    "source_sha256": "0f10d1c289e59816936fa2b143b9e24fc292dfaa00fe133d9665aa2489ce3286",
+    "image_sha256": "a1922289a90b48582e5237f7a3d6339e65bc97d4876b6d2aeffd5bf1819dd60a",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-ba5ae4f5-50ff-96aa-beca-1312df94093c",
+    "profile": {
+      "product_type_ru": "Картина по номерам",
+      "facts_ru": "40×50 см на подрамнике"
+    },
+    "fixed_tags": [
+      "#картина"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Звездное небо над городом\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Картина по номерам 40×50 см на подрамнике \"Звездное небо над городом\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0068.jpg",
+    "category": "mug",
+    "source_sha256": "16a6e17aa1c6d03588e0361b526d8bf7e6baa917c54ae09655fdaa522ce639b7",
+    "image_sha256": "2150dd293755e3d52b7d78eb9b502ce2fa6273669f5a2992da7c34e612a27f27",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-39d39fd2-bc44-9cd2-a02d-45df96b5e04b",
+    "profile": {
+      "product_type_ru": "Кружка",
+      "facts_ru": "керамическая 330 мл"
+    },
+    "fixed_tags": [
+      "#кружка"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Девушка в кимоно с цветами\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Кружка керамическая 330 мл \"Девушка в кимоно с цветами\"",
+    "expected_reason": null
+  },
+  {
+    "image": "SZ-9BXIE0610-0073.jpg",
+    "category": "mousepad",
+    "source_sha256": "105cbdaba71cf3490edaa2fad1c0265ea9a0293e9c4616621e5e990fc1372099",
+    "image_sha256": "d151d5630e0066456991798e604edd9afe84c14a0e4e176062de870c38478887",
+    "prompt_sha256": "cb5058bff11442e940b7ca683aca2350be44c11a7fb61b8f22d3d68a454f7299",
+    "response_id": "chatcmpl-62a73ee9-088e-97cb-9fa8-ab39a135acc5",
+    "profile": {
+      "product_type_ru": "Коврик для мыши",
+      "facts_ru": "800×300 мм"
+    },
+    "fixed_tags": [
+      "#коврик"
+    ],
+    "completion": {
+      "choices": [
+        {
+          "message": {
+            "content": "{\n  \"state\": \"clear\",\n  \"theme_ru\": \"Кот с чашкой\"\n}"
+          }
+        }
+      ]
+    },
+    "expected_title": "Коврик для мыши 800×300 мм \"Кот с чашкой\"",
+    "expected_reason": null
+  }
+]

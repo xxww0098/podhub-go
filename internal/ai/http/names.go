@@ -8,6 +8,7 @@ import (
 
 	"github.com/xxww0098/podhub-go/internal/ai/service"
 	billing "github.com/xxww0098/podhub-go/internal/billing/contract"
+	"github.com/xxww0098/podhub-go/internal/platform/aiclient"
 )
 
 // Same-package names for symbols that live in service, so relay.go and
@@ -22,19 +23,13 @@ var errInvalid = service.Invalid()
 
 func Key(raw string) (string, bool) { return service.Key(raw) }
 
-func Stamp(body []byte, model string) ([]byte, error) { return service.Stamp(body, model) }
-
-func ParseUsage(completion []byte) (billing.Usage, string, error) {
-	return service.ParseUsage(completion)
+func ParseUsage(format aiclient.Format, completion []byte) (billing.Usage, string, error) {
+	return service.ParseUsage(format, completion)
 }
 
 func FoldCompletion(body []byte) (json.RawMessage, error) {
 	return service.FoldCompletion(body)
 }
-
-func LimitsFromEnv() Limits { return service.LimitsFromEnv() }
-
-func EstimatePromptTokens(body []byte) int { return service.EstimatePromptTokens(body) }
 
 func Acquire(ctx context.Context, pool *pgxpool.Pool, limits Limits, userID int64, account string, includeGlobal bool) (Lease, int, string) {
 	return service.Acquire(ctx, pool, limits, userID, account, includeGlobal)

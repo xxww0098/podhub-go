@@ -128,7 +128,7 @@ func TestScaleNearestMatchesRGBASet(t *testing.T) {
 	}
 }
 
-func TestFetchLoopbackStopsWhenParentCancels(t *testing.T) {
+func TestFetchCatalogImageStopsWhenParentCancels(t *testing.T) {
 	started := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
@@ -142,7 +142,7 @@ func TestFetchLoopbackStopsWhenParentCancels(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)
 	go func() {
-		_, err := fetchLoopback(ctx, loopbackAccount(srv.URL), "a.jpg", time.Minute, 20*time.Second)
+		_, err := fetchCatalogImage(ctx, loopbackAccount(srv.URL), "a.jpg", time.Minute, 20*time.Second)
 		errc <- err
 	}()
 	select {
@@ -161,13 +161,13 @@ func TestFetchLoopbackStopsWhenParentCancels(t *testing.T) {
 	}
 }
 
-func TestFetchLoopbackReturnsBody(t *testing.T) {
+func TestFetchCatalogImageReturnsBody(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/jpeg")
 		w.Write([]byte("jpeg-bytes"))
 	}))
 	defer srv.Close()
-	body, err := fetchLoopback(context.Background(), loopbackAccount(srv.URL), "a.jpg", 300*time.Second, 20*time.Second)
+	body, err := fetchCatalogImage(context.Background(), loopbackAccount(srv.URL), "a.jpg", 300*time.Second, 20*time.Second)
 	if err != nil || string(body) != "jpeg-bytes" {
 		t.Fatalf("%q %v", body, err)
 	}

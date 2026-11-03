@@ -111,14 +111,13 @@ test("review rows preserve exact SKU and full customer text", () => {
   assert.doesNotMatch(html, /line-clamp/)
 })
 
-test("queue tables are named, bounded, focusable and sticky", () => {
+test("queue tables are named, focusable and sticky", () => {
   const html = renderToStaticMarkup(
     <ReviewsSection {...ready} view={reviewsAvailable} onLoadMore={() => {}} />,
   )
   assert.match(html, /role="region"/)
   assert.match(html, /aria-label="评价列表"/)
   assert.match(html, /tabindex="0"/)
-  assert.match(html, /max-h-\[32rem\]/)
   assert.match(html, /sticky top-0/)
 })
 
@@ -322,7 +321,7 @@ test("Voice controller owns no duplicate title and distinguishes unavailable Sto
   assert.match(source, /questionsSequence\.current \+= 1/)
   assert.doesNotMatch(source, /chatsSequence/)
   assert.doesNotMatch(source, /opsVoiceListChats/)
-  assert.match(source, /会话请到 消息/)
+  assert.doesNotMatch(source, /会话请到 消息/)
   assert.doesNotMatch(source, /space-y-/)
   assert.match(source, /VOICE_REVIEWS_LIVE = "voice-reviews-read"/)
   assert.match(source, /VOICE_QUESTIONS_LIVE = "voice-questions-read"/)

@@ -1,7 +1,0 @@
-package: storegen
-output: internal/store/http/gen/store.gen.go
-generate:
-  models: true
-output-options:
-  include-tags:
-    - stores

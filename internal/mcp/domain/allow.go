@@ -5,6 +5,7 @@ package domain
 
 import (
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/xxww0098/podhub-go/internal/mcp/contract"
@@ -46,29 +47,62 @@ func (a Allow) CheckHost(host string) (int, string) {
 	return 403, "Forbidden: Host header is not allowed"
 }
 
-// CheckOrigin returns 400 or 403, or 0 when the origin is allowed.
+// CheckOrigin compares scheme, host and effective port, without Host's port wildcard.
 // An empty allow-list skips the check. A missing Origin passes.
 func (a Allow) CheckOrigin(origin string) (int, string) {
 	if len(a.Origins) == 0 || strings.TrimSpace(origin) == "" {
 		return 0, ""
 	}
-	got, err := url.Parse(origin)
-	if err != nil || got.Scheme == "" || got.Host == "" {
+	got, ok := parseOrigin(origin)
+	if !ok {
 		return 400, "Bad Request: Invalid Origin header"
 	}
 	for _, item := range a.Origins {
-		want, err := url.Parse(strings.TrimSpace(item))
-		if err != nil || want.Scheme == "" || want.Host == "" {
+		want, ok := parseOrigin(strings.TrimSpace(item))
+		if !ok {
 			continue
 		}
 		if !strings.EqualFold(want.Scheme, got.Scheme) || !strings.EqualFold(want.Hostname(), got.Hostname()) {
 			continue
 		}
-		if want.Port() == "" || want.Port() == got.Port() {
+		if originPort(want) == originPort(got) {
 			return 0, ""
 		}
 	}
 	return 403, "Forbidden: Origin header is not allowed"
+}
+
+func parseOrigin(raw string) (*url.URL, bool) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" || u.Hostname() == "" ||
+		u.User != nil || u.Path != "" || u.RawQuery != "" || u.ForceQuery || strings.Contains(raw, "#") {
+		return nil, false
+	}
+	if strings.HasSuffix(u.Host, ":") {
+		return nil, false
+	}
+	if port := u.Port(); port != "" {
+		n, err := strconv.Atoi(port)
+		if err != nil || n < 0 || n > 65535 {
+			return nil, false
+		}
+	}
+	return u, true
+}
+
+func originPort(u *url.URL) string {
+	if port := u.Port(); port != "" {
+		n, _ := strconv.Atoi(port) // parseOrigin already validated it.
+		return strconv.Itoa(n)
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	default:
+		return ""
+	}
 }
 
 // HostOK reports whether CheckHost accepts the value.

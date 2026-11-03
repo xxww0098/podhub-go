@@ -5,7 +5,6 @@ import type {
   AccountOverview,
   AccountSessionView,
   EntitlementView,
-  StackedAccountView,
   WorkspaceSummaryView,
 } from "@/bindings/commands"
 import { accountHttp } from "@/bindings/http-account"
@@ -14,7 +13,7 @@ import { setErrorTelemetryContext } from "@/lib/error-telemetry"
 import { setListingLogCollect } from "@/lib/listing-log"
 
 /**
- * Shell, 账户, 工作空间 and 加购 all print the same session standing. Passing
+ * Shell, 账户, 工作空间 and 订阅 all print the same session standing. Passing
  * AccountOverview down from App meant a 60s beat that called setState on the
  * authenticated tree rebuilt the active keep-alive pane. The query cache holds
  * the snapshot; identical reads are deduped by `sameAccountOverview` before
@@ -39,14 +38,13 @@ const entryGeneration = new Map<string, number>()
 // The same cache observes login, account/Workspace changes and global logout.
 // This key fences diagnostics in memory; it is never included in an event.
 function syncErrorTelemetryContext(overview: AccountOverview | undefined): void {
-  const account = overview?.accounts?.find((item) => item.active)
-  const identity = account?.uuid ?? overview?.session.email
+  const identity = overview?.session.uuid ?? overview?.session.email
   setErrorTelemetryContext({
     sessionKey:
       overview?.session.authenticated && identity && overview.active_workspace?.uuid
         ? `${identity}:${overview.active_workspace.uuid}`
         : null,
-    userId: account?.uuid,
+    userId: overview?.session.uuid,
     workspaceId: overview?.active_workspace?.uuid,
   })
   setListingLogCollect(overview?.client_log_collect === true)
@@ -143,6 +141,7 @@ export function loadAccountOverview(options?: {
     return accountHttp
       .accountGetOverview()
       .then((overview) => {
+        if (bornAs !== liveGeneration) return undefined
         if (overview.session.authenticated) {
           // Commit under the generation this probe was born into: an
           // invalidate landing between the request and the reply still
@@ -216,8 +215,8 @@ export function sameAccountOverview(
     // Fields the shell renders directly: a change the comparators above
     // ignore would be deduped away forever.
     current.is_agent === next.is_agent &&
+    current.is_catalog_manager === next.is_catalog_manager &&
     current.client_log_collect === next.client_log_collect &&
-    sameAccounts(current.accounts, next.accounts) &&
     sameWorkspaces(current.unusable_workspaces ?? [], next.unusable_workspaces ?? [])
   )
 }
@@ -225,6 +224,7 @@ export function sameAccountOverview(
 function sameSession(current: AccountSessionView, next: AccountSessionView): boolean {
   return (
     current.authenticated === next.authenticated &&
+    current.uuid === next.uuid &&
     current.is_admin === next.is_admin &&
     current.email === next.email &&
     current.name === next.name &&
@@ -259,26 +259,6 @@ function sameEntitlement(
     a.ai_tokens_used === b.ai_tokens_used &&
     a.ai_calls_per_day === b.ai_calls_per_day
   )
-}
-
-function sameAccounts(
-  current: StackedAccountView[] | undefined,
-  next: StackedAccountView[] | undefined,
-): boolean {
-  const a = current ?? []
-  const b = next ?? []
-  if (a.length !== b.length) return false
-  return a.every((account, index) => {
-    const other = b[index]
-    return (
-      other !== undefined &&
-      account.uuid === other.uuid &&
-      account.email === other.email &&
-      account.name === other.name &&
-      account.active === other.active &&
-      account.avatar_url === other.avatar_url
-    )
-  })
 }
 
 function sameWorkspaces(

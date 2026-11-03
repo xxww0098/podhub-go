@@ -76,7 +76,7 @@ test("request evidence is emitted after body consumption and before promise sett
 
 test("HTTP evidence uses x-request-id while OCR recovery keeps its separate business requestId", async () => {
   const observed: RequestEvidence[] = []
-  await withFetch(async () => Response.json({ code: "OCR_BUSY", message: "fixture refusal", ocrRecovery: { requestId: "ocr-business-id" } },
+  await withFetch(async () => Response.json({ code: "OCR_BUSY", message: "fixture refusal", ocr_recovery: { request_id: "ocr-business-id" } },
     { status: 409, headers: { "x-request-id": "http-id", "Retry-After": "5" } }), async (calls) => {
     await assert.rejects(request("POST", endpoint, { source: "fixture" }, {}, undefined, undefined,
       { reportOwner: "caller", onEvidence: (evidence) => observed.push(evidence) }), (reason: unknown) => {

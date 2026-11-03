@@ -1,6 +1,6 @@
 // Package domain is the automation state vocabulary.
 // Status and action strings are the CHECK constraints in
-// db/migrations/00182_automation_commands.sql. The transition table is the
+// the baseline schema. The transition table is the
 // WHERE clause of claim, renew, progress, settle, and deregister.
 package domain
 

@@ -12,7 +12,7 @@ import (
 )
 
 func TestBrowserStateWasmFreezeAndTransitions(t *testing.T) {
-	raw := readStateWasm(t)
+	raw := committedStateWasm(t)
 	mod, err := OpenBrowser(context.Background(), raw)
 	if err != nil {
 		t.Fatal(err)
@@ -79,31 +79,6 @@ func TestCommittedBrowserWasmChecksum(t *testing.T) {
 	if want := manifestSHA256(t, "browser/listing-state.wasm"); got != want {
 		t.Fatalf("sha256 %s manifest %s", got, want)
 	}
-}
-
-func readStateWasm(t *testing.T) []byte {
-	t.Helper()
-	path := os.Getenv("LISTING_STATE_WASM")
-	if path == "" {
-		return committedStateWasm(t)
-	}
-	data, err := os.ReadFile(path)
-	if err == nil || filepath.IsAbs(path) {
-		if err != nil {
-			t.Fatal(err)
-		}
-		return data
-	}
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal(err)
-	}
-	rooted := filepath.Join(filepath.Dir(file), "..", "..", "..", path)
-	data, rootedErr := os.ReadFile(rooted)
-	if rootedErr != nil {
-		t.Fatal(err)
-	}
-	return data
 }
 
 func committedStateWasm(t *testing.T) []byte {

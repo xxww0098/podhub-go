@@ -3,7 +3,6 @@ package adminrepo
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -12,6 +11,7 @@ import (
 	"github.com/xxww0098/podhub-go/internal/admin/contract"
 	corerepo "github.com/xxww0098/podhub-go/internal/admin/core/repo"
 	"github.com/xxww0098/podhub-go/internal/admin/domain"
+	"github.com/xxww0098/podhub-go/internal/platform/db"
 )
 
 const (
@@ -73,27 +73,11 @@ func data(v any) ([]byte, error) {
 	return corerepo.Data(v)
 }
 
-func (r *Repo) Standing(ctx context.Context, userID int64, tokenHash string) (domain.Standing, error) {
-	var enrolled, elevated bool
-	err := r.Pool.QueryRow(ctx, `
-		SELECT (t.confirmed_at IS NOT NULL) AS enrolled,
-		       COALESCE(s.admin_step_up_until > clock_timestamp(), false) AS elevated
-		  FROM account_sessions s
-		  LEFT JOIN account_admin_totp t ON t.user_id = s.user_id
-		 WHERE s.token_hash = $1 AND s.user_id = $2 AND s.expires_at > clock_timestamp()`,
-		tokenHash, userID).Scan(&enrolled, &elevated)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return domain.Standing{Missing: true}, nil
-	}
-	if err != nil {
-		return domain.Standing{}, mapBill(err, "INTERNAL", true)
-	}
-	return domain.Standing{Enrolled: enrolled, Elevated: elevated}, nil
-}
-
 func (r *Repo) PublicID(ctx context.Context, userID int64) (string, error) {
 	var id string
-	err := r.Pool.QueryRow(ctx, `SELECT public_id FROM account_users WHERE id = $1`, userID).Scan(&id)
+	err := db.InTx(ctx, r.Pool, db.AppRole(), func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT public_id FROM account_users WHERE id = $1`, userID).Scan(&id)
+	})
 	if err != nil {
 		return "", mapBill(err, "INTERNAL", true)
 	}
@@ -101,8 +85,6 @@ func (r *Repo) PublicID(ctx context.Context, userID int64) (string, error) {
 }
 
 func orgAtLeast0(orgID int64) int64 { return corerepo.OrgAtLeast0(orgID) }
-
-func rfc3339Millis(t time.Time) string { return corerepo.RFC3339Millis(t) }
 
 func (r Repo) beginCore() corerepo.Begin {
 	if r.begin == nil {

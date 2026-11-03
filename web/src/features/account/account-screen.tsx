@@ -1,15 +1,17 @@
 import { useEffect, useState } from "react"
 import type { AccountOverview } from "@/bindings/commands"
 import { accountHttp } from "@/bindings/http-account"
+import { Database, Eraser, File, Image, Layers3, type LucideIcon } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { ChangeNameDialog } from "@/components/change-name-dialog"
+import { ChangeEmailDialog } from "@/components/change-email-dialog"
 import { IdentityMark } from "@/components/identity-mark"
+import { IconButton } from "@/components/ui/icon-button"
 import { Spinner } from "@/components/ui/spinner"
 import { formatBytes } from "@/lib/format"
 import { notifyCommandError, notifySuccess } from "@/lib/notify"
-import { cn } from "@/lib/utils"
 import {
   clearCache,
   clearCacheFamily,
@@ -18,6 +20,7 @@ import {
   usageByFamily,
   type CacheFamilyUsage,
 } from "@/render/opfs-cache"
+import { root as deviceStorageRoot } from "@/render/opfs-io"
 import {
   renameCooldownLabel,
   renameLockedUntil as renameLockedUntilMs,
@@ -45,6 +48,7 @@ export function AccountProfileSection({
   const [busy, setBusy] = useState(false)
   const [clearAvatarOpen, setClearAvatarOpen] = useState(false)
   const [renameOpen, setRenameOpen] = useState(false)
+  const [emailOpen, setEmailOpen] = useState(false)
   const staffLabel = platformStaffRoleLabel(overview?.session.role)
   const renameLockedUntil = renameLockedUntilMs(
     overview?.session.name_changed_at_ms ?? undefined,
@@ -80,7 +84,7 @@ export function AccountProfileSection({
   }
 
   return (
-    <div className="flex w-full flex-col gap-4">
+    <div className="flex w-full flex-col gap-2">
       {!overview ? (
         <div
           role="status"
@@ -93,60 +97,54 @@ export function AccountProfileSection({
         </div>
       ) : (
         <div
-          className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-border bg-card px-4 py-3"
+          className="flex flex-wrap items-center gap-x-7 gap-y-3 rounded-xl border border-border bg-card p-4 sm:p-6"
           data-platform-staff={isPlatformStaffRole(overview.session.role)}
         >
-            <IdentityMark
-              kind="user"
-              role={overview?.session.role}
-              name={overview.session.name ?? overview.session.email ?? ""}
-              imageUrl={overview.session.avatar_url}
-              className="size-9"
-            />
-            <div className="flex min-w-0 flex-1 flex-col gap-2">
-              <p className="flex min-w-0 flex-col gap-0.5">
-                <span className="break-words text-md font-semibold">
-                  {overview.session.name ?? "—"}
-                </span>
-                <span className="break-all text-compact text-muted-foreground">
-                  {overview.session.email ?? "—"}
-                </span>
-              </p>
-              <div className="flex flex-wrap items-center gap-3">
-                {renameLocked ? (
-                  <span className="w-fit text-xs text-muted-foreground">
-                    {renameCooldownLabel(renameLockedUntil, Date.now())}
-                  </span>
-                ) : (
-                  <button
-                    type="button"
-                    className="w-fit cursor-pointer text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:cursor-not-allowed disabled:opacity-45"
-                    disabled={busy}
-                    onClick={() => setRenameOpen(true)}
-                  >
-                    修改名字
-                  </button>
-                )}
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {staffLabel ? (
+          <IdentityMark
+            kind="user"
+            role={overview?.session.role}
+            name={overview.session.name ?? overview.session.email ?? ""}
+            imageUrl={overview.session.avatar_url}
+            className="size-16 shrink-0 sm:size-[5.5rem]"
+          />
+          <div className="flex min-w-0 flex-1 basis-40 flex-col gap-1 sm:basis-56">
+            <p className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+              <span className="break-words text-xl font-semibold leading-tight tracking-[-0.01em]">
+                {overview.session.name ?? "—"}
+              </span>
+              {staffLabel && staffLabel !== overview.session.name?.trim() ? (
                 <span className={STAFF_RANK_CHIP_CLASS}>{staffLabel}</span>
               ) : null}
-            </div>
-            <div className="ml-auto flex flex-wrap items-center gap-2">
-              {overview.session.avatar_url ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setClearAvatarOpen(true)}
-                  disabled={busy}
-                >
-                  清空头像
-                </Button>
-              ) : null}
-            </div>
+            </p>
+            <p className="break-all text-md text-muted-foreground">
+              {overview.session.email ?? "—"}
+            </p>
           </div>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="lg" className="h-11" disabled={busy} onClick={() => setEmailOpen(true)}>
+              更换邮箱
+            </Button>
+            {renameLocked ? (
+              <span className="text-meta text-muted-foreground">
+                {renameCooldownLabel(renameLockedUntil, Date.now())}
+              </span>
+            ) : (
+              <Button variant="outline" size="lg" className="h-11" disabled={busy} onClick={() => setRenameOpen(true)}>
+                修改名字
+              </Button>
+            )}
+            {overview.session.avatar_url ? (
+              <IconButton
+                icon={Eraser}
+                label="清空头像"
+                size="icon-sm"
+                variant="outline"
+                onClick={() => setClearAvatarOpen(true)}
+                disabled={busy}
+              />
+            ) : null}
+          </div>
+        </div>
       )}
 
       <ConfirmDialog
@@ -165,6 +163,7 @@ export function AccountProfileSection({
         onOpenChange={setRenameOpen}
         onSubmit={(name) => void renameAccount(name)}
       />
+      {emailOpen ? <ChangeEmailDialog open onOpenChange={setEmailOpen} /> : null}
     </div>
   )
 }
@@ -172,31 +171,27 @@ export function AccountProfileSection({
 type DeviceStorage = Awaited<ReturnType<typeof deviceStorageUsage>>
 type PinnedSourceUsage = Awaited<ReturnType<typeof pinnedSourceUsage>>
 
-/**
- * The render cache's families, in bar and row order. `swatch` pairs each
- * family with its `--chart-N` token, the palette the usage charts already
- * draw with.
- */
-const CACHE_FAMILY_META: Record<string, { label: string; description: string; swatch: string }> = {
+/** The render cache's families, in display order. */
+const CACHE_FAMILY_META: Record<string, { label: string; description: string; icon: LucideIcon }> = {
   templates: {
     label: "PSD 模板",
     description: "保留在本机的模板文件，删除后需重新选择",
-    swatch: "bg-chart-1",
+    icon: File,
   },
   sources: {
     label: "源图",
     description: "已导入的设计图源文件，删除后需重新导入",
-    swatch: "bg-chart-2",
+    icon: Image,
   },
   renders: {
     label: "切片产物",
     description: "已渲染、尚未投递的切片",
-    swatch: "bg-chart-3",
+    icon: Layers3,
   },
   "static-slices": {
     label: "静态切片缓存",
     description: "跨商品行复用的静态图层切片",
-    swatch: "bg-chart-4",
+    icon: Database,
   },
 }
 
@@ -220,16 +215,16 @@ interface ClearTarget {
  */
 export function DeviceStoragePanel() {
   const [storage, setStorage] = useState<DeviceStorage | null>()
-  const [families, setFamilies] = useState<CacheFamilyUsage[]>()
+  const [families, setFamilies] = useState<CacheFamilyUsage[] | null>()
   const [pinned, setPinned] = useState<PinnedSourceUsage>()
   const [target, setTarget] = useState<ClearTarget | null>(null)
   const [clearing, setClearing] = useState(false)
 
   function reload() {
     void deviceStorageUsage().then(setStorage, () => setStorage(null))
-    // An engine without OPFS still reports `storage` — the family breakdown
-    // just stays absent rather than painting fabricated zeros.
-    void usageByFamily().then(setFamilies, () => setFamilies(undefined))
+    // The survey tolerates an unavailable OPFS root. Probe it first so that
+    // an inaccessible cache is not presented as four empty families.
+    void deviceStorageRoot().then(usageByFamily).then(setFamilies, () => setFamilies(null))
     // 0 pinned is the honest state until a local row store wires
     // `setPinnedSources` (browser-owned-listing slice 17) — never fabricated.
     void pinnedSourceUsage().then(setPinned, () => setPinned(undefined))
@@ -256,7 +251,14 @@ export function DeviceStoragePanel() {
     }
   }
 
-  if (storage === undefined) return null
+  if (storage === undefined) {
+    return (
+      <div role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Spinner className="size-4" />
+        正在读取本机存储…
+      </div>
+    )
+  }
   return (
     <>
       <DeviceStorageCard
@@ -300,14 +302,8 @@ export function DeviceStoragePanel() {
 }
 
 /**
- * The measured half, so both the reported and the unsupported card can be read
- * without a browser. The cache evicts itself under a ceiling (`render/opfs-cache.ts`
- * eviction policy); `onClear` is the escape hatch for the operator who wants
- * the disk back now, and is absent on an engine that cannot report at all.
- *
- * `families` turns the card into a dashboard: a segmented bar over the
- * browser quota plus one row per cache family with its own 清理. `onClear`
- * stays the drop-everything hatch next to the heading.
+ * Browser estimates and cache-family records are separate measurements. They
+ * can differ, so neither a remainder nor a combined quota chart is inferred.
  */
 export function DeviceStorageCard({
   storage,
@@ -317,124 +313,89 @@ export function DeviceStorageCard({
   onClear,
 }: {
   storage: DeviceStorage | null
-  families?: CacheFamilyUsage[]
+  families?: CacheFamilyUsage[] | null
   /** The `sources` family's pinned subset — undefined while still loading. */
   pinned?: PinnedSourceUsage
   onClearFamily?: (family: string) => void
   onClear?: () => void
 }) {
-  const cacheBytes = families?.reduce((total, row) => total + row.bytes, 0) ?? 0
-  // OPFS families are what the sweep can free; the remainder is IndexedDB,
-  // Cache Storage and localStorage — reported, never cleared from here.
-  const otherBytes = storage ? Math.max(0, storage.usedBytes - cacheBytes) : 0
-  const segments = [
-    ...(families ?? []).map((row) => ({
-      key: row.family,
-      bytes: row.bytes,
-      swatch: CACHE_FAMILY_META[row.family]?.swatch ?? "bg-muted-foreground/40",
-    })),
-    { key: "other", bytes: otherBytes, swatch: "bg-muted-foreground/30" },
-  ].filter((segment) => segment.bytes > 0)
-  const barBasis = storage && storage.quotaBytes > 0 ? storage.quotaBytes : storage?.usedBytes ?? 0
-
   return (
-    <section className="flex flex-col rounded-xl border border-border bg-card">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
-        <p className="min-w-0 text-compact text-muted-foreground">
-          {storage === null
-            ? "当前浏览器不提供存储用量，模板与切片缓存不可用。"
-            : (
-              <>
-                <span className="font-mono font-medium tabular-nums text-foreground">
-                  已用 {formatBytes(storage.usedBytes)}
-                </span>
-                {` / 配额 ${formatBytes(storage.quotaBytes)}`}
-              </>
-            )}
-        </p>
+    <section className="flex flex-col gap-6">
+      <div className="flex min-h-[48px] flex-wrap items-center gap-x-4 gap-y-2">
+        {storage === null ? (
+          <p className="min-w-0 text-compact text-muted-foreground">当前浏览器不提供存储用量。</p>
+        ) : (
+          <p className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+            <span className="text-sm font-medium tabular-nums text-foreground">
+              浏览器估算已用 {formatBytes(storage.usedBytes)}
+            </span>
+            <span className="text-compact text-muted-foreground">{`配额 ${formatBytes(storage.quotaBytes)}`}</span>
+          </p>
+        )}
+        {families?.length ? <span className="text-compact text-muted-foreground">分区依据本机缓存记录</span> : null}
         <div className="ml-auto flex flex-wrap items-center gap-2">
           {storage ? (
-            <Badge variant="outline">
+            <Badge variant={storage.persisted ? "good" : "outline"}>
               {storage.persisted ? "已持久化" : "磁盘紧张时可能被清理"}
             </Badge>
           ) : null}
           {onClear ? (
-            <Button variant="outline" size="sm" onClick={onClear}>
-              清理本机缓存
-            </Button>
+            <IconButton
+              icon={Eraser}
+              label="清理本机缓存"
+              size="icon-sm"
+              variant="outline"
+              onClick={onClear}
+            />
           ) : null}
         </div>
       </div>
-      {storage && families ? (
-        <>
-          <div className="px-4 pb-3">
-            <div
-              role="img"
-              aria-label={`本机存储用量 ${formatBytes(storage.usedBytes)} / ${formatBytes(storage.quotaBytes)}`}
-              className="flex h-2 w-full overflow-hidden rounded-full bg-muted"
-            >
-              {segments.map((segment) => (
-                <span
-                  key={segment.key}
-                  className={cn("h-full", segment.swatch)}
-                  style={{ width: `${Math.min(100, (segment.bytes / barBasis) * 100)}%` }}
-                />
-              ))}
-            </div>
-          </div>
-          <ul>
-            {families.map((row) => {
-              const meta = CACHE_FAMILY_META[row.family]
-              return (
-                <li
-                  key={row.family}
-                  className="flex flex-wrap items-center gap-3 border-t border-border px-4 py-3"
-                >
-                  <span
-                    aria-hidden
-                    className={cn("size-2.5 shrink-0 rounded-xs", meta?.swatch ?? "bg-muted-foreground/40")}
-                  />
-                  <div className="flex min-w-0 flex-col">
-                    <p className="text-compact font-medium">{meta?.label ?? row.family}</p>
-                    <p className="text-meta text-muted-foreground">{meta?.description ?? ""}</p>
-                    {row.family === "sources" && pinned ? (
-                      <p className="text-meta text-muted-foreground">
-                        已钉住 {pinned.count} 张 · {formatBytes(pinned.bytes)}，清理时不会被删除
-                      </p>
-                    ) : null}
-                  </div>
-                  <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-3">
-                    <span className="font-mono text-meta tabular-nums text-muted-foreground">
-                      {formatBytes(row.bytes)}
-                      {row.entries > 0 ? ` · ${row.entries} 项` : ""}
-                    </span>
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      disabled={row.bytes === 0}
-                      onClick={() => onClearFamily?.(row.family)}
-                    >
-                      清理
-                    </Button>
-                  </div>
-                </li>
-              )
-            })}
-            {otherBytes > 0 ? (
-              <li className="flex flex-wrap items-center gap-3 border-t border-border px-4 py-3">
-                <span aria-hidden className="size-2.5 shrink-0 rounded-xs bg-muted-foreground/30" />
-                <div className="flex min-w-0 flex-col">
-                  <p className="text-compact font-medium">其他浏览器数据</p>
-                  <p className="text-meta text-muted-foreground">类目树、偏好与浏览器的其他存储</p>
+      {families === undefined ? (
+        <p role="status" className="text-compact text-muted-foreground">正在读取缓存分类…</p>
+      ) : families === null ? (
+        <p role="status" className="text-compact text-muted-foreground">无法读取本机缓存分类，请检查浏览器存储权限。</p>
+      ) : families.length === 0 ? (
+        <p className="text-compact text-muted-foreground">当前没有可显示的缓存分类。</p>
+      ) : (
+        <ul className="flex flex-col gap-4.5" aria-label="本机缓存分类">
+          {families.map((row) => {
+            const meta = CACHE_FAMILY_META[row.family]
+            const Icon = meta?.icon ?? File
+            return (
+              <li
+                key={row.family}
+                className="flex min-h-[110px] flex-wrap items-center gap-x-4 gap-y-3 rounded-lg border border-border bg-card p-5 sm:gap-x-7 sm:px-6"
+              >
+                <span className="grid size-[60px] shrink-0 place-items-center rounded-xl bg-brand-soft text-brand"><Icon aria-hidden className="size-[28px]" /></span>
+                <div className="min-w-0 flex-1 basis-36">
+                  <p className="text-md font-semibold leading-6">{meta?.label ?? row.family}</p>
+                  <p className="mt-1 text-md leading-5 text-muted-foreground">{meta?.description ?? ""}</p>
+                  {row.family === "sources" && pinned ? (
+                    <p className="text-xs text-muted-foreground">
+                      已钉住 {pinned.count} 张 · {formatBytes(pinned.bytes)}，清理时不会被删除
+                    </p>
+                  ) : null}
                 </div>
-                <span className="ml-auto shrink-0 font-mono text-meta tabular-nums text-muted-foreground">
-                  {formatBytes(otherBytes)}
-                </span>
+                <div className="ml-auto flex shrink-0 items-center justify-end gap-3">
+                  <span className="text-md font-medium tabular-nums text-muted-foreground">
+                    {formatBytes(row.bytes)}
+                    {row.entries > 0 ? ` · ${row.entries} 项` : ""}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="lg"
+                    className="h-11 min-w-[84px]"
+                    aria-label={`清理${meta?.label ?? row.family}`}
+                    disabled={!onClearFamily || row.bytes === 0}
+                    onClick={() => onClearFamily?.(row.family)}
+                  >清理</Button>
+                </div>
               </li>
-            ) : null}
-          </ul>
-        </>
-      ) : null}
+            )
+          })}
+        </ul>
+      )}
     </section>
   )
 }

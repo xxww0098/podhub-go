@@ -1,22 +1,20 @@
 package testkit
 
-import (
-	"context"
-
-	"github.com/jackc/pgx/v5/pgxpool"
-)
-
-// These names exist so tests/integration can call the helpers without
-// changing the helper bodies. The functions below only forward.
-
+// DockerAvailable reports whether the shared Postgres container can start.
 func DockerAvailable() bool { return dockerAvailable() }
 
-func CompareHeadFingerprint(t failer, ctx context.Context, pool *pgxpool.Pool) {
-	compareHeadFingerprint(t, ctx, pool)
-}
-
-func CompareRoutineBodies(t failer, ctx context.Context, pool *pgxpool.Pool) {
-	compareRoutineBodies(t, ctx, pool)
-}
-
+// QuoteIdent quotes a SQL identifier for use in a statement built by a test.
 func QuoteIdent(name string) string { return quoteIdent(name) }
+
+// quoteIdent doubles embedded quotes and wraps the name in double quotes.
+func quoteIdent(name string) string {
+	out := make([]byte, 0, len(name)+2)
+	out = append(out, '"')
+	for i := 0; i < len(name); i++ {
+		if name[i] == '"' {
+			out = append(out, '"')
+		}
+		out = append(out, name[i])
+	}
+	return string(append(out, '"'))
+}

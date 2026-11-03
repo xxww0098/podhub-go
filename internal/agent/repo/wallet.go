@@ -5,13 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/xxww0098/podhub-go/internal/agent/contract"
 	"github.com/xxww0098/podhub-go/internal/agent/domain"
+	"github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
 )
 
 func validateAmount(key string, amount int64) error {
@@ -171,37 +171,22 @@ func hold(ctx context.Context, tx pgx.Tx, userID, withdrawalID int64, key string
 	return recordCommission(ctx, tx, userID, "withdrawal_hold", key, 0, amount, beforeBal, beforeBal, beforeHeld, afterHeld, nil, &withdrawalID, "")
 }
 
-func withAppWallet(ctx context.Context, tx pgx.Tx, orgID, owner int64, fn func() error) error {
-	if _, err := tx.Exec(ctx,
-		`SELECT set_config('app.current_org_id', $1, true), set_config('app.current_wallet_user_id', $2, true)`,
-		strconv.FormatInt(orgID, 10), strconv.FormatInt(owner, 10)); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx, `SELECT set_config('role', 'podhub_app', true)`); err != nil {
+func withAppWallet(ctx context.Context, tx pgx.Tx, orgID int64, fn func() error) error {
+	if err := tenantx.EnterApp(ctx, tx, orgID); err != nil {
 		return err
 	}
 	return fn()
 }
 
-func walletOwner(ctx context.Context, tx pgx.Tx, orgID int64) (int64, error) {
-	var id int64
-	err := tx.QueryRow(ctx, `SELECT owner_user_id FROM organizations WHERE id = $1`, orgID).Scan(&id)
-	return id, err
-}
-
 // aiBalance is the wallet view a transfer replay uses: ensure, then select
 // the live balance without FOR UPDATE.
 func aiBalance(ctx context.Context, tx pgx.Tx, orgID int64) (int64, error) {
-	owner, err := walletOwner(ctx, tx, orgID)
-	if err != nil {
-		return 0, err
-	}
 	var bal int64
-	err = withAppWallet(ctx, tx, orgID, owner, func() error {
-		if _, err := tx.Exec(ctx, `INSERT INTO user_wallets (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`, owner); err != nil {
+	err := withAppWallet(ctx, tx, orgID, func() error {
+		if _, err := tx.Exec(ctx, `INSERT INTO workspace_wallets (org_id) VALUES ($1) ON CONFLICT (org_id) DO NOTHING`, orgID); err != nil {
 			return err
 		}
-		return tx.QueryRow(ctx, `SELECT balance_microfen FROM user_wallets WHERE user_id = $1`, owner).Scan(&bal)
+		return tx.QueryRow(ctx, `SELECT balance_microfen FROM workspace_wallets WHERE org_id = $1`, orgID).Scan(&bal)
 	})
 	return bal, err
 }
@@ -212,21 +197,17 @@ func adjust(ctx context.Context, tx pgx.Tx, orgID int64, key string, amount int6
 	if strings.TrimSpace(key) == "" {
 		return 0, fmt.Errorf("钱包转入失败: a wallet movement requires an idempotency key")
 	}
-	owner, err := walletOwner(ctx, tx, orgID)
-	if err != nil {
-		return 0, fmt.Errorf("钱包转入失败: %w", err)
-	}
 	var after int64
-	err = withAppWallet(ctx, tx, orgID, owner, func() error {
-		if _, err := tx.Exec(ctx, `INSERT INTO user_wallets (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`, owner); err != nil {
+	err := withAppWallet(ctx, tx, orgID, func() error {
+		if _, err := tx.Exec(ctx, `INSERT INTO workspace_wallets (org_id) VALUES ($1) ON CONFLICT (org_id) DO NOTHING`, orgID); err != nil {
 			return err
 		}
 		var before, held int64
 		err := tx.QueryRow(ctx, `
 			SELECT balance_microfen, held_microfen
-			FROM user_wallets WHERE user_id = $1 FOR UPDATE`, owner).Scan(&before, &held)
+			FROM workspace_wallets WHERE org_id = $1 FOR UPDATE`, orgID).Scan(&before, &held)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return fmt.Errorf("user wallet vanished after upsert")
+			return fmt.Errorf("workspace wallet vanished after upsert")
 		}
 		if err != nil {
 			return err
@@ -239,12 +220,12 @@ func adjust(ctx context.Context, tx pgx.Tx, orgID int64, key string, amount int6
 			return fmt.Errorf("insufficient")
 		}
 		tag, err := tx.Exec(ctx, `
-			UPDATE user_wallets
+			UPDATE workspace_wallets
 			   SET balance_microfen = $2,
 			       held_microfen = $3,
 			       version = version + 1,
 			       updated_at = clock_timestamp()
-			 WHERE user_id = (SELECT owner_user_id FROM organizations WHERE id = $1)`,
+			 WHERE org_id = $1`,
 			orgID, sum, held)
 		if err != nil {
 			return err
@@ -254,11 +235,11 @@ func adjust(ctx context.Context, tx pgx.Tx, orgID int64, key string, amount int6
 		}
 		_, err = tx.Exec(ctx, `
 			INSERT INTO wallet_ledger
-			    (org_id, user_id, entry_type, idempotency_key, amount_microfen, held_delta_microfen,
+			    (org_id, entry_type, idempotency_key, amount_microfen, held_delta_microfen,
 			     balance_before_microfen, balance_after_microfen,
 			     held_before_microfen, held_after_microfen,
 			     ai_request_id, payment_order_id, note)
-			VALUES ($1, (SELECT owner_user_id FROM organizations WHERE id = $1), 'adjustment', $2, $3, 0, $4, $5, $6, $7, NULL, NULL, $8)`,
+			VALUES ($1, 'adjustment', $2, $3, 0, $4, $5, $6, $7, NULL, NULL, $8)`,
 			orgID, key, amount, before, sum, held, held, note)
 		if err != nil {
 			return err

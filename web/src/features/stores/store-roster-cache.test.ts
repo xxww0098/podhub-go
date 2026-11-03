@@ -46,8 +46,8 @@ const cloudStore = {
   needs_reentry: true,
   can_manage: true,
     can_edit_credential: true,
-    permissions: { manage_store: true, edit_name: true, manage_key_grants: true, manage_tags: true, test_key: true, manage_key: true, delete_store: true },
-    assignee_key_manage: true,
+    permissions: { manage_store: true, edit_name: true, manage_tags: true, test_key: true, manage_key: true, delete_store: true },
+
 } satisfies OzonStoreView
 
 const overview = {
@@ -220,10 +220,6 @@ test("上架 and 店铺 subscribe to the same roster snapshot", () => {
   assert.match(reload, /loadStoreRoster\(\{ workspaceId, force: !options\?\.soft \}\)/)
   assert.match(reload, /if \(!options\?\.soft\) \{\s*forgetStoreRoster\(workspaceId\)/)
   assert.match(library, /return \{ refreshSavedForms, reloadOzonStores, openRunner \}/)
-  const products = readFileSync(
-    new URL("../products/products-screen.tsx", import.meta.url),
-    "utf8",
-  )
   const shipping = readFileSync(
     new URL("../ops/shipping/shipping-screen.tsx", import.meta.url),
     "utf8",
@@ -244,7 +240,6 @@ test("上架 and 店铺 subscribe to the same roster snapshot", () => {
     new URL("../message-center/message-center-screen.tsx", import.meta.url),
     "utf8",
   )
-  assert.match(products, /useStoreRoster/)
   assert.match(shipping, /useStoreRoster/)
   assert.match(returns, /useStoreRoster/)
   assert.match(supply, /useStoreRoster/)

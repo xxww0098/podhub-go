@@ -4,8 +4,6 @@ import test from "node:test"
 
 import type { WorkflowOperationRowResult } from "@/bindings/commands"
 import {
-  OCR_RETRY_KEY_SUFFIX,
-  ocrPurchaseKey,
   RECOGNITION_CONTRACT_VERSION,
 } from "./ai-job"
 import { requestStop, setCardContext } from "./execution-context"
@@ -16,19 +14,12 @@ import {
   COMPLETION,
   FIXED_TAGS,
   FIVE_TAGS,
-  HAN_ANSWER,
   RECOGNISED,
   ROW,
   windowCalls,
   withStubbedDevice,
 } from "./executor-test-support"
 import { record } from "./ai-job-test-support"
-
-test("OCR stage has one initial purchase and one retry identity", () => {
-  assert.equal(ocrPurchaseKey("job-key", 1), "job-key")
-  assert.equal(ocrPurchaseKey("job-key", 2), `job-key${OCR_RETRY_KEY_SUFFIX}`)
-  assert.equal(ocrPurchaseKey("job-key", 3), `job-key${OCR_RETRY_KEY_SUFFIX}`)
-})
 
 test("the logged OCR cost is the charged split, never the nominal total", async () => {
   const stub = record((call) => {
@@ -135,7 +126,7 @@ test("OCR writeback pending recovers through ai/settle and does not fail the job
       return new Response(JSON.stringify({
         error: "识图已计费，商品尚未写入，请核对后重试写回",
         code: "LISTING_WRITEBACK_PENDING",
-        ocrRecovery: { jobId: "job-1", requestId: "air-purchase" },
+        ocr_recovery: { job_id: "job-1", request_id: "air-purchase" },
       }), { status: 409, headers: { "Content-Type": "application/json" } })
     }
     if (call.url.endsWith("/ai/settle")) return { ...RECOGNISED, revision: 10 }
@@ -186,149 +177,23 @@ test("five image tags settle without a retry", async () => {
   }
 })
 
-test("a bad OCR answer gets at most one retry under its derived purchase key", async () => {
-  setCardContext({ psdTemplateSha256: "template-sha" })
-  const JOB_KEY = "recognize:v1:row-1:9:ai:v2:source-sha:prompt-sha:browser-image-v1_ocr-v1"
-  const prepare = { outcome: "running", jobs: [{ id: "job-1", kind: "ai.recognize", aggregate_id: "row-1", aggregate_type: "listing_row", input_revision: 9, state: "queued", attempt: 0, idempotency_key: JOB_KEY, payload: { recognition_prompt: { prompt_id: "prompt-1", fixed_tags: FIXED_TAGS, content: "识图提示词", sha256: "prompt-sha" }, executor: "browser", pinned_revision: 9, source_sha256: "source-sha", psd_template_sha256: "template-sha", renderer_contract_version: RENDERER_CONTRACT_VERSION }, updated_at_ms: 0 }] }
-  const badThenGood = record((call) => {
-    if (call.url.endsWith("/prepare")) return prepare
-    if (call.url.endsWith("/ocr/completions")) {
-      return call.headers["Idempotency-Key"] === JOB_KEY
-        ? { billing: COMPLETION.billing, completion: answer(JSON.stringify({ ru: "Чехол 山", tags: FIVE_TAGS, desc: "Сюжет." })) }
-        : COMPLETION
-    }
+test("an unusable server theme waits for a person without another paid request", async () => {
+  const stub = record(call => {
+    if (call.url.endsWith("/prepare")) return {outcome:"running", jobs:[{id:"job-1",kind:"ai.recognize",attempt:2,idempotency_key:"one-key",payload:{source_sha256:"source-sha",recognition_prompt:{fixed_tags:FIXED_TAGS,content:"facts"}}}]}
+    if (call.url.endsWith("/ocr/completions")) return new Response(JSON.stringify({code:"OCR_CONTRACT_VIOLATION",error:"图片无法辨认，请人工处理"}),{status:422})
     return ROW
   })
   try {
     const { runRows } = await import("./run-rows")
-    const [result] = await withStubbedDevice(() =>
-      runRows({ row_ids: ["row-1"], expected_revisions: [{ row_id: "row-1", revision: 9 }] }, "recognize"),
-    )
-    assert.equal(result!.outcome, "start")
-    assert.equal(result!.error, undefined)
-    const keys = badThenGood.calls
-      .filter((call) => call.url.endsWith("/ocr/completions"))
-      .map((call) => call.headers["Idempotency-Key"])
-    assert.deepEqual(keys, [JOB_KEY, `${JOB_KEY}${OCR_RETRY_KEY_SUFFIX}`])
-    const purchases = badThenGood.calls.filter((call) => call.url.endsWith("/ocr/completions"))
-    assert.deepEqual(purchases.map((call) => ({
-      job: call.headers["X-Listing-Job-Id"],
-      owner: call.headers["X-Listing-Lease-Owner"],
-      epoch: call.headers["X-Listing-Lease-Epoch"],
-    })), [
-      { job: "job-1", owner: "tab-job-1", epoch: "1" },
-      { job: "job-1", owner: "tab-job-1", epoch: "1" },
-    ])
-    assert.deepEqual(purchases[0]!.body, { uploadTicket: "private-ocr-ticket" }, "the server Job now owns the prompt and image reconstruction")
-    assert.deepEqual(purchases[1]!.body, purchases[0]!.body, "retry retains the source binding while Cloud repairs the stored answer")
-    assert.ok(badThenGood.calls.some((call) => call.url.endsWith("/ai/settle")))
-  } finally {
-    badThenGood.restore()
-  }
-
-  const alwaysBad = record((call) => {
-    if (call.url.endsWith("/prepare")) return prepare
-    if (call.url.endsWith("/ocr/completions")) return { billing: COMPLETION.billing, completion: answer(HAN_ANSWER) }
-    return ROW
-  })
-  try {
-    const { runRows } = await import("./run-rows")
-    const [result] = await withStubbedDevice(() =>
-      runRows({ row_ids: ["row-1"], expected_revisions: [{ row_id: "row-1", revision: 9 }] }, "recognize"),
-    )
-    assert.equal(result!.error?.code, "workflow_ai_result_unusable")
-    assert.match(result!.error?.message ?? "", /俄语标题中混入了中文，需要纯俄语内容/)
-    assert.match(result!.error?.message ?? "", /已计费，结果未写入商品/)
-    assert.match(result!.error?.message ?? "", /更新系统提示词后重新准备/)
-    assert.doesNotMatch(result!.error?.message ?? "", /Idempotency-Key|\bru\b/)
-    const posts = alwaysBad.calls.map((call) => `${call.method} ${call.url}`)
-    assert.equal(posts.filter((post) => post.endsWith("/ocr/completions")).length, 2, "han receives one correction and never a third purchase")
-    assert.doesNotMatch(result!.error?.message ?? "", /不会生成新答案/)
-    assert.ok(!posts.some((post) => post.endsWith("/ai/settle")), "a bad answer never reaches the Draft")
-    assert.ok(posts.some((post) => post.endsWith("/ai/fail")), "a failed Job is retired so a hot update can take effect")
-  } finally {
-    alwaysBad.restore()
-  }
-})
-
-test("a mixed-script answer is corrected once and a second failure names the field", async () => {
-  setCardContext({ psdTemplateSha256: "template-sha" })
-  const stuck = `кип${"i"}рис`
-  const mixed = JSON.stringify({ ru: `Чехол ${stuck}`, tags: FIVE_TAGS, desc: `Сюжет ${stuck}.` })
-  const stub = record((call) => {
-    if (call.url.endsWith("/prepare")) return {
-      outcome: "running",
-      jobs: [{ id: "job-1", kind: "ai.recognize", idempotency_key: "mixed-key", payload: { source_sha256: "source-sha", recognition_prompt: { fixed_tags: FIXED_TAGS, content: "识图提示词" } } }],
-    }
-    if (call.url.endsWith("/ocr/completions")) return { billing: COMPLETION.billing, completion: answer(mixed) }
-    return ROW
-  })
-  try {
-    const { runRows } = await import("./run-rows")
-    const [result] = await withStubbedDevice(() => runRows({ row_ids: ["row-1"], expected_revisions: [] }, "recognize"))
-    assert.equal(result!.error?.code, "workflow_ai_result_unusable")
-    assert.match(result!.error?.message ?? "", /俄语标题里的俄语词混入了拉丁字母/)
-    assert.doesNotMatch(result!.error?.message ?? "", /不会生成新答案/)
-    const keys = stub.calls.filter((call) => call.url.endsWith("/ocr/completions")).map((call) => call.headers["Idempotency-Key"])
-    assert.deepEqual(keys, ["mixed-key", `mixed-key${OCR_RETRY_KEY_SUFFIX}`])
-  } finally {
-    stub.restore()
-  }
-})
-
-test("stop after a bad paid OCR prevents the retry purchase", async () => {
-  setCardContext({ psdTemplateSha256: "template-sha" })
-  const stub = record((call) => {
-    if (call.url.endsWith("/prepare")) {
-      return { outcome: "running", jobs: [{ id: "job-1", kind: "ai.recognize", aggregate_id: "row-1", aggregate_type: "listing_row", input_revision: 9, state: "queued", attempt: 0, idempotency_key: "job-key", payload: { source_sha256: "source-sha", recognition_prompt: { fixed_tags: FIXED_TAGS, content: "识图提示词" } }, updated_at_ms: 0 }] }
-    }
-    if (call.url.endsWith("/ocr/completions")) {
-      requestStop(["row-1"])
-      return { billing: COMPLETION.billing, completion: answer(HAN_ANSWER) }
-    }
-    return ROW
-  })
-  try {
-    const { runRows } = await import("./run-rows")
-    const [result] = await withStubbedDevice(() =>
-      runRows({ row_ids: ["row-1"], expected_revisions: [{ row_id: "row-1", revision: 9 }] }, "recognize"),
-    )
-    assert.equal(result!.noop_reason, "cancelled")
-    assert.equal(stub.calls.filter((call) => call.url.endsWith("/ocr/completions")).length, 1)
-    assert.equal(stub.calls.some((call) => call.url.endsWith("/ai/settle")), false)
-  } finally {
-    stub.restore()
-  }
-})
-
-for (const unusable of [
-  { name: "Chinese title", content: HAN_ANSWER, posts: [ "paid-once", `paid-once${OCR_RETRY_KEY_SUFFIX}` ] },
-  { name: "overlong title", content: JSON.stringify({ ru: "Ж".repeat(201), tags: FIVE_TAGS, desc: "Сюжет." }), posts: [ "paid-once", `paid-once${OCR_RETRY_KEY_SUFFIX}` ] },
-]) test(`a paid OCR with ${unusable.name} stops after its allowed purchases`, async (t) => {
-  let now = 0
-  t.mock.method(performance, "now", () => now)
-  const stub = record((call) => {
-    if (call.url.endsWith("/prepare")) return {
-      outcome: "running",
-      jobs: [{ id: "expired-ai", kind: "ai.recognize", idempotency_key: "paid-once", payload: { source_sha256: ROW.source.sha256, recognition_prompt: { fixed_tags: FIXED_TAGS, content: "识图" } } }],
-    }
-    if (call.url.endsWith("/ocr/completions")) {
-      now = 31_000
-      return { billing: COMPLETION.billing, completion: answer(unusable.content) }
-    }
-    return ROW
-  })
-  try {
-    const { runRows } = await import("./run-rows")
-    const [result] = await withStubbedDevice(() => runRows({ row_ids: [ROW.id], expected_revisions: [] }, "recognize"))
-    assert.equal(result?.error?.code, "workflow_ai_result_unusable")
-    const posts = stub.calls.filter((call) => call.url.endsWith("/ocr/completions") && call.method === "POST")
-    assert.deepEqual(posts.map((call) => call.headers["Idempotency-Key"]),
-      unusable.posts,
-      "each contract failure gets at most the original and one retry identity")
-    assert.equal(stub.calls.some((call) => call.url.endsWith("/ai/settle")), false)
-    assert.equal(stub.calls.filter((call) => call.url.endsWith("/ai/fail")).length, 1)
-  } finally { stub.restore() }
+    const [result] = await withStubbedDevice(() => runRows({row_ids:[ROW.id],expected_revisions:[]},"recognize"))
+    assert.equal(result?.error?.code,"cloud_ocr_contract_violation")
+    const calls=stub.calls.filter(c=>c.url.endsWith("/ocr/completions"))
+    assert.equal(calls.length,1)
+    assert.equal(calls[0]!.headers["Idempotency-Key"],"one-key")
+    assert.equal(stub.calls.some(c=>c.url.endsWith("/ai/settle")),false)
+    assert.equal(stub.calls.filter(c=>c.url.endsWith("/ai/fail")).length,1)
+    assert.equal(stub.calls.find(c=>c.url.endsWith("/ai/fail"))?.body.error_code,"cloud_ocr_contract_violation")
+  } finally {stub.restore()}
 })
 
 test("recognition requires the pinned processing contract and a Cloud purchase id", async () => {
@@ -350,6 +215,7 @@ test("recognition requires the pinned processing contract and a Cloud purchase i
       const [result] = await withStubbedDevice(() => runRows({ row_ids: [ROW.id], expected_revisions: [] }, "recognize"))
       assert.equal(result?.error?.code, bad === "contract" ? "workflow_recognition_contract_changed" : "workflow_purchase_missing")
       assert.equal(stub.calls.some((call) => call.url.endsWith("/ai/settle")), false)
+      if (bad === "contract") assert.equal(stub.calls.find(call => call.url.endsWith("/ai/fail"))?.body.error_code, "workflow_recognition_contract_changed")
       assert.equal(
         stub.calls.filter((call) => call.url.endsWith("/ocr/completions")).length,
         bad === "contract" ? 0 : 3,

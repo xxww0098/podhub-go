@@ -38,13 +38,13 @@ import { useVisiblePolling } from "@/lib/visible-polling"
 import { cn } from "@/lib/utils"
 
 /**
- * 去充值 opens this dialog in place — no detour through 加购. It is the same
- * Payment Order pipeline as seat purchases (`POST /api/ai/recharge/orders`):
+ * 去充值 opens this dialog in place — no detour through the plans page. It is the same
+ * Payment Order pipeline as subscription purchases (`POST /api/ai/recharge/orders`):
  * the channel list is whatever the platform admin switched on, and a pending
  * order survives the dialog closing so the operator can resume paying.
  *
  * Top-up orders are not readable through `/api/orders/{public_id}` (that query
- * is member-seats only), so status refresh polls the wallet detail's
+ * is subscription-only), so status refresh polls the wallet detail's
  * `recharges` page — and there is no self-serve cancel for a pending top-up.
  */
 
@@ -98,7 +98,7 @@ export function RechargeDialog({
   /** Re-read the wallet detail and fold it into dialog state; the fresh wallet publishes to the shared cache. */
   const syncFromWallet = useCallback(async (): Promise<AiRechargeOrderView | undefined> => {
     const detail = await accountHttp.accountGetWalletDetail()
-    rememberWallet(detail.wallet)
+    rememberWallet(detail)
     const latest = orderRef.current
     const next = latest
       ? detail.recharges.find((row) => row.public_id === latest.public_id)
@@ -214,7 +214,7 @@ export function RechargeDialog({
       try {
         const detail = await accountHttp.accountGetWalletDetail()
         if (cancelled) return
-        rememberWallet(detail.wallet)
+        rememberWallet(detail)
         const pending = detail.recharges.find((row) => row.status === "pending")
         if (!pending) return
         orderRef.current = pending
@@ -387,7 +387,7 @@ export function RechargeDialog({
             </DialogTitle>
             <DialogDescription>
               为{lockedWorkspace ? `「${lockedWorkspace.name}」` : "当前工作空间"}
-              的创建者钱包充值。同一创建者的所有工作空间共用余额。
+              的钱包充值。每个工作空间的余额相互独立。
             </DialogDescription>
           </DialogHeader>
         </div>
@@ -544,7 +544,7 @@ export function RechargeDialog({
                 </span>
               </div>
               <p className="border-t border-border/60 pt-3 text-meta leading-5 text-muted-foreground">
-                支付成功后余额实时充入工作空间创建者的钱包，余额不过期。
+                支付成功后余额实时充入当前工作空间的钱包，不过期。
               </p>
               <Button
                 type="submit"

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -24,7 +23,7 @@ func TestMCPCodesMatchAdmin(t *testing.T) {
 	t.Setenv("CLOUD_MCP_ALLOWED_ORIGINS", "")
 
 	// account_users_single_super_admin allows one super_admin row. The
-	// missing-totp, missing-step-up, and expired cases mutate that row.
+	// expired-session case mutates that row.
 	if _, err := pool.Exec(ctx, `
 		DELETE FROM account_sessions WHERE user_id IN (89101, 89102, 89103);
 		DELETE FROM account_users WHERE id IN (89101, 89102, 89103)`); err != nil {
@@ -35,14 +34,12 @@ func TestMCPCodesMatchAdmin(t *testing.T) {
 		email string
 		role  string
 		token string
-		totp  bool
-		step  string
 	}
 	const superToken = "mcp-code-super"
 	accounts := []account{
-		{89101, "mcp-code-super@example.invalid", "super_admin", superToken, true, "clock_timestamp() + interval '10 minutes'"},
-		{89102, "mcp-code-member@example.invalid", "user", "mcp-code-member", false, "NULL"},
-		{89103, "mcp-code-staff@example.invalid", "admin", "mcp-code-staff", true, "clock_timestamp() + interval '10 minutes'"},
+		{89101, "mcp-code-super@example.invalid", "super_admin", superToken},
+		{89102, "mcp-code-member@example.invalid", "user", "mcp-code-member"},
+		{89103, "mcp-code-staff@example.invalid", "admin", "mcp-code-staff"},
 	}
 	for _, item := range accounts {
 		if _, err := pool.Exec(ctx, `
@@ -51,18 +48,11 @@ func TestMCPCodesMatchAdmin(t *testing.T) {
 			item.id, item.email, item.email, item.role); err != nil {
 			t.Fatal(err)
 		}
-		query := fmt.Sprintf(`
-			INSERT INTO account_sessions (token_hash, user_id, expires_at, admin_step_up_until)
-			VALUES ($1, $2, clock_timestamp() + interval '1 day', %s)`, item.step)
-		if _, err := pool.Exec(ctx, query, domain.SessionHash(item.token), item.id); err != nil {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO account_sessions (token_hash, user_id, expires_at)
+			VALUES ($1, $2, clock_timestamp() + interval '1 day')`,
+			domain.SessionHash(item.token), item.id); err != nil {
 			t.Fatal(err)
-		}
-		if item.totp {
-			if _, err := pool.Exec(ctx, `
-				INSERT INTO account_admin_totp (user_id, secret_nonce, secret_ciphertext, confirmed_at)
-				VALUES ($1, decode('00112233445566778899aabb', 'hex'), decode('00112233445566778899aabbccddeeff00', 'hex'), clock_timestamp())`, item.id); err != nil {
-				t.Fatal(err)
-			}
 		}
 	}
 	seedMatchingLease(t, ctx, pool, "admin", "mcp code test")
@@ -79,11 +69,9 @@ func TestMCPCodesMatchAdmin(t *testing.T) {
 	denied := []struct {
 		name, token, tool, body, want string
 	}{
-		{"member", "mcp-code-member", "generateActivationCodes", seatBody, "需要超级管理员权限"},
+		{"member", "mcp-code-member", "generateQuotaCards", walletBody, "需要超级管理员权限"},
 		{"staff", "mcp-code-staff", "generateQuotaCards", walletBody, "需要超级管理员权限"},
 		{"quantity", superToken, "generateQuotaCards", walletTooMany, "兑换码数量需在 1-500 之间"},
-		{"retired activation", superToken, "generateActivationCodes", seatBody, "仅支持创建钱包额度兑换码，成员席位批次已停用"},
-		{"bad tier", superToken, "generateActivationCodes", seatBadTier, "仅支持创建钱包额度兑换码，成员席位批次已停用"},
 	}
 	for _, tc := range denied {
 		t.Run(tc.name, func(t *testing.T) {
@@ -93,31 +81,9 @@ func TestMCPCodesMatchAdmin(t *testing.T) {
 			}
 		})
 	}
-	noToken := mcpCall(handler, "", "generateActivationCodes", seatBody)
+	noToken := mcpCall(handler, "", "generateQuotaCards", walletBody)
 	if noToken.Code != http.StatusUnauthorized {
 		t.Fatalf("no token %d %s", noToken.Code, noToken.Body.String())
-	}
-	if _, err := pool.Exec(ctx, `DELETE FROM account_admin_totp WHERE user_id = 89101`); err != nil {
-		t.Fatal(err)
-	}
-	noTotp := mcpCall(handler, superToken, "generateActivationCodes", seatBody)
-	if noTotp.Code != http.StatusOK || !strings.Contains(noTotp.Body.String(), "请先绑定验证器") || !strings.Contains(noTotp.Body.String(), `"isError":true`) {
-		t.Fatalf("no totp %d %s", noTotp.Code, noTotp.Body.String())
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO account_admin_totp (user_id, secret_nonce, secret_ciphertext, confirmed_at)
-		VALUES (89101, decode('00112233445566778899aabb', 'hex'), decode('00112233445566778899aabbccddeeff00', 'hex'), clock_timestamp())`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `UPDATE account_sessions SET admin_step_up_until = clock_timestamp() - interval '1 minute' WHERE user_id = 89101`); err != nil {
-		t.Fatal(err)
-	}
-	noStep := mcpCall(handler, superToken, "generateQuotaCards", walletBody)
-	if noStep.Code != http.StatusOK || !strings.Contains(noStep.Body.String(), "管理操作需要重新验证") || !strings.Contains(noStep.Body.String(), `"isError":true`) {
-		t.Fatalf("no step-up %d %s", noStep.Code, noStep.Body.String())
-	}
-	if _, err := pool.Exec(ctx, `UPDATE account_sessions SET admin_step_up_until = clock_timestamp() + interval '10 minutes' WHERE user_id = 89101`); err != nil {
-		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `UPDATE account_sessions SET expires_at = clock_timestamp() - interval '1 minute' WHERE user_id = 89101`); err != nil {
 		t.Fatal(err)
@@ -198,16 +164,14 @@ func TestMCPCodesMatchAdmin(t *testing.T) {
 	var leaked int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*) FROM audit_logs
-		WHERE user_id = 89101 AND (message LIKE '%POD-PLAN-%' OR message LIKE '%POD-WALLET-%')`).Scan(&leaked); err != nil || leaked != 0 {
+		WHERE user_id = 89101 AND message LIKE '%POD-WALLET-%'`).Scan(&leaked); err != nil || leaked != 0 {
 		t.Fatalf("audit leaked %d %v", leaked, err)
 	}
 }
 
 const (
-	seatBody      = `{"product":"member_seats","member_seats":2,"tier":"max","quantity":2,"duration_days":45,"expires_at":"2030-06-01T00:00:00Z"}`
-	walletBody    = `{"product":"wallet_credits","member_seats":0,"wallet_cents":2500,"quantity":1,"duration_days":30,"expires_at":"2030-06-01T00:00:00Z"}`
-	walletTooMany = `{"product":"wallet_credits","member_seats":0,"wallet_cents":100,"quantity":501,"duration_days":30}`
-	seatBadTier   = `{"product":"member_seats","member_seats":1,"tier":"lite","quantity":1,"duration_days":30}`
+	walletBody    = `{"wallet_cents":2500,"quantity":1,"expires_at":"2030-06-01T00:00:00Z"}`
+	walletTooMany = `{"wallet_cents":100,"quantity":501}`
 )
 
 func mcpCall(h http.Handler, token, tool, args string) *httptest.ResponseRecorder {
@@ -231,18 +195,11 @@ func adminPost(h http.Handler, token, path, body string) *httptest.ResponseRecor
 }
 
 type issuedCode struct {
-	ID           int64  `json:"id"`
-	Code         string `json:"code"`
-	Plan         string `json:"plan"`
-	PlanName     string `json:"plan_name"`
-	Product      string `json:"product"`
-	MemberSeats  int64  `json:"member_seats"`
-	Tier         string `json:"tier"`
-	OcrCredits   int64  `json:"ocr_credits"`
-	WalletCents  int64  `json:"wallet_cents"`
-	DurationDays int32  `json:"duration_days"`
-	BatchID      string `json:"batch_id"`
-	ExpiresAt    string `json:"expires_at"`
+	ID          int64  `json:"id"`
+	Code        string `json:"code"`
+	WalletCents int64  `json:"wallet_cents"`
+	BatchID     string `json:"batch_id"`
+	ExpiresAt   string `json:"expires_at"`
 }
 
 func decodeCodes(t *testing.T, body []byte) []issuedCode {

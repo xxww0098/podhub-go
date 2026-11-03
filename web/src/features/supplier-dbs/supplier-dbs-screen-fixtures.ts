@@ -178,6 +178,7 @@ export function memoryClient(
         internalNote: body.internalNote,
         listed: body.listed,
         icon: body.icon,
+        factoryId: body.factoryId,
       })
       dbs = [...dbs, next]
       details.set(next.sourceId, { db: next, propDefs: [], rows: [] })
@@ -196,18 +197,12 @@ export function memoryClient(
         listed: body.listed,
         icon: body.icon,
         viewPrefs: body.viewPrefs,
-        ...(body.accountEmail ? { accountEmail: body.accountEmail } : {}),
+        ...(body.factoryId ? { factoryId: body.factoryId } : {}),
       })
       return { db: next }
     },
     supplierDbDelete: async (sourceId) => {
       calls.deleteDb.push(sourceId)
-      const detail = details.get(sourceId)
-      if (detail && detail.rows.length > 0) {
-        // The fetch client namespaces Cloud codes: CONFLICT arrives as
-        // `cloud_conflict`, which is what the store branches on.
-        throw { code: "cloud_conflict", message: "channel still referenced" }
-      }
       dbs = dbs.filter((item) => item.sourceId !== sourceId)
       details.delete(sourceId)
       return { sourceId }
@@ -265,6 +260,7 @@ export function memoryClient(
         shippingCostCents: body.shippingCostCents,
         leadTime: body.leadTime,
         size: body.size,
+        variantGroup: body.variantGroup,
         material: body.material,
         craft: body.craft,
         grossWeightG: body.grossWeightG,
@@ -306,6 +302,7 @@ export function memoryClient(
         shippingCostCents: body.shippingCostCents,
         leadTime: body.leadTime,
         size: body.size,
+        variantGroup: body.variantGroup,
         material: body.material,
         craft: body.craft,
         grossWeightG: body.grossWeightG,

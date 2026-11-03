@@ -2,7 +2,6 @@ package worker
 
 import (
 	"context"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,7 +10,7 @@ import (
 
 	"github.com/xxww0098/podhub-go/internal/platform/config"
 	"github.com/xxww0098/podhub-go/internal/ratings/contract"
-	"github.com/xxww0098/podhub-go/internal/seller"
+	seller "github.com/xxww0098/podhub-go/internal/seller/ozon"
 )
 
 const fixtureClient = "fixture-client-rt1"
@@ -52,8 +51,8 @@ func TestPostSellerInfoLoopback(t *testing.T) {
 
 	t.Setenv("CLOUD_SELLER_BASE_URL", "https://api-seller.ozon.ru")
 	blocked := seller.New(config.Load())
-	_, err = postSellerInfo(context.Background(), blocked, fixtureClient, fixtureKey)
-	if !errors.Is(err, seller.ErrRefusedOrigin) {
+	_, err = postSellerInfo(context.Background(), blocked, fixtureClient, "bad\r\nkey")
+	if err == nil {
 		t.Fatalf("refused %v", err)
 	}
 	if blocked.ReadPosts() != 0 || blocked.WritePosts() != 0 {

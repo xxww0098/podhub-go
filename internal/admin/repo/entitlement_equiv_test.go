@@ -4,10 +4,13 @@ import (
 	"math"
 	"testing"
 	"time"
+
+	billingcontract "github.com/xxww0098/podhub-go/internal/billing/contract"
 )
 
 // legacyOrgAtLeast0 and legacyRFC3339Millis are the admin/repo bodies before
-// they moved to admin/core/repo.
+// they moved to admin/core/repo (and, for the timestamp format, to the shared
+// billing contract helper).
 func legacyOrgAtLeast0(orgID int64) int64 {
 	if orgID < 0 {
 		return 0
@@ -38,7 +41,7 @@ func TestRFC3339MillisMatchesLegacy(t *testing.T) {
 		time.Date(1969, 12, 31, 23, 59, 59, 123_000_000, time.UTC),
 		time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC),
 	} {
-		if got, want := rfc3339Millis(at), legacyRFC3339Millis(at); got != want {
+		if got, want := billingcontract.RFC3339Millis(at), legacyRFC3339Millis(at); got != want {
 			t.Fatalf("%v: got %q want %q", at, got, want)
 		}
 	}

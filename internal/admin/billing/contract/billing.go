@@ -2,20 +2,15 @@ package contract
 
 import "time"
 
-// RedeemSpec is what gets inserted. PlanKey is the catalogue key or "wallet".
+// RedeemSpec is what gets inserted as a batch of wallet or plan codes.
 type RedeemSpec struct {
-	Product      string
-	PlanKey      string
-	PlanName     string
-	MemberSeats  int64
-	Tier         string
-	OcrCredits   int64
-	WalletCents  int64
-	Quantity     int32
-	DurationDays int32
-	ExpiresAt    time.Time
-	Note         *string
-	NeedsPlan    bool
+	Quantity    int32
+	WalletCents int64
+	PlanKey     string
+	PlanStores  int32
+	PlanMonths  int32
+	ExpiresAt   time.Time
+	Note        *string
 }
 
 // TopupGrant is a manual wallet grant.

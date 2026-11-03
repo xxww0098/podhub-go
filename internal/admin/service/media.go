@@ -80,44 +80,8 @@ type ObjectPage struct {
 	HasCursor  bool
 }
 
-func (d Deps) loadAccounts(ctx context.Context) ([]domain.CloudAccount, error) {
-	if d.Pool == nil {
-		return nil, fail(500, "INTERNAL", "服务暂不可用")
-	}
-	var nonce, ciphertext []byte
-	err := d.Pool.QueryRow(ctx, `SELECT nonce, ciphertext FROM public.platform_integration_config WHERE singleton = true`).Scan(&nonce, &ciphertext)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, fail(503, "UNAVAILABLE", "平台尚未配置媒体存储")
-	}
-	if err != nil {
-		return nil, mapDB(err, 500, "INTERNAL", "服务暂不可用")
-	}
-	if len(nonce) != 12 {
-		slog.Error("连接配置密文 nonce 长度无效")
-		return nil, fail(500, "INTERNAL", "服务暂不可用")
-	}
-	accounts, err := domain.OpenSnapshot(d.Key, nonce, ciphertext)
-	if err == nil {
-		return accounts, nil
-	}
-	switch {
-	case errors.Is(err, domain.ErrKeyMissing), errors.Is(err, domain.ErrKeyExample):
-		return nil, fail(503, "UNAVAILABLE", err.Error())
-	case errors.Is(err, domain.ErrSchema):
-		slog.Error("已存储的连接配置 schema 版本不受支持")
-		return nil, fail(500, "INTERNAL", "服务暂不可用")
-	default:
-		slog.Error("连接配置快照解密失败", "err", err)
-		return nil, fail(500, "INTERNAL", "服务暂不可用")
-	}
-}
-
 func (d Deps) resolve(ctx context.Context, id *string, persistent bool) (domain.CloudAccount, sign.Account, error) {
-	accounts, err := d.loadAccounts(ctx)
-	if err != nil {
-		return domain.CloudAccount{}, sign.Account{}, err
-	}
-	account, err := domain.ResolveAccount(accounts, id)
+	account, err := domain.ResolveAccount(d.Accounts, id)
 	if errors.Is(err, domain.ErrAccount) {
 		return domain.CloudAccount{}, sign.Account{}, fail(400, "VALIDATION", err.Error())
 	}
@@ -150,11 +114,11 @@ func toSign(account domain.CloudAccount) sign.Account {
 	}
 }
 
-func (d Deps) exchange(ctx context.Context, method, rawURL string, headers map[string]string, body []byte, timeout time.Duration, noCompress, strict bool, max int64) (int, map[string][]string, []byte, error) {
+func (d Deps) exchange(ctx context.Context, account sign.Account, method, rawURL string, headers map[string]string, body []byte, timeout time.Duration, noCompress, strict bool, max int64) (int, map[string][]string, []byte, error) {
 	if d.Origin == nil {
 		return 0, nil, nil, fail(500, "INTERNAL", "服务暂不可用")
 	}
-	return d.Origin.Exchange(ctx, method, rawURL, headers, body, timeout, noCompress, strict, max)
+	return d.Origin.Exchange(ctx, account, method, rawURL, headers, body, timeout, noCompress, strict, max)
 }
 
 func presign(account sign.Account, method, key, contentType string, now time.Time, exp time.Duration, query, headers [][2]string) (string, error) {
@@ -185,7 +149,7 @@ func (d Deps) listPage(ctx context.Context, account sign.Account, prefix, delimi
 	if err != nil {
 		return domain.ListPage{}, fail(500, "INTERNAL", "服务暂不可用")
 	}
-	status, _, body, err := d.exchange(ctx, methodGet, raw, nil, nil, listTimeout, strict, strict, 0)
+	status, _, body, err := d.exchange(ctx, account, methodGet, raw, nil, nil, listTimeout, strict, strict, 0)
 	if err != nil {
 		if strict {
 			return domain.ListPage{}, fail(503, "UNAVAILABLE", "源站列举失败："+err.Error())
@@ -351,7 +315,7 @@ func (d Deps) deleteKey(ctx context.Context, account sign.Account, key string) (
 		slog.Warn("无法签发源站 DELETE", "err", err)
 		return "failed", errors.New("无法签发源站 DELETE")
 	}
-	status, _, _, err := d.exchange(ctx, methodDelete, raw, nil, nil, deleteTimeout, true, true, 0)
+	status, _, _, err := d.exchange(ctx, account, methodDelete, raw, nil, nil, deleteTimeout, true, true, 0)
 	if err != nil {
 		slog.Warn("源站 DELETE", "err", err)
 		return "failed", err

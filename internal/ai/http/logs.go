@@ -12,9 +12,10 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	billing "github.com/xxww0098/podhub-go/internal/billing/contract"
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
 	"github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
-	"github.com/xxww0098/podhub-go/internal/platform/newapibilling"
+	"github.com/xxww0098/podhub-go/internal/platform/httpx/jsonwire"
 )
 
 const (
@@ -126,7 +127,7 @@ func (h httpHandler) logs(w http.ResponseWriter, r *http.Request) {
 	if items == nil {
 		items = []logItem{}
 	}
-	writeJSON(w, 200, map[string]any{
+	jsonwire.Write(w, 200, map[string]any{
 		"page": q.Page, "page_size": q.PageSize, "total": total, "items": items,
 	})
 }
@@ -151,7 +152,7 @@ func (h httpHandler) logStat(w http.ResponseWriter, r *http.Request) {
 		writeResp(w, fail(500, "INTERNAL", "服务暂不可用"))
 		return
 	}
-	writeJSON(w, 200, stat)
+	jsonwire.Write(w, 200, stat)
 }
 
 func (h httpHandler) logExport(w http.ResponseWriter, r *http.Request) {
@@ -532,19 +533,17 @@ func clientIPFrom(ctx context.Context) string {
 	return ip
 }
 
-func logOther(settled newapibilling.Settlement, charged, absorbed int64, cache int) ([]byte, error) {
+func logOther(charge billing.Charge, charged, absorbed int64, cache int) ([]byte, error) {
 	payload := map[string]any{
-		"model_ratio":           settled.ModelRatio,
-		"group_ratio":           settled.GroupRatio,
-		"completion_ratio":      settled.CompletionRatio,
-		"cache_ratio":           settled.CacheRatio,
 		"cache_tokens":          cache,
-		"model_price":           settled.ModelPrice,
+		"uncached_input":        charge.UncachedInput,
+		"cached_input":          charge.CachedInput,
+		"output":                charge.Output,
+		"reasoning":             charge.Reasoning,
 		"billing_source":        "wallet",
 		"billing_preference":    "wallet_only",
 		"wallet_quota_deducted": charged,
 		"absorbed_microfen":     absorbed,
-		"group":                 newapibilling.UsingGroup,
 	}
 	return json.Marshal(payload)
 }

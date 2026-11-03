@@ -54,9 +54,8 @@ Go 1.27.2，wazero v1.9.0，Linux amd64 / Xeon Platinum 8573C，GOMAXPROCS=4。
 新增 Go 回归覆盖重复调用结果所有权、trap/关闭/替换后的实例隔离、
 函数缓存的内存隔离、随机数写入边界。越界三例在旧实现上失败。
 
-新增浏览器回归使用真实 dist 模块，覆盖正确/错误/缺失 MIME、HTTP 错误、
+新增浏览器回归使用真实 listing-core dist 模块，覆盖正确/错误/缺失 MIME、HTTP 错误、
 网络错误、编译错误、链接错误、start trap，以及 restart 零额外请求。
-旧实现 3 pass / 14 fail，修改后 17 pass / 0 fail。
 
 ```sh
 go test -count=1 ./internal/platform/wasm ./internal/listing/core/... ./wasm ./tests/archtest ./tests/parity
@@ -65,7 +64,7 @@ go test -run '^$' -bench . -benchmem -count=3 ./internal/platform/wasm
 go test -run '^$' -bench 'BenchmarkListing(Core|Tags)Pool/pool2' -benchmem -count=3 ./internal/listing/core ./internal/listing/core/service/engine
 bash scripts/check-wasm-dist.sh
 cd web
-bun test --preload ./tests/network-guard.preload.ts ./tests/wasm-loading.test.ts ./tests/render-wasm.test.ts ./tests/render-worker.test.ts ./tests/listing-core-wasm.test.ts ./src/render ./src/listing-core ./src/features/workflow/platforms
+bun test --preload ./tests/network-guard.preload.ts ./tests/wasm-loading.test.ts ./tests/listing-core-wasm.test.ts ./src/render ./src/listing-core ./src/features/workflow/platforms
 bun run build
 ```
 

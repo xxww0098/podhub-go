@@ -72,7 +72,7 @@ func TestSendStoredValidatesDirectBatch(t *testing.T) {
 		StoreID: "11111111-1111-4111-8111-111111111111",
 		RowIDs:  []string{"22222222-2222-4222-8222-222222222222"},
 	}
-	_, err := SendStored(context.Background(), nil, 1, 1, req, time.Now())
+	_, err := testSubmit().SendStored(context.Background(), nil, 1, 1, req, time.Now())
 	var status Status
 	if !errors.As(err, &status) || status.Code != 400 || status.Kind != "bad_request" {
 		t.Fatalf("direct call without pins must fail validation before opening a database: %v", err)

@@ -56,7 +56,7 @@ func (e *Error) Error() string {
 		return ""
 	}
 	if e.Insufficient {
-		return fmt.Sprintf("insufficient wallet balance: available %d, required %d", e.Available, e.Required)
+		return fmt.Sprintf("工作空间钱包余额不足：可用 %s，需要 %s", yuan(e.Available), yuan(e.Required))
 	}
 	return e.Msg
 }
@@ -64,4 +64,14 @@ func (e *Error) Error() string {
 // RFC3339Millis matches Rust SecondsFormat::Millis with Zulu.
 func RFC3339Millis(t time.Time) string {
 	return t.UTC().Format("2006-01-02T15:04:05.000Z")
+}
+
+// yuan renders microfen as a yuan amount with up to six decimals trimmed to
+// at least two, so a ¥0.003 reservation does not read as ¥0.00.
+func yuan(microfen int64) string {
+	s := fmt.Sprintf("%.8f", float64(microfen)/100_000_000)
+	for len(s) > 0 && s[len(s)-1] == '0' && s[len(s)-3] != '.' {
+		s = s[:len(s)-1]
+	}
+	return "¥" + s
 }

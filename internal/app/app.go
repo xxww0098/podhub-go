@@ -6,12 +6,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	queuerepo "github.com/xxww0098/podhub-go/internal/queue/repo"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -21,56 +21,73 @@ import (
 
 	"github.com/xxww0098/podhub-go/internal/ai"
 	httpapi "github.com/xxww0098/podhub-go/internal/app/api"
-	_ "github.com/xxww0098/podhub-go/internal/billing"
 	billinghttp "github.com/xxww0098/podhub-go/internal/billing/http"
+	"github.com/xxww0098/podhub-go/internal/catalog"
 	"github.com/xxww0098/podhub-go/internal/identity"
 	"github.com/xxww0098/podhub-go/internal/listing/core"
 	listing "github.com/xxww0098/podhub-go/internal/listing/core/contract"
+	listengine "github.com/xxww0098/podhub-go/internal/listing/core/service/engine"
 	readhttp "github.com/xxww0098/podhub-go/internal/listing/read/http"
-	_ "github.com/xxww0098/podhub-go/internal/listing/rules"
+	readrepo "github.com/xxww0098/podhub-go/internal/listing/read/repo"
 	"github.com/xxww0098/podhub-go/internal/listing/submit"
+	media "github.com/xxww0098/podhub-go/internal/media/contract"
 	ozonerrrepo "github.com/xxww0098/podhub-go/internal/ozonerr/repo"
 	ozonerrsvc "github.com/xxww0098/podhub-go/internal/ozonerr/service"
+	"github.com/xxww0098/podhub-go/internal/platform/cloudflare"
 	"github.com/xxww0098/podhub-go/internal/platform/config"
 	"github.com/xxww0098/podhub-go/internal/platform/db"
 	loadtest "github.com/xxww0098/podhub-go/internal/platform/loadmode"
-	storage "github.com/xxww0098/podhub-go/internal/platform/r2"
 	sign "github.com/xxww0098/podhub-go/internal/platform/r2/sigv4"
 	"github.com/xxww0098/podhub-go/internal/platform/seal"
-	"github.com/xxww0098/podhub-go/internal/seller"
+	seller "github.com/xxww0098/podhub-go/internal/seller/ozon"
 )
 
 // Handler is the chi router wrapped for tracing. pool may be nil.
 func Handler(pool *pgxpool.Pool) http.Handler {
+	cfg := config.Load()
+	return handler(pool, cfg, newCatalogFetcher(context.Background(), pool, cfg), newIdentity(pool, cfg))
+}
+
+func handler(pool *pgxpool.Pool, cfg config.Config, fetcher *catalog.Fetcher, svc *identity.Service) http.Handler {
 	router := chi.NewRouter()
-	svc := identity.New(pool)
 	router.Use(func(next http.Handler) http.Handler {
 		return otelhttp.NewHandler(next, "podhub-api")
 	})
 	router.Use(identity.CSRF)
 	router.Use(svc.Middleware)
-	cfg := config.Load()
 	var recorded httpapi.OzonRecorder
 	if pool != nil {
 		recorded = ozonerrsvc.New(ozonerrrepo.New(pool))
 	}
 	srv := &httpapi.Server{
-		Pool: pool, Engine: sharedEngine(), Identity: svc, Access: svc,
-		Media:  loopbackMedia(),
-		Seller: sellerPoster(seller.New(cfg)),
-		Seals:  sealRing(cfg),
+		ListingPreparationQueue: readhttp.MediaQueue{EnqueueOn: queuerepo.EnqueueOn},
+		ListingTaskRecords:      readrepo.TaskRecords,
+		Listing:                 submit.Service{Queue: submit.Queue{EnqueueOn: queuerepo.EnqueueOn, MutateRunning: queuerepo.MutateRunning}},
+		Pool:                    pool, Engine: sharedEngine(), Identity: svc, Access: svc,
+		SliceStorageKey:    sliceStorageKey(cfg),
+		SliceDeleteAllowed: cfg.MediaDeleteEnabled(),
+		Cloudflare:         cloudflare.New(nil),
+		CloudflareOAuth:    cloudflareOAuth(cfg),
+		Seller:             sellerPoster(seller.New(cfg)),
+		Seals:              sealRing(cfg),
+		CatalogSnapshot:    catalogSnapshot,
+		CatalogFetch:       fetcher,
 		// The grant route reads this captured bool. It does not load again.
-		WritesDisabled: cfg.OzonWritesDisabled(),
-		Ozon:           recorded,
+		WritesDisabled:       cfg.OzonWritesDisabled(),
+		PublicURL:            cfg.PublicURL,
+		Ozon:                 recorded,
+		SupplierMediaAccount: func(context.Context) (sign.Account, error) { return configuredR2Account(cfg, media.RoleAssets) },
 	}
-	ai.Register(router, ai.HTTPDeps{Deps: ai.Deps{Pool: pool}, Access: svc})
-	billinghttp.Register(router, billinghttp.Deps{Pool: pool, Access: svc})
+	ocrRuntime := newOCRRuntime(pool, cfg)
+	srv.RecognitionModels = ocrRuntime.Models
+	ai.Register(router, ai.HTTPDeps{Deps: ai.Deps{Pool: pool, Text: newTextRuntime(pool, cfg), Images: newImageRuntime(pool, cfg), OCR: ocrRuntime, Wallet: aiWallet(), Limits: aiLimits(pool, cfg)}, Access: svc})
+	billinghttp.Register(router, billinghttp.Deps{Pool: pool, Access: svc, Runtime: NewPaymentRuntime(pool, cfg, nil), Billing: billingHTTPDeps()})
 	mountAgent(router, pool, svc)
 	bindListingCore()
 	httpapi.RegisterBrowserDirect(router, srv)
 	httpapi.HandlerFromMux(srv, router)
 	httpapi.MountDomains(router, srv)
-	mountPR8A(router, pool, svc, loopbackMedia())
+	mountPR8A(router, pool, svc, cfg)
 	mountPR8B(router, srv)
 	mountWarehouse(router, pool, svc, cfg)
 	mountStore(router, pool, svc, cfg)
@@ -88,26 +105,20 @@ func Handler(pool *pgxpool.Pool) http.Handler {
 	return router
 }
 
-var (
-	engineOnce     sync.Once
-	embeddedEngine listing.Engine
-)
-
-func loopbackMedia() *sign.Account {
-	account, ok := storage.LoopbackAccount(config.Load())
-	if !ok {
+func sliceStorageKey(cfg config.Config) []byte {
+	if len(strings.TrimSpace(cfg.IntegrationConfigKey)) < 32 {
 		return nil
 	}
-	return &account
+	return seal.DeriveKEK(cfg.IntegrationConfigKey)
 }
 
-// sellerPoster is seller.Egress.Call with write=false. A refused origin or a
+// sellerPoster uses the dedicated Seller read allowlist. A refused origin or a
 // nil egress is unreachable and is not dialed. Saturated slots keep their class
 // so catalog can answer 429. The kill switch is the bool seller.New already
 // captured; this function does not read OZON_WRITE_KILL_SWITCH.
 func sellerPoster(eg *seller.Egress) func(ctx context.Context, path string, body []byte, clientID, apiKey string) (int, []byte, error) {
 	return func(ctx context.Context, path string, body []byte, clientID, apiKey string) (int, []byte, error) {
-		reply, err := eg.Call(ctx, http.MethodPost, path, body, false, false, clientID, apiKey)
+		reply, err := eg.SellerReadCall(ctx, http.MethodPost, path, body, false, false, clientID, apiKey)
 		if err != nil {
 			class := "unreachable"
 			if errors.Is(err, seller.ErrSaturated) {
@@ -151,15 +162,14 @@ func bindListingCore() {
 }
 
 func sharedEngine() listing.Engine {
-	engineOnce.Do(func() {
-		var err error
-		embeddedEngine, err = listing.OpenEmbedded(context.Background())
-		if err != nil {
-			// Health still serves. Tag checks fail closed while the engine is nil.
-			slog.Error("listing tags wasm", "err", err)
-		}
-	})
-	return embeddedEngine
+	mod, err := core.Shared(context.Background())
+	if err != nil {
+		// Health still serves. Tag checks fail closed: a nil *Engine returns an
+		// error from every method, where a nil interface would panic.
+		slog.Error("listing-core wasm", "err", err)
+		return (*listengine.Engine)(nil)
+	}
+	return listengine.New(mod)
 }
 
 // Serve listens until SIGINT or SIGTERM. An empty DATABASE_URL still serves
@@ -173,6 +183,8 @@ func Serve(ctx context.Context, cfg config.Config) error {
 	if err := cfg.CheckDatabase(); err != nil {
 		return err
 	}
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	var pool *pgxpool.Pool
 	if cfg.DatabaseURL != "" {
 		var err error
@@ -182,9 +194,15 @@ func Serve(ctx context.Context, cfg config.Config) error {
 		}
 		defer pool.Close()
 	}
+	fetcher := newCatalogFetcher(ctx, pool, cfg)
+	defer func() { stop(); fetcher.Wait() }()
+	svc := newIdentity(pool, cfg)
+	mailDone := make(chan struct{})
+	go func() { defer close(mailDone); runPasswordRecovery(ctx, svc) }()
+	defer func() { stop(); <-mailDone }()
 	server := &http.Server{
 		Addr:              cfg.Bind,
-		Handler:           Handler(pool),
+		Handler:           handler(pool, cfg, fetcher, svc),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	errCh := make(chan error, 1)
@@ -196,10 +214,8 @@ func Serve(ctx context.Context, cfg config.Config) error {
 		}
 		close(errCh)
 	}()
-	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	if pool != nil {
-		go RunBackground(ctx, pool)
+		go RunBackground(ctx, pool, fetcher)
 	}
 	select {
 	case err := <-errCh:

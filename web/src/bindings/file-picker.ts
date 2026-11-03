@@ -44,7 +44,7 @@ export function stagedFile(handle: FileHandle): File | undefined {
 const FILE_PICK_FOCUS_GRACE_MS = 300
 const FILE_PICK_ABANDON_MS = 120_000
 
-/** Cloud registers at most 500 MiB (`listing/api/templates` `MAX_BYTES`). */
+/** Local template admission keeps hashing and rendering within 500 MiB. */
 export const PSD_TEMPLATE_MAX_BYTES = 500 * 1024 * 1024
 
 /**
@@ -160,20 +160,6 @@ export function pickFiles(accept: string, multiple = false): Promise<File[]> {
   return picked
 }
 
-/**
- * Pick a whole directory. Each `File` carries `webkitRelativePath`
- * (`l1/l2/type/file`); the browser does the walking.
- */
-export function pickDirectory(): Promise<File[]> {
-  if (typeof document === "undefined") return Promise.resolve([])
-  const input = document.createElement("input")
-  input.type = "file"
-  input.webkitdirectory = true
-  const picked = chosenFiles(input)
-  input.click()
-  return picked
-}
-
 export const PSD_ACCEPT = ".psd,.psb"
 export const SOURCE_ACCEPT = "image/jpeg,image/png,.jpg,.jpeg,.png"
 
@@ -183,7 +169,6 @@ export function isSourceImage(file: File): boolean {
   )
 }
 export const VIDEO_ACCEPT = "video/mp4,video/quicktime"
-export const PROMPT_ACCEPT = ".txt,.md"
 
 export async function fileBytes(file: File): Promise<Uint8Array<ArrayBuffer>> {
   return new Uint8Array(await file.arrayBuffer())

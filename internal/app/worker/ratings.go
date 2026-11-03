@@ -18,7 +18,7 @@ import (
 	ratingjobs "github.com/xxww0098/podhub-go/internal/ratings/jobs"
 	ratingrepo "github.com/xxww0098/podhub-go/internal/ratings/repo"
 	ratingsvc "github.com/xxww0098/podhub-go/internal/ratings/service"
-	"github.com/xxww0098/podhub-go/internal/seller"
+	seller "github.com/xxww0098/podhub-go/internal/seller/ozon"
 )
 
 func ratingAddon(pool *pgxpool.Pool, cfg config.Config) queuejobs.Addon {
@@ -45,9 +45,8 @@ func ratingRing(cfg config.Config) seal.Ring {
 	return ring
 }
 
-// ratingSource posts contract.SellerInfoPath through seller.Egress.Call
-// with write disabled, which is the rate-limited loopback client. There is
-// no refresh-store-info function to call instead.
+// ratingSource uses the dedicated Seller read allowlist after opening the
+// tenant's persisted credential.
 type ratingSource struct {
 	pool *pgxpool.Pool
 	eg   *seller.Egress
@@ -100,13 +99,13 @@ func (s ratingSource) open(ctx context.Context, orgID int64, storeID string) (se
 	return secret, nil
 }
 
-// postSellerInfo is one read of /v1/seller/info. A non-loopback base is
-// not dialed. The error text does not include the credential.
+// postSellerInfo is one read of /v1/seller/info. The error text does not
+// include the credential.
 func postSellerInfo(ctx context.Context, eg *seller.Egress, clientID, apiKey string) ([]byte, error) {
-	if eg == nil || !eg.Loopback() {
+	if eg == nil {
 		return nil, seller.ErrRefusedOrigin
 	}
-	reply, err := eg.Call(ctx, http.MethodPost, contract.SellerInfoPath, []byte(`{}`), false, false, clientID, apiKey)
+	reply, err := eg.SellerReadCall(ctx, http.MethodPost, contract.SellerInfoPath, []byte(`{}`), false, false, clientID, apiKey)
 	if err != nil {
 		return nil, errors.New("seller info read failed")
 	}

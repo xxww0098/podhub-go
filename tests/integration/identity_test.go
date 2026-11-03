@@ -48,7 +48,7 @@ func TestIdentityAndTenantIsolation(t *testing.T) {
 	const idem = "register-idem-1"
 	rec := postJSON(t, handler, "/api/auth/register", `{"email":"ada@pod.example","password":"correct-horse","name":"Ada"}`, idem, "")
 	hash := passwordHash(t, ctx, pool, "ada@pod.example")
-	token := identity.DeriveSessionToken(hash, idem)
+	token := identity.DeriveSessionToken(hash+"\x00"+"0", idem)
 	if err := parity.DiffHTTP(parity.Exchange{Status: rec.Code, Body: rec.Body.Bytes()}, parity.Exchange{
 		Status: http.StatusOK,
 		Body:   []byte(`{"data":{"token":"` + token + `","user":{"uuid":"` + publicID(t, ctx, pool, "ada@pod.example") + `","role":"user","email":"ada@pod.example","name":"Ada"},"target":"/workspace"}}`),
@@ -56,8 +56,13 @@ func TestIdentityAndTenantIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	cookies := rec.Header().Values("Set-Cookie")
+	// One browser, one account: `sid` is the whole session, and the retired
+	// `sids` cookie is only expired so an old browser drops it.
 	if len(cookies) != 2 || !strings.Contains(cookies[0], "sid="+token) || !strings.Contains(cookies[0], "HttpOnly") || strings.Contains(cookies[0], "Secure") {
 		t.Fatalf("cookies %#v", cookies)
+	}
+	if !strings.HasPrefix(cookies[1], "sids=;") || !strings.Contains(cookies[1], "Max-Age=0") {
+		t.Fatalf("retired stack cookie not cleared: %#v", cookies)
 	}
 	var sessions, audits, orgs, members int64
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM account_sessions WHERE token_hash = $1 AND user_id = (SELECT id FROM account_users WHERE email = 'ada@pod.example')`, sha256Hex(token)).Scan(&sessions); err != nil || sessions != 1 {
@@ -75,13 +80,13 @@ func TestIdentityAndTenantIsolation(t *testing.T) {
 
 	adaCookie := cookies[0]
 	session := get(t, handler, "/api/auth/session", adaCookie)
-	if session.Code != http.StatusOK || !bytes.Contains(session.Body.Bytes(), []byte(`"email":"ada@pod.example"`)) || !bytes.Contains(session.Body.Bytes(), []byte(`"email_verified":false`)) || !bytes.Contains(session.Body.Bytes(), []byte(`"account_mode":"owner"`)) {
+	if session.Code != http.StatusOK || !bytes.Contains(session.Body.Bytes(), []byte(`"email":"ada@pod.example"`)) || bytes.Contains(session.Body.Bytes(), []byte(`"email_verified"`)) || !bytes.Contains(session.Body.Bytes(), []byte(`"account_mode":"owner"`)) {
 		t.Fatalf("session %d %s", session.Code, session.Body.Bytes())
 	}
 	anon := get(t, handler, "/api/auth/session", "")
 	if err := parity.DiffHTTP(parity.Exchange{Status: anon.Code, Body: anon.Body.Bytes()}, parity.Exchange{
 		Status: http.StatusOK,
-		Body:   []byte(`{"data":{"authenticated":false,"active_workspace":null,"workspaces":[],"unusable_workspaces":[],"accounts":[]}}`),
+		Body:   []byte(`{"data":{"authenticated":false,"active_workspace":null,"workspaces":[],"unusable_workspaces":[]}}`),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +137,7 @@ func TestIdentityAndTenantIsolation(t *testing.T) {
 	if adaOrg == bobOrg || adaOrg == 0 || bobOrg == 0 {
 		t.Fatalf("orgs %d %d", adaOrg, bobOrg)
 	}
-	denied := postJSON(t, handler, "/api/workspaces/switch", `{"id":`+strconv.FormatInt(bobOrg, 10)+`}`, "", adaCookie)
+	denied := postJSON(t, handler, "/api/workspaces/switch", `{"workspace_id":`+strconv.FormatInt(bobOrg, 10)+`}`, "", adaCookie)
 	if err := parity.DiffHTTP(parity.Exchange{Status: denied.Code, Body: denied.Body.Bytes()}, parity.Exchange{
 		Status: http.StatusForbidden,
 		Body:   []byte(`{"error":"无权切换到该 Workspace","code":"FORBIDDEN"}`),
@@ -147,8 +152,35 @@ func TestIdentityAndTenantIsolation(t *testing.T) {
 	if roster.Code != http.StatusOK || bytes.Contains(roster.Body.Bytes(), []byte("bob@pod.example")) || !bytes.Contains(roster.Body.Bytes(), []byte("ada@pod.example")) {
 		t.Fatalf("roster %d %s", roster.Code, roster.Body.Bytes())
 	}
-	if !bytes.Contains(roster.Body.Bytes(), []byte(`"inviteRoles":["manager","member"]`)) {
+	if !bytes.Contains(roster.Body.Bytes(), []byte(`"invite_roles":["manager","member"]`)) {
 		t.Fatalf("owner invite roles %s", roster.Body.Bytes())
+	}
+	var directory struct {
+		Data struct {
+			Members []struct {
+				Name        string `json:"name"`
+				JoinedAtMS  int64  `json:"joined_at_ms"`
+				Permissions struct {
+					Remove bool `json:"remove"`
+				} `json:"permissions"`
+			} `json:"members"`
+			Invitations  []json.RawMessage `json:"invitations"`
+			SeatsUsed    int64             `json:"seats_used"`
+			PendingLimit int64             `json:"pending_limit"`
+			Permissions  struct {
+				Dissolve         bool `json:"dissolve"`
+				Leave            bool `json:"leave"`
+				RevokeInvitation bool `json:"revoke_invitation"`
+			} `json:"permissions"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(roster.Body.Bytes(), &directory); err != nil {
+		t.Fatal(err)
+	}
+	d := directory.Data
+	if len(d.Members) != 1 || d.Members[0].Name != "Ada" || d.Members[0].JoinedAtMS <= 0 || d.Members[0].Permissions.Remove ||
+		d.Invitations == nil || d.SeatsUsed != 1 || d.PendingLimit != 10 || !d.Permissions.Dissolve || d.Permissions.Leave || !d.Permissions.RevokeInvitation {
+		t.Fatalf("owner directory %s", roster.Body.Bytes())
 	}
 
 	usage := get(t, handler, "/api/billing/usage-stats?rollup=1&from=2026-08-01&to=2026-08-31", adaCookie)
@@ -191,7 +223,7 @@ func TestIdentityAndTenantIsolation(t *testing.T) {
 	hidden := get(t, handler, "/api/listing/jobs/55555555-5555-4555-8555-555555555555", adaCookie)
 	if err := parity.DiffHTTP(parity.Exchange{Status: hidden.Code, Body: hidden.Body.Bytes()}, parity.Exchange{
 		Status: http.StatusNotFound,
-		Body:   []byte(`{"error":"准备作业不存在","code":"not_found"}`),
+		Body:   []byte(`{"error":"商品行或任务不存在","code":"not_found"}`),
 	}); err != nil {
 		t.Fatal(err)
 	}

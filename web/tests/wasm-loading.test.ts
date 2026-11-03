@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs"
 import test from "node:test"
 
 import { ListingCoreClient } from "../src/listing-core/client"
-import { loadRenderModule } from "../src/render/wasm"
 
 const loaders = [
   {
@@ -12,13 +11,6 @@ const loaders = [
     async load(url: string) {
       const client = new ListingCoreClient(url)
       assert.ok((await client.issueManifest()).length > 0)
-    },
-  },
-  {
-    name: "legacy-render",
-    bytes: readFileSync(new URL("../../wasm/dist/browser/render/render_wasm.wasm", import.meta.url)),
-    async load(url: string) {
-      assert.ok((await loadRenderModule(url)).memoryBytes() > 0)
     },
   },
 ]

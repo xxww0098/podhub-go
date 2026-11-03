@@ -7,12 +7,37 @@ import { preparationBatch } from "../prepare/preparation-batch"
 import { createPreparationTracks } from "../prepare/preparation-tracks"
 import { errorFields } from "../prepare/execution-context"
 import { runWorkflowOperationBatch } from "../batch-operation"
-import { instance, row } from "./workbench-test-fixtures"
+import { idleLifecycle, instance, projection, row, slice } from "./workbench-test-fixtures"
 import { harness } from "./workbench-test-harness"
 import { listingWorkbenchScope, patchListingWorkbench, resetListingWorkbench } from "./listing-workbench-store"
 import { RowErrorFeedback } from "./row-error-feedback"
 
 const refusal = { code: "prepare_failed", message: "图片处理失败", remediation: "请检查图片后重试。" }
+
+test("a missing AI model after completed media keeps its blocker receipt on recognition", async () => {
+  const target = row(1)
+  const scene = harness([target], { [target.draftId]: instance(target) })
+  const mediaReady = projection(target, {
+    ...idleLifecycle, media: "ready", image_total: 2, image_completed: 2,
+    images: [slice(0, { phase: "public_ready" }), slice(1, { phase: "public_ready" })],
+  })
+  const result = { row_id: target.draftId, outcome: "blocked" as const, blockers: ["missing_model"], product: mediaReady }
+  const report = mock.method(console, "log", () => {})
+  try {
+    const failures = await runWorkflowOperationBatch([target], {
+      ...scene.deps, feedbackContext: { stage: "upload", cardId: "card-1" },
+      settleRow: async (target, log) => scene.deps.patchRow(target.id, { log }),
+    }, async (_request, onRow) => { onRow(result); return [result] }, { status: "running" }, "准备已完成")
+    assert.equal(failures.length, 1)
+    assert.equal(scene.row(target.id).errorFeedback?.code, "missing_model")
+    assert.match(scene.row(target.id).errorFeedback?.summary ?? "", /配置识别模型/)
+    assert.equal(scene.products[target.draftId]?.lifecycle.media, "ready")
+    assert.equal(scene.products[target.draftId]?.lifecycle.image_completed, 2)
+    assert.equal(report.mock.calls.length, 1)
+    assert.match(String(report.mock.calls[0]?.arguments[0]), /code=missing_model.*stage=ai/)
+    assert.doesNotMatch(String(report.mock.calls[0]?.arguments[0]), /stage=upload|code=operation_failed/)
+  } finally { report.mock.restore() }
+})
 
 test("one row receipt survives streamed and returned settlement and reaches reporting with draft/card context", async () => {
   const target = row(1)
@@ -30,7 +55,7 @@ test("one row receipt survives streamed and returned settlement and reaches repo
       onRow(result)
       return [result]
     }, { status: "running" }, "识别完成")
-    assert.match(streamedId!, /^[0-9]{20}$/)
+    assert.match(streamedId!, /^[0-9A-F][0-9A-HJKMNP-TV-Z]{12}$/)
     assert.equal(scene.row(target.id).errorFeedback?.errorId, streamedId)
     assert.equal(scene.row(target.id).errorFeedback?.traceId, "trace-502")
     assert.equal(scene.row(target.id).errorFeedback?.status, 502)
@@ -66,12 +91,12 @@ test("thrown batch errors produce distinct image receipts but never report an ol
 })
 
 test("row receipt displays labeled safe copy and an unknown result never invites resubmission", () => {
-  const feedback = { errorId: "00000000000000000001", code: "prepare_failed", outcome: "unknown" as const, summary: "操作未完成", action: "重试", traceId: "technical-trace" }
+  const feedback = { errorId: "0000000000001", code: "prepare_failed", outcome: "unknown" as const, summary: "操作未完成", action: "重试", traceId: "technical-trace" }
   const markup = renderToStaticMarkup(createElement(RowErrorFeedback, { feedback, unknownOutcome: true }))
   assert.match(markup, /原因/)
   assert.match(markup, /建议/)
   assert.match(markup, /编号/)
-  assert.match(markup, /00000000000000000001/)
+  assert.match(markup, /0000-0000-00001/)
   assert.match(markup, /刷新核对结果，请勿重复提交/)
   assert.doesNotMatch(markup, /technical-trace|prepare_failed|>重试</)
 })
@@ -106,4 +131,11 @@ test("batch notice shows only the failure count and routes details to images wit
     assert.equal(logs.mock.calls.length, 1)
     assert.ok(logs.mock.calls.some(call => /\[notify\].*code=preparation_failed.*stage=prepare.*card=batch-feedback-card/.test(String(call.arguments[0]))))
   } finally { logs.mock.restore(); notices.mock.restore(); resetListingWorkbench() }
+})
+
+test("only a missing slice R2 account receipt offers the settings shortcut", () => {
+  const html = (code: string) => renderToStaticMarkup(createElement(RowErrorFeedback, {
+    feedback: { errorId: "e1", code, summary: "失败", outcome: "failed" }, unknownOutcome: false }))
+  assert.match(html("missing_media_account"), /查看工作空间存储桶/)
+  assert.doesNotMatch(html("prepare_failed"), /查看工作空间存储桶/)
 })

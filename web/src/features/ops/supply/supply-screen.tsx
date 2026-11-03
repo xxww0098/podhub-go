@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import {
   ChevronLeft,
   ChevronRight,
+  Eye,
   RefreshCw,
   Search,
   Warehouse,
@@ -22,11 +23,13 @@ import {
   type OpsStore,
 } from "@/features/ops/ops-store-roster"
 import { IdCode } from "@/components/id-code"
+import { ErrorNotice } from "@/components/error-notice"
 import { PageToolbar } from "@/components/page-toolbar"
 import { useScreenActive } from "@/components/screen-pane"
 import { KeyValue, KeyValueGrid, Section } from "@/components/section"
 import { StateChip } from "@/components/state-chip"
 import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import {
   Empty,
   EmptyDescription,
@@ -327,58 +330,28 @@ export function SupplyScreen({ workspaceId, onOpenStores }: SupplyScreenProps) {
   }
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+    <section className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto">
       <PageToolbar
         primary={
-          <OpsStoreSelect
-            value={storeUid}
-            stores={stores}
-            onChange={(next) => {
-              if (next === storeUid) return
-              const store = stores.find((item) => item.storeUid === next)
-              notifyInfo(`已切换店铺 · ${store?.name ?? next}`)
-              ordersSequence.current += 1
-              warehousesSequence.current += 1
-              setOrdersRead({ ...EMPTY_LIST_READ, loading: true })
-              setWarehouseRead({ ...EMPTY_WAREHOUSE_READ, loading: true })
-              setCursorStack([])
-              setPage(1)
-              setStoreUid(next)
-            }}
-          />
-        }
-        secondary={
-          <Button
-            size="sm"
-            variant="default"
-            disabled={!storeUid.trim() || ordersRead.loading || warehouseRead.loading}
-            onClick={() => refresh(storeUid)}
-          >
-            <RefreshCw
-              className={cn(
-                (ordersRead.loading || warehouseRead.loading) && "animate-spin",
-              )}
+          <>
+            <OpsStoreSelect
+              value={storeUid}
+              stores={stores}
+              onChange={(next) => {
+                if (next === storeUid) return
+                const store = stores.find((item) => item.storeUid === next)
+                notifyInfo(`已切换店铺 · ${store?.name ?? next}`)
+                ordersSequence.current += 1
+                warehousesSequence.current += 1
+                setOrdersRead({ ...EMPTY_LIST_READ, loading: true })
+                setWarehouseRead({ ...EMPTY_WAREHOUSE_READ, loading: true })
+                setCursorStack([])
+                setPage(1)
+                setStoreUid(next)
+              }}
             />
-            {ordersRead.loading || warehouseRead.loading ? "正在读取…" : "刷新"}
-          </Button>
-        }
-      />
-
-      <StoreGate
-        loading={storesLoading}
-        error={storesError}
-        reason={storesReason}
-        storeCount={stores.length}
-        hasUnavailableStores={hasUnavailableStores}
-        onRetry={() => setRosterRetry((value) => value + 1)}
-        onOpenStores={onOpenStores}
-        icon={<Warehouse />}
-      >
-        <>
-          <Section
-            title="供货单"
-            action={
-              <div className="flex flex-wrap items-end gap-2">
+            {stores.length > 0 ? (
+              <div className="flex flex-wrap items-center gap-2">
                 <Tabs
                   value={stateFilter || "all"}
                   onValueChange={(next) => applyState(next === "all" ? ALL_STATE : next)}
@@ -396,9 +369,9 @@ export function SupplyScreen({ workspaceId, onOpenStores }: SupplyScreenProps) {
                     ))}
                   </TabsList>
                 </Tabs>
-                <Field className="w-[220px] gap-1">
+                <Field className="w-[220px] md:flex-row md:items-center md:*:w-auto">
                   <FieldLabel htmlFor="ops-supply-number">供货单号</FieldLabel>
-                  <div className="relative">
+                  <div className="relative min-w-0 flex-1">
                     <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
                     <Input
                       id="ops-supply-number"
@@ -459,19 +432,51 @@ export function SupplyScreen({ workspaceId, onOpenStores }: SupplyScreenProps) {
                   </Tooltip>
                 </nav>
               </div>
-            }
-          >
+            ) : null}
+          </>
+        }
+        secondary={
+          <IconButton
+            icon={RefreshCw}
+            label="刷新"
+            variant="default"
+            size="icon-sm"
+            disabled={!storeUid.trim() || ordersRead.loading || warehouseRead.loading}
+            className={cn(
+              (ordersRead.loading || warehouseRead.loading) && "[&_svg]:animate-spin",
+            )}
+            onClick={() => refresh(storeUid)}
+          />
+        }
+      />
+
+      <StoreGate
+        loading={storesLoading}
+        error={storesError}
+        reason={storesReason}
+        storeCount={stores.length}
+        hasUnavailableStores={hasUnavailableStores}
+        onRetry={() => setRosterRetry((value) => value + 1)}
+        onOpenStores={onOpenStores}
+        icon={<Warehouse />}
+      >
+        <>
+          <Section title="供货单" className="min-h-0 flex-1">
             <SupplyOrdersTable
               orders={ordersRead.view.orders}
               loading={ordersRead.loading}
+              failed={Boolean(ordersRead.error)}
+              onRetry={() => refresh(storeUid)}
               onOpen={setOpenOrder}
             />
           </Section>
 
-          <Section title="各仓库存">
+          <Section title="各仓库存" className="min-h-0 flex-1">
             <WarehouseStocksTable
               warehouses={warehouseRead.view}
               loading={warehouseRead.loading}
+              failed={Boolean(warehouseRead.error)}
+              onRetry={() => void loadWarehouses(storeUid)}
             />
           </Section>
           <SupplyDetailDialog
@@ -489,24 +494,31 @@ export function SupplyScreen({ workspaceId, onOpenStores }: SupplyScreenProps) {
 export function SupplyOrdersTable({
   orders,
   loading,
+  failed = false,
+  onRetry,
   onOpen,
 }: {
   orders: SupplyOrderView[]
   loading: boolean
+  failed?: boolean
+  onRetry?: () => void
   onOpen?: (order: SupplyOrderView) => void
 }) {
   return (
     <div
       aria-busy={loading}
-      className="overflow-hidden rounded-xl border border-border bg-card"
+      className="min-h-0 flex-1 overflow-auto rounded-xl border border-border bg-card"
     >
       {loading ? (
         <span role="status" className="sr-only">
           正在读取供货单…
         </span>
       ) : null}
-      <Table>
-        <TableHeader>
+      {failed && orders.length > 0 ? (
+        <ErrorNotice layout="banner" title="供货单刷新失败，当前显示上次数据，最新状态未确认" onRetry={onRetry} />
+      ) : null}
+      <Table containerClassName="overflow-visible">
+        <TableHeader className="sticky top-0 z-10 bg-card">
           <TableRow>
             <TableHead>供货单号</TableHead>
             <TableHead>目标仓库</TableHead>
@@ -520,7 +532,9 @@ export function SupplyOrdersTable({
           {orders.length === 0 ? (
             <TableRow>
               <TableCell colSpan={6} className="px-4 py-6">
-                <Empty className="border-0 bg-transparent py-8">
+                {failed ? (
+                  <ErrorNotice layout="block" title="读取供货单失败" description="尚未确认当前店铺的供货单，请重试。" onRetry={onRetry} />
+                ) : <Empty className="border-0 bg-transparent py-8">
                   <EmptyHeader>
                     <EmptyMedia variant="icon">
                       {loading ? <Spinner className="size-4" /> : <Warehouse />}
@@ -534,7 +548,7 @@ export function SupplyOrdersTable({
                         : "当前店铺没有匹配的供货单。"}
                     </EmptyDescription>
                   </EmptyHeader>
-                </Empty>
+                </Empty>}
               </TableCell>
             </TableRow>
           ) : null}
@@ -594,17 +608,16 @@ export function SupplyOrdersTable({
                 )}
               </TableCell>
               <TableCell>
-                <Button
-                  size="xs"
+                <IconButton
+                  icon={Eye}
+                  label={`详情 ${orderIdentity(order)}`}
+                  size="icon-xs"
                   variant="outline"
-                  aria-label={`详情 ${orderIdentity(order)}`}
                   onClick={(event) => {
                     event.stopPropagation()
                     onOpen?.(order)
                   }}
-                >
-                  详情
-                </Button>
+                />
               </TableCell>
             </TableRow>
           ))}
@@ -617,9 +630,13 @@ export function SupplyOrdersTable({
 export function WarehouseStocksTable({
   warehouses,
   loading,
+  failed = false,
+  onRetry,
 }: {
   warehouses: SupplyWarehouseStockView[]
   loading: boolean
+  failed?: boolean
+  onRetry?: () => void
 }) {
   return (
     <div
@@ -627,15 +644,18 @@ export function WarehouseStocksTable({
       aria-label="各仓库存表"
       aria-busy={loading}
       tabIndex={0}
-      className="max-h-[32rem] overflow-auto rounded-xl border border-border bg-card"
+      className="min-h-0 flex-1 overflow-auto rounded-xl border border-border bg-card"
     >
       {loading ? (
         <span role="status" className="sr-only">
           正在读取仓库存…
         </span>
       ) : null}
-      <Table>
-        <TableHeader>
+      {failed && warehouses.length > 0 ? (
+        <ErrorNotice layout="banner" title="仓库存刷新失败，当前显示上次数据，最新状态未确认" onRetry={onRetry} />
+      ) : null}
+      <Table containerClassName="overflow-visible">
+        <TableHeader className="sticky top-0 z-10 bg-card">
           <TableRow>
             <TableHead>仓库</TableHead>
             <TableHead className="w-28 text-right">在库</TableHead>
@@ -648,7 +668,9 @@ export function WarehouseStocksTable({
           {warehouses.length === 0 ? (
             <TableRow>
               <TableCell colSpan={5} className="px-4 py-6">
-                <Empty className="border-0 bg-transparent py-8">
+                {failed ? (
+                  <ErrorNotice layout="block" title="读取仓库存失败" description="尚未确认各仓库存数量，请重试。" onRetry={onRetry} />
+                ) : <Empty className="border-0 bg-transparent py-8">
                   <EmptyHeader>
                     <EmptyMedia variant="icon">
                       {loading ? <Spinner className="size-4" /> : <Warehouse />}
@@ -662,7 +684,7 @@ export function WarehouseStocksTable({
                         : "Ozon 未返回任何仓库的在库数量。"}
                     </EmptyDescription>
                   </EmptyHeader>
-                </Empty>
+                </Empty>}
               </TableCell>
             </TableRow>
           ) : null}

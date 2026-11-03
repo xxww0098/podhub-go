@@ -35,21 +35,30 @@ func (q *Queries) AccountStanding(ctx context.Context, userID int64) (AccountSta
 }
 
 const assertPassword = `-- name: AssertPassword :one
-SELECT password_hash, (disabled_at IS NOT NULL)::bool AS disabled
+SELECT password_hash, email, session_revision, (disabled_at IS NOT NULL)::bool AS disabled, role
 FROM account_users
 WHERE id = $1
 FOR UPDATE
 `
 
 type AssertPasswordRow struct {
-	PasswordHash string
-	Disabled     bool
+	PasswordHash    string
+	Email           string
+	SessionRevision int64
+	Disabled        bool
+	Role            string
 }
 
 func (q *Queries) AssertPassword(ctx context.Context, id int64) (AssertPasswordRow, error) {
 	row := q.db.QueryRow(ctx, assertPassword, id)
 	var i AssertPasswordRow
-	err := row.Scan(&i.PasswordHash, &i.Disabled)
+	err := row.Scan(
+		&i.PasswordHash,
+		&i.Email,
+		&i.SessionRevision,
+		&i.Disabled,
+		&i.Role,
+	)
 	return i, err
 }
 
@@ -179,10 +188,11 @@ func (q *Queries) ClearMustChangePassword(ctx context.Context, id int64) error {
 const consumeEmailToken = `-- name: ConsumeEmailToken :one
 UPDATE auth_email_tokens
 SET consumed_at = clock_timestamp()
-WHERE token_hash = $1
+WHERE auth_email_tokens.token_hash = $1
   AND purpose = $2
   AND consumed_at IS NULL
   AND expires_at > clock_timestamp()
+  AND NOT EXISTS (SELECT 1 FROM auth_password_reset_deliveries d WHERE d.token_hash=auth_email_tokens.token_hash AND d.state IN ('failed','cancelled'))
 RETURNING user_id
 `
 
@@ -245,8 +255,60 @@ func (q *Queries) DeleteUserSessions(ctx context.Context, userID int64) (int64, 
 	return result.RowsAffected(), nil
 }
 
+const directoryInvitations = `-- name: DirectoryInvitations :many
+SELECT i.id, lower(i.uuid::text) AS uuid, i.email, i.role, i.invited_by_email,
+       (EXTRACT(EPOCH FROM i.created_at) * 1000)::bigint AS created_at_ms,
+       (EXTRACT(EPOCH FROM i.expires_at) * 1000)::bigint AS expires_at_ms
+FROM org_invitations i
+WHERE i.org_id = $1
+  AND i.accepted_at IS NULL
+  AND i.revoked_at IS NULL
+  AND i.declined_at IS NULL
+  AND i.expires_at > clock_timestamp()
+ORDER BY i.created_at DESC, i.id DESC
+`
+
+type DirectoryInvitationsRow struct {
+	ID             int64
+	Uuid           string
+	Email          string
+	Role           string
+	InvitedByEmail string
+	CreatedAtMs    int64
+	ExpiresAtMs    int64
+}
+
+func (q *Queries) DirectoryInvitations(ctx context.Context, orgID int64) ([]DirectoryInvitationsRow, error) {
+	rows, err := q.db.Query(ctx, directoryInvitations, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DirectoryInvitationsRow
+	for rows.Next() {
+		var i DirectoryInvitationsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Uuid,
+			&i.Email,
+			&i.Role,
+			&i.InvitedByEmail,
+			&i.CreatedAtMs,
+			&i.ExpiresAtMs,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const directoryMembers = `-- name: DirectoryMembers :many
-SELECT m.id, m.user_id, m.role, m.display_name, u.email, m.manual_disabled, m.quota_suspended
+SELECT m.id, m.user_id, m.role, m.display_name, u.email, m.manual_disabled, m.quota_suspended,
+       (EXTRACT(EPOCH FROM m.created_at) * 1000)::bigint AS joined_at_ms
 FROM organization_members m
 JOIN account_users u ON u.id = m.user_id
 WHERE m.org_id = $1
@@ -261,6 +323,7 @@ type DirectoryMembersRow struct {
 	Email          string
 	ManualDisabled bool
 	QuotaSuspended bool
+	JoinedAtMs     int64
 }
 
 func (q *Queries) DirectoryMembers(ctx context.Context, orgID int64) ([]DirectoryMembersRow, error) {
@@ -280,6 +343,7 @@ func (q *Queries) DirectoryMembers(ctx context.Context, orgID int64) ([]Director
 			&i.Email,
 			&i.ManualDisabled,
 			&i.QuotaSuspended,
+			&i.JoinedAtMs,
 		); err != nil {
 			return nil, err
 		}
@@ -291,39 +355,27 @@ func (q *Queries) DirectoryMembers(ctx context.Context, orgID int64) ([]Director
 	return items, nil
 }
 
-const emailVerified = `-- name: EmailVerified :one
-SELECT (email_verified_at IS NOT NULL)::bool AS verified
-FROM account_users
-WHERE id = $1
-`
-
-func (q *Queries) EmailVerified(ctx context.Context, id int64) (bool, error) {
-	row := q.db.QueryRow(ctx, emailVerified, id)
-	var verified bool
-	err := row.Scan(&verified)
-	return verified, err
-}
-
 const findUserByEmail = `-- name: FindUserByEmail :one
-SELECT u.id, u.public_id, u.email, c.password_hash, u.role, p.name, p.target,
+SELECT u.id, u.public_id, u.email, c.password_hash, u.session_revision, u.role, p.name, p.target,
        p.supplier_id, (u.disabled_at IS NOT NULL)::bool AS disabled
 FROM account_users u
 JOIN account_credentials c ON c.user_id = u.id
 JOIN account_profiles p ON p.user_id = u.id
-WHERE u.email = $1
+WHERE lower(u.email) = lower($1::text)
 LIMIT 1
 `
 
 type FindUserByEmailRow struct {
-	ID           int64
-	PublicID     string
-	Email        string
-	PasswordHash string
-	Role         string
-	Name         string
-	Target       string
-	SupplierID   string
-	Disabled     bool
+	ID              int64
+	PublicID        string
+	Email           string
+	PasswordHash    string
+	SessionRevision int64
+	Role            string
+	Name            string
+	Target          string
+	SupplierID      string
+	Disabled        bool
 }
 
 func (q *Queries) FindUserByEmail(ctx context.Context, email string) (FindUserByEmailRow, error) {
@@ -334,6 +386,7 @@ func (q *Queries) FindUserByEmail(ctx context.Context, email string) (FindUserBy
 		&i.PublicID,
 		&i.Email,
 		&i.PasswordHash,
+		&i.SessionRevision,
 		&i.Role,
 		&i.Name,
 		&i.Target,
@@ -368,7 +421,7 @@ INSERT INTO account_users (
     $1, $2, $3, 'user', $4, '/workspace', '', 'lite',
     NULL, NULL, NULL, NULL, clock_timestamp(), clock_timestamp()
 )
-ON CONFLICT (email) DO NOTHING
+ON CONFLICT (lower(email)) DO NOTHING
 RETURNING id, public_id, email, password_hash, role, name, target, supplier_id
 `
 
@@ -466,28 +519,6 @@ func (q *Queries) InsertCardCursor(ctx context.Context, arg InsertCardCursorPara
 	return err
 }
 
-const insertEmailToken = `-- name: InsertEmailToken :exec
-INSERT INTO auth_email_tokens (token_hash, user_id, purpose, expires_at, created_at)
-VALUES ($1, $2, $3, ($4::text)::timestamptz, clock_timestamp())
-`
-
-type InsertEmailTokenParams struct {
-	TokenHash string
-	UserID    int64
-	Purpose   string
-	Column4   string
-}
-
-func (q *Queries) InsertEmailToken(ctx context.Context, arg InsertEmailTokenParams) error {
-	_, err := q.db.Exec(ctx, insertEmailToken,
-		arg.TokenHash,
-		arg.UserID,
-		arg.Purpose,
-		arg.Column4,
-	)
-	return err
-}
-
 const insertFreeSubscription = `-- name: InsertFreeSubscription :exec
 INSERT INTO subscriptions (org_id, status, plan_key, revision, updated_at)
 VALUES ($1, 'free', 'free', 1, clock_timestamp())
@@ -501,10 +532,10 @@ func (q *Queries) InsertFreeSubscription(ctx context.Context, orgID int64) error
 
 const insertOrganization = `-- name: InsertOrganization :one
 INSERT INTO organizations (
-    owner_user_id, name, plan, seat_limit, psd_upload_enabled, uuid,
+    owner_user_id, name, plan, uuid,
     created_at, updated_at
 ) VALUES (
-    $1, $2, $3, 1, false, gen_random_uuid(), clock_timestamp(), clock_timestamp()
+    $1, $2, $3, gen_random_uuid(), clock_timestamp(), clock_timestamp()
 )
 RETURNING id
 `
@@ -673,7 +704,6 @@ func (q *Queries) LockOrganization(ctx context.Context, id int64) (int64, error)
 
 const lockUserState = `-- name: LockUserState :one
 SELECT (disabled_at IS NOT NULL)::bool AS disabled,
-       (email_verified_at IS NOT NULL)::bool AS email_verified,
        email
 FROM account_users
 WHERE id = $1
@@ -681,15 +711,14 @@ FOR UPDATE
 `
 
 type LockUserStateRow struct {
-	Disabled      bool
-	EmailVerified bool
-	Email         string
+	Disabled bool
+	Email    string
 }
 
 func (q *Queries) LockUserState(ctx context.Context, id int64) (LockUserStateRow, error) {
 	row := q.db.QueryRow(ctx, lockUserState, id)
 	var i LockUserStateRow
-	err := row.Scan(&i.Disabled, &i.EmailVerified, &i.Email)
+	err := row.Scan(&i.Disabled, &i.Email)
 	return i, err
 }
 
@@ -709,17 +738,6 @@ func (q *Queries) LoginWaiting(ctx context.Context, arg LoginWaitingParams) (boo
 	var waiting bool
 	err := row.Scan(&waiting)
 	return waiting, err
-}
-
-const markEmailVerified = `-- name: MarkEmailVerified :exec
-UPDATE account_users
-SET email_verified_at = COALESCE(email_verified_at, clock_timestamp())
-WHERE id = $1
-`
-
-func (q *Queries) MarkEmailVerified(ctx context.Context, id int64) error {
-	_, err := q.db.Exec(ctx, markEmailVerified, id)
-	return err
 }
 
 const nextJoinOrder = `-- name: NextJoinOrder :one
@@ -811,27 +829,6 @@ func (q *Queries) PruneLoginAttempts(ctx context.Context, limit int32) error {
 	return err
 }
 
-const recentOpenEmailToken = `-- name: RecentOpenEmailToken :one
-SELECT count(*)::bigint AS n
-FROM auth_email_tokens
-WHERE user_id = $1
-  AND purpose = $2
-  AND consumed_at IS NULL
-  AND created_at > clock_timestamp() - interval '60 seconds'
-`
-
-type RecentOpenEmailTokenParams struct {
-	UserID  int64
-	Purpose string
-}
-
-func (q *Queries) RecentOpenEmailToken(ctx context.Context, arg RecentOpenEmailTokenParams) (int64, error) {
-	row := q.db.QueryRow(ctx, recentOpenEmailToken, arg.UserID, arg.Purpose)
-	var n int64
-	err := row.Scan(&n)
-	return n, err
-}
-
 const replacePassword = `-- name: ReplacePassword :exec
 UPDATE account_users
 SET password_hash = $1, updated_at = clock_timestamp()
@@ -906,53 +903,6 @@ func (q *Queries) ResolveAccount(ctx context.Context, tokenHash string) (Resolve
 	return i, err
 }
 
-const resolveStacked = `-- name: ResolveStacked :many
-SELECT s.token_hash, u.id AS user_id, u.public_id AS uuid, u.email, p.name,
-       CASE WHEN p.avatar_bytes IS NOT NULL THEN p.avatar_updated_at_ms END AS avatar_revision
-FROM account_sessions s
-JOIN account_users u ON u.id = s.user_id
-JOIN account_profiles p ON p.user_id = u.id
-WHERE s.token_hash = ANY($1::text[])
-  AND s.expires_at > clock_timestamp()
-  AND u.disabled_at IS NULL
-`
-
-type ResolveStackedRow struct {
-	TokenHash      string
-	UserID         int64
-	Uuid           string
-	Email          string
-	Name           string
-	AvatarRevision interface{}
-}
-
-func (q *Queries) ResolveStacked(ctx context.Context, dollar_1 []string) ([]ResolveStackedRow, error) {
-	rows, err := q.db.Query(ctx, resolveStacked, dollar_1)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ResolveStackedRow
-	for rows.Next() {
-		var i ResolveStackedRow
-		if err := rows.Scan(
-			&i.TokenHash,
-			&i.UserID,
-			&i.Uuid,
-			&i.Email,
-			&i.Name,
-			&i.AvatarRevision,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const setActiveOrg = `-- name: SetActiveOrg :exec
 UPDATE account_users
 SET active_org_id = $1, updated_at = clock_timestamp()
@@ -983,19 +933,6 @@ type StampNameChangedParams struct {
 func (q *Queries) StampNameChanged(ctx context.Context, arg StampNameChangedParams) error {
 	_, err := q.db.Exec(ctx, stampNameChanged, arg.NameChangedAtMs, arg.UserID)
 	return err
-}
-
-const totpConfirmed = `-- name: TotpConfirmed :one
-SELECT (confirmed_at IS NOT NULL)::bool AS confirmed
-FROM account_admin_totp
-WHERE user_id = $1
-`
-
-func (q *Queries) TotpConfirmed(ctx context.Context, userID int64) (bool, error) {
-	row := q.db.QueryRow(ctx, totpConfirmed, userID)
-	var confirmed bool
-	err := row.Scan(&confirmed)
-	return confirmed, err
 }
 
 const touchLastLogin = `-- name: TouchLastLogin :exec

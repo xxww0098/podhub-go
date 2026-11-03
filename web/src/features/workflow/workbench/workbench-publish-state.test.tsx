@@ -266,7 +266,7 @@ test("a failed preparation result remains visible over an unprepared product pro
   assert.match(html, /准备失败/)
   assert.match(html, /云端结果待确认/)
   assert.match(html, /刷新核对结果，请勿重复提交/)
-  assert.match(failed.errorFeedback?.errorId ?? "", /^[0-9]{20}$/)
+  assert.match(failed.errorFeedback?.errorId ?? "", /^[0-9A-F][0-9A-HJKMNP-TV-Z]{12}$/)
   // The strip's own state fact, and the retry that now rides on its glyph.
   assert.match(html, /data-preparation-step="ai" data-state="failed"/)
   assert.doesNotMatch(html, /aria-label="识别：失败，重试识别"/)

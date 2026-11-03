@@ -1,6 +1,5 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { PackageSearch } from "lucide-react"
 import { renderToStaticMarkup } from "react-dom/server"
 
 import type {
@@ -16,13 +15,12 @@ import {
 import { ordersFootnote } from "./console-board"
 import {
   chartAnimation,
+  lifecycleColorTone,
   lifecycleDonutDescription,
   readPalette,
   SalesTrendChart,
   salesTrendDescription,
 } from "./console-charts"
-import { MetricCard } from "./console-kpi"
-import { AdviceBanner, RankingPanel } from "./console-panels"
 
 function replaceGlobal(name: PropertyKey, value: unknown): () => void {
   const previous = Object.getOwnPropertyDescriptor(globalThis, name)
@@ -52,7 +50,7 @@ function storeView(over: Partial<OzonStoreView>): OzonStoreView {
     active: false,
     advertising_client_id: "",
     advertising_configured: false,
-    assignee_key_manage: false,
+
     can_edit_credential: false,
     can_manage: false,
     client_id: "42",
@@ -64,7 +62,7 @@ function storeView(over: Partial<OzonStoreView>): OzonStoreView {
       delete_store: false,
       edit_name: false,
       manage_key: false,
-      manage_key_grants: false,
+
       manage_store: false,
       manage_tags: false,
       test_key: false,
@@ -193,65 +191,7 @@ test("orders footnote: 有可读店铺时给出覆盖率与环比对照", () => 
   )
   assert.equal(summary.coverage.read, 2)
   assert.match(footnote, /覆盖 2\/2 店/)
-  assert.match(footnote, /较上 30 日 \+5 件/)
-})
-
-// --- 面板渲染 ---------------------------------------------------------------
-
-test("ranking panel lists stores with units and signed deltas", () => {
-  const html = renderToStaticMarkup(
-    <RankingPanel
-      rows={[
-        { storeId: "a", name: "榜首店", units: 42, deltaPct: 12.34 },
-        { storeId: "b", name: "次席店", units: 7, deltaPct: null },
-      ]}
-      onNavigate={() => {}}
-    />,
-  )
-  assert.match(html, /店铺出单排行（近 14 日）/)
-  assert.match(html, /榜首店/)
-  assert.match(html, />42</)
-  assert.match(html, /\+12\.3%/)
-  assert.match(html, /次席店/)
-  // 无对照的店给「—」，不编一个百分比。
-  assert.match(html, /—/)
-})
-
-test("advice banner renders the headline advice and its action", () => {
-  const html = renderToStaticMarkup(
-    <AdviceBanner
-      advice={[
-        { text: "2 项操作待介入，建议先完成对账再继续提交。", target: "products" },
-        { text: "3 家店铺指标读取失败。", target: null },
-      ]}
-      onNavigate={() => {}}
-    />,
-  )
-  assert.match(html, /运营建议/)
-  assert.match(html, /2 项操作待介入/)
-  assert.match(html, /3 家店铺指标读取失败/)
-  assert.match(html, /查看运营建议/)
-})
-
-test("advice banner stays silent when there is nothing to say", () => {
-  assert.equal(renderToStaticMarkup(<AdviceBanner advice={[]} onNavigate={() => {}} />), "")
-})
-
-test("metric card renders label, value, footnote and its refresh affordance", () => {
-  const html = renderToStaticMarkup(
-    <MetricCard
-      icon={PackageSearch}
-      label="30 日出单"
-      value="128"
-      unit="件"
-      footnote="覆盖 2/2 店"
-      onRefresh={() => {}}
-    />,
-  )
-  assert.match(html, /30 日出单/)
-  assert.match(html, />128</)
-  assert.match(html, /覆盖 2\/2 店/)
-  assert.match(html, /aria-label="刷新30 日出单"/)
+  assert.match(footnote, /较上次更新 \+5 件/)
 })
 
 // --- 图表 -------------------------------------------------------------------
@@ -305,12 +245,15 @@ test("trend chart description carries both series' daily values", () => {
   ]
   assert.equal(
     salesTrendDescription(points),
-    "近 2 日出单与上架走势：2026-09-22 出单 3 件、上架 1 件；2026-09-23 出单 4 件、上架 0 件",
+    "近 2 日出单与上架提交走势：2026-09-22 出单 3 件、上架提交 1 次；2026-09-23 出单 4 件、上架提交 0 次",
   )
 
   const html = renderToStaticMarkup(<SalesTrendChart points={points} active />)
   assert.match(html, /role="img"/)
-  assert.match(html, /aria-label="近 2 日出单与上架走势：2026-09-22 出单 3 件/)
+  assert.match(html, /aria-label="近 2 日出单与上架提交走势：2026-09-22 出单 3 件/)
+  const partial = renderToStaticMarkup(<SalesTrendChart points={points} active includeListings={false} />)
+  assert.match(partial, /上架提交记录可能不完整，未绘制/)
+  assert.doesNotMatch(partial, /上架提交 1 次|上架提交 0 次/)
 })
 
 test("lifecycle donut description names every slice and the total", () => {
@@ -326,4 +269,13 @@ test("lifecycle donut description names every slice and the total", () => {
     ),
     "商品生命周期分布，共 57 件：在售 45；已隐藏 9；审核失败 2；已归档 1",
   )
+})
+
+test("platform lifecycle colors are distinct without changing the seller palette", () => {
+  assert.equal(lifecycleColorTone("good"), "flight")
+  assert.equal(lifecycleColorTone("attest"), "unknown")
+  assert.equal(lifecycleColorTone("good", "platform"), "good")
+  assert.equal(lifecycleColorTone("attest", "platform"), "flight")
+  assert.equal(lifecycleColorTone("bad", "platform"), "bad")
+  assert.equal(lifecycleColorTone("idle", "platform"), "idle")
 })

@@ -3,7 +3,6 @@ import { MEDIA_ROLE_LABEL, type MediaRoleKey } from "../media/workflow-media-rol
 import {
   DESCRIPTION_ATTRIBUTE_ID,
   MODEL_NAME_ATTRIBUTE_ID,
-  RICH_CONTENT_ATTRIBUTE_ID,
   SEARCH_TAGS_ATTRIBUTE_ID,
   SELLER_CODE_ATTRIBUTE_ID,
   THEME_ATTRIBUTE_ID,
@@ -74,15 +73,11 @@ export const MEDIA_ROLE_COLUMNS: readonly MediaRoleKey[] = [
  * `lifecycle.ai_summary` until that write path lands; the column already owns
  * the field so 默认字段 locks it the same way it locks 名称.
  *
- * JSON富内容 owns attribute 11254. Nothing can build it but the operator: rich
- * content embeds this row's own media. It is still a `tableInput` — the card
- * default is the batch starting point an untouched row inherits.
- *
  * 主题 owns attribute 7109 — an Ozon dictionary (44 options, at most 5). Picking
  * them is a per-row judgement an operator makes while reviewing the batch, but the
  * card default may still carry one theme for untouched rows.
  *
- * 销售价 (`price`) and 划线价 (`old_price`), 主题 and JSON富内容 are the four
+ * 销售价 (`price`), 划线价 (`old_price`) and 主题 are the three
  * `tableInput` columns: the operator types them on the row, but a 默认字段 may
  * still carry the batch value that untouched rows inherit. That is why they carry
  * a `lockReason` and yet stay out of `tableOwnedFields` — locking the card input
@@ -110,7 +105,7 @@ export const WORKBENCH_COLUMNS: readonly WorkbenchColumn[] = [
   {
     id: "name",
     label: "名称",
-    width: "min-w-56",
+    width: "w-56 min-w-56",
     field: { by: "key", key: "name" },
     lockReason: FROM_AI_PER_IMAGE,
   },
@@ -154,7 +149,7 @@ export const WORKBENCH_COLUMNS: readonly WorkbenchColumn[] = [
   {
     id: "description",
     label: "简介",
-    width: "min-w-48",
+    width: "w-48 min-w-48",
     field: { by: "attribute", id: DESCRIPTION_ATTRIBUTE_ID },
     lockReason: FROM_AI_PER_IMAGE,
   },
@@ -168,19 +163,10 @@ export const WORKBENCH_COLUMNS: readonly WorkbenchColumn[] = [
   {
     id: "theme",
     label: "主题",
-    width: "min-w-48",
+    width: "w-48 min-w-48",
     field: { by: "attribute", id: THEME_ATTRIBUTE_ID },
     // 主题是字典里的运营选择：行里选的赢，没选的行走卡默认的批量主题
     // （与两列价格同一套 tableInput 语义）。
-    tableInput: true,
-    lockReason: FROM_OPERATOR_PER_ROW,
-  },
-  {
-    id: "rich_content",
-    label: "JSON富内容",
-    width: "min-w-48",
-    field: { by: "attribute", id: RICH_CONTENT_ATTRIBUTE_ID },
-    // 富内容嵌的是本行的媒体：操作员逐行粘贴，没贴过的行才继承卡默认。
     tableInput: true,
     lockReason: FROM_OPERATOR_PER_ROW,
   },

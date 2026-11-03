@@ -11,7 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/xxww0098/podhub-go/internal/identity"
+	access "github.com/xxww0098/podhub-go/internal/identity/contract"
 	"github.com/xxww0098/podhub-go/internal/warehouse/contract"
 	"github.com/xxww0098/podhub-go/internal/warehouse/service"
 )
@@ -82,13 +82,12 @@ func TestOpenAPIListsWarehouseRoutes(t *testing.T) {
 }
 
 func allowRead(role string) bool {
-	parsed, ok := identity.ParseWorkspaceRole(role)
-	return ok && parsed.Allows(identity.CapStoreRead)
+	_, ok := access.ParseWorkspace(role)
+	return ok
 }
 
 func allowWrite(role string) bool {
-	parsed, ok := identity.ParseWorkspaceRole(role)
-	return ok && parsed.Allows(identity.CapWarehouseWrite)
+	return access.CanManage(role)
 }
 
 func post(h http.Handler, path, body string) *httptest.ResponseRecorder {

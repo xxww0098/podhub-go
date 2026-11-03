@@ -55,7 +55,9 @@ const (
 	MediaForeign              = domain.MediaForeign
 	MediaExpired              = domain.MediaExpired
 	ImportReconcileFirstWait  = domain.ImportReconcileFirstWait
+	ImportUnknownFirstWait    = domain.ImportUnknownFirstWait
 	ImportProbePassCap        = domain.ImportProbePassCap
+	InfoListBatch             = domain.InfoListBatch
 	CodeReconcileStillUnknown = domain.CodeReconcileStillUnknown
 	SightAbsent               = domain.SightAbsent
 	SightUnreadable           = domain.SightUnreadable
@@ -63,25 +65,27 @@ const (
 )
 
 var (
-	Edges             = domain.Edges
-	History           = domain.History
-	ErrIllegalEdge    = domain.ErrIllegalEdge
-	ErrBadRequest     = domain.ErrBadRequest
-	ErrStoreRequired  = domain.ErrStoreRequired
-	ErrStoreInvalid   = domain.ErrStoreInvalid
-	ErrCardRequired   = domain.ErrCardRequired
-	ErrRowsRequired   = domain.ErrRowsRequired
-	ErrBatchTooLarge  = domain.ErrBatchTooLarge
-	PlanImportJobs    = domain.PlanImportJobs
-	Classify          = domain.Classify
-	RecoverSubmitting = domain.RecoverSubmitting
-	Apply             = domain.Apply
-	Allows            = domain.Allows
-	ParseUploadKey    = domain.ParseUploadKey
-	ImageIssue        = domain.ImageIssue
-	DecideProbe       = domain.DecideProbe
-	IsDraft           = domain.IsDraft
-	IsBatch           = domain.IsBatch
-	PeekDraft         = domain.PeekDraft
-	ParseBatch        = domain.ParseBatch
+	Edges               = domain.Edges
+	History             = domain.History
+	ErrIllegalEdge      = domain.ErrIllegalEdge
+	ErrBadRequest       = domain.ErrBadRequest
+	ErrStoreRequired    = domain.ErrStoreRequired
+	ErrStoreInvalid     = domain.ErrStoreInvalid
+	ErrCardRequired     = domain.ErrCardRequired
+	ErrRowsRequired     = domain.ErrRowsRequired
+	ErrBatchTooLarge    = domain.ErrBatchTooLarge
+	PlanImportJobs      = domain.PlanImportJobs
+	Classify            = domain.Classify
+	RecoverSubmitting   = domain.RecoverSubmitting
+	Apply               = domain.Apply
+	Allows              = domain.Allows
+	ParseUploadKey      = domain.ParseUploadKey
+	ImageIssue          = domain.ImageIssue
+	DecideProbe         = domain.DecideProbe
+	DecideAcceptedProbe = domain.DecideAcceptedProbe
+	AcceptedSKURetry    = domain.AcceptedSKURetry
+	IsDraft             = domain.IsDraft
+	IsBatch             = domain.IsBatch
+	PeekDraft           = domain.PeekDraft
+	ParseBatch          = domain.ParseBatch
 )

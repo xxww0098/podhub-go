@@ -9,8 +9,21 @@ import {
   invalidateWallet,
   loadWallet,
   peekWallet,
+  peekWalletLedger,
   subscribeWallet,
 } from "./wallet-cache"
+
+type Detail = Awaited<ReturnType<typeof accountHttp.accountGetWalletDetail>>
+
+function detail(availableYuan: number, note = ""): Detail {
+  return {
+    wallet: wallet(availableYuan),
+    ledger: note
+      ? [{ entry_type: "topup", amount_microfen: availableYuan * 100_000_000, balance_after_microfen: availableYuan * 100_000_000, note, created_at: "2026-08-24T00:00:00Z" }]
+      : [],
+    recharges: [],
+  }
+}
 
 function wallet(availableYuan: number): WalletView {
   const available_microfen = availableYuan * 100_000_000
@@ -37,13 +50,13 @@ function readNearby(relative: string): string {
 
 test("a later wallet load updates every subscriber", async (t) => {
   invalidateWallet()
-  const original = accountHttp.accountGetWallet
-  const empty = deferred<WalletView>()
-  const topped = deferred<WalletView>()
+  const original = accountHttp.accountGetWalletDetail
+  const empty = deferred<Detail>()
+  const topped = deferred<Detail>()
   const responses = [empty.promise, topped.promise]
-  accountHttp.accountGetWallet = () => responses.shift()!
+  accountHttp.accountGetWalletDetail = () => responses.shift()!
   t.after(() => {
-    accountHttp.accountGetWallet = original
+    accountHttp.accountGetWalletDetail = original
     invalidateWallet()
   })
 
@@ -54,12 +67,12 @@ test("a later wallet load updates every subscriber", async (t) => {
   t.after(stop)
 
   const first = loadWallet()
-  empty.resolve(wallet(0))
+  empty.resolve(detail(0))
   await first
   assert.equal(peekWallet()?.available_microfen, 0)
 
   const second = loadWallet()
-  topped.resolve(wallet(10))
+  topped.resolve(detail(10))
   await second
   assert.equal(peekWallet()?.available_microfen, 1_000_000_000)
   assert.deepEqual(seen, [0, 1_000_000_000])
@@ -67,41 +80,65 @@ test("a later wallet load updates every subscriber", async (t) => {
 
 test("a request resolved after invalidate cannot repopulate the cache", async (t) => {
   invalidateWallet()
-  const original = accountHttp.accountGetWallet
-  const pending = deferred<WalletView>()
-  accountHttp.accountGetWallet = () => pending.promise
+  const original = accountHttp.accountGetWalletDetail
+  const pending = deferred<Detail>()
+  accountHttp.accountGetWalletDetail = () => pending.promise
   t.after(() => {
-    accountHttp.accountGetWallet = original
+    accountHttp.accountGetWalletDetail = original
     invalidateWallet()
   })
 
   const request = loadWallet()
   invalidateWallet()
-  pending.resolve(wallet(10))
+  pending.resolve(detail(10))
   await request
   assert.equal(peekWallet(), null)
 })
 
 test("concurrent loads share one in-flight request", async (t) => {
   invalidateWallet()
-  const original = accountHttp.accountGetWallet
+  const original = accountHttp.accountGetWalletDetail
   let calls = 0
-  const pending = deferred<WalletView>()
-  accountHttp.accountGetWallet = () => {
+  const pending = deferred<Detail>()
+  accountHttp.accountGetWalletDetail = () => {
     calls += 1
     return pending.promise
   }
   t.after(() => {
-    accountHttp.accountGetWallet = original
+    accountHttp.accountGetWalletDetail = original
     invalidateWallet()
   })
 
   const first = loadWallet()
   const second = loadWallet()
-  pending.resolve(wallet(10))
+  pending.resolve(detail(10))
   assert.equal(await first, await second)
   assert.equal(calls, 1)
   assert.equal(peekWallet()?.available_microfen, 1_000_000_000)
+})
+
+test("the ledger rides the same read and is fenced by invalidateWallet", async (t) => {
+  invalidateWallet()
+  const original = accountHttp.accountGetWalletDetail
+  accountHttp.accountGetWalletDetail = async () => detail(5, "手动充值")
+  t.after(() => {
+    accountHttp.accountGetWalletDetail = original
+    invalidateWallet()
+  })
+
+  assert.equal(peekWalletLedger(), null)
+  const seen: number[] = []
+  const stop = subscribeWallet(() => seen.push(peekWalletLedger()?.length ?? -1))
+  t.after(stop)
+
+  await loadWallet()
+  assert.equal(peekWalletLedger()?.[0]?.note, "手动充值")
+  // A Workspace switch drops the previous Workspace's balance and ledger together
+  // and tells subscribers, so no surface keeps printing them.
+  invalidateWallet()
+  assert.equal(peekWallet(), null)
+  assert.equal(peekWalletLedger(), null)
+  assert.deepEqual(seen, [1, -1])
 })
 
 test("header, 用量 and redeem share the wallet cache", () => {
@@ -124,6 +161,7 @@ test("header, 用量 and redeem share the wallet cache", () => {
   assert.doesNotMatch(usage, /accountGetWallet/)
   assert.match(redeem, /void loadWallet\(\)/)
   assert.match(shell, /invalidateWallet/)
+  assert.match(usage, /useWalletLedger/)
   // Sign-out sweeps every registered session cache in one call (lib/session-cache).
   assert.match(app, /invalidateAllSessionCaches/)
   assert.match(workspace, /invalidateWallet/)

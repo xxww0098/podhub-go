@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react"
-import { Check } from "lucide-react"
+import { Check, Pencil } from "lucide-react"
 
 import type { AgentPayoutAccount } from "@/bindings/commands"
 import { accountHttp } from "@/bindings/http-account"
 import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import {
   Field,
   FieldDescription,
@@ -87,9 +88,13 @@ export function PayoutAccountForm({
         <span className="min-w-0 break-all font-mono">{account.account}</span>
         <span className="text-muted-foreground">{account.real_name}</span>
         <span className="ml-auto flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
-            修改
-          </Button>
+          <IconButton
+            icon={Pencil}
+            label="修改"
+            size="icon-sm"
+            variant="outline"
+            onClick={() => setEditing(true)}
+          />
           <Button
             variant="ghost"
             size="sm"

@@ -164,7 +164,7 @@ for (const mode of ["permission", "account", "route", "stop", "revision", "view"
       await fx.hook.inspectUnknownRows(["row"])
       assert.equal(fx.hook.canReleaseUnknownRows(["row"]), true)
       if (mode === "permission") rememberStoreRoster({ stores: [{ ...fx.store, can_manage: false }] }, 1)
-      if (mode === "account") rememberAccountOverview({ ...fx.account, accounts: [{ ...fx.account.accounts[0]!, uuid: "other" }] })
+      if (mode === "account") rememberAccountOverview({ ...fx.account, session: { ...fx.account.session, uuid: "other" } })
       if (mode === "route") fx.context.active = false
       if (mode === "stop") fx.context.controlVersion++
       if (mode === "revision" || mode === "view") patchListingWorkbench((state) => ({ productDrafts: { row: { ...state.productBases.row!,

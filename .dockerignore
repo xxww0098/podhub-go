@@ -1,0 +1,7 @@
+.git
+.env
+.env.*
+**/node_modules
+rust/target
+rust/target-browser
+bin

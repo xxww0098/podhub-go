@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/xxww0098/podhub-go/internal/billing/domain"
 	"github.com/xxww0098/podhub-go/internal/platform/db"
 )
 
@@ -48,9 +49,9 @@ func redeemTx(ctx context.Context, tx pgx.Tx, orgID, userID int64, code string, 
 	var err error
 	var orgUUID uuid.UUID
 	var dissolved *time.Time
-	var plan string
+	// Ledger inserts take a foreign-key lock on this row before releasing the wallet.
 	err = tx.QueryRow(ctx, `
-		SELECT uuid, dissolved_at, plan FROM organizations WHERE id = $1 FOR UPDATE`, orgID).Scan(&orgUUID, &dissolved, &plan)
+		SELECT uuid, dissolved_at FROM organizations WHERE id = $1 FOR NO KEY UPDATE`, orgID).Scan(&orgUUID, &dissolved)
 	if err != nil {
 		return RedeemResult{}, redeemErr(500, "INTERNAL", "兑换失败")
 	}
@@ -61,21 +62,20 @@ func redeemTx(ctx context.Context, tx pgx.Tx, orgID, userID int64, code string, 
 		return RedeemResult{}, redeemErr(400, "VALIDATION", "工作空间已解散")
 	}
 	var row struct {
-		ID           int64
-		Product      string
-		MemberSeats  int64
-		Tier         string
-		OcrCredits   int64
-		WalletCents  int64
-		DurationDays int32
-		Used         bool
-		ExpiresAt    *time.Time
-		RevokedAt    *time.Time
+		ID          int64
+		WalletCents int64
+		Used        bool
+		ExpiresAt   *time.Time
+		RevokedAt   *time.Time
+		PlanKey     *string
+		PlanStores  *int
+		PlanMonths  *int
+		PlanPrice   *int64
 	}
 	err = tx.QueryRow(ctx, `
-		SELECT id, product, member_seats, tier, ocr_credits, wallet_cents,
-		       duration_days, used, expires_at, revoked_at
-		  FROM public.billing_lock_redeem_code($1)`, code).Scan(&row.ID, &row.Product, &row.MemberSeats, &row.Tier, &row.OcrCredits, &row.WalletCents, &row.DurationDays, &row.Used, &row.ExpiresAt, &row.RevokedAt)
+		SELECT id, wallet_cents, used, expires_at, revoked_at, plan_key, plan_stores, plan_months, plan_store_monthly_cents
+		  FROM public.billing_lock_redeem_code($1)`, code).Scan(&row.ID, &row.WalletCents, &row.Used, &row.ExpiresAt, &row.RevokedAt,
+		&row.PlanKey, &row.PlanStores, &row.PlanMonths, &row.PlanPrice)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return RedeemResult{}, redeemErr(400, "VALIDATION", "兑换码无效")
 	}
@@ -88,31 +88,26 @@ func redeemTx(ctx context.Context, tx pgx.Tx, orgID, userID int64, code string, 
 	if row.RevokedAt != nil {
 		return RedeemResult{}, redeemErr(400, "VALIDATION", "兑换码已作废")
 	}
-	if row.DurationDays < 1 || row.DurationDays > 3650 {
-		return RedeemResult{}, redeemErr(400, "VALIDATION", "兑换码有效期无效")
-	}
 	if row.ExpiresAt != nil && !row.ExpiresAt.After(time.Now()) {
 		return RedeemResult{}, redeemErr(400, "VALIDATION", "兑换码已过期")
 	}
 	var result RedeemResult
-	switch row.Product {
-	case "ocr_credits":
-		return RedeemResult{}, redeemErr(400, "VALIDATION", "识别额度兑换码已停用")
-	case "member_seats":
-		return RedeemResult{}, redeemErr(400, "VALIDATION", "成员席位批次兑换码已停用，不会消耗该兑换码，请联系运营")
-	case "wallet_credits":
-		if row.WalletCents < 100 || row.WalletCents > 1_000_000 || row.MemberSeats != 0 || row.OcrCredits != 0 {
+	if row.PlanKey != nil {
+		if row.PlanStores == nil || row.PlanMonths == nil || row.PlanPrice == nil {
+			return RedeemResult{}, redeemErr(400, "VALIDATION", "兑换码套餐无效")
+		}
+		result, err = redeemPlan(ctx, tx, orgID, row.ID, *row.PlanKey, *row.PlanStores, *row.PlanMonths, *row.PlanPrice)
+		if err != nil {
+			return RedeemResult{}, err
+		}
+	} else {
+		if row.WalletCents < 100 || row.WalletCents > 1_000_000 {
 			return RedeemResult{}, redeemErr(400, "VALIDATION", "兑换码钱包额度无效")
 		}
 		if _, err = AdjustTx(ctx, tx, orgID, fmt.Sprintf("redeem:%d", row.ID), row.WalletCents*1_000_000, "兑换码充值"); err != nil {
 			return RedeemResult{}, redeemErr(500, "INTERNAL", "兑换失败")
 		}
-		result = RedeemResult{PlanKey: plan, WalletCents: row.WalletCents}
-	default:
-		return RedeemResult{}, redeemErr(400, "VALIDATION", "兑换码产品类型无效")
-	}
-	if err != nil {
-		return RedeemResult{}, redeemErr(500, "INTERNAL", "兑换失败")
+		result.WalletCents = row.WalletCents
 	}
 	var consumed int
 	err = tx.QueryRow(ctx, `SELECT public.billing_consume_redeem_code($1, $2, $3, $4)`, row.ID, userID, orgID, time.Now().UnixMilli()).Scan(&consumed)
@@ -122,22 +117,61 @@ func redeemTx(ctx context.Context, tx pgx.Tx, orgID, userID int64, code string, 
 	if consumed != 1 {
 		return RedeemResult{}, redeemErr(400, "VALIDATION", "兑换码已被使用")
 	}
-	name, err := planName(ctx, tx, result.PlanKey)
-	if err != nil {
-		return RedeemResult{}, redeemErr(400, "VALIDATION", fmt.Sprintf("兑换码权益无效（%s），请联系客服", result.PlanKey))
-	}
-	result.PlanName = name
 	return result, nil
 }
 
-func planName(ctx context.Context, tx pgx.Tx, key string) (string, error) {
-	var name string
-	err := tx.QueryRow(ctx, `SELECT name FROM plans WHERE key = $1`, key).Scan(&name)
+func redeemPlan(ctx context.Context, tx pgx.Tx, orgID, codeID int64, plan string, stores, months int, price int64) (RedeemResult, error) {
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	sub, err := LockSubscription(ctx, tx, orgID)
 	if err != nil {
-		return "", err
+		return RedeemResult{}, redeemErr(500, "INTERNAL", "兑换失败")
 	}
-	if strings.TrimSpace(name) == "" {
-		return key, nil
+	if err = checkPending(ctx, tx, orgID, false, now); err != nil {
+		var refusal *domain.QuoteError
+		if errors.As(err, &refusal) {
+			return RedeemResult{}, redeemErr(refusal.Status, refusal.Code, refusal.Message)
+		}
+		return RedeemResult{}, redeemErr(500, "INTERNAL", "兑换失败")
 	}
-	return name, nil
+	start, anchor := now, now
+	if sub.TermEnd != nil && sub.TermEnd.After(now) {
+		start = *sub.TermEnd
+		if sub.Anchor != nil {
+			anchor = *sub.Anchor
+		}
+	}
+	end := domain.AnchoredEnd(anchor, start, months)
+	var keep []string
+	var live int
+	if live, err = liveStoreCount(ctx, tx, orgID); err == nil && live > stores {
+		err = tx.QueryRow(ctx, `SELECT COALESCE(array_agg(uuid),'{}'::uuid[]) FROM
+			(SELECT uuid FROM organization_stores WHERE org_id=$1 AND deleted_at_ms IS NULL AND NOT manual_disabled
+			 ORDER BY create_order,id LIMIT $2) selected`, orgID, stores).Scan(&keep)
+	}
+	if err != nil {
+		return RedeemResult{}, redeemErr(500, "INTERNAL", "兑换失败")
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO subscription_periods
+		(org_id,starts_at,ends_at,plan_key,stores,store_monthly_cents,keep_store_ids,redeem_code_id)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, orgID, start, end, plan, stores, price, keep, codeID)
+	if err == nil {
+		_, err = tx.Exec(ctx, `UPDATE subscriptions SET status='active',
+			term_start=CASE WHEN term_end>$2 THEN term_start ELSE $3 END, term_end=$4,
+			billing_anchor=$5, plan_key=CASE WHEN term_end>$2 THEN plan_key ELSE $6 END,
+			stores=CASE WHEN term_end>$2 THEN stores ELSE $7 END, revision=revision+1,updated_at=$2 WHERE org_id=$1`,
+			orgID, now, start, end, anchor, plan, stores)
+	}
+	if err == nil {
+		_, err = tx.Exec(ctx, `INSERT INTO subscription_events
+			(org_id,kind,effective_at,plan_from,plan_to,term_start,term_end,breakdown,created_at)
+			VALUES($1,'redeem',$2,$3,$4,$2,$5,jsonb_build_object('redeem_code_id',$6::bigint),$7)`,
+			orgID, start, sub.PlanKey, plan, end, codeID, now)
+	}
+	if err == nil {
+		_, err = ProjectSubscription(ctx, tx, orgID, now)
+	}
+	if err != nil {
+		return RedeemResult{}, redeemErr(500, "INTERNAL", "兑换失败")
+	}
+	return RedeemResult{PlanKey: plan, PlanStores: stores, PlanMonths: months, StartsAt: &start, EndsAt: &end}, nil
 }

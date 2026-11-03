@@ -17,17 +17,17 @@ func TestCatalogTreeFlatContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	const root = `{"language":"en","fetched_at_ms":1,"items":[` +
-		`{"description_category_id":1,"category_name":"root","type_id":10,"type_name":"type","disabled":false,"parent_id":null},` +
-		`{"description_category_id":0,"category_name":"","type_id":30,"type_name":"leaf","disabled":false,"parent_id":10}]}`
+		`{"description_category_id":1,"category_name":"root","type_id":10,"type_name":"type","disabled":false,"parent_index":null},` +
+		`{"description_category_id":0,"category_name":"","type_id":30,"type_name":"leaf","disabled":false,"parent_index":0}]}`
 	for _, tc := range []struct {
 		name      string
 		node      string
 		wantError string
 	}{
 		{"flat nodes", root, ""},
-		{"wrong node type", strings.Replace(root, `"disabled":false,"parent_id":10`, `"disabled":"false","parent_id":10`, 1), ".disabled"},
+		{"wrong node type", strings.Replace(root, `"disabled":false,"parent_index":0`, `"disabled":"false","parent_index":0`, 1), ".disabled"},
 		{"missing node field", strings.Replace(root, `"type_name":"leaf",`, "", 1), `missing required "type_name"`},
-		{"unknown node field", strings.Replace(root, `"parent_id":10`, `"parent_id":10,"unexpected":true`, 1), "unexpected"},
+		{"unknown node field", strings.Replace(root, `"parent_index":0`, `"parent_index":0,"unexpected":true`, 1), "unexpected"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := spec.CheckResponse(http.MethodGet, "/api/catalog/tree", http.StatusOK,
@@ -75,12 +75,8 @@ func TestCatalogTreeGeneratedModelIsolation(t *testing.T) {
 				t.Fatal(err)
 			}
 			count := strings.Count(string(generated), "type CatalogTreeNode struct {")
-			want := 0
-			if filepath.Base(path) == "catalog-reads.yaml" {
-				want = 1
-			}
-			if count != want {
-				t.Fatalf("%s: CatalogTreeNode declarations = %d, want %d", cfg.Output, count, want)
+			if count != 0 {
+				t.Fatalf("%s: CatalogTreeNode declarations = %d, want 0", cfg.Output, count)
 			}
 		})
 	}

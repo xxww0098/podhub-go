@@ -18,7 +18,7 @@ type cardView struct {
 	StoreID         *string         `json:"storeId,omitempty"`
 	Revision        int64           `json:"revision"`
 	Payload         json.RawMessage `json:"payload"`
-	UpdatedAtMs     int64           `json:"updatedAtMs"`
+	UpdatedAtMs     int64           `json:"updated_at_ms"`
 	OcrPromptSha256 *string         `json:"ocrPromptSha256,omitempty"`
 }
 
@@ -73,7 +73,7 @@ func (h Host) listCards(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "limit 无效", "validation")
 		return
 	}
-	_, fetch := PageFetch(limit)
+	fetch := limit + 1
 	micros, afterID := ParseCursor(q.Get("cursor"))
 	store := q.Get("storeId")
 	var rows []cardRow
@@ -168,6 +168,15 @@ func (h Host) loadCard(r *http.Request, org int64, id string) (cardRow, error) {
 		row := tx.QueryRow(r.Context(), `SELECT `+cardSelect+` FROM listing_cards WHERE org_id = $1 AND id = $2::uuid`, org, id)
 		var scanErr error
 		item, scanErr = scanCard(row)
+		if scanErr == nil && item.supplier {
+			item.payload, scanErr = projectSupplierCard(r.Context(), tx, item.payload, h.clock().UnixMilli())
+		}
+		if scanErr == nil {
+			item.payload, scanErr = projectStoreCurrency(r.Context(), tx, org, item.payload, item.view.StoreID)
+		}
+		if scanErr == nil {
+			item.view.Payload = item.payload
+		}
 		return scanErr
 	})
 	return item, err

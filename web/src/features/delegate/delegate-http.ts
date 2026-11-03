@@ -43,7 +43,7 @@ export const delegateHttp = {
 
   listBindings: async (storeId: string): Promise<DelegateBinding[]> => {
     const data = await api.get<components["schemas"]["DelegateBindingsData"]>(
-      `${route("sellerDelegateBindings")}${query({ storeId })}`,
+      `${route("sellerDelegateBindings")}${query({ store_id: storeId })}`,
     )
     return data.bindings
   },
@@ -117,14 +117,16 @@ export const delegateHttp = {
   listOrders: (params: {
     storeId?: string
     state?: string
+    search?: string
     cursor?: string
     limit?: number
   }) =>
     api
       .get<DelegateOrderListData>(
         `${route("sellerDelegateOrders")}${query({
-          storeId: params.storeId,
+          store_id: params.storeId,
           state: params.state,
+          search: params.search,
           cursor: params.cursor,
           limit: params.limit,
         })}`,
@@ -159,13 +161,13 @@ export const delegateHttp = {
       )
       .then((data) => data.order),
 
-  /** 发货屏徽标：纯 DB 读；`postingNumbers` 逗号分隔，单批 ≤200。 */
+  /** 发货屏徽标：纯 DB 读；`posting_numbers` 逗号分隔，单批 ≤200。 */
   postingStates: async (storeId: string, postingNumbers: string[]) => {
     if (postingNumbers.length === 0) return []
     const data = await api.get<components["schemas"]["DelegatePostingStatesData"]>(
       `${route("sellerDelegatePostingStates")}${query({
-        storeId,
-        postingNumbers: postingNumbers.join(","),
+        store_id: storeId,
+        posting_numbers: postingNumbers.join(","),
       })}`,
     )
     return data.states

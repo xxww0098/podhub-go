@@ -3,11 +3,13 @@ package submit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
-	queue "github.com/xxww0098/podhub-go/internal/platform/jobsched"
+	queue "github.com/xxww0098/podhub-go/internal/queue/contract"
+	sellercontract "github.com/xxww0098/podhub-go/internal/seller/contract"
 )
 
 // JobBody is the listing.submit payload after freeze. requestHash is the
@@ -27,7 +29,16 @@ type JobBody struct {
 // A crash after the request leaves the lease running so the next claim parks
 // the intent instead of sending again. A nil return means the loop must not
 // settle or requeue.
-func Work(ctx context.Context, pool *pgxpool.Pool, job queue.Claimed, tr Transport) error {
+func (svc Service) Work(ctx context.Context, pool *pgxpool.Pool, job queue.Claimed, tr Transport) error {
+	err := svc.work(ctx, pool, job, tr)
+	var wait *policyWait
+	if errors.As(err, &wait) {
+		return svc.deferPolicy(ctx, pool, job, wait)
+	}
+	return err
+}
+
+func (svc Service) work(ctx context.Context, pool *pgxpool.Pool, job queue.Claimed, tr Transport) error {
 	var batch struct {
 		StoreID string        `json:"storeId"`
 		Intents []batchIntent `json:"intents"`
@@ -36,7 +47,7 @@ func Work(ctx context.Context, pool *pgxpool.Pool, job queue.Claimed, tr Transpo
 		return err
 	}
 	if len(batch.Intents) > 0 {
-		return workBatch(ctx, pool, job, tr, batch.StoreID, batch.Intents)
+		return svc.workBatch(ctx, pool, job, tr, batch.StoreID, batch.Intents)
 	}
 	var body JobBody
 	if err := json.Unmarshal(job.Payload, &body); err != nil {
@@ -54,7 +65,21 @@ func Work(ctx context.Context, pool *pgxpool.Pool, job queue.Claimed, tr Transpo
 	}
 	switch state {
 	case "", Queued:
-		_, err = RunAttempt(ctx, pool, tr, in)
+		if body.StorePK <= 0 {
+			return svc.settleIntent(ctx, pool, in, Classify(Reply{Connect: true}))
+		}
+		if tr != nil && !tr.WritesDisabled() {
+			tr, err = bindStoreTransport(ctx, tr, sellercontract.StoreBinding{
+				OrgID: job.OrgID, UserID: job.SubmitterUserID, StorePK: body.StorePK, IntentIDs: []string{body.IntentID},
+			})
+			if err != nil {
+				if errors.Is(err, ErrNotSent) {
+					return svc.settleIntent(ctx, pool, in, Classify(Reply{Connect: true}))
+				}
+				return err
+			}
+		}
+		_, err = svc.RunAttempt(ctx, pool, tr, in)
 		if Crashed(err) {
 			return nil
 		}
@@ -65,9 +90,9 @@ func Work(ctx context.Context, pool *pgxpool.Pool, job queue.Claimed, tr Transpo
 			return err
 		}
 		if task != "" {
-			return resumeSingle(ctx, pool, in, task)
+			return svc.resumeSingle(ctx, pool, in, task)
 		}
-		_, err = Recover(ctx, pool, in)
+		_, err = svc.Recover(ctx, pool, in)
 		return err
 	default:
 		return nil
@@ -104,13 +129,13 @@ func intentTask(ctx context.Context, pool *pgxpool.Pool, orgID int64, intentID s
 	return facts[intentID].task, nil
 }
 
-func resumeSingle(ctx context.Context, pool *pgxpool.Pool, in Attempt, task string) error {
+func (svc Service) resumeSingle(ctx context.Context, pool *pgxpool.Pool, in Attempt, task string) error {
 	if err := touchLeases(ctx, pool, in.OrgID, in.Body); err != nil {
 		return err
 	}
 	body := receiptBody(task)
 	reply := Reply{Sent: true, Status: 200, Body: body, TaskID: taskID(body)}
-	if err := settleIntent(ctx, pool, in, Classify(reply)); err != nil {
+	if err := svc.settleIntent(ctx, pool, in, Classify(reply)); err != nil {
 		return queue.ErrReceiptHeld
 	}
 	return nil

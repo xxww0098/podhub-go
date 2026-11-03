@@ -35,11 +35,11 @@ func (s Service) CreateAccount(ctx context.Context, actor contract.Actor, body [
 			return domain.Member{}, nil, err
 		}
 	}
-	publicID, err := s.publicID()
+	hash, err := hashPassword(password)
 	if err != nil {
-		return domain.Member{}, nil, unavailable(err)
+		return domain.Member{}, nil, err
 	}
-	member, initial, err := s.Store.CreateAccount(ctx, actor, in, publicID, s.nowMs(), password)
+	member, initial, err := s.Store.CreateAccount(ctx, actor, in, s.nowMs(), password, hash)
 	return member, initial, fillDisabled(err, msgPortalWrites)
 }
 
@@ -62,7 +62,7 @@ func (s Service) PatchAccount(ctx context.Context, actor contract.Actor, memberI
 			return domain.Member{}, nil, err
 		}
 	}
-	member, initial, err := s.Store.PatchAccount(ctx, actor, id, in, hash)
+	member, initial, err := s.Store.PatchAccount(ctx, actor, id, in, hash, s.nowMs())
 	return member, initial, fillDisabled(err, msgPortalWrites)
 }
 

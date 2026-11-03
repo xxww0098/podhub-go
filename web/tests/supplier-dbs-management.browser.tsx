@@ -1,6 +1,7 @@
 /** Production surface tested against an ownership-enforcing in-memory server. */
 import { flushSync } from "react-dom"
 import { createRoot } from "react-dom/client"
+import { route } from "@/api/routes"
 import { SupplierDbsScreen } from "@/features/supplier-dbs/supplier-dbs-screen"
 import { createSupplierDbsStore } from "@/features/supplier-dbs/supplier-dbs-store"
 import { supplierOzonConfigIO } from "@/features/supplier-dbs/supplier-ozon-config"
@@ -11,8 +12,19 @@ import "../src/index.css"
 const fixture = document.querySelector<HTMLDivElement>("#fixture")!
 const results = document.querySelector<HTMLPreElement>("#results")!
 const unexpectedRequests: string[] = []
-window.fetch = async (input) => { unexpectedRequests.push(String(input)); throw new Error("Unexpected fixture network request") }
-localStorage.setItem("podhub.workflow.category-tree.v1", JSON.stringify({ language: "zh_hans", fetchedAt: new Date().toISOString(), tree: [{ description_category_id: 1, category_name: "测试类目", type_id: 0, type_name: "", disabled: false, children: [] }] }))
+window.fetch = async (input, init) => {
+  if (String(input) === route("meCatalogBannedTags") && (init?.method ?? "GET") === "GET") {
+    return new Response(JSON.stringify({ data: { rules: [] } }), { headers: { "Content-Type": "application/json" } })
+  }
+  unexpectedRequests.push(String(input)); throw new Error("Unexpected fixture network request")
+}
+const categoryCacheKey = "podhub.workflow.category-tree.v2"
+const categoryCacheBefore = localStorage.getItem(categoryCacheKey)
+localStorage.setItem(categoryCacheKey, JSON.stringify({ language: "zh_hans", fetchedAt: new Date().toISOString(), tree: [{ description_category_id: 1, category_name: "测试类目", type_id: 0, type_name: "", disabled: false, children: [] }] }))
+window.addEventListener("pagehide", () => {
+  if (categoryCacheBefore && !categoryCacheBefore.includes('"category_name":"测试类目"')) localStorage.setItem(categoryCacheKey, categoryCacheBefore)
+  else localStorage.removeItem(categoryCacheKey)
+})
 supplierOzonConfigIO.get = async () => undefined
 const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
 async function settle() { await frame(); await frame() }
@@ -23,7 +35,7 @@ function element(selector: string, root: ParentNode = document): HTMLElement {
   return node
 }
 function byText(text: string, root: ParentNode = document): HTMLElement {
-  const node = [...root.querySelectorAll<HTMLElement>("button")].find((button) => button.textContent?.trim() === text && !button.closest('[hidden], [inert], [aria-hidden="true"]'))
+  const node = [...root.querySelectorAll<HTMLElement>("button")].find((button) => (button.textContent?.trim() === text || button.getAttribute("aria-label") === text) && !button.closest('[hidden], [inert], [aria-hidden="true"]'))
   check(node, `Missing button ${text}`)
   return node
 }
@@ -105,7 +117,7 @@ const checks: Array<[string, () => Promise<void>]> = [
     check(!fixture.textContent?.includes("印花帆布袋"), "旧库响应恢复到了新范围")
     check(new URLSearchParams(location.search).get("open") === "chen", "范围切换没有自动落库")
     await chooseCreator("历史归属未知"); await waitForLibrary("legacy")
-    check(fixture.textContent?.includes("新建商品") && fixture.textContent?.includes("库设置"), "超级管理员维护能力被删除")
+    check(fixture.querySelector('[aria-label="新建商品"]') && fixture.querySelector('[aria-label="库设置"]'), "超级管理员维护能力被删除")
   })],
   ["范围与库切换：提示词草稿取消保留，确认丢弃", () => mounted(async () => {
     await waitForLibrary("lin"); await openRow("lin-1", true)
@@ -148,6 +160,51 @@ const checks: Array<[string, () => Promise<void>]> = [
     await click(element('[aria-label="选择本页全部行"]', fixture)); await click(element('[data-bulk-menu]', fixture)); await click(element('[data-bulk-action="delete"]')); await click(byText("删除 1 行"))
     check(calls.some((call) => call.kind === "delete" && call.productId === "lin-1"), "批量删除丢失")
   })],
+  ["商品详情：缺项可定位，资料字段直接展开", () => mounted(async () => {
+    await waitForLibrary("lin"); await openRow("lin-1")
+    const detail = panel()!
+    check(![...detail.querySelectorAll("button")].some((button) => button.textContent?.includes("更多资料")), "商品资料不应再折叠")
+    check((element('[aria-label="名称"]', detail) as HTMLInputElement).getBoundingClientRect().width > 0, "基础编辑不可见")
+    const description = element('[aria-label="商品描述"]', detail) as HTMLTextAreaElement
+    check(description.getBoundingClientRect().height > 0, "商品描述未展开")
+    check(byText("上传图片", detail).textContent?.includes("上传图片"), "图片上传入口需要文字")
+    const readiness = element("[data-readiness-toggle]", detail)
+    check(readiness.getAttribute("aria-expanded") === "false", "缺项应先显示汇总")
+    await click(readiness); await click(element('[data-missing="category"]', detail))
+    check(element('[data-row-tab="defaults"]', detail).getAttribute("aria-selected") === "true", "缺项未定位到OZON字段")
+    await click(element('[data-row-tab="info"]', detail))
+    const kept = element('[aria-label="商品描述"]', detail) as HTMLTextAreaElement
+    kept.focus(); input(kept, "保留的描述草稿")
+    await click(element('[data-row-tab="defaults"]', detail))
+    await click(element('[data-row-tab="info"]', detail))
+    check((element('[aria-label="商品描述"]', detail) as HTMLTextAreaElement).value === "保留的描述草稿", "切换页签丢失描述草稿")
+    const bounds = detail.getBoundingClientRect()
+    const close = element('[aria-label="关闭行详情"]', detail).getBoundingClientRect()
+    check(bounds.top >= 0 && bounds.bottom <= innerHeight + 1 && close.bottom <= innerHeight + 1, "详情超出视口")
+  })],
+  ["新建货源：主要字段优先，展开后按钮仍在视口内", () => mounted(async ({ calls }) => {
+    await waitForLibrary("lin")
+    await click(byText("新建平台商品库", fixture))
+    const form = element("[data-supplier-db-form]")
+    const dialog = form.closest<HTMLElement>('[role="dialog"]')!
+    const more = byText("更多设置", dialog)
+    check(more.getAttribute("aria-expanded") === "false", "次要设置必须默认收起")
+    input(element("#supplier-db-name", form) as HTMLInputElement, "新货源")
+    input(element("#supplier-db-account-email", form) as HTMLInputElement, "factory@example.invalid")
+    check(!byText("创建", form).hasAttribute("disabled"), "主要字段完整应可创建")
+    const before = calls.length
+    await click(more)
+    input(element("#supplier-db-contact", form) as HTMLInputElement, "保留的联系人")
+    await settle()
+    const bounds = dialog.getBoundingClientRect()
+    const footer = element('[data-slot="dialog-footer"]', dialog).getBoundingClientRect()
+    check(bounds.top >= 0 && bounds.bottom <= innerHeight + 1, "弹窗超出视口")
+    check(footer.top >= bounds.top && footer.bottom <= innerHeight + 1, "底部按钮超出视口")
+    await click(more); await click(more)
+    check((element("#supplier-db-contact", form) as HTMLInputElement).value === "保留的联系人", "折叠设置丢失草稿")
+    await click(byText("取消", dialog))
+    check(calls.length === before, "取消表单不应创建货源")
+  })],
   ["编辑保持行 CAS 和库设置入口", () => mounted(async ({ calls }) => {
     await waitForLibrary("lin"); await click(byText("库设置", fixture))
     for (const label of ["编辑库信息", "自定义属性", "厂家账号", "删除库"]) check(document.querySelector(`[data-db-menu="${label}"]`), `丢失库设置 ${label}`)
@@ -155,7 +212,7 @@ const checks: Array<[string, () => Promise<void>]> = [
     const name = element('[aria-label="名称"]', panel()!) as HTMLInputElement
     name.focus(); input(name, "改名帆布袋"); name.blur(); await settle()
     check(calls.some((call) => call.kind === "CAS" && call.revision === 1), "编辑没有沿用 expectedRevision")
-    await click(byText("完成", panel()!)); check(fixture.textContent?.includes("改名帆布袋"), "编辑结果未更新商品表")
+    await click(element('[aria-label="关闭行详情"]', panel()!)); check(fixture.textContent?.includes("改名帆布袋"), "编辑结果未更新商品表")
   })],
 ]
 document.querySelector<HTMLButtonElement>("#run")!.addEventListener("click", async () => {
@@ -166,7 +223,7 @@ document.querySelector<HTMLButtonElement>("#run")!.addEventListener("click", asy
     catch (error) { failed++; lines.push(`✗ ${name}: ${error instanceof Error ? error.message : String(error)}`) }
     results.textContent = lines.join("\n")
   }
-  if (unexpectedRequests.length) { failed++; lines.push(`✗ ${unexpectedRequests.length} unexpected requests`) }
+  if (unexpectedRequests.length) { failed++; lines.push(`✗ ${unexpectedRequests.length} unexpected requests: ${unexpectedRequests.join(", ")}`) }
   results.textContent = `${lines.join("\n")}\n${failed ? `${failed} 项失败` : "全部通过"}`
 })
 

@@ -46,18 +46,6 @@ func NormalizeClientID(value *string) (*string, *contract.APIError) {
 	return &trimmed, nil
 }
 
-// NormalizeStoreTagName trims and checks a tag name.
-func NormalizeStoreTagName(value string) (string, *contract.APIError) {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return "", contract.Validation(contract.MsgTagNameEmpty)
-	}
-	if len([]rune(trimmed)) > MaxStoreTagName {
-		return "", contract.Validation(contract.MsgTagNameLong)
-	}
-	return trimmed, nil
-}
-
 // NormalizeStoreGroupName trims and checks a group name.
 func NormalizeStoreGroupName(value string) (string, *contract.APIError) {
 	trimmed := strings.TrimSpace(value)
@@ -105,16 +93,13 @@ func isHex(b byte) bool {
 	return false
 }
 
-// AssigneeForCreate is assignee_for_create. An owner gets exactly what they
-// asked for. A manager may name any workspacemate and otherwise lands on
-// themselves so they can register the first key. A member may only name
-// themselves.
+// AssigneeForCreate permits owners and managers to create and assign stores.
 func AssigneeForCreate(actor Actor, requested *int64) (*int64, *contract.APIError) {
+	if !actor.CanManageAll() {
+		return nil, contract.Forbidden(contract.MsgManagerOnly)
+	}
 	if actor.IsOwner() {
 		return requested, nil
-	}
-	if !actor.CanManageAll() && requested != nil && *requested != actor.MembershipID {
-		return nil, contract.Forbidden(contract.MsgAssigneeOther)
 	}
 	if requested != nil {
 		return requested, nil
@@ -124,14 +109,14 @@ func AssigneeForCreate(actor Actor, requested *int64) (*int64, *contract.APIErro
 }
 
 // MayDeleteStore is ensure_may_delete_store. A store that holds ciphertext
-// requires the key grant; one that does not is open to a manager or its
+// requires a manager; one that does not is open to a manager or its
 // assignee. Everything else looks like "no such store".
 func MayDeleteStore(actor Actor, row Row) *contract.APIError {
 	if !actor.Visible(row.AssigneeMembershipID) {
 		return contract.NotFound(contract.MsgStoreMissing)
 	}
 	if row.CredentialAnyConfigured {
-		if actor.MayManageKey(row.AssigneeKeyManage, row.AssigneeMembershipID) {
+		if actor.CanManageAll() {
 			return nil
 		}
 		return contract.Forbidden(contract.MsgNoKeyPermission)

@@ -11,8 +11,8 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"bytes"
-	"github.com/xxww0098/podhub-go/internal/admin/domain"
 	delegatec "github.com/xxww0098/podhub-go/internal/delegate/contract"
+	access "github.com/xxww0098/podhub-go/internal/identity/contract"
 )
 
 const x2BodyLimit = 2 * 1024 * 1024
@@ -103,7 +103,7 @@ func (h handler) x2Principal(w http.ResponseWriter, r *http.Request) (Session, b
 		x2Fail(w, delegatec.Unauthenticated(""))
 		return Session{}, false
 	}
-	if !domain.PlatformStaff(p.PlatformRole) {
+	if !access.IsPlatformStaff(p.PlatformRole) {
 		x2Fail(w, delegatec.Forbidden("需要平台管理员权限"))
 		return Session{}, false
 	}

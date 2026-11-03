@@ -36,7 +36,7 @@ func CreateSubscriptionOrder(
 		if err != nil {
 			return err
 		}
-		if q.Payload.Quote.ScheduleOnly || q.Payload.Quote.AmountCents <= 0 {
+		if q.Payload.Quote.FreeOnly || q.Payload.Quote.AmountCents <= 0 {
 			return quoteFailure(domain.CodeValidation, "免费续费配置请显式确认，无需订单")
 		}
 		if err = checkPending(ctx, tx, orgID, false, now); err != nil {
@@ -58,6 +58,15 @@ func CreateSubscriptionOrder(
 			publicID, orgID, priced.PlanKey, priced.Months, priced.AmountCents, currency, provider,
 			userID, now, snapshot, now.Add(PaymentWindow), json.RawMessage(agreement), q.ID).Scan(&orderID); err != nil {
 			return err
+		}
+		if priced.CouponCode != "" {
+			var claimed bool
+			if err = tx.QueryRow(ctx, `SELECT public.billing_coupon_consume($1,$2,$3)`, priced.CouponCode, priced.CouponPercent, now).Scan(&claimed); err != nil {
+				return err
+			}
+			if !claimed {
+				return couponInvalid()
+			}
 		}
 		return nil
 	})
@@ -130,12 +139,20 @@ func FulfillSubscription(ctx context.Context, tx pgx.Tx, order contract.Order, n
 		// The paid end and the current capacity boundary are separate facts.
 		if _, err = tx.Exec(ctx, `UPDATE subscriptions SET status='active',term_start=CASE WHEN term_end>$2 THEN term_start ELSE $2 END,
    term_end=$3,billing_anchor=$4,plan_key=CASE WHEN term_end>$2 THEN plan_key ELSE $5 END,
-   extra_stores=CASE WHEN term_end>$2 THEN extra_stores ELSE $6 END,
-   extra_members=CASE WHEN term_end>$2 THEN extra_members ELSE $7 END WHERE org_id=$1`,
-			order.OrgID, start, end, anchor, q.PlanKey, q.ExtraStores, q.ExtraMembers); err != nil {
+   stores=CASE WHEN term_end>$2 THEN stores ELSE $6 END WHERE org_id=$1`,
+			order.OrgID, start, end, anchor, q.PlanKey, q.Stores); err != nil {
 			return err
 		}
 	case domain.ActionChange:
+		cat, err := Catalog(ctx, tx)
+		if err != nil {
+			return err
+		}
+		// Replay the quoted upgrade at the unit prices the quote froze, so a
+		// catalogue edit between preview and payment cannot change the result.
+		target := cat.Plans[q.PlanKey]
+		target.StoreMonthlyCents = payload.Period.StoreMonthlyCents
+		cat.Plans[q.PlanKey] = target
 		periods, err := quotedChangePeriods(payload.ChangePeriods, sub.Periods, now)
 		if err != nil {
 			return err
@@ -155,47 +172,31 @@ func FulfillSubscription(ctx context.Context, tx pgx.Tx, order contract.Order, n
 					return err
 				}
 			}
-			upgraded := p.PlanMonthlyCents < payload.Period.PlanMonthlyCents
-			stores, members := max(p.ExtraStores, q.ExtraStores), max(p.ExtraMembers, q.ExtraMembers)
-			if !upgraded && stores == p.ExtraStores && members == p.ExtraMembers {
+			upgraded, err := cat.Upgrade(p, domain.Target(payload.Request.Target))
+			if err != nil {
+				return err
+			}
+			if upgraded.PlanKey == p.PlanKey && upgraded.Stores == p.Stores {
 				continue
 			}
-			oldStores, oldMembers := p.PlanStores+p.ExtraStores, p.PlanMembers+p.ExtraMembers
-			if upgraded {
-				p.PlanKey = q.PlanKey
-				p.PlanStores = max(p.PlanStores, payload.Period.PlanStores)
-				p.PlanMembers = max(p.PlanMembers, payload.Period.PlanMembers)
-				p.PlanMonthlyCents = payload.Period.PlanMonthlyCents
-			}
-			if growth := p.PlanStores + stores - oldStores; growth > 0 && p.KeepStores != nil && payload.Request.KeepStores == nil {
+			if growth := upgraded.Stores - p.Stores; growth > 0 && p.KeepStores != nil && payload.Request.KeepStores == nil {
 				var extra []string
 				if err = tx.QueryRow(ctx, `SELECT COALESCE(array_agg(uuid),'{}'::uuid[]) FROM
      (SELECT uuid FROM organization_stores WHERE org_id=$1 AND deleted_at_ms IS NULL AND NOT manual_disabled
       AND NOT(uuid=ANY($2::uuid[])) ORDER BY create_order,id LIMIT $3) candidates`, order.OrgID, p.KeepStores, growth).Scan(&extra); err != nil {
 					return err
 				}
-				p.KeepStores = append(p.KeepStores, extra...)
-			}
-			if growth := p.PlanMembers + members - oldMembers; growth > 0 && p.KeepMembers != nil && payload.Request.KeepMembers == nil {
-				var extra []int64
-				if err = tx.QueryRow(ctx, `SELECT COALESCE(array_agg(id),'{}'::bigint[]) FROM
-     (SELECT id FROM organization_members WHERE org_id=$1 AND status='active' AND NOT manual_disabled
-      AND NOT(id=ANY($2::bigint[])) ORDER BY (role='owner') DESC,join_order,id LIMIT $3) candidates`, order.OrgID, p.KeepMembers, growth).Scan(&extra); err != nil {
-					return err
-				}
-				p.KeepMembers = append(p.KeepMembers, extra...)
+				upgraded.KeepStores = append(p.KeepStores, extra...)
 			}
 
 			if payload.Request.KeepStores != nil {
-				p.KeepStores = payload.Request.KeepStores
-			}
-			if payload.Request.KeepMembers != nil {
-				p.KeepMembers = payload.Request.KeepMembers
+				upgraded.KeepStores = payload.Request.KeepStores
 			}
 
-			if _, err = tx.Exec(ctx, `UPDATE subscription_periods SET plan_key=$3,plan_stores=$4,plan_members=$5,plan_monthly_cents=$6,
-    extra_stores=$7,extra_members=$8,keep_store_ids=$9,keep_member_ids=$10 WHERE org_id=$1 AND id=$2`,
-				order.OrgID, p.ID, p.PlanKey, p.PlanStores, p.PlanMembers, p.PlanMonthlyCents, stores, members, p.KeepStores, p.KeepMembers); err != nil {
+			if _, err = tx.Exec(ctx, `UPDATE subscription_periods SET plan_key=$3,stores=$4,
+    store_monthly_cents=$5,keep_store_ids=$6 WHERE org_id=$1 AND id=$2`,
+				order.OrgID, p.ID, upgraded.PlanKey, upgraded.Stores,
+				upgraded.StoreMonthlyCents, upgraded.KeepStores); err != nil {
 				return err
 			}
 			applied = true
@@ -207,13 +208,6 @@ func FulfillSubscription(ctx context.Context, tx pgx.Tx, order contract.Order, n
 		}
 	default:
 		return errors.New("unknown paid subscription action")
-	}
-	if payload.UpdateRenewal && sub.Revision == payload.Revision {
-		r := payload.Renewal
-		if _, err = tx.Exec(ctx, `UPDATE subscriptions SET next_plan_key=$2,next_extra_stores=$3,next_extra_members=$4,
-   next_keep_store_ids=COALESCE($5,'{}'::uuid[]),next_keep_member_ids=COALESCE($6,'{}'::bigint[]) WHERE org_id=$1`, order.OrgID, r.PlanKey, r.ExtraStores, r.ExtraMembers, payload.Request.KeepStores, payload.Request.KeepMembers); err != nil {
-			return err
-		}
 	}
 	if _, err = tx.Exec(ctx, `UPDATE subscriptions SET revision=revision+1,updated_at=$2 WHERE org_id=$1`, order.OrgID, now); err != nil {
 		return err
@@ -241,15 +235,23 @@ func LoadOrder(ctx context.Context, tx pgx.Tx, publicID string) (contract.Order,
 
 // MarkOrderPaid accepts pending orders and late subscription payments only.
 func MarkOrderPaid(ctx context.Context, tx pgx.Tx, orderID int64, providerRef string, now time.Time) (bool, error) {
+	// Verified late receipts still settle; canceled_at remains the cancellation history.
 	tag, err := tx.Exec(ctx, `
 		UPDATE payment_orders
 		   SET status = 'paid', paid_at = $1, provider_ref = COALESCE($2, provider_ref),
+		       reconciliation_reason = CASE WHEN status='canceled' THEN 'fulfilled_after_cancel' ELSE reconciliation_reason END,
 		       qr_code = NULL, pay_url = NULL, launch_state = NULL, updated_at = $1
-		 WHERE id = $3 AND (status = 'pending' OR (product = 'subscription' AND status = 'canceled'))`, now, providerRef, orderID)
+		 WHERE id = $3 AND (status = 'pending' OR (product IN ('subscription','wallet_topup') AND status = 'canceled'))`, now, providerRef, orderID)
 	if err != nil {
 		return false, err
 	}
-	return tag.RowsAffected() == 1, nil
+	if tag.RowsAffected() != 1 {
+		return false, nil
+	}
+	if err := SettleFirstOrderCommission(ctx, tx, orderID, 0, "POST", "/api/billing/webhooks"); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // A changed or missing priced interval needs reconciliation, never a wider entitlement.
@@ -268,8 +270,7 @@ func quotedChangePeriods(quoted, current []domain.Period, now time.Time) ([]doma
 		}
 		p, ok := byID[frozen.ID]
 		if !ok || !p.Start.Equal(frozen.Start) || !p.End.Equal(frozen.End) || p.Target != frozen.Target ||
-			p.PlanStores != frozen.PlanStores || p.PlanMembers != frozen.PlanMembers || p.PlanMonthlyCents != frozen.PlanMonthlyCents ||
-			p.StoreMonthlyCents != frozen.StoreMonthlyCents || p.MemberMonthlyCents != frozen.MemberMonthlyCents {
+			p.StoreMonthlyCents != frozen.StoreMonthlyCents {
 			return nil, errors.New("quoted subscription period changed")
 		}
 		periods = append(periods, p)

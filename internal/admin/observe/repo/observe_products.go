@@ -11,6 +11,7 @@ import (
 	corerepo "github.com/xxww0098/podhub-go/internal/admin/core/repo"
 	observecontract "github.com/xxww0098/podhub-go/internal/admin/observe/contract"
 	"github.com/xxww0098/podhub-go/internal/admin/observe/domain"
+	"github.com/xxww0098/podhub-go/internal/platform/uuidx"
 )
 
 type rawProduct struct {
@@ -20,39 +21,39 @@ type rawProduct struct {
 }
 
 type overviewStore struct {
-	StoreID               string  `json:"storeId"`
+	StoreID               string  `json:"store_id"`
 	Name                  string  `json:"name"`
 	Status                string  `json:"status"`
-	AssigneeName          *string `json:"assigneeName"`
-	Pass                  *bool   `json:"pass"`
-	Hold                  *bool   `json:"hold"`
-	LastFullSyncAtMS      *int64  `json:"lastFullSyncAtMs"`
-	NextDueAtMS           *int64  `json:"nextDueAtMs"`
-	ManualRequestedAtMS   *int64  `json:"manualRequestedAtMs"`
-	ManualNextAllowedAtMS *int64  `json:"manualNextAllowedAtMs"`
-	HoldUntilMS           *int64  `json:"holdUntilMs"`
-	HoldReason            *string `json:"holdReason"`
-	CountTotal            *int64  `json:"countTotal"`
-	CountOnSale           *int64  `json:"countOnSale"`
-	CountProcessing       *int64  `json:"countProcessing"`
-	CountHidden           *int64  `json:"countHidden"`
-	CountModerationFailed *int64  `json:"countModerationFailed"`
-	CountZeroStock        *int64  `json:"countZeroStock"`
-	CountArchived         *int64  `json:"countArchived"`
-	CountDelisted         *int64  `json:"countDelisted"`
-	MetricsAtMS           *int64  `json:"metricsAtMs"`
-	MetricsError          *string `json:"metricsError"`
+	AssigneeName          *string `json:"assignee_name"`
+	Pass                  *string `json:"pass"`
+	Hold                  *string `json:"hold"`
+	LastFullSyncAtMS      *int64  `json:"last_full_sync_at_ms"`
+	NextDueAtMS           *int64  `json:"next_due_at_ms"`
+	ManualRequestedAtMS   *int64  `json:"manual_requested_at_ms"`
+	ManualNextAllowedAtMS *int64  `json:"manual_next_allowed_at_ms"`
+	HoldUntilMS           *int64  `json:"hold_until_ms"`
+	HoldReason            *string `json:"hold_reason"`
+	CountTotal            *int64  `json:"count_total"`
+	CountOnSale           *int64  `json:"count_on_sale"`
+	CountProcessing       *int64  `json:"count_processing"`
+	CountHidden           *int64  `json:"count_hidden"`
+	CountModerationFailed *int64  `json:"count_moderation_failed"`
+	CountZeroStock        *int64  `json:"count_zero_stock"`
+	CountArchived         *int64  `json:"count_archived"`
+	CountDelisted         *int64  `json:"count_delisted"`
+	MetricsAtMS           *int64  `json:"metrics_at_ms"`
+	MetricsError          *string `json:"metrics_error"`
 	Currency              *string `json:"currency"`
 	Freshness             string  `json:"freshness"`
 }
 
 type countTotals struct {
 	Total            int64 `json:"total"`
-	OnSale           int64 `json:"onSale"`
+	OnSale           int64 `json:"on_sale"`
 	Processing       int64 `json:"processing"`
 	Hidden           int64 `json:"hidden"`
-	ModerationFailed int64 `json:"moderationFailed"`
-	ZeroStock        int64 `json:"zeroStock"`
+	ModerationFailed int64 `json:"moderation_failed"`
+	ZeroStock        int64 `json:"zero_stock"`
 	Archived         int64 `json:"archived"`
 	Delisted         int64 `json:"delisted"`
 }
@@ -130,8 +131,8 @@ func (r *Observe) Overview(ctx context.Context, actor corecontract.Actor, scope 
 			Read  int `json:"read"`
 			Total int `json:"total"`
 		} `json:"coverage"`
-		NewestSyncAtMS *int64 `json:"newestSyncAtMs"`
-		SyncDisabled   bool   `json:"syncDisabled"`
+		NewestSyncAtMS *int64 `json:"newest_sync_at_ms"`
+		SyncDisabled   bool   `json:"sync_disabled"`
 	}{Stores: views, Totals: totals, Coverage: struct {
 		Read  int `json:"read"`
 		Total int `json:"total"`
@@ -148,50 +149,50 @@ func trimEmpty(value string) bool {
 }
 
 type productMetrics struct {
-	HitsView        *int64   `json:"hitsView"`
-	SessionView     *int64   `json:"sessionView"`
-	HitsTocart      *int64   `json:"hitsTocart"`
-	ConvTocart      *float64 `json:"convTocart"`
-	OrderedUnits    *int64   `json:"orderedUnits"`
+	HitsView        *int64   `json:"hits_view"`
+	SessionView     *int64   `json:"session_view"`
+	HitsTocart      *int64   `json:"hits_tocart"`
+	ConvTocart      *float64 `json:"conv_tocart"`
+	OrderedUnits    *int64   `json:"ordered_units"`
 	Revenue         *float64 `json:"revenue"`
-	RevenueCurrency string   `json:"revenueCurrency"`
-	FxQuote         *string  `json:"fxQuote"`
-	FxRate          *float64 `json:"fxRate"`
-	FxAsOf          *string  `json:"fxAsOf"`
-	FxSource        *string  `json:"fxSource"`
-	PeriodDays      *int32   `json:"periodDays"`
-	ThroughDay      *string  `json:"throughDay"`
-	FetchedAtMS     *int64   `json:"fetchedAtMs"`
+	RevenueCurrency string   `json:"revenue_currency"`
+	FxQuote         *string  `json:"fx_quote"`
+	FxRate          *float64 `json:"fx_rate"`
+	FxAsOf          *string  `json:"fx_as_of"`
+	FxSource        *string  `json:"fx_source"`
+	PeriodDays      *int32   `json:"period_days"`
+	ThroughDay      *string  `json:"through_day"`
+	FetchedAtMS     *int64   `json:"fetched_at_ms"`
 }
 
 type productItem struct {
-	WorkspaceID   string     `json:"workspaceId"`
-	WorkspaceName string     `json:"workspaceName"`
-	OwnerUUID     string     `json:"ownerUuid"`
-	OwnerName     string     `json:"ownerName"`
+	WorkspaceID   string     `json:"workspace_id"`
+	WorkspaceName string     `json:"workspace_name"`
+	OwnerUUID     string     `json:"owner_uuid"`
+	OwnerName     string     `json:"owner_name"`
 	Product       productRow `json:"product"`
 }
 
 type productRow struct {
-	StoreID       string          `json:"storeId"`
-	StoreName     string          `json:"storeName"`
-	ProductID     int64           `json:"productId"`
-	OfferID       string          `json:"offerId"`
+	StoreID       string          `json:"store_id"`
+	StoreName     string          `json:"store_name"`
+	ProductID     int64           `json:"product_id"`
+	OfferID       string          `json:"offer_id"`
 	Name          *string         `json:"name"`
-	SKU           *int64          `json:"sku"`
-	ImageURL      *string         `json:"imageUrl,omitempty"`
-	ImageRetired  bool            `json:"imageRetired,omitempty"`
-	StatusName    *string         `json:"statusName"`
+	SKU           *string         `json:"sku"`
+	ImageURL      *string         `json:"image_url,omitempty"`
+	ImageRetired  bool            `json:"image_retired,omitempty"`
+	StatusName    *string         `json:"status_name"`
 	State         *string         `json:"state"`
-	ModelID       *int64          `json:"modelId"`
-	ModelCount    *int64          `json:"modelCount"`
+	ModelID       *int64          `json:"model_id"`
+	ModelCount    *int64          `json:"model_count"`
 	Price         *string         `json:"price"`
-	OldPrice      *string         `json:"oldPrice"`
-	StockPresent  *int64          `json:"stockPresent"`
-	StockReserved *int64          `json:"stockReserved"`
+	OldPrice      *string         `json:"old_price"`
+	StockPresent  *int64          `json:"stock_present"`
+	StockReserved *int64          `json:"stock_reserved"`
 	Metrics       *productMetrics `json:"metrics,omitempty"`
 	Gone          bool            `json:"gone"`
-	RefreshedAtMS *int64          `json:"refreshedAtMs"`
+	RefreshedAtMS *int64          `json:"refreshed_at_ms"`
 }
 
 func (r *Observe) Products(ctx context.Context, actor corecontract.Actor, query observecontract.ProductQuery) ([]byte, error) {
@@ -248,7 +249,7 @@ func (r *Observe) Products(ctx context.Context, actor corecontract.Actor, query 
 		needleArg = needle
 	}
 	sql := fmt.Sprintf(`
-		SELECT p.org_id, s.uuid::text, p.product_id, p.offer_id, p.name, p.sku, p.primary_image,
+		SELECT p.org_id, s.uuid::text, p.product_id, p.offer_id, p.name, CASE WHEN p.sku > 0 THEN p.sku::text END, p.primary_image,
 		       d.status_name, d.state, p.model_id, p.model_count, p.price::text, p.old_price::text,
 		       p.stock_present, p.stock_reserved, (p.gone_at_ms IS NOT NULL), p.refreshed_at_ms,
 		       m.hits_view, m.session_view, m.hits_tocart, m.conv_tocart, m.ordered_units, m.revenue,
@@ -340,7 +341,7 @@ func (r *Observe) Products(ctx context.Context, actor corecontract.Actor, query 
 	}
 	return corerepo.Data(struct {
 		Items      []productItem `json:"items"`
-		NextCursor *string       `json:"nextCursor,omitempty"`
+		NextCursor *string       `json:"next_cursor,omitempty"`
 	}{items, next})
 }
 
@@ -387,7 +388,7 @@ func retiredImages(ctx context.Context, tx pgx.Tx, raws []rawProduct) (map[int]b
 }
 
 func (r *Observe) Thumbnail(ctx context.Context, actor corecontract.Actor, thumb observecontract.Thumbnail) (observecontract.ImageBytes, error) {
-	storeID, ok := corecontract.NormalizeUUID(thumb.StoreID)
+	storeID, ok := uuidx.StrictUUID(thumb.StoreID)
 	if !ok {
 		return observecontract.ImageBytes{}, corecontract.Validation("validation", "范围 UUID 无效")
 	}

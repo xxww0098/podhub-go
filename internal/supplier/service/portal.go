@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"github.com/xxww0098/podhub-go/internal/supplier/contract"
 	"github.com/xxww0098/podhub-go/internal/supplier/domain"
@@ -11,12 +12,13 @@ import (
 // wired through New.
 type Portal interface {
 	Me(ctx context.Context, userID int64) (contract.MeData, error)
-	ListDispatches(ctx context.Context, userID int64, state string, cursor domain.Cursor) (contract.DispatchListData, error)
+	ListDispatches(ctx context.Context, userID int64, sourceID, view, search, status, reason string, cursor domain.Cursor, now time.Time) (contract.DispatchListData, error)
+	Dashboard(ctx context.Context, userID int64, sourceID string, now time.Time) (contract.DashboardData, error)
 	GetDispatch(ctx context.Context, userID int64, dispatchID string) (contract.DispatchDetail, error)
 	Accept(ctx context.Context, userID int64, dispatchID string) (contract.ActionData, error)
 	Reject(ctx context.Context, userID int64, dispatchID, reason string) (contract.ActionData, error)
 	Ship(ctx context.Context, userID int64, dispatchID, tracking, note string, nowMs int64) (contract.ActionData, error)
-	DownloadAsset(ctx context.Context, userID int64, dispatchID, assetID string, wantJSON bool, nowMs int64) (contract.AssetBytes, error)
+	DownloadAsset(ctx context.Context, userID int64, dispatchID, assetID string, wantJSON bool, nowMs int64) (contract.DownloadGrant, error)
 	Catalog(ctx context.Context, userID, nowMs int64) (contract.CatalogData, error)
 	CatalogImage(ctx context.Context, sourceID, file string, edge uint32) (contract.ImageBody, error)
 }
@@ -28,11 +30,18 @@ func (s Service) Me(ctx context.Context, userID int64) (contract.MeData, error) 
 	return s.portal.Me(ctx, userID)
 }
 
-func (s Service) ListDispatches(ctx context.Context, userID int64, state string, cursor domain.Cursor) (contract.DispatchListData, error) {
+func (s Service) ListDispatches(ctx context.Context, userID int64, sourceID, view, search, status, reason string, cursor domain.Cursor, now time.Time) (contract.DispatchListData, error) {
 	if s.portal == nil {
 		return contract.DispatchListData{}, contract.ErrNotPorted
 	}
-	return s.portal.ListDispatches(ctx, userID, state, cursor)
+	return s.portal.ListDispatches(ctx, userID, sourceID, view, search, status, reason, cursor, now)
+}
+
+func (s Service) Dashboard(ctx context.Context, userID int64, sourceID string, now time.Time) (contract.DashboardData, error) {
+	if s.portal == nil {
+		return contract.DashboardData{}, contract.ErrNotPorted
+	}
+	return s.portal.Dashboard(ctx, userID, sourceID, now)
 }
 
 func (s Service) GetDispatch(ctx context.Context, userID int64, dispatchID string) (contract.DispatchDetail, error) {
@@ -63,9 +72,9 @@ func (s Service) Ship(ctx context.Context, userID int64, dispatchID, tracking, n
 	return s.portal.Ship(ctx, userID, dispatchID, tracking, note, nowMs)
 }
 
-func (s Service) DownloadAsset(ctx context.Context, userID int64, dispatchID, assetID string, wantJSON bool, nowMs int64) (contract.AssetBytes, error) {
+func (s Service) DownloadAsset(ctx context.Context, userID int64, dispatchID, assetID string, wantJSON bool, nowMs int64) (contract.DownloadGrant, error) {
 	if s.portal == nil {
-		return contract.AssetBytes{}, contract.ErrNotPorted
+		return contract.DownloadGrant{}, contract.ErrNotPorted
 	}
 	return s.portal.DownloadAsset(ctx, userID, dispatchID, assetID, wantJSON, nowMs)
 }

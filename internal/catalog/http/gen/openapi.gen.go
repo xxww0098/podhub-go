@@ -19,6 +19,7 @@ const (
 	Forbidden          CatalogErrorCode = "forbidden"
 	Internal           CatalogErrorCode = "internal"
 	NotFound           CatalogErrorCode = "not_found"
+	NotPorted          CatalogErrorCode = "not_ported"
 	Validation         CatalogErrorCode = "validation"
 	WritesDisabled     CatalogErrorCode = "writes_disabled"
 )
@@ -40,9 +41,29 @@ func (e CatalogErrorCode) Valid() bool {
 		return true
 	case NotFound:
 		return true
+	case NotPorted:
+		return true
 	case Validation:
 		return true
 	case WritesDisabled:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CatalogFetchScheduleMode.
+const (
+	Fixed  CatalogFetchScheduleMode = "fixed"
+	Random CatalogFetchScheduleMode = "random"
+)
+
+// Valid indicates whether the value is a known member of the CatalogFetchScheduleMode enum.
+func (e CatalogFetchScheduleMode) Valid() bool {
+	switch e {
+	case Fixed:
+		return true
+	case Random:
 		return true
 	default:
 		return false
@@ -88,8 +109,7 @@ type CatalogDictionarySearchRequest struct {
 
 // CatalogDictionarySearchResponse defines model for CatalogDictionarySearchResponse.
 type CatalogDictionarySearchResponse struct {
-	Items []CatalogSchemaOption `json:"items"`
-	Total int64                 `json:"total"`
+	Data []CatalogSchemaOption `json:"data"`
 }
 
 // CatalogErrorCode defines model for CatalogErrorCode.
@@ -118,44 +138,46 @@ type CatalogFetchConfigResponse struct {
 		ClientId         string `json:"client_id"`
 		Disabled         bool   `json:"disabled"`
 	} `json:"keys"`
-	Language         string  `json:"language"`
-	LastDurationMs   *int64  `json:"last_duration_ms"`
-	LastError        string  `json:"last_error"`
-	LastKeyAttempts  int     `json:"last_key_attempts"`
-	LastKeyClientId  *string `json:"last_key_client_id"`
-	LastRootNodes    *int64  `json:"last_root_nodes"`
-	LastRunAtMs      *int64  `json:"last_run_at_ms"`
-	LastStatus       *string `json:"last_status"`
-	NextRunAtMs      *int64  `json:"next_run_at_ms"`
-	Running          bool    `json:"running"`
-	ScheduleMode     string  `json:"schedule_mode"`
-	UpdatedAtMs      int64   `json:"updated_at_ms"`
-	UtcOffsetMinutes int     `json:"utc_offset_minutes"`
-	WbCredential     struct {
-		Configured         bool   `json:"configured"`
-		CredentialRevision int64  `json:"credential_revision"`
-		LastVerifiedAtMs   *int64 `json:"last_verified_at_ms"`
-	} `json:"wb_credential"`
-	WindowEndMinute   int `json:"window_end_minute"`
-	WindowStartMinute int `json:"window_start_minute"`
+	LastDurationMs    *int64  `json:"last_duration_ms"`
+	LastError         string  `json:"last_error"`
+	LastKeyAttempts   int     `json:"last_key_attempts"`
+	LastKeyClientId   *string `json:"last_key_client_id"`
+	LastRootNodes     *int64  `json:"last_root_nodes"`
+	LastRunAtMs       *int64  `json:"last_run_at_ms"`
+	LastStatus        *string `json:"last_status"`
+	NextRunAtMs       *int64  `json:"next_run_at_ms"`
+	Running           bool    `json:"running"`
+	ScheduleMode      string  `json:"schedule_mode"`
+	UpdatedAtMs       int64   `json:"updated_at_ms"`
+	UtcOffsetMinutes  int     `json:"utc_offset_minutes"`
+	WindowEndMinute   int     `json:"window_end_minute"`
+	WindowStartMinute int     `json:"window_start_minute"`
 }
 
-// CatalogFetchWbCredentialView Safe WB credential status. The token itself is write-only.
-type CatalogFetchWbCredentialView struct {
-	Configured bool `json:"configured"`
+// CatalogFetchConfigWriteRequest A full replacement of the settings. The submitted list order is the
+// failover order.
+type CatalogFetchConfigWriteRequest struct {
+	AtMinute int32                  `json:"at_minute"`
+	Enabled  bool                   `json:"enabled"`
+	Keys     []CatalogFetchKeyInput `json:"keys"`
 
-	// CredentialRevision Independent CAS revision for replacing the WB token.
-	CredentialRevision int64 `json:"credential_revision"`
-
-	// LastVerifiedAtMs Time of the successful `parent_categories` validation for the stored token.
-	LastVerifiedAtMs *int64 `json:"last_verified_at_ms,omitempty"`
+	// ScheduleMode How the daily fetch picks its time.
+	ScheduleMode      CatalogFetchScheduleMode `json:"schedule_mode"`
+	UtcOffsetMinutes  int32                    `json:"utc_offset_minutes"`
+	WindowEndMinute   int32                    `json:"window_end_minute"`
+	WindowStartMinute int32                    `json:"window_start_minute"`
 }
 
-// CatalogFetchWbCredentialWriteRequest Replace only the platform WB category-read credential.
-type CatalogFetchWbCredentialWriteRequest struct {
-	ExpectedCredentialRevision int64  `json:"expected_credential_revision"`
-	Token                      string `json:"token"`
+// CatalogFetchKeyInput One submitted key. An empty `api_key` keeps the stored one for this
+// Client-Id; there being nothing stored is a first configuration and must
+// carry a key.
+type CatalogFetchKeyInput struct {
+	ApiKey   *string `json:"api_key,omitempty"`
+	ClientId string  `json:"client_id"`
 }
+
+// CatalogFetchScheduleMode How the daily fetch picks its time.
+type CatalogFetchScheduleMode string
 
 // CatalogSchemaLanguage Language variant of the cached Seller category schema.
 type CatalogSchemaLanguage string
@@ -168,8 +190,8 @@ type CatalogSchemaOption struct {
 	Value   string  `json:"value"`
 }
 
-// PutWbCredentialJSONRequestBody defines body for PutWbCredential for application/json ContentType.
-type PutWbCredentialJSONRequestBody = CatalogFetchWbCredentialWriteRequest
+// SaveCatalogFetchConfigJSONRequestBody defines body for SaveCatalogFetchConfig for application/json ContentType.
+type SaveCatalogFetchConfigJSONRequestBody = CatalogFetchConfigWriteRequest
 
 // SearchCatalogDictionaryJSONRequestBody defines body for SearchCatalogDictionary for application/json ContentType.
 type SearchCatalogDictionaryJSONRequestBody = CatalogDictionarySearchRequest
@@ -177,14 +199,14 @@ type SearchCatalogDictionaryJSONRequestBody = CatalogDictionarySearchRequest
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// CatalogFetchConfig Platform catalog fetch schedule, keys, and cache freshness; super admin only
-	// (GET /api/catalog/fetch-config)
+	// (GET /api/admin/catalog/fetch-config)
 	CatalogFetchConfig(w http.ResponseWriter, r *http.Request)
+	// SaveCatalogFetchConfig Save platform category credentials and a disabled fetch schedule; super admin only
+	// (PUT /api/admin/catalog/fetch-config)
+	SaveCatalogFetchConfig(w http.ResponseWriter, r *http.Request)
 	// RunNow Fetch now, whatever the schedule says.
-	// (POST /api/catalog/fetch-config/run)
+	// (POST /api/admin/catalog/fetch-config/run)
 	RunNow(w http.ResponseWriter, r *http.Request)
-
-	// (PUT /api/catalog/fetch-config/wb-credential)
-	PutWbCredential(w http.ResponseWriter, r *http.Request)
 
 	// (POST /api/catalog/schema/dictionary-search)
 	SearchCatalogDictionary(w http.ResponseWriter, r *http.Request)
@@ -198,19 +220,20 @@ type ServerInterface interface {
 type Unimplemented struct{}
 
 // CatalogFetchConfig Platform catalog fetch schedule, keys, and cache freshness; super admin only
-// (GET /api/catalog/fetch-config)
+// (GET /api/admin/catalog/fetch-config)
 func (_ Unimplemented) CatalogFetchConfig(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// RunNow Fetch now, whatever the schedule says.
-// (POST /api/catalog/fetch-config/run)
-func (_ Unimplemented) RunNow(w http.ResponseWriter, r *http.Request) {
+// SaveCatalogFetchConfig Save platform category credentials and a disabled fetch schedule; super admin only
+// (PUT /api/admin/catalog/fetch-config)
+func (_ Unimplemented) SaveCatalogFetchConfig(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// (PUT /api/catalog/fetch-config/wb-credential)
-func (_ Unimplemented) PutWbCredential(w http.ResponseWriter, r *http.Request) {
+// RunNow Fetch now, whatever the schedule says.
+// (POST /api/admin/catalog/fetch-config/run)
+func (_ Unimplemented) RunNow(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -248,11 +271,11 @@ func (siw *ServerInterfaceWrapper) CatalogFetchConfig(w http.ResponseWriter, r *
 	handler.ServeHTTP(w, r)
 }
 
-// RunNow operation middleware
-func (siw *ServerInterfaceWrapper) RunNow(w http.ResponseWriter, r *http.Request) {
+// SaveCatalogFetchConfig operation middleware
+func (siw *ServerInterfaceWrapper) SaveCatalogFetchConfig(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RunNow(w, r)
+		siw.Handler.SaveCatalogFetchConfig(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -262,11 +285,11 @@ func (siw *ServerInterfaceWrapper) RunNow(w http.ResponseWriter, r *http.Request
 	handler.ServeHTTP(w, r)
 }
 
-// PutWbCredential operation middleware
-func (siw *ServerInterfaceWrapper) PutWbCredential(w http.ResponseWriter, r *http.Request) {
+// RunNow operation middleware
+func (siw *ServerInterfaceWrapper) RunNow(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PutWbCredential(w, r)
+		siw.Handler.RunNow(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -421,13 +444,13 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Get(options.BaseURL+"/api/me/catalog/banned-tags", wrapper.BannedTagsEnabled)
 	})
 	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/api/catalog/fetch-config", wrapper.CatalogFetchConfig)
+		r.Get(options.BaseURL+"/api/admin/catalog/fetch-config", wrapper.CatalogFetchConfig)
 	})
 	r.Group(func(r chi.Router) {
-		r.Post(options.BaseURL+"/api/catalog/fetch-config/run", wrapper.RunNow)
+		r.Put(options.BaseURL+"/api/admin/catalog/fetch-config", wrapper.SaveCatalogFetchConfig)
 	})
 	r.Group(func(r chi.Router) {
-		r.Put(options.BaseURL+"/api/catalog/fetch-config/wb-credential", wrapper.PutWbCredential)
+		r.Post(options.BaseURL+"/api/admin/catalog/fetch-config/run", wrapper.RunNow)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/catalog/schema/dictionary-search", wrapper.SearchCatalogDictionary)

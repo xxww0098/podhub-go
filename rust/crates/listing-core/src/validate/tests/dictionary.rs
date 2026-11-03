@@ -36,9 +36,15 @@ fn legal_dictionary_id_is_kept_on_the_attribute() {
     use crate::records::ChoiceValue;
 
     let mut draft = draft_with(filled_values());
+    let mut field = select_field("attribute_color", "3301", false, false);
+    field.options.push(crate::records::ListingFieldOption {
+        id: "42".to_owned(),
+        value: "红".to_owned(),
+        ..crate::records::ListingFieldOption::default()
+    });
     std::sync::Arc::make_mut(&mut draft.schema_snapshot)
         .fields
-        .push(select_field("attribute_color", "3301", false, false));
+        .push(field);
     draft.raw_values.insert(
         "attribute_color".to_owned(),
         RawDraftValue::OneChoice(ChoiceValue {
@@ -58,6 +64,44 @@ fn legal_dictionary_id_is_kept_on_the_attribute() {
         .find(|attribute| attribute.id == 3301)
         .expect("color attribute");
     assert_eq!(color.values[0].dictionary_value_id, Some(42));
+}
+
+#[test]
+fn empty_dictionary_rejects_unconfirmed_ids() {
+    use crate::draft::RawDraftValue;
+    use crate::records::ChoiceValue;
+
+    for collection in [false, true] {
+        let mut draft = draft_with(filled_values());
+        let mut field = select_field("attribute_color", "3301", collection, false);
+        if collection {
+            field.editor = crate::schema::ListingFieldEditor::MultiSelect;
+        }
+        std::sync::Arc::make_mut(&mut draft.schema_snapshot)
+            .fields
+            .push(field);
+        let choice = ChoiceValue {
+            id: "42".to_owned(),
+            label: "红".to_owned(),
+        };
+        draft.raw_values.insert(
+            "attribute_color".to_owned(),
+            if collection {
+                RawDraftValue::ManyChoices(vec![choice])
+            } else {
+                RawDraftValue::OneChoice(choice)
+            },
+        );
+        draft
+            .field_values
+            .insert("attribute_color".to_owned(), "红".to_owned());
+        assert!(matches!(
+            normalize_and_validate(&draft),
+            ValidationOutcome::Rejected { issues }
+                if issues.iter().any(|issue| issue.field_key == "attribute_color"
+                    && issue.code == "unknown_dictionary_id")
+        ));
+    }
 }
 
 #[test]

@@ -24,7 +24,10 @@ func TestSendDraftsSnakeCaseEnvelopePreservesWASMItem(t *testing.T) {
 	}
 	mod := &draftRequestModule{}
 	f.bind(t, mod)
-	result, err := SendDrafts(f.ctx, f.pool, f.org, f.user, body, time.Now())
+	if _, err := f.pool.Exec(f.ctx, `INSERT INTO catalog_dictionary_search_material(description_category_id,type_id,language,attribute_id,dictionary_id,option_id,value) VALUES($1,$2,'default',85,5,7,'Verified')`, 100000+f.user, f.user); err != nil {
+		t.Fatal(err)
+	}
+	result, err := testSubmit().SendDrafts(f.ctx, f.pool, f.org, f.user, body, time.Now())
 	if err != nil || len(result.Items) != 1 {
 		t.Fatalf("draft result: %+v err=%v", result, err)
 	}
@@ -34,6 +37,9 @@ func TestSendDraftsSnakeCaseEnvelopePreservesWASMItem(t *testing.T) {
 	}
 	if !bytes.Equal(mod.draft, item) {
 		t.Fatalf("HTTP envelope translation altered the WASM item: got=%s want=%s", mod.draft, item)
+	}
+	if !bytes.Contains(mod.schema, []byte(`"valueId":7`)) {
+		t.Fatalf("draft submit lost confirmed dictionary material: %s", mod.schema)
 	}
 }
 
@@ -55,7 +61,7 @@ func TestSendDraftsSuccessResponseContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.bind(t, &draftRequestModule{blockedRow: blocked})
-	result, err := SendDrafts(f.ctx, f.pool, f.org, f.user, body, time.Now())
+	result, err := testSubmit().SendDrafts(f.ctx, f.pool, f.org, f.user, body, time.Now())
 	if err != nil || len(result.Items) != 3 {
 		t.Fatalf("draft result: %+v err=%v", result, err)
 	}
@@ -102,10 +108,15 @@ const draftRequestIssues = `[{"field_key":"name","code":"required","parameters":
 type draftRequestModule struct {
 	storedSubmitModule
 	draft      json.RawMessage
+	card       json.RawMessage
+	schema     json.RawMessage
 	blockedRow string
 }
 
 func (m *draftRequestModule) Call(ctx context.Context, op uint32, schema, body []byte) ([]byte, error) {
+	if op == contract.OpFreezeListing {
+		m.schema = append(json.RawMessage(nil), schema...)
+	}
 	if op == contract.OpFreezeListing && m.blockedRow != "" {
 		var input struct {
 			RowID string `json:"rowId"`
@@ -122,10 +133,11 @@ func (m *draftRequestModule) Call(ctx context.Context, op uint32, schema, body [
 	}
 	var input struct {
 		Draft json.RawMessage `json:"draft"`
+		Card  json.RawMessage `json:"card"`
 	}
 	if err := json.Unmarshal(body, &input); err != nil {
 		return nil, err
 	}
-	m.draft = input.Draft
+	m.draft, m.card = input.Draft, input.Card
 	return []byte(`{}`), nil
 }

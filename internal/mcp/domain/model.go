@@ -25,7 +25,7 @@ func NewHost(code, message string) *HostError {
 }
 
 // Grant is one resolved automation grant. WorkspaceRole is the stored form
-// (admin is already manager). SourceAll is a NULL source_ids array.
+// (owner, manager, member). SourceAll is a NULL source_ids array.
 type Grant struct {
 	ID            string
 	UserID        int64
@@ -88,4 +88,9 @@ type Store interface {
 	Finish(ctx context.Context, grant Grant, claim Claim, status string, herr *HostError, calls int) (Envelope, error)
 	WorkspaceName(ctx context.Context, grant Grant, claim Claim) (string, error)
 	ExecutionView(ctx context.Context, grant Grant, claim Claim, executionID string) (Envelope, error)
+}
+
+// ListingStateReader returns one visible row and its latest submission evidence.
+type ListingStateReader interface {
+	ListingState(ctx context.Context, grant Grant, claim Claim, cardID, rowID, storeID string) (json.RawMessage, error)
 }

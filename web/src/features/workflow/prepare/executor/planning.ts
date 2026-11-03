@@ -5,7 +5,6 @@ import type { components } from "@/api/schema"
 import { withListingSchemaSync } from "@/bindings/http-listing"
 import { cancelledError } from "@/lib/error-message"
 import { CONTROL_PLANE_TIMEOUT_MS, errorFields, PREPARATION_BUSY_RETRY, type AutomationExecutionScope, type PreparationPlan, type PreparationVerb } from "../execution-context"
-import type { OcrModelRouting } from "../ocr-model-routing"
 import { RENDERER_CONTRACT_VERSION } from "../media-job"
 import { planStage } from "./capacity"
 
@@ -17,7 +16,7 @@ export function queueBusy(reason: unknown): boolean {
   return errorFields(reason).code === "cloud_queue_busy"
 }
 
-export async function planRow(rowId: string, operation: PreparationVerb, shouldStop: () => boolean, commandId: string, feedback?: { onWait?: () => void, onReady?: (waitedMs: number) => void }, automationScope?: AutomationExecutionScope, modelRouting?: OcrModelRouting): Promise<PreparationPlan> {
+export async function planRow(rowId: string, operation: PreparationVerb, shouldStop: () => boolean, commandId: string, feedback?: { onWait?: () => void, onReady?: (waitedMs: number) => void }, automationScope?: AutomationExecutionScope): Promise<PreparationPlan> {
   return planStage(async () => {
     try {
       return await withListingSchemaSync(rowId, () => {
@@ -33,7 +32,6 @@ export async function planRow(rowId: string, operation: PreparationVerb, shouldS
         }
         return request<PreparationPlan>("POST", route("listingRowsByIdPrepare", { id: rowId }), {
           operation, renderer_contract_version: RENDERER_CONTRACT_VERSION, command_id: commandId,
-          ...((operation === "prepare" || operation === "recognize") && modelRouting ? { model_routing: modelRouting } : {}),
         } satisfies components["schemas"]["PrepareListingRowRequest"], scopeHeaders, CONTROL_PLANE_TIMEOUT_MS)
       })
     } catch (reason) {

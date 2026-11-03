@@ -137,10 +137,10 @@ export async function verifyThreadedRenderer() {
   }
 }
 
-/** Real-asset comparison. Both paths transfer every input/result, warm one
- * render per compute lane, and verify hashes outside the timed interval.
- * Memory is WASM linear-memory high-water, NOT browser-process RSS. */
-export async function benchThreadedRenderer(templateHref: string, designHrefs: string[], threads: number, jobs: number, shared: boolean) {
+/** Real-asset throughput probe. Every input/result is transferred, one render
+ * per compute lane is warmed, and hashes are verified outside the timed
+ * interval. Memory is WASM linear-memory high-water, NOT browser-process RSS. */
+export async function benchThreadedRenderer(templateHref: string, designHrefs: string[], threads: number, jobs: number) {
   const [template, ...designs] = await Promise.all([read(templateHref), ...designHrefs.map(read)])
   const key = await digest(template)
   const workers: Worker[] = []
@@ -148,39 +148,25 @@ export async function benchThreadedRenderer(templateHref: string, designHrefs: s
     spawn: () => { const w = new Worker(new URL("../src/render/threaded-worker.ts", import.meta.url), { type: "module" }); workers.push(w); return w },
   })
   const batch = client.createBatch()
-  const memory = new Map<Worker, number>()
-  const legacy = shared ? [] : Array.from({ length: threads }, () => {
-    const w = new Worker(new URL("../src/render/worker.ts", import.meta.url), { type: "module" }); workers.push(w); return w
-  })
-  const call = (worker: Worker, args: object) => new Promise<unknown>((resolve, reject) => {
-    worker.onerror = reject
-    worker.onmessage = ({ data }) => { memory.set(worker, data.memoryBytes); data.ok ? resolve(data.value) : reject(new Error(data.message)) }
-    const input = args as { bytes?: Uint8Array<ArrayBuffer>; designBytes?: Uint8Array<ArrayBuffer> }
-    worker.postMessage({ id: 1, ...args }, [(input.bytes ?? input.designBytes)!.buffer])
-  })
   try {
     const start = performance.now()
-    const ids = await Promise.all(legacy.map(w => call(w, { op: "loadTemplate", bytes: template.slice() })))
-    const render = (job: number): Promise<RenderResult> => shared
-      ? batch.withLane(key, async lane => {
-        const id = lane.heldTemplate()?.id ?? await lane.retainTemplate(key, template.slice())
-        return lane.renderProduct(id, designs[job % designs.length].slice(), "bench.jpg")
-      })
-      : call(legacy[job % threads], { op: "renderProduct", templateId: ids[job % threads], designBytes: designs[job % designs.length].slice(), designName: "bench.jpg" }) as Promise<RenderResult>
+    const render = (job: number): Promise<RenderResult> => batch.withLane(key, async lane => {
+      const id = lane.heldTemplate()?.id ?? await lane.retainTemplate(key, template.slice())
+      return lane.renderProduct(id, designs[job % designs.length].slice(), "bench.jpg")
+    })
     await Promise.all(Array.from({ length: threads }, (_, i) => render(i)))
     const setupMs = performance.now() - start
     const began = performance.now()
     const results: RenderResult[] = []
-    // The legacy path admits one request per Worker; shared dispatch lives in Rust.
     await Promise.all(Array.from({ length: threads }, async (_, lane) => {
       for (let i = lane; i < jobs; i += threads) results[i] = await render(i)
     }))
     const renderMs = performance.now() - began
-    const wasmBytes = shared ? client.measure().residentBytes : [...memory.values()].reduce((a, b) => a + b, 0)
+    const wasmBytes = client.measure().residentBytes
     const outputs = await Promise.all(results.map(async result => Promise.all(result.slices.map(async s => ({
       width: s.width, height: s.height, hash: await digest(s.bytes),
     })))))
-    return { shared, threads, jobs, setupMs, renderMs, wasmBytes, outputs }
+    return { threads, jobs, setupMs, renderMs, wasmBytes, outputs }
   } finally { batch.dispose(); for (const w of workers) w.terminate() }
 }
 

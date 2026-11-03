@@ -20,7 +20,11 @@ const (
 	mediaDigest    = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 )
 
-func TestMediaPresignRequiresSessionAndLoopback(t *testing.T) {
+func fixedMedia(account *sign.Account) func(context.Context, access.Principal) (*sign.Account, error) {
+	return func(context.Context, access.Principal) (*sign.Account, error) { return account, nil }
+}
+
+func TestMediaPresignRequiresSessionStorageAndReservation(t *testing.T) {
 	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
 	account := sign.Account{
 		ID: "acct", Provider: sign.ProviderGeneric,
@@ -34,7 +38,7 @@ func TestMediaPresignRequiresSessionAndLoopback(t *testing.T) {
 			UserID: 9, OrgID: 4, WorkspaceRole: "member", PlatformRole: "user",
 		}},
 		Now:   func() time.Time { return now },
-		Media: &account,
+		Media: fixedMedia(&account),
 		Workspace: func(_ context.Context, orgID int64) (string, error) {
 			seenOrg = orgID
 			return mediaWorkspace, nil
@@ -42,19 +46,18 @@ func TestMediaPresignRequiresSessionAndLoopback(t *testing.T) {
 	}
 	body := `{"byte_length":12}`
 	rec := mediaPost(t, srv, body)
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status %d %s", rec.Code, rec.Body.Bytes())
 	}
 	if seenOrg != 4 {
 		t.Fatalf("workspace lookup org %d", seenOrg)
 	}
 	raw := rec.Body.String()
-	wantKey := "images/teams/" + mediaWorkspace + "/sha256/" + mediaDigest + ".jpg"
-	if !strings.Contains(raw, wantKey) || strings.Contains(raw, "example.r2.cloudflarestorage.com") {
+	if strings.Contains(raw, "X-Amz-Signature") || strings.Contains(raw, "upload_ticket") {
 		t.Fatalf("body %s", raw)
 	}
 
-	loggedOut := &Server{Access: access.FixedResolver{}, Media: &account, Now: srv.Now, Workspace: srv.Workspace}
+	loggedOut := &Server{Access: access.FixedResolver{}, Media: fixedMedia(&account), Now: srv.Now, Workspace: srv.Workspace}
 	rec = mediaPost(t, loggedOut, body)
 	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), "未登录") {
 		t.Fatalf("logged out %d %s", rec.Code, rec.Body.Bytes())
@@ -62,7 +65,7 @@ func TestMediaPresignRequiresSessionAndLoopback(t *testing.T) {
 
 	noOrg := &Server{
 		Access: access.FixedResolver{Principal: &access.Principal{UserID: 9, WorkspaceRole: "member"}},
-		Media:  &account, Now: srv.Now, Workspace: srv.Workspace,
+		Media:  fixedMedia(&account), Now: srv.Now, Workspace: srv.Workspace,
 	}
 	rec = mediaPost(t, noOrg, body)
 	if rec.Code != http.StatusForbidden {
@@ -71,10 +74,17 @@ func TestMediaPresignRequiresSessionAndLoopback(t *testing.T) {
 
 	real := account
 	real.Endpoint = "https://example.r2.cloudflarestorage.com"
-	refused := &Server{Access: srv.Access, Media: &real, Now: srv.Now, Workspace: srv.Workspace}
+	refused := &Server{Access: srv.Access, Media: fixedMedia(&real), Now: srv.Now, Workspace: srv.Workspace}
 	rec = mediaPost(t, refused, body)
 	if rec.Code != http.StatusServiceUnavailable || strings.Contains(rec.Body.String(), "example.r2.cloudflarestorage.com") {
 		t.Fatalf("real bucket %d %s", rec.Code, rec.Body.Bytes())
+	}
+	real.Endpoint = "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.r2.cloudflarestorage.com"
+	real.Provider = sign.ProviderCloudflare
+	real.Bucket = "podhub-test-slices"
+	real.PublicBaseURL = "https://pub-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.r2.dev"
+	if _, ok := (&Server{Media: fixedMedia(&real)}).mediaAccount(context.Background(), access.Principal{}); !ok {
+		t.Fatal("validated real transit account was refused")
 	}
 }
 

@@ -74,12 +74,6 @@ func loadSyncSnapshot(ctx context.Context, tx pgx.Tx, orgID int64, storeUUID str
 	return &out, nil
 }
 
-// RestSyncSnapshot reads the same row without the lock. The verify path uses
-// it because it never writes the lease.
-func RestSyncSnapshot(ctx context.Context, tx pgx.Tx, orgID int64, storeUUID string, nowMS int64) (*domain.SyncSnapshot, error) {
-	return loadSyncSnapshot(ctx, tx, orgID, storeUUID, nowMS, false)
-}
-
 // landSyncHold is the one writer of the hold axis. `until` may be nil only for
 // open-ended holds (`disabled`); the lease clears with it.
 func landSyncHold(ctx context.Context, tx pgx.Tx, state domain.SyncSnapshot, hold string, untilMS *int64, reason string) error {
@@ -184,18 +178,18 @@ func landSyncPass(ctx context.Context, tx pgx.Tx, state domain.SyncSnapshot, tok
 	}
 	tag, err := tx.Exec(ctx, `
 		UPDATE public.store_product_sync
-		   SET pass = $3, cursor_last_id = $4,
-		       pass_pages_live = pass_pages_live + $5,
-		       pass_pages_archived = pass_pages_archived + $6,
+		   SET pass = $1, cursor_last_id = $2,
+		       pass_pages_live = pass_pages_live + $3,
+		       pass_pages_archived = pass_pages_archived + $4,
 		       consecutive_failures = 0,
 		       hold = 'none', hold_until_ms = NULL, hold_reason = NULL,
-		       next_due_at_ms = $7,
+		       next_due_at_ms = $5,
 		       inflight_token = NULL, inflight_until_ms = NULL
-		 WHERE store_id = $8::uuid AND org_id = $9
-		   AND inflight_token = $10 AND refresh_generation = $11
-		   AND cursor_last_id IS NOT DISTINCT FROM $12`,
-		state.StoreUUID, state.OrgID, pass, cursor, liveBump, archivedBump,
-		nowMS+domain.ChainWatchdogMS, state.StoreUUID, state.OrgID,
+		 WHERE store_id = $6::uuid AND org_id = $7
+		   AND inflight_token = $8 AND refresh_generation = $9
+		   AND cursor_last_id IS NOT DISTINCT FROM $10`,
+		pass, cursor, liveBump, archivedBump, nowMS+domain.ChainWatchdogMS,
+		state.StoreUUID, state.OrgID,
 		token, state.RefreshGeneration, state.CursorLastID)
 	if err != nil {
 		return false, err
@@ -249,7 +243,7 @@ func pendingDetailPage(ctx context.Context, tx pgx.Tx, state domain.SyncSnapshot
 		SELECT page_no, product_ids
 		  FROM public.store_product_pass_pages
 		 WHERE store_pk = $1 AND generation = $2
-		   AND archived = false AND detailed_at_ms IS NULL
+		   AND archived = false AND detailed_at_ms IS NULL AND cardinality(product_ids) > 0
 		 ORDER BY page_no
 		 LIMIT 1`, state.StorePK, state.RefreshGeneration).Scan(&pageNo, &ids)
 	if errors.Is(err, pgx.ErrNoRows) {

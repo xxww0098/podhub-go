@@ -6,7 +6,6 @@ import { supplierDbsHttp, type SupplierDbPropDef } from "@/bindings/http-supplie
 import { rememberAccountOverview, peekAccountOverview, invalidateAccountOverview } from "@/features/account/account-overview-cache"
 import { overview as accountOverviewFixture } from "../../../tests/account-fixtures"
 import { createSupplierDbsStore, supplierDbs } from "./supplier-dbs-store"
-import { supplierDbCreatorOptions, supplierDbsInScope } from "./supplier-db-scope"
 import { managementClient, managementSeed } from "../../../tests/supplier-dbs-management.fixtures"
 
 async function ready(role: string, accountUuid: string) {
@@ -21,27 +20,15 @@ test("普通管理员展示服务端自己的库，超级管理员展示创建�
   for (const [accountUuid, visible, hidden] of [["admin-lin", "林的印刷厂", "陈的服装厂"], ["admin-chen", "陈的服装厂", "林的印刷厂"]]) {
     const store = await ready("admin", accountUuid)
     const html = renderToStaticMarkup(<SupplierDbsScreen role="admin" accountUuid={accountUuid} store={store} />)
-    assert.match(html, /仅我创建/)
     assert.ok(html.includes(visible))
     assert.ok(!html.includes(hidden))
     assert.doesNotMatch(html, /历史归属库|按库创建人筛选|<th[^>]*>创建人<\/th>/)
   }
   const store = await ready("super_admin", "root")
   const html = renderToStaticMarkup(<SupplierDbsScreen role="super_admin" accountUuid="root" store={store} />)
-  for (const text of ["林的印刷厂", "陈的服装厂", "历史归属库", "全部管理员", "创建人", "库设置", "新建商品", "编辑"]) assert.ok(html.includes(text), text)
+  for (const text of ["林的印刷厂", "陈的服装厂", "全部商品库", "新增商品", "编辑商品"]) assert.ok(html.includes(text), text)
   assert.match(html, /35×40cm/)
   assert.match(html, /¥18\.00/)
-  assert.match(html, /data-readiness-summary=""[^>]*>缺 类目、提示词、固定 tags、Ozon 配置未校验/)
-})
-
-test("超级管理员范围按公开账号 UUID 分组，同名不会合并，未知历史可单独选择", () => {
-  const dbs = managementSeed().map((detail) => detail.db)
-  dbs[1] = { ...dbs[1], creatorName: "林管理员" }
-  assert.deepEqual(supplierDbCreatorOptions(dbs).map((option) => option.value), ["all", "admin-lin", "admin-chen", "unknown"])
-  assert.equal(supplierDbCreatorOptions(dbs)[1]?.label, "林管理员 · admin-li创建")
-  assert.equal(supplierDbCreatorOptions(dbs)[2]?.label, "林管理员 · admin-ch创建")
-  assert.deepEqual(supplierDbsInScope(dbs, "admin-chen").map((db) => db.sourceId), ["chen"])
-  assert.deepEqual(supplierDbsInScope(dbs, "unknown").map((db) => db.sourceId), ["legacy"])
 })
 
 test("身份重置清空旧详情，迟到列表和详情不能重新提交旧管理员数据", async () => {
@@ -124,8 +111,7 @@ test("全局 supplierDbs 在页面未挂载时也跟随账号/角色，清全部
   const commitAuthority = (role: string, accountUuid: string) => {
     authority = { role, accountUuid }
     rememberAccountOverview({ ...accountOverviewFixture,
-      session: { ...accountOverviewFixture.session, role },
-      accounts: [{ uuid: accountUuid, name: "同名管理员", email: "fixture@example.invalid", active: true }],
+      session: { ...accountOverviewFixture.session, role, uuid: accountUuid },
     })
   }
   try {

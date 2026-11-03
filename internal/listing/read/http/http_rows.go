@@ -71,6 +71,18 @@ func (h Host) getRow(w http.ResponseWriter, r *http.Request) {
 		writeDB(w, err)
 		return
 	}
+	if r.URL.Query().Get("include") == "ocrRecovery" {
+		recovery, err := h.readOCRRecovery(r, p.OrgID, id)
+		if err != nil {
+			mediaError(w, err)
+			return
+		}
+		mediaData(w, struct {
+			RowView
+			Recovery ocrRecovery `json:"ocr_recovery"`
+		}{ProjectRow(item.row), recovery})
+		return
+	}
 	writeRow(w, item, nil)
 }
 
@@ -168,7 +180,7 @@ func (h Host) patchRow(w http.ResponseWriter, r *http.Request) {
 	if sent, ok := fields["draft"]; ok && string(sent) != "null" {
 		draft = sent
 	}
-	if err := h.rejectTags(r, cardPayload, draft); err != nil {
+	if err := h.rejectTags(r, p.OrgID, cardPayload, draft); err != nil {
 		var refusal tagRefusal
 		if errors.As(err, &refusal) {
 			writeErr(w, refusal.status, refusal.message, refusal.code)
@@ -189,7 +201,7 @@ type tagRefusal struct {
 
 func (t tagRefusal) Error() string { return t.message }
 
-func (h Host) rejectTags(r *http.Request, cardPayload, draft []byte) error {
+func (h Host) rejectTags(r *http.Request, orgID int64, cardPayload, draft []byte) error {
 	cat, typ, lang, ok := categoryOf(cardPayload)
 	if !ok {
 		return tagRefusal{http.StatusConflict, "该类目尚未同步，请先同步类目字段后重试", "schema_sync_required"}
@@ -198,17 +210,22 @@ func (h Host) rejectTags(r *http.Request, cardPayload, draft []byte) error {
 		return errors.New("database unavailable")
 	}
 	var fields []byte
-	err := h.Pool.QueryRow(r.Context(), `
+	err := h.withOrg(r.Context(), orgID, func(tx pgx.Tx) error {
+		return tx.QueryRow(r.Context(), `
 		SELECT fields FROM ozon_category_current
 		WHERE description_category_id = $1 AND type_id = $2 AND ($3 = '' OR language = $3)
 		LIMIT 1`, cat, typ, lang).Scan(&fields)
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return tagRefusal{http.StatusConflict, "该类目尚未同步，请先同步类目字段后重试", "schema_sync_required"}
 	}
 	if err != nil {
 		return tagRefusal{http.StatusServiceUnavailable, "规则表读取失败，已拒绝通过", "rules_unavailable"}
 	}
-	tokens, err := SearchTagTokens(fields, draft)
+	if h.SearchTagTokens == nil {
+		return tagRefusal{http.StatusServiceUnavailable, "规则表读取失败，已拒绝通过", "rules_unavailable"}
+	}
+	tokens, err := h.SearchTagTokens(fields, draft)
 	if err != nil {
 		return tagRefusal{http.StatusServiceUnavailable, "规则表读取失败，已拒绝通过", "rules_unavailable"}
 	}
@@ -222,7 +239,7 @@ func (h Host) rejectTags(r *http.Request, cardPayload, draft []byte) error {
 	if err != nil {
 		return tagRefusal{http.StatusServiceUnavailable, "规则表读取失败，已拒绝通过", "rules_unavailable"}
 	}
-	save, err := ForbidSave(r.Context(), h.Engine, tokens, rules)
+	save, err := h.Engine.ForbidSave(r.Context(), tokens, rules)
 	if err != nil {
 		return tagRefusal{http.StatusServiceUnavailable, "规则未能执行，已拒绝通过", "rules_unavailable"}
 	}

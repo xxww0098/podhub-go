@@ -2,27 +2,10 @@
  * 商品镜像投影（store_product_sync / store_products）——大屏读取的每店
  * count_* 汇总与生命周期分布都从这里派生。
  */
-import type { OzonStoreView } from "@/bindings/commands"
+import type { ConsoleSnapshot, OzonStoreView } from "@/bindings/commands"
+import { storeFreshness } from "@/features/products/freshness"
 
-const DAY_MS = 24 * 60 * 60 * 1000
-
-export type StoreProductMirrorRow = {
-  store_id: string
-  count_total?: number | null
-  count_on_sale?: number | null
-  count_hidden?: number | null
-  count_moderation_failed?: number | null
-  count_zero_stock?: number | null
-  count_archived?: number | null
-  probed_at_ms?: number | null
-  last_full_sync_at_ms?: number | null
-  priced_at_ms_max?: number | null
-  pass?: string | null
-  hold?: string | null
-  hold_until_ms?: number | null
-  hold_reason?: string | null
-  price_stock_enabled?: boolean
-}
+export type StoreProductMirrorRow = ConsoleSnapshot["products"][number]
 
 export type StoreProductStatus = "fresh" | "stale" | "expired" | "never"
 
@@ -32,7 +15,7 @@ export type StoreProductsSummary = {
     onSale: number
     /** 待处理 = 隐藏 + 审核失败 — the bucket an operator acts on. */
     pending: number
-    /** null when no counted store runs the six-hour price/stock layer. */
+    /** null when the counted mirrors do not all provide a zero-stock count. */
     zeroStock: number | null
     archived: number
   }
@@ -50,18 +33,9 @@ export type StoreProductsSummary = {
   }[]
 }
 
-const SEVEN_DAYS_MS = 7 * DAY_MS
-const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000
-
-/** The mirror's freshness answer for one store: newest read vs its budget. */
+/** The console wire provides the last complete sync, but not failure counts. */
 function productMirrorStatus(row: StoreProductMirrorRow, nowMs: number): StoreProductStatus {
-  const newest = Math.max(row.probed_at_ms ?? 0, row.last_full_sync_at_ms ?? 0)
-  if (newest <= 0) return "never"
-  const age = Math.max(0, nowMs - newest)
-  if (age >= SEVEN_DAYS_MS) return "expired"
-  // A full sync freshens for two weekly windows; a bare probe for two rounds.
-  const freshWindow = row.last_full_sync_at_ms ? 2 * SEVEN_DAYS_MS : TWELVE_HOURS_MS
-  return age < Math.min(freshWindow, SEVEN_DAYS_MS) ? "fresh" : "stale"
+  return storeFreshness(row.last_full_sync_at_ms, 0, nowMs)
 }
 
 /**
@@ -77,7 +51,12 @@ export function summarizeStoreProducts(
   const names = new Map(
     stores.map((store) => [store.cloud_store_uuid?.trim() || store.id, store]),
   )
-  const perStore = rows.map((row) => ({
+  const returnedIds = new Set(rows.map((row) => row.store_id))
+  const mirrors: StoreProductMirrorRow[] = [
+    ...rows,
+    ...Array.from(names.keys()).filter((id) => !returnedIds.has(id)).map((store_id) => ({ store_id })),
+  ]
+  const perStore = mirrors.map((row) => ({
     storeId: row.store_id,
     name: names.get(row.store_id)?.label ?? row.store_id.slice(0, 8),
     onSale: row.count_on_sale ?? null,
@@ -87,11 +66,14 @@ export function summarizeStoreProducts(
     status: productMirrorStatus(row, nowMs),
   }))
 
-  const counted = rows.filter((row) => {
+  const counted = mirrors.filter((row) => {
     const status = productMirrorStatus(row, nowMs)
     return status === "fresh" || status === "stale"
   })
-  const zeroStockEnabled = counted.some((row) => row.price_stock_enabled)
+  const zeroStockCounts = counted.map((row) => row.count_zero_stock)
+  const zeroStock = zeroStockCounts.length > 0 && zeroStockCounts.every(
+    (value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0,
+  ) ? zeroStockCounts.reduce((sum, value) => sum + value, 0) : null
   const totals = {
     total: counted.reduce((sum, row) => sum + (row.count_total ?? 0), 0),
     onSale: counted.reduce((sum, row) => sum + (row.count_on_sale ?? 0), 0),
@@ -99,9 +81,7 @@ export function summarizeStoreProducts(
       (sum, row) => sum + (row.count_hidden ?? 0) + (row.count_moderation_failed ?? 0),
       0,
     ),
-    zeroStock: zeroStockEnabled
-      ? counted.reduce((sum, row) => sum + (row.count_zero_stock ?? 0), 0)
-      : null,
+    zeroStock,
     archived: counted.reduce((sum, row) => sum + (row.count_archived ?? 0), 0),
   }
 
@@ -118,12 +98,12 @@ export function summarizeStoreProducts(
         }
 
   const newestSyncMs =
-    rows.reduce((max, row) => Math.max(max, row.probed_at_ms ?? 0, row.last_full_sync_at_ms ?? 0), 0) ||
+    rows.reduce((max, row) => Math.max(max, row.last_full_sync_at_ms ?? 0), 0) ||
     null
 
   return {
     totals,
-    coverage: { read: counted.length, total: rows.length },
+    coverage: { read: counted.length, total: mirrors.length },
     newestSyncMs,
     quotaUsage,
     perStore,
@@ -171,13 +151,13 @@ export function lifecycleScope(
   storeId: string | null,
 ): LifecycleScope {
   const row = storeId ? summary.perStore.find((store) => store.storeId === storeId) : undefined
-  const counted = row
-    ? row.status === "fresh" || row.status === "stale"
-      ? [row]
-      : []
+  const counted = storeId
+    ? row && (row.status === "fresh" || row.status === "stale") ? [row] : []
     : summary.perStore.filter((store) => store.status === "fresh" || store.status === "stale")
   if (storeId && counted.length === 0) return { status: "unsynced" }
   if (!storeId && summary.coverage.read === 0) return { status: "unsynced" }
+  if (!storeId && counted.length !== summary.coverage.read) return { status: "unsynced" }
+  if (counted.some((store) => store.onSale == null || store.hidden == null || store.moderationFailed == null || store.archived == null)) return { status: "unsynced" }
   const slices = lifecycleSlices(
     counted.reduce((sum, store) => sum + (store.onSale ?? 0), 0),
     counted.reduce((sum, store) => sum + (store.hidden ?? 0), 0),

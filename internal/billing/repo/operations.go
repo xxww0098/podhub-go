@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/xxww0098/podhub-go/internal/platform/config"
+	"github.com/xxww0098/podhub-go/internal/platform/db"
 	"github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
 )
 
@@ -26,7 +27,6 @@ type operation struct {
 
 // ChargeListingSubmit charges one succeeded listing submit once.
 // price <= 0 returns nil. A missing job commits without a charge.
-// This function is not called from the queue worker.
 func ChargeListingSubmit(ctx context.Context, pool *pgxpool.Pool, orgID int64, idempotencyKey string, price int64) error {
 	if price <= 0 {
 		return nil
@@ -36,7 +36,7 @@ func ChargeListingSubmit(ctx context.Context, pool *pgxpool.Pool, orgID int64, i
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `SELECT set_config($1, $2, true)`, tenantx.GUCCurrentOrgID, strconvFormat(orgID)); err != nil {
+	if err := tenantx.EnterApp(ctx, tx, orgID); err != nil {
 		return err
 	}
 	var jobID string
@@ -51,9 +51,6 @@ func ChargeListingSubmit(ctx context.Context, pool *pgxpool.Pool, orgID int64, i
 		return tx.Commit(ctx)
 	}
 	if err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx, `SELECT set_config('role', 'podhub_app', true)`); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
@@ -96,9 +93,6 @@ func ChargeListingSubmit(ctx context.Context, pool *pgxpool.Pool, orgID int64, i
 			return &Error{Msg: "billing operation settlement update affected an unexpected row count"}
 		}
 	}
-	if _, err := tx.Exec(ctx, `RESET ROLE`); err != nil {
-		return err
-	}
 	return tx.Commit(ctx)
 }
 
@@ -119,47 +113,41 @@ func strconvFormat(n int64) string {
 }
 
 // ReapReservations releases holds older than olderThan. Each candidate is its own transaction.
+// The candidate scan runs as podhub_maintenance; each row is then locked and
+// released under podhub_app for that org.
 func ReapReservations(ctx context.Context, pool *pgxpool.Pool, olderThan time.Duration, limit int64) (int64, error) {
 	seconds := int64(olderThan / time.Second)
 	if seconds < 0 {
 		seconds = 0
 	}
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return 0, err
-	}
-	rows, err := tx.Query(ctx, `
+	var candidates []operation
+	err := db.InTx(ctx, pool, db.Maintenance(), func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
 		SELECT id, org_id, idempotency_key, expected_upper_bound_microfen, state
 		  FROM billing_operations
 		 WHERE state IN ('reserved', 'outcome_unknown')
 		   AND updated_at < clock_timestamp() - ($1 || ' seconds')::interval
 		 ORDER BY updated_at ASC
 		 LIMIT $2`, strconvFormat(seconds), limit)
-	if err != nil {
-		tx.Rollback(ctx)
-		return 0, err
-	}
-	var candidates []operation
-	for rows.Next() {
-		var op operation
-		if err := rows.Scan(&op.ID, &op.OrgID, &op.Key, &op.Expected, &op.State); err != nil {
-			rows.Close()
-			tx.Rollback(ctx)
-			return 0, err
+		if err != nil {
+			return err
 		}
-		candidates = append(candidates, op)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		tx.Rollback(ctx)
-		return 0, err
-	}
-	if err := tx.Commit(ctx); err != nil {
+		defer rows.Close()
+		for rows.Next() {
+			var op operation
+			if err := rows.Scan(&op.ID, &op.OrgID, &op.Key, &op.Expected, &op.State); err != nil {
+				return err
+			}
+			candidates = append(candidates, op)
+		}
+		return rows.Err()
+	})
+	if err != nil {
 		return 0, err
 	}
 	var released int64
 	for _, candidate := range candidates {
-		n, err := releaseOne(ctx, pool, candidate.ID)
+		n, err := releaseOne(ctx, pool, candidate.OrgID, candidate.ID)
 		if err != nil {
 			continue
 		}
@@ -168,25 +156,25 @@ func ReapReservations(ctx context.Context, pool *pgxpool.Pool, olderThan time.Du
 	return released, nil
 }
 
-func releaseOne(ctx context.Context, pool *pgxpool.Pool, id int64) (int64, error) {
+func releaseOne(ctx context.Context, pool *pgxpool.Pool, orgID, id int64) (int64, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback(ctx)
+	if err := tenantx.EnterApp(ctx, tx, orgID); err != nil {
+		return 0, err
+	}
 	var op operation
 	err = tx.QueryRow(ctx, `
 		SELECT id, org_id, idempotency_key, expected_upper_bound_microfen, state
 		  FROM billing_operations
-		 WHERE id = $1 AND state IN ('reserved', 'outcome_unknown')
-		 FOR UPDATE`, id).Scan(&op.ID, &op.OrgID, &op.Key, &op.Expected, &op.State)
+		 WHERE org_id = $1 AND id = $2 AND state IN ('reserved', 'outcome_unknown')
+		 FOR UPDATE`, orgID, id).Scan(&op.ID, &op.OrgID, &op.Key, &op.Expected, &op.State)
 	if err == pgx.ErrNoRows {
 		return 0, tx.Commit(ctx)
 	}
 	if err != nil {
-		return 0, err
-	}
-	if _, err := tx.Exec(ctx, `SELECT set_config('role', 'podhub_app', true)`); err != nil {
 		return 0, err
 	}
 	if _, err := ReleaseTx(ctx, tx, op.OrgID, op.Key, nil, op.Expected, "billing_reaper_expired"); err != nil {
@@ -200,9 +188,6 @@ func releaseOne(ctx context.Context, pool *pgxpool.Pool, id int64) (int64, error
 	}
 	if tag.RowsAffected() != 1 {
 		return 0, nil
-	}
-	if _, err := tx.Exec(ctx, `RESET ROLE`); err != nil {
-		return 0, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, err

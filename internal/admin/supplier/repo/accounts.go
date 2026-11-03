@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
-	"golang.org/x/crypto/bcrypt"
 
 	corecontract "github.com/xxww0098/podhub-go/internal/admin/core/contract"
 	outcome "github.com/xxww0098/podhub-go/internal/admin/core/contract/outcome"
@@ -18,10 +17,10 @@ func (r Portal) ListAccounts(ctx context.Context, actor outcome.Actor) ([]supcon
 	var out []supcontract.Member
 	err := r.withTx(ctx, actor.OrgID, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
-			SELECT m.member_id::text, m.source_id, s.name, s.country, s.icon,
-			       m.status, m.created_at_ms, u.email, u.name
-			  FROM sc_source_members m
-			  JOIN sc_sources s ON s.source_id = m.source_id
+			SELECT m.member_id::text, m.factory_id, s.name, s.country, s.icon,
+			       m.status, m.created_at_ms, u.email, u.name, u.public_id
+			  FROM sc_factory_members m
+			  JOIN sc_factories s ON s.factory_id = m.factory_id
 			  JOIN account_users u ON u.id = m.user_id
 			 ORDER BY s.name ASC, m.created_at_ms ASC, m.member_id ASC`)
 		if err != nil {
@@ -41,18 +40,17 @@ func (r Portal) ListAccounts(ctx context.Context, actor outcome.Actor) ([]supcon
 	return out, err
 }
 
-func (r Portal) CreateAccount(ctx context.Context, actor outcome.Actor, in supcontract.NormalizedAccount, publicID string, nowMs int64, password string) (supcontract.Member, *string, error) {
+func (r Portal) CreateAccount(ctx context.Context, actor outcome.Actor, in supcontract.NormalizedAccount, nowMs int64, password, passwordHash string) (supcontract.Member, *string, error) {
 	var member supcontract.Member
 	var initial *string
 	err := r.withTx(ctx, actor.OrgID, func(tx pgx.Tx) error {
 		if err := corerepo.AssertWrite(ctx, tx); err != nil {
 			return err
 		}
-		memberID, once, err := provision(ctx, tx, actor, in.SourceID, in.Email, in.Name, password, "/api/admin/supplier-accounts", nowMs, "新建厂家账号需要超级管理员", "厂家不存在")
+		memberID, once, err := provision(ctx, tx, actor, in.FactoryID, in.Email, in.Name, password, passwordHash, "/api/admin/supplier-accounts", nowMs, "新建厂家账号需要超级管理员", "厂家不存在")
 		if err != nil {
 			return err
 		}
-		_ = publicID
 		initial = once
 		loaded, err := loadMember(ctx, tx, memberID)
 		if err != nil {
@@ -67,7 +65,7 @@ func (r Portal) CreateAccount(ctx context.Context, actor outcome.Actor, in supco
 	return member, initial, err
 }
 
-func (r Portal) PatchAccount(ctx context.Context, actor outcome.Actor, memberID string, in supcontract.AccountPatch, passwordHash string) (supcontract.Member, *string, error) {
+func (r Portal) PatchAccount(ctx context.Context, actor outcome.Actor, memberID string, in supcontract.AccountPatch, passwordHash string, nowMs int64) (supcontract.Member, *string, error) {
 	var member supcontract.Member
 	var initial *string
 	err := r.withTx(ctx, actor.OrgID, func(tx pgx.Tx) error {
@@ -82,8 +80,8 @@ func (r Portal) PatchAccount(ctx context.Context, actor outcome.Actor, memberID 
 			return corerepo.NotFound("厂家成员不存在")
 		}
 		var userID int64
-		if in.Password != nil {
-			err = tx.QueryRow(ctx, `SELECT user_id FROM sc_source_members WHERE member_id = $1::uuid`, memberID).Scan(&userID)
+		if in.Password != nil || in.Status != nil {
+			err = tx.QueryRow(ctx, `SELECT user_id FROM sc_factory_members WHERE member_id = $1::uuid FOR UPDATE`, memberID).Scan(&userID)
 			if errors.Is(err, pgx.ErrNoRows) {
 				return corerepo.NotFound("厂家成员不存在")
 			}
@@ -102,12 +100,17 @@ func (r Portal) PatchAccount(ctx context.Context, actor outcome.Actor, memberID 
 			}
 		}
 		if in.Status != nil {
-			tag, err := tx.Exec(ctx, `UPDATE sc_source_members SET status = $2 WHERE member_id = $1::uuid`, memberID, *in.Status)
+			tag, err := tx.Exec(ctx, `UPDATE sc_factory_members SET status = $2 WHERE member_id = $1::uuid`, memberID, *in.Status)
 			if err != nil {
 				return corerepo.MapDB(err)
 			}
 			if tag.RowsAffected() == 0 {
 				return corerepo.NotFound("厂家成员不存在")
+			}
+			if *in.Status == "disabled" {
+				if err := disableFactorySourceRoles(ctx, tx, loaded.Factory.FactoryID, userID, actor.UserID, nowMs); err != nil {
+					return err
+				}
 			}
 		}
 		var revoked int64
@@ -162,14 +165,15 @@ func (r Portal) DeleteAccount(ctx context.Context, actor outcome.Actor, memberID
 			return err
 		}
 		var userID int64
-		err := tx.QueryRow(ctx, `DELETE FROM sc_source_members WHERE member_id = $1::uuid RETURNING user_id`, memberID).Scan(&userID)
+		var factoryID string
+		err := tx.QueryRow(ctx, `DELETE FROM sc_factory_members WHERE member_id = $1::uuid RETURNING user_id, factory_id`, memberID).Scan(&userID, &factoryID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return corerepo.NotFound("厂家成员不存在")
 		}
 		if err != nil {
 			return corerepo.MapDB(err)
 		}
-		if err := disableSourceRoles(ctx, tx, userID, actor.UserID, nowMs); err != nil {
+		if err := disableFactorySourceRoles(ctx, tx, factoryID, userID, actor.UserID, nowMs); err != nil {
 			return err
 		}
 		return corerepo.Audit(ctx, tx, actor, "supplier_portal", "supplier_account", memberID, "DELETE", "/api/admin/supplier-accounts/{member_id}", "supplier_account_unbound", `{}`)
@@ -196,12 +200,12 @@ func (r Portal) AccountStaff(ctx context.Context, userID int64) (bool, bool, err
 	return found, staff, err
 }
 
-func provision(ctx context.Context, tx pgx.Tx, actor outcome.Actor, sourceID, email string, name *string, password, auditPath string, nowMs int64, superMessage, missing string) (string, *string, error) {
+func provision(ctx context.Context, tx pgx.Tx, actor outcome.Actor, factoryID, email string, name *string, password, passwordHash, auditPath string, nowMs int64, superMessage, missing string) (string, *string, error) {
 	if actor.Role != "super_admin" {
 		return "", nil, corerepo.Forbidden(superMessage)
 	}
 	var one int
-	err := tx.QueryRow(ctx, `SELECT 1 FROM sc_sources WHERE source_id = $1 LIMIT 1`, sourceID).Scan(&one)
+	err := tx.QueryRow(ctx, `SELECT 1 FROM sc_factories WHERE factory_id = $1 LIMIT 1`, factoryID).Scan(&one)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil, corerepo.NotFound(missing)
 	}
@@ -222,10 +226,6 @@ func provision(ctx context.Context, tx pgx.Tx, actor outcome.Actor, sourceID, em
 		if len(password) > 72 {
 			return "", nil, &outcome.Fail{Kind: outcome.KindValidation, Message: "密码过长"}
 		}
-		hash, herr := bcrypt.GenerateFromPassword([]byte(password), 12)
-		if herr != nil {
-			return "", nil, &outcome.Fail{Kind: outcome.KindValidation, Message: "密码加密失败，请重试"}
-		}
 		display := emailLocal(email)
 		if name != nil && strings.TrimSpace(*name) != "" {
 			display = strings.TrimSpace(*name)
@@ -240,7 +240,7 @@ func provision(ctx context.Context, tx pgx.Tx, actor outcome.Actor, sourceID, em
 			        account_kind, must_change_password, created_at, updated_at)
 			VALUES ($1, $2, $3, 'user', $4, '/supplier', '', 'free', 'supplier', true,
 			        clock_timestamp(), clock_timestamp())
-			RETURNING id::bigint`, publicID, email, string(hash), display).Scan(&userID)
+			RETURNING id::bigint`, publicID, email, passwordHash, display).Scan(&userID)
 		if corerepo.Constraint(err) != "" {
 			return "", nil, corerepo.Conflict("邮箱已注册")
 		}
@@ -263,10 +263,10 @@ func provision(ctx context.Context, tx pgx.Tx, actor outcome.Actor, sourceID, em
 	}
 	var memberID string
 	err = tx.QueryRow(ctx, `
-		INSERT INTO sc_source_members (source_id, user_id, created_by, created_at_ms)
+		INSERT INTO sc_factory_members (factory_id, user_id, created_by, created_at_ms)
 		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (source_id, user_id) DO NOTHING
-		RETURNING member_id::text`, sourceID, userID, actor.UserID, nowMs).Scan(&memberID)
+		ON CONFLICT (factory_id, user_id) DO NOTHING
+		RETURNING member_id::text`, factoryID, userID, actor.UserID, nowMs).Scan(&memberID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil, corerepo.Conflict("该邮箱已是这家厂家的成员")
 	}
@@ -275,54 +275,21 @@ func provision(ctx context.Context, tx pgx.Tx, actor outcome.Actor, sourceID, em
 	}
 	createdUser := initial != nil
 	if err := corerepo.Audit(ctx, tx, actor, "supplier_portal", "supplier_account", memberID, "POST", auditPath, "supplier_account_created", corecontract.JSONText(struct {
-		SourceID    string `json:"sourceId"`
+		FactoryID   string `json:"factoryId"`
 		Email       string `json:"email"`
 		CreatedUser bool   `json:"createdUser"`
-	}{sourceID, email, createdUser})); err != nil {
+	}{factoryID, email, createdUser})); err != nil {
 		return "", nil, err
 	}
 	return memberID, initial, nil
 }
 
-func rebind(ctx context.Context, tx pgx.Tx, actor outcome.Actor, sourceID, email, password string, nowMs int64) (*string, error) {
-	var existing string
-	err := tx.QueryRow(ctx, `
-		SELECT m.member_id::text
-		  FROM sc_source_members m
-		  JOIN account_users u ON u.id = m.user_id
-		 WHERE m.source_id = $1 AND lower(u.email) = $2
-		 LIMIT 1`, sourceID, email).Scan(&existing)
-	if err == nil {
-		return nil, nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return nil, corerepo.MapDB(err)
-	}
-	if actor.Role != "super_admin" {
-		return nil, corerepo.Forbidden("换绑厂家邮箱需要超级管理员")
-	}
-	memberID, initial, err := provision(ctx, tx, actor, sourceID, email, nil, password, "/api/admin/supplier-dbs/{source_id}", nowMs, "换绑厂家邮箱需要超级管理员", missingRow)
-	if err != nil {
-		return nil, err
-	}
-	tag, err := tx.Exec(ctx, `DELETE FROM sc_source_members WHERE source_id = $1 AND member_id <> $2::uuid`, sourceID, memberID)
-	if err != nil {
-		return nil, corerepo.MapDB(err)
-	}
-	if tag.RowsAffected() > 0 {
-		if err := corerepo.Audit(ctx, tx, actor, "supplier_portal", "supplier_account", memberID, "PUT", "/api/admin/supplier-dbs/{source_id}", "supplier_account_rebound", `{}`); err != nil {
-			return nil, err
-		}
-	}
-	return initial, nil
-}
-
 func loadMember(ctx context.Context, tx pgx.Tx, memberID string) (*supcontract.Member, error) {
 	rows, err := tx.Query(ctx, `
-		SELECT m.member_id::text, m.source_id, s.name, s.country, s.icon,
-		       m.status, m.created_at_ms, u.email, u.name
-		  FROM sc_source_members m
-		  JOIN sc_sources s ON s.source_id = m.source_id
+		SELECT m.member_id::text, m.factory_id, s.name, s.country, s.icon,
+		       m.status, m.created_at_ms, u.email, u.name, u.public_id
+		  FROM sc_factory_members m
+		  JOIN sc_factories s ON s.factory_id = m.factory_id
 		  JOIN account_users u ON u.id = m.user_id
 		 WHERE m.member_id = $1::uuid`, memberID)
 	if err != nil {
@@ -346,7 +313,7 @@ type rowScanner interface {
 func scanMember(rows rowScanner) (supcontract.Member, error) {
 	var m supcontract.Member
 	var name string
-	if err := rows.Scan(&m.MemberID, &m.Source.SourceID, &m.Source.Name, &m.Source.Country, &m.Source.Icon, &m.Status, &m.CreatedAtMs, &m.Email, &name); err != nil {
+	if err := rows.Scan(&m.MemberID, &m.Factory.FactoryID, &m.Factory.Name, &m.Factory.Country, &m.Factory.Icon, &m.Status, &m.CreatedAtMs, &m.Email, &name, &m.AccountUUID); err != nil {
 		return supcontract.Member{}, corerepo.MapDB(err)
 	}
 	if strings.TrimSpace(name) != "" {

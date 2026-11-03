@@ -56,7 +56,7 @@ function SummaryItem({
  */
 export function UsageSummaryStrip({ data }: { data: AdminUsageSummaryData }) {
   return (
-    <div className="grid grid-cols-2 items-start gap-4 border-b border-border p-4 lg:grid-cols-3">
+    <div className="grid grid-cols-2 items-start gap-x-6 gap-y-3 border-b border-border bg-muted/30 px-4 py-3 md:grid-cols-3 xl:grid-cols-6">
       <SummaryItem
         label="请求"
         value={formatUsageNumber(data.total_rows)}

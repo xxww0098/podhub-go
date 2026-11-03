@@ -16,5 +16,24 @@ type Transport interface {
 	Ready(ctx context.Context) error
 }
 
+// StoreBinding is backed by existing submission intents, never a browser credential.
+// ReadOnly reconciles already accepted work without granting new write authority.
+type StoreBinding struct {
+	OrgID, UserID, StorePK int64
+	StoreUUID              string
+	IntentIDs              []string
+	ReadOnly               bool
+}
+
+type StoreTransport interface {
+	Transport
+	BindStore(context.Context, StoreBinding) (Transport, error)
+}
+
+type PhysicalAccountTransport interface{ PhysicalAccountKey() string }
+
 // ErrNotSent is a connect refusal. No request left the process.
 var ErrNotSent = errors.New("seller write did not leave the process")
+
+// ErrWritesDisabled means the configured Ozon write gate is closed.
+var ErrWritesDisabled = errors.New("OZON_WRITE_KILL_SWITCH is engaged; Ozon writes are closed")

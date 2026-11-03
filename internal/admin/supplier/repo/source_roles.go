@@ -122,7 +122,7 @@ func (r Portal) ListCatalogManagers(ctx context.Context, actor outcome.Actor, so
 }
 
 // GrantFulfiller gives one supplier account the fulfiller role on one source.
-func (r Portal) GrantFulfiller(ctx context.Context, actor outcome.Actor, sourceID string, userID, nowMs int64) (supcontract.Fulfiller, error) {
+func (r Portal) GrantFulfiller(ctx context.Context, actor outcome.Actor, sourceID, accountUUID string, nowMs int64) (supcontract.Fulfiller, error) {
 	var out supcontract.Fulfiller
 	err := r.withTx(ctx, actor.OrgID, func(tx pgx.Tx) error {
 		if err := corerepo.AssertWrite(ctx, tx); err != nil {
@@ -131,8 +131,23 @@ func (r Portal) GrantFulfiller(ctx context.Context, actor outcome.Actor, sourceI
 		if err := sourceExists(ctx, tx, sourceID); err != nil {
 			return err
 		}
+		var userID int64
+		if err := tx.QueryRow(ctx, `SELECT id FROM public.account_users WHERE public_id = $1`, accountUUID).Scan(&userID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return corerepo.Conflict("该账号不存在")
+			}
+			return corerepo.MapDB(err)
+		}
 		if err := grantableAccount(ctx, tx, userID, "supplier", "只能授权供应商账号为履约人"); err != nil {
 			return err
+		}
+		var memberID string
+		if err := tx.QueryRow(ctx, `SELECT m.member_id::text FROM public.sc_sources s JOIN public.sc_factory_members m ON m.factory_id=s.factory_id
+			WHERE s.source_id=$1 AND m.user_id=$2 AND m.status='active' FOR UPDATE OF m`, sourceID, userID).Scan(&memberID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return corerepo.Conflict("履约账号必须是已绑定工厂的有效成员")
+			}
+			return corerepo.MapDB(err)
 		}
 		var id string
 		err := tx.QueryRow(ctx, `
@@ -180,7 +195,7 @@ func (r Portal) RevokeFulfiller(ctx context.Context, actor outcome.Actor, source
 }
 
 // GrantCatalogManager gives one platform account the catalog-manager role.
-func (r Portal) GrantCatalogManager(ctx context.Context, actor outcome.Actor, sourceID string, userID, nowMs int64) (supcontract.CatalogManager, error) {
+func (r Portal) GrantCatalogManager(ctx context.Context, actor outcome.Actor, sourceID, accountUUID string, nowMs int64) (supcontract.CatalogManager, error) {
 	var out supcontract.CatalogManager
 	err := r.withTx(ctx, actor.OrgID, func(tx pgx.Tx) error {
 		if err := corerepo.AssertWrite(ctx, tx); err != nil {
@@ -188,6 +203,13 @@ func (r Portal) GrantCatalogManager(ctx context.Context, actor outcome.Actor, so
 		}
 		if err := sourceExists(ctx, tx, sourceID); err != nil {
 			return err
+		}
+		var userID int64
+		if err := tx.QueryRow(ctx, `SELECT id FROM public.account_users WHERE public_id = $1`, accountUUID).Scan(&userID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return corerepo.Conflict("该账号不存在")
+			}
+			return corerepo.MapDB(err)
 		}
 		if err := grantableAccount(ctx, tx, userID, "platform", "只能授权平台账号为商品负责人"); err != nil {
 			return err
@@ -343,15 +365,10 @@ func loadCatalogManager(ctx context.Context, tx pgx.Tx, id string) (supcontract.
 // from DeleteAccount: a removed member must not keep a fulfiller or
 // catalog-manager grant. Rows are disabled, never deleted, because
 // delegate_dispatches.fulfiller_id still points at them.
-func disableSourceRoles(ctx context.Context, tx pgx.Tx, userID, actorUserID, nowMs int64) error {
-	for _, table := range []string{"sc_source_fulfillers", "sc_catalog_managers"} {
-		if _, err := tx.Exec(ctx, `
-			UPDATE public.`+table+`
-			   SET status = 'disabled', revoked_by = $2, revoked_at_ms = $3
-			 WHERE user_id = $1 AND status = 'active'`,
-			userID, actorUserID, nowMs); err != nil {
-			return corerepo.MapDB(err)
-		}
-	}
-	return nil
+func disableFactorySourceRoles(ctx context.Context, tx pgx.Tx, factoryID string, userID, actorUserID, nowMs int64) error {
+	_, err := tx.Exec(ctx, `UPDATE public.sc_source_fulfillers
+		SET status='disabled', revoked_by=$2, revoked_at_ms=$3
+		WHERE user_id=$1 AND status='active' AND source_id IN
+			(SELECT source_id FROM public.sc_sources WHERE factory_id=$4)`, userID, actorUserID, nowMs, factoryID)
+	return corerepo.MapDB(err)
 }

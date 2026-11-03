@@ -32,6 +32,7 @@ WITH rt AS (
     SELECT id, grant_id, org_id, user_id, label FROM automation_runtimes
      WHERE id = $3::uuid AND org_id = $1 AND user_id = $2
        AND deregistered_at IS NULL
+     FOR UPDATE
 ),
 due AS (
     SELECT c.id

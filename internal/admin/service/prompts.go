@@ -12,7 +12,6 @@ import (
 
 	"github.com/xxww0098/podhub-go/internal/admin/domain"
 	core "github.com/xxww0098/podhub-go/internal/listing/core/contract"
-	rules "github.com/xxww0098/podhub-go/internal/listing/rules/contract"
 	"github.com/xxww0098/podhub-go/internal/platform/httpx/jsonwire"
 )
 
@@ -61,7 +60,7 @@ func scanPrompt(row pgx.Row) (Prompt, error) {
 func (d Deps) CreatePrompt(ctx context.Context, actor Actor, in PromptWrite) (Prompt, error) {
 	var out Prompt
 	err := d.under(ctx, "提示词目录写入未启用", func(g *gate) error {
-		norm, err := d.normalizePrompt(ctx, in)
+		norm, err := d.normalizePrompt(ctx, g.tx, in)
 		if err != nil {
 			return err
 		}
@@ -103,7 +102,7 @@ RETURNING `+promptReturning, id, norm.Category, norm.TypeID, norm.Name, norm.Fil
 func (d Deps) UpdatePrompt(ctx context.Context, actor Actor, promptID string, in PromptWrite) (Prompt, error) {
 	var out Prompt
 	err := d.under(ctx, "提示词目录写入未启用", func(g *gate) error {
-		norm, err := d.normalizePrompt(ctx, in)
+		norm, err := d.normalizePrompt(ctx, g.tx, in)
 		if err != nil {
 			return err
 		}
@@ -155,7 +154,7 @@ func promptMessage(p Prompt) map[string]any {
 	}
 }
 
-func (d Deps) normalizePrompt(ctx context.Context, in PromptWrite) (PromptWrite, error) {
+func (d Deps) normalizePrompt(ctx context.Context, q execer, in PromptWrite) (PromptWrite, error) {
 	if in.Category <= 0 || in.TypeID <= 0 {
 		return PromptWrite{}, fail(400, "VALIDATION", "缺少有效的三级类目标识")
 	}
@@ -167,26 +166,26 @@ func (d Deps) normalizePrompt(ctx context.Context, in PromptWrite) (PromptWrite,
 	if err != nil {
 		return PromptWrite{}, fail(400, "VALIDATION", err.Error())
 	}
-	content, err := domain.CanonicalBrief(in.Content)
+	content, err := domain.CanonicalProfile(in.Content)
 	if err != nil {
 		return PromptWrite{}, fail(400, "VALIDATION", err.Error())
 	}
 	if err := domain.FixedTags(in.Tags); err != nil {
 		return PromptWrite{}, fail(400, "VALIDATION", err.Error())
 	}
-	if err := d.forbid(ctx, in.Tags); err != nil {
+	if err := d.forbid(ctx, q, in.Tags); err != nil {
 		return PromptWrite{}, err
 	}
 	in.Name, in.FileName, in.Content = name, file, content
 	return in, nil
 }
 
-func (d Deps) forbid(ctx context.Context, tags []string) error {
-	if d.Engine == nil || d.Pool == nil {
+func (d Deps) forbid(ctx context.Context, q execer, tags []string) error {
+	if d.Engine == nil || q == nil {
 		return fail(500, "INTERNAL", "服务暂不可用")
 	}
 	load := func(ctx context.Context) ([]core.Rule, error) {
-		rows, err := d.Pool.Query(ctx, `SELECT term, match_mode FROM public.banned_tags WHERE enabled ORDER BY id`)
+		rows, err := q.Query(ctx, `SELECT term, match_mode FROM public.banned_tags WHERE enabled ORDER BY id`)
 		if err != nil {
 			return nil, err
 		}
@@ -207,11 +206,10 @@ func (d Deps) forbid(ctx context.Context, tags []string) error {
 		ruleset []core.Rule
 		err     error
 	)
-	if rules.EnabledBannedTags != nil {
-		ruleset, err = rules.EnabledBannedTags(ctx, load)
-	} else {
-		ruleset, err = load(ctx)
+	if d.BannedTags == nil {
+		return fail(500, "INTERNAL", "服务暂不可用")
 	}
+	ruleset, err = d.BannedTags(ctx, load)
 	if err != nil {
 		return mapDB(err, 500, "INTERNAL", "服务暂不可用")
 	}

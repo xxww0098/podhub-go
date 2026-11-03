@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -32,13 +33,21 @@ func (f fixedSession) Resolve(*http.Request) (*Principal, *Refusal, error) {
 }
 
 type spy struct {
-	accepts int
-	me      contract.MeData
+	accepts              int
+	me                   contract.MeData
+	source, view, search string
+	status, reason       string
+	cursor               domain.Cursor
+	at                   time.Time
 }
 
 func (s *spy) Me(context.Context, int64) (contract.MeData, error) { return s.me, nil }
-func (s *spy) ListDispatches(context.Context, int64, string, domain.Cursor) (contract.DispatchListData, error) {
+func (s *spy) ListDispatches(_ context.Context, _ int64, source, view, search, status, reason string, cursor domain.Cursor, now time.Time) (contract.DispatchListData, error) {
+	s.source, s.view, s.search, s.status, s.reason, s.cursor, s.at = source, view, search, status, reason, cursor, now
 	return contract.DispatchListData{Dispatches: []contract.DispatchRow{}, Cursor: "", HasMore: false}, nil
+}
+func (s *spy) Dashboard(context.Context, int64, string, time.Time) (contract.DashboardData, error) {
+	return contract.DashboardData{UrgentOrders: []contract.DispatchRow{}}, nil
 }
 func (s *spy) GetDispatch(context.Context, int64, string) (contract.DispatchDetail, error) {
 	return contract.DispatchDetail{}, nil
@@ -53,8 +62,8 @@ func (s *spy) Reject(context.Context, int64, string, string) (contract.ActionDat
 func (s *spy) Ship(context.Context, int64, string, string, string, int64) (contract.ActionData, error) {
 	return contract.ActionData{}, nil
 }
-func (s *spy) DownloadAsset(context.Context, int64, string, string, bool, int64) (contract.AssetBytes, error) {
-	return contract.AssetBytes{Grant: &contract.DownloadGrant{URL: "http://127.0.0.1/x", ExpiresAtMs: 1}}, nil
+func (s *spy) DownloadAsset(context.Context, int64, string, string, bool, int64) (contract.DownloadGrant, error) {
+	return contract.DownloadGrant{URL: "http://127.0.0.1/x", ExpiresAtMs: 1}, nil
 }
 func (s *spy) Catalog(context.Context, int64, int64) (contract.CatalogData, error) {
 	return contract.CatalogData{DBs: []contract.SourceCard{}, PropDefs: []contract.PropDef{}, Rows: []contract.CatalogRow{}}, nil
@@ -77,13 +86,13 @@ func TestSupplierAuthAndValidation(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/supplier/me", nil))
-	if err := parity.DiffHTTP(parity.Exchange{Status: rec.Code, Body: rec.Body.Bytes()}, parity.Exchange{Status: 200, Body: []byte(`{"data":{"sources":[{"sourceId":"s","name":"厂","country":"CN","icon":""}]}}`)}); err != nil {
+	if err := parity.DiffHTTP(parity.Exchange{Status: rec.Code, Body: rec.Body.Bytes()}, parity.Exchange{Status: 200, Body: []byte(`{"data":{"sources":[{"source_id":"s","name":"厂","country":"CN","icon":""}]}}`)}); err != nil {
 		t.Fatal(err)
 	}
 
 	rec = httptest.NewRecorder()
-	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/supplier/dispatches?state=rejected", nil))
-	if err := parity.DiffHTTP(parity.Exchange{Status: rec.Code, Body: rec.Body.Bytes()}, parity.Exchange{Status: 400, Body: []byte(`{"error":"未知的派发包状态","code":"validation"}`)}); err != nil {
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/supplier/workspaces/s/dispatches?view=rejected", nil))
+	if err := parity.DiffHTTP(parity.Exchange{Status: rec.Code, Body: rec.Body.Bytes()}, parity.Exchange{Status: 400, Body: []byte(`{"error":"未知的订单视图","code":"validation"}`)}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -150,6 +159,26 @@ func TestSupplierAuthAndValidation(t *testing.T) {
 	broken.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/supplier/me", nil))
 	if rec.Code != 500 || !strings.Contains(rec.Body.String(), `"code":"internal"`) {
 		t.Fatalf("resolve %d %s", rec.Code, rec.Body.Bytes())
+	}
+}
+
+func TestWorkspaceListForwardsValidatedFilters(t *testing.T) {
+	actions := &spy{}
+	now := time.Date(2026, 10, 29, 8, 0, 0, 0, time.UTC)
+	r := chi.NewRouter()
+	Mount(r, Deps{Session: fixedSession{userID: 7}, Actions: actions, Now: func() time.Time { return now }})
+	path := "/api/supplier/workspaces/factory-a/dispatches?view=urgent&search=%E5%95%86%E5%93%81&status=accepted&reason=nudge"
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+	if rec.Code != 200 || actions.source != "factory-a" || actions.view != "urgent" || actions.search != "商品" || actions.status != "accepted" || actions.reason != "nudge" || !actions.at.Equal(now) {
+		t.Fatalf("response %d %s, forwarded %+v", rec.Code, rec.Body.String(), actions)
+	}
+	for _, query := range []string{"view=pending&reason=nudge", "view=urgent&status=shipped", "view=urgent&reason=unknown", "view=urgent&cursor=bad"} {
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/supplier/workspaces/factory-a/dispatches?"+query, nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: %d %s", query, rec.Code, rec.Body.String())
+		}
 	}
 }
 

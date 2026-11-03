@@ -56,6 +56,11 @@ export function bannedTagRejection(raw: string): string | null {
   return `标签含受限词，不能保存：${rejected.join("、")}`
 }
 
+export function filterBannedTags(tags: readonly string[]): string[] {
+  const flags = banFlags([...tags])
+  return tags.filter((_, index) => !flags[index])
+}
+
 export function normalizeTagToken(raw: string): string {
   const trimmed = raw.normalize("NFKC").trim().replace(/^#+/, "").trim()
   return foldTagSeparators(foldLatinLookalikes(trimmed.toLowerCase()))
@@ -97,7 +102,7 @@ function banFlags(tokens: string[]): boolean[] {
     const width = rule.term.split("_").filter(Boolean).length
     if (width < 2 || tokens.length < width) continue
     for (let start = 0; start <= tokens.length - width; start++) {
-      const joined = normalizeTagToken(tokens.slice(start, start + width).join(" "))
+      const joined = tokens.slice(start, start + width).map(normalizeTagToken).join("_")
       if (tokenMatches(joined, rule)) {
         for (let index = start; index < start + width; index++) flags[index] = true
       }

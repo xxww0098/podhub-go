@@ -25,15 +25,14 @@ type StorageNode struct {
 	Children              []StorageNode `json:"children"`
 }
 
-// TreeNode is one wire node. The tree ships as one flat node list; a
-// descendant points at its parent's type_id, and a root carries null.
+// TreeNode carries the effective category and its parent's index in the flat list.
 type TreeNode struct {
 	DescriptionCategoryID int64  `json:"description_category_id"`
 	CategoryName          string `json:"category_name"`
 	TypeID                int64  `json:"type_id"`
 	TypeName              string `json:"type_name"`
 	Disabled              bool   `json:"disabled"`
-	ParentID              *int64 `json:"parent_id"`
+	ParentIndex           *int64 `json:"parent_index"`
 }
 
 // TreeData is a fresh cache hit.
@@ -43,26 +42,29 @@ type TreeData struct {
 	Items       []TreeNode `json:"items"`
 }
 
-// FlattenTree walks the stored recursion depth-first into the flat wire
-// list. The parent pointer is the parent node's type_id.
+// FlattenTree uses array positions because category nodes share type_id=0.
 func FlattenTree(nodes []StorageNode) []TreeNode {
 	out := make([]TreeNode, 0, len(nodes))
-	var walk func(rows []StorageNode, parent *int64)
-	walk = func(rows []StorageNode, parent *int64) {
+	var walk func(rows []StorageNode, parent *int64, category int64)
+	walk = func(rows []StorageNode, parent *int64, category int64) {
 		for _, node := range rows {
-			id := node.TypeID
+			id := int64(len(out))
+			current := node.DescriptionCategoryID
+			if current <= 0 {
+				current = category
+			}
 			out = append(out, TreeNode{
-				DescriptionCategoryID: node.DescriptionCategoryID,
+				DescriptionCategoryID: current,
 				CategoryName:          node.CategoryName,
 				TypeID:                node.TypeID,
 				TypeName:              node.TypeName,
 				Disabled:              node.Disabled,
-				ParentID:              parent,
+				ParentIndex:           parent,
 			})
-			walk(node.Children, &id)
+			walk(node.Children, &id, current)
 		}
 	}
-	walk(nodes, nil)
+	walk(nodes, nil, 0)
 	return out
 }
 

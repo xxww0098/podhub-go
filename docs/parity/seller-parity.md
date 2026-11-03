@@ -1,16 +1,16 @@
 # Seller 出口对照（PR-6）
 
-对照提交：Rust `a03d735`。`OZON_WRITE_KILL_SWITCH` 只在 `internal/config` 解析一次。`seller.Egress` 只读 `config.OzonWritesDisabled()`，没有第二套解析。读和探测不看这个开关。
+对照提交：Rust `a03d735`。本文保留 PR-6 的出口与扫描基线；六个后续 tick 见 [对账缺口补齐](reconcile-gap-parity.md)，不能再把下表的「空转」当作当前全貌。`OZON_WRITE_KILL_SWITCH` 只在 `internal/platform/config` 解析一次。`seller.Egress` 只读 `config.OzonWritesDisabled()`，没有第二套解析。读和探测不看这个开关。
 
 ## 出口
 
 `CLOUD_SELLER_BASE_URL` 的接受条件和 `src/store/egress.rs` 的 `is_loopback_origin` 相同：`http`、loopback 主机、显式端口、路径 `/`、没有用户信息、查询和片段。其它值在 Rust 里会回到 `https://api-seller.ozon.ru`。本进程即使落到这个生产源也拒绝拨号（`ErrRefusedOrigin`），计数保持 0。这是安全约束，不是结果等价。
 
-L1 是 `src/lease/mod.rs` 的 `RESERVE_SQL`，原样放在 `internal/seller/budget.go`。时钟只用 `clock_timestamp()`。集成测试对 `lease_budget` 做了一次成功预留。L2 槽位：读 8、交互读 4、写 2、交互写 2，合计 16。默认速率：普通 5/s 突发 10，分析 1/s 突发 1，目录间隔 2s 突发 1。目录路径只有四条：`/v3/product/list`、`/v3/product/info/list`、`/v4/product/info/stocks`、`/v5/product/info/prices`。`/v3/product/import` 留在 default。
+L1 是 `src/lease/mod.rs` 的 `RESERVE_SQL`，原样放在 `internal/seller/ozon/repo/budget.go`。时钟只用 `clock_timestamp()`。集成测试对 `lease_budget` 做了一次成功预留。L2 槽位：读 8、交互读 4、写 2、交互写 2，合计 16。默认速率：普通 5/s 突发 10，分析 1/s 突发 1，目录间隔 2s 突发 1。目录路径只有四条：`/v3/product/list`、`/v3/product/info/list`、`/v4/product/info/stocks`、`/v5/product/info/prices`。`/v3/product/import` 留在 default。
 
 ## 上游代理
 
-`GET` 与 `POST /api/seller/upstream/{uuid}/*` 在 `internal/seller.MountUpstream`。允许表 31 条，先于数据库。chi v5 把 `{name:*}` 当成单段正则，所以捕获用末尾 `*`。`URL.Path` 会把 `%2F` 解成斜杠，chi 的 `*` 仍保留编码，允许表对不上，现为 403。读路径不查 kill switch。超 2MiB 的正文是 413 `Failed to buffer the request body`，`Content-Type: text/plain; charset=utf-8`。
+PR-6 当时的上游代理是 `GET` 与 `POST /api/seller/upstream/{uuid}/*`，原挂载函数名为 `MountUpstream`；当前路由以 `api/openapi.yaml` 与 `internal/app/testdata/routes.txt` 为准。允许表 31 条，先于数据库。chi v5 把 `{name:*}` 当成单段正则，所以捕获用末尾 `*`。`URL.Path` 会把 `%2F` 解成斜杠，chi 的 `*` 仍保留编码，允许表对不上，现为 403。读路径不查 kill switch。超 2MiB 的正文是 413 `Failed to buffer the request body`，`Content-Type: text/plain; charset=utf-8`。
 
 ## 对账探测
 

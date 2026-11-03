@@ -54,7 +54,7 @@ func ClientIP(h http.Header) string {
 }
 
 func pairKey(email, ip string) ([32]byte, [32]byte) {
-	return sha256.Sum256([]byte(email)), sha256.Sum256([]byte(ip))
+	return sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(email)))), sha256.Sum256([]byte(ip))
 }
 
 func ipScope() [32]byte { return [32]byte{} }

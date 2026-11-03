@@ -92,55 +92,58 @@ test("export formats one store per line and parses back losslessly", () => {
   )
 })
 
-test("#标签 tokens after the API Key become the row's tag set", () => {
+test("the # token after the API Key becomes the row's group", () => {
   const { rows, issues } = parseStoreImportText(
-    "a店,111,key-a #华东 #VIP\nb店,222,key-b#自营\nc店,333,key-c #华东 #华东\n主店，444，key-d ＃全角",
+    "a店,111,key-a #华东\nb店,222,key-b#自营\n主店，444，key-d ＃全角",
   )
   assert.equal(issues.length, 0)
-  assert.deepEqual(rows[0].tags, ["华东", "VIP"])
-  assert.deepEqual(rows[1].tags, ["自营"])
-  assert.deepEqual(rows[2].tags, ["华东"])
-  assert.deepEqual(rows[3].tags, ["全角"])
+  assert.deepEqual(rows.map((row) => row.group), ["华东", "自营", "全角"])
 })
 
-test("a line without a marker leaves tags undefined; a bare marker clears", () => {
+test("a line without a marker leaves group undefined; a bare marker clears", () => {
   const { rows, issues } = parseStoreImportText("a店,111,key-a\nb店,222,key-b #\n")
   assert.equal(issues.length, 0)
-  assert.equal(rows[0].tags, undefined)
-  assert.deepEqual(rows[1].tags, [])
+  assert.equal(rows[0].group, undefined)
+  assert.equal(rows[1].group, "")
 })
 
 test("a name carrying # keeps it because only the last field is scanned", () => {
   const { rows, issues } = parseStoreImportText("店#1铺,123,key #a")
   assert.equal(issues.length, 0)
   assert.equal(rows[0].name, "店#1铺")
-  assert.deepEqual(rows[0].tags, ["a"])
+  assert.equal(rows[0].group, "a")
 })
 
-test("an overlong tag name turns the line into an issue", () => {
+test("more than one group token turns the line into an issue", () => {
+  const { rows, issues } = parseStoreImportText("a店,111,key #华东 #VIP")
+  assert.equal(rows.length, 0)
+  assert.deepEqual(issues, [
+    { line: 1, source: "a店,111,key #华东 #VIP", reason: "分组只能填一个" },
+  ])
+})
+
+test("an overlong group name turns the line into an issue", () => {
   const { rows, issues } = parseStoreImportText(`a店,111,key #${"长".repeat(65)}`)
   assert.equal(rows.length, 0)
   assert.deepEqual(issues, [
     {
       line: 1,
       source: `a店,111,key #${"长".repeat(65)}`,
-      reason: "标签名过长",
+      reason: "分组名过长",
     },
   ])
 })
 
-test("export writes tags as # suffixes and skips names it cannot encode", () => {
+test("export writes the group as a # suffix and skips names it cannot encode", () => {
   const text = formatStoreImportText([
-    { name: "a店", client_id: "1", api_key: "k-1", tags: ["华东", "VIP 仓"] },
-    { name: "b店", client_id: "2", api_key: "k-2", tags: ["逗,号", "好#名", "正常"] },
-    { name: "c店", client_id: "3", api_key: "k-3", tags: [] },
+    { name: "a店", client_id: "1", api_key: "k-1", group: "华东" },
+    { name: "b店", client_id: "2", api_key: "k-2", group: "逗,号" },
+    { name: "c店", client_id: "3", api_key: "k-3", group: null },
     { name: "d店", client_id: "4", api_key: "k-4" },
   ])
-  assert.equal(text, "a店,1,k-1 #华东 #VIP 仓\nb店,2,k-2 #正常\nc店,3,k-3\nd店,4,k-4")
+  assert.equal(text, "a店,1,k-1 #华东\nb店,2,k-2\nc店,3,k-3\nd店,4,k-4")
   const { rows, issues } = parseStoreImportText(text)
   assert.equal(issues.length, 0)
-  assert.deepEqual(rows[0].tags, ["华东", "VIP 仓"])
-  assert.deepEqual(rows[1].tags, ["正常"])
-  assert.equal(rows[2].tags, undefined)
-  assert.equal(rows[3].tags, undefined)
+  assert.equal(rows[0].group, "华东")
+  assert.equal(rows[1].group, undefined)
 })

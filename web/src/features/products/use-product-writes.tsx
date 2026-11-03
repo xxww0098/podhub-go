@@ -18,6 +18,7 @@ import {
   VERIFY_LIMIT,
   chunkRows,
   listAfterArchive,
+  openInScope,
   primaryStoreGroup,
   rowKey,
   writableFor,
@@ -26,12 +27,6 @@ import {
 import { ProductPriceDialog, type AppliedPrice } from "./products-price-dialog"
 import { ProductPromotionDialog } from "./products-promotion-dialog"
 import { ProductStockDialog } from "./products-stock-dialog"
-import { ProductVariantDialog } from "./products-variant-dialog"
-import {
-  isVariantAction,
-  openInScope,
-  type VariantTargetOption,
-} from "./products-variant-model"
 
 type WriteAction = Exclude<ProductAction, "verify">
 
@@ -49,7 +44,6 @@ export function useProductWrites({
   listStatus,
   onArchived,
   scopeKey,
-  variantTargets,
 }: {
   stores: StoreProductOverviewRow[]
   syncDisabled: boolean
@@ -63,8 +57,6 @@ export function useProductWrites({
   onArchived: (rows: StoreProductRow[]) => void
   /** 工作空间 + 店铺：换范围后属于上一范围的打开状态一律作废。 */
   scopeKey: string
-  /** 「移入已有同款」的候选：当前列表里已观察到的同款分组。 */
-  variantTargets: readonly VariantTargetOption[]
 }): {
   verifying: Set<string>
   runAction: (action: ProductAction, candidates: StoreProductRow[]) => void
@@ -190,14 +182,6 @@ export function useProductWrites({
     ],
   )
 
-  /** 分组回执已落地：清勾选并重读镜像。分组事实由镜像观察，核实走账本观察轴
-   * （对话框里的「核实结果」），这里不再向 Ozon 追一次单行读。 */
-  const applyVariantOperation = useCallback(() => {
-    clearSelection()
-    void reloadOverview()
-    void reloadList()
-  }, [clearSelection, reloadOverview, reloadList])
-
   const applyPrices = useCallback(
     (applied: AppliedPrice[]) => {
       const target = mutationRows[0]?.store_id
@@ -205,7 +189,7 @@ export function useProductWrites({
       setRows((prev) =>
         prev.map((row) => {
           const hit = row.store_id === target ? patch.get(row.product_id) : undefined
-          return hit ? { ...row, price: hit.price, oldPrice: hit.oldPrice } : row
+          return hit ? { ...row, price: hit.price, old_price: hit.oldPrice } : row
         }),
       )
       void reloadOverview()
@@ -216,7 +200,6 @@ export function useProductWrites({
   const store = stores.find((item) => item.store_id === mutationRows[0]?.store_id)
   const storeName = store?.name ?? ""
   const lifecycleAction = opened && isLifecycle(opened.action) ? opened.action : null
-  const variantAction = opened && isVariantAction(opened.action) ? opened.action : null
   const close = () => setMutation(null)
   const rowsFor = (action: WriteAction) => (opened?.action === action ? mutationRows : [])
 
@@ -251,18 +234,6 @@ export function useProductWrites({
         onClose={close}
         onApplied={applyLifecycle}
       />
-      {/* 只在打开时挂载：关掉再打开是一次新意图，内部状态与 operation_id 都要换新。 */}
-      {variantAction ? (
-        <ProductVariantDialog
-          action={variantAction}
-          rows={mutationRows}
-          storeName={storeName}
-          scopeKey={scopeKey}
-          targets={variantTargets}
-          onClose={close}
-          onApplied={applyVariantOperation}
-        />
-      ) : null}
     </>
   )
 

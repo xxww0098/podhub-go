@@ -2,21 +2,59 @@ package app
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
+	opscontract "github.com/xxww0098/podhub-go/internal/ops/contract"
 	ozonerrdomain "github.com/xxww0098/podhub-go/internal/ozonerr/domain"
 	ozonerrsvc "github.com/xxww0098/podhub-go/internal/ozonerr/service"
 	"github.com/xxww0098/podhub-go/internal/platform/config"
-	"github.com/xxww0098/podhub-go/internal/seller"
+	seller "github.com/xxww0098/podhub-go/internal/seller/ozon"
+	whcontract "github.com/xxww0098/podhub-go/internal/warehouse/contract"
 )
+
+func TestWarehouseOpenerPreservesAdmission(t *testing.T) {
+	const storeID = "11111111-1111-1111-1111-111111111111"
+	now := time.Date(2026, 10, 28, 0, 0, 0, 0, time.UTC)
+	store := &warehouseAdmission{t: t, storeID: storeID, now: now}
+	opener := admitOpener{store: store}
+	clientID, apiKey, err := opener.Open(context.Background(), 7, 9, "owner", storeID, now)
+	if err != nil || clientID != "fixture-client" || apiKey != "fixture-key" {
+		t.Fatalf("admitted credential lost: %q %v", clientID, err)
+	}
+	store.err = &opscontract.Fail{Status: 404, Code: "not_found", Message: "Store 不存在"}
+	clientID, apiKey, err = opener.Open(context.Background(), 7, 9, "owner", storeID, now)
+	var refused *whcontract.OpenError
+	if !errors.As(err, &refused) || refused.Status != 404 || refused.Code != "not_found" || clientID != "" || apiKey != "" {
+		t.Fatalf("admission refusal lost: %v", err)
+	}
+}
+
+type warehouseAdmission struct {
+	t       *testing.T
+	storeID string
+	now     time.Time
+	err     error
+}
+
+func (s *warehouseAdmission) Admit(_ context.Context, orgID, userID int64, role, storeID string, nowMS int64) (opscontract.Admitted, error) {
+	if orgID != 7 || userID != 9 || role != "owner" || storeID != s.storeID || nowMS != s.now.UnixMilli() {
+		s.t.Fatal("warehouse admission changed the actor, store or clock")
+	}
+	if s.err != nil {
+		return opscontract.Admitted{}, s.err
+	}
+	return opscontract.Admitted{Secret: opscontract.Secret{ClientID: "fixture-client", APIKey: "fixture-key"}}, nil
+}
 
 func TestMountedWarehouseKillSwitchAndCapability(t *testing.T) {
 	t.Setenv("OZON_WRITE_KILL_SWITCH", "1")

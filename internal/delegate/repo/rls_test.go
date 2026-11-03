@@ -16,8 +16,8 @@ func TestDispatchRLS(t *testing.T) {
 	memberB := int64(880104)
 	orgA := seedOrg(t, ctx, pool, sellerA, "rls-a")
 	orgB := seedOrg(t, ctx, pool, sellerB, "rls-b")
-	seedUser(t, ctx, pool, memberA, "rls-ma")
-	seedUser(t, ctx, pool, memberB, "rls-mb")
+	seedSupplierUser(t, ctx, pool, memberA, "rls-ma")
+	seedSupplierUser(t, ctx, pool, memberB, "rls-mb")
 	sourceA := "src_rls_a"
 	sourceB := "src_rls_b"
 	seedSource(t, ctx, pool, sourceA, "rls-a")

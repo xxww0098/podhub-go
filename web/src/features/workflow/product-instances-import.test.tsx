@@ -109,7 +109,7 @@ test("ten source images import one row each, in stable order, with isolated fail
     })
     assert.equal(
       result.products.workflow_instance_0?.ai_prompt,
-      "识图提示词",
+      CARD.payload.aiPrompt,
       "an instance inherits the card's prompt; it does not carry one of its own",
     )
   } finally {

@@ -41,7 +41,7 @@ export function image(digest = DIGEST, byteLength?: number): DeliverMediaObjectR
 }
 export type Call = { url: string; method: string; headers: Headers; body?: BodyInit | null; signal?: AbortSignal | null }
 export function json(data: unknown, status = 200, code = "media_complete_missing"): Response {
-  return new Response(JSON.stringify(status === 200 ? { data } : { code, message: "请重试" }), {
+  return new Response(JSON.stringify(status === 200 ? data : { code, message: "请重试" }), {
     status, headers: { "Content-Type": "application/json", "Retry-After": "0" },
   })
 }
@@ -79,10 +79,13 @@ export function directHarness(options: {
     const ext = String(match[2] ?? item.extension ?? "jpg")
     const operation = match[3] ?? match[4]
     let target = answer(digest, ext)
-    if (body.upload_batch && !["mp4", "mov"].includes(ext!)) {
-      const [stamp, uuid] = String(body.upload_batch).split(".")
+    if (!["mp4", "mov"].includes(ext!)) {
+      const [stamp, uuid] = String(body.upload_batch ?? `${Date.now()}.22222222-2222-4222-8222-222222222222`).split(".")
       const prefix = `uploads/2026-09-16/${stamp}-${uuid}/`
-      target = { ...target, objectKey: prefix + target.objectKey, publicUrl: PUBLIC + "/" + prefix + target.objectKey }
+      target = { ...target, objectKey: `${prefix}${digest}.${ext}`, publicUrl: `${PUBLIC}/${prefix}${digest}.${ext}` }
+    }
+    if (operation === "complete" && typeof body.object_key === "string") {
+      target = { ...target, objectKey: body.object_key, publicUrl: `${PUBLIC}/${body.object_key}` }
     }
     const wire = { account_id: target.accountId, workspace_uuid: target.workspaceUuid, storage_revision: target.storageRevision,
       object_key: target.objectKey, public_url: target.publicUrl }

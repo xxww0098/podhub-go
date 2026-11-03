@@ -20,7 +20,7 @@ import type { ListingRowView } from "@/bindings/listing-projection"
 import { rememberListingRows, rowCacheScope } from "@/bindings/listing-row-cache"
 import { TRACE_ID_PATTERN } from "@/lib/utils"
 import type { FrozenItem } from "../platforms/core"
-import type { OzonBody } from "../platforms/ozon"
+import type { OzonBody } from "../platforms/ozon/adapter"
 import { rowStatusView } from "../model/row-state"
 import { ozonAdmissionFailure, projectOzonListingIssue, type OzonSubmissionError } from "./ozon-admission-refusal"
 import { cancelledResult, revisionMismatch } from "./send-local"
@@ -64,6 +64,22 @@ export type OzonSendContext = {
   replayed: boolean
 }
 
+/** Cloud's compose refusal, said in the operator's words: a stale slice is a
+ * re-slice, not a field error. Only declared codes are projected; any other
+ * detail stays server-side so it cannot become row presentation. */
+function composeRefusal(detail: string): OzonSubmissionError {
+  switch (detail) {
+    case "media_expired":
+      return { code: "workflow_media_expired", message: "图片切片已过有效期，请重新切片并上传后再发送", remediation: "清除生成内容后重新准备该行；也可以只重试切片并上传。" }
+    case "media_foreign":
+      return { code: "workflow_media_foreign", message: "图片不属于当前工作空间，请重新上传后再发送", remediation: "重新导入原图并生成切片后重试。" }
+    case "schema_stale":
+      return { code: "workflow_schema_stale", message: "商品字段与店铺类目版本不一致，请刷新类目字段后重试", remediation: "刷新类目字段并重新校验该行后发送。" }
+    default:
+      return { code: "workflow_compose_failed", message: "该商品在云端拼接时被拒绝，请重新校验商品字段", remediation: "查看字段校验结果并修正；仍失败请联系管理员核对该商品。" }
+  }
+}
+
 export function cloudRowResult(item: SubmitItem): OzonRowResult {
   const intent = item.intent
   const receipt = intent?.submission_receipt ?? undefined
@@ -71,7 +87,7 @@ export function cloudRowResult(item: SubmitItem): OzonRowResult {
   const error: OzonSubmissionError | undefined = item.skipped === "revision_mismatch"
     ? revisionMismatch(item.row_id).error : listingIssue
     ? { code: listingIssue.code, message: listingIssue.summary, remediation: listingIssue.remediation, listingIssue }
-    : item.detail ? { code: "workflow_compose_failed", message: "该商品在云端拼接时被拒绝，请重新校验商品字段", remediation: "查看字段校验结果并修正；仍失败请联系管理员核对该商品。" } : undefined
+    : item.detail ? composeRefusal(item.detail) : undefined
   return {
     row_id: item.row_id,
     outcome: item.created ? "start" : REFUSED.includes(item.skipped ?? "") ? "blocked" : "noop",

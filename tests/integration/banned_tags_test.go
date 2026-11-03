@@ -12,9 +12,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	httpapi "github.com/xxww0098/podhub-go/internal/app/api"
+	coremod "github.com/xxww0098/podhub-go/internal/listing/core"
 	listing "github.com/xxww0098/podhub-go/internal/listing/core/contract"
-	_ "github.com/xxww0098/podhub-go/internal/listing/core/service/engine"
-	_ "github.com/xxww0098/podhub-go/internal/listing/rules"
+	listengine "github.com/xxww0098/podhub-go/internal/listing/core/service/engine"
 	"github.com/xxww0098/podhub-go/tests/parity"
 )
 
@@ -44,11 +44,7 @@ func testBannedTagRules(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	}
 
 	before := tableCounts(t, ctx, pool)
-	engine, err := listing.OpenEmbedded(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = engine.Close(context.Background()) })
+	engine := tagsEngine(t)
 	handler := httpapi.HandlerFromMux(&httpapi.Server{Pool: pool, Engine: engine}, chi.NewRouter())
 
 	rec := httptest.NewRecorder()
@@ -80,7 +76,7 @@ func testBannedTagRules(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	for i, rule := range doc.BannedTags.Rules {
 		rules[i] = listing.Rule{Term: rule.Term, MatchMode: rule.MatchMode}
 	}
-	wantVersion, err := listing.RulesVersion(rules)
+	wantVersion, err := listengine.RulesVersion(rules)
 	if err != nil || wantVersion != doc.RulesVersion {
 		t.Fatalf("version %s %s %v", doc.RulesVersion, wantVersion, err)
 	}
@@ -115,4 +111,14 @@ func testBannedTagRules(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	if err := parity.DiffCounts(before, tableCounts(t, ctx, pool)); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// tagsEngine is the banned-tag engine over the embedded listing-core module.
+func tagsEngine(t testing.TB) *listengine.Engine {
+	t.Helper()
+	mod, err := coremod.Shared(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return listengine.New(mod)
 }

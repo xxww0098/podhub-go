@@ -2,8 +2,9 @@ import { api } from "@/api/client"
 import { route } from "@/api/routes"
 import type { components } from "@/api/schema"
 import type { IntegrationCredentialsOverview } from "./commands"
-import { replaceIntegrationConfigRequest, type MediaCredential } from "./integration-writes"
-type IntegrationConfigData = components["schemas"]["IntegrationConfigData"]
+import { isAiRuntime, replaceIntegrationConfigRequest } from "./integration-writes"
+import { refuse } from "./refusal"
+type IntegrationConfigData = components["schemas"]["AdminIntegrationConfigView"]
 
 /**
  * The console's read model of the platform integrations. Key material never
@@ -13,6 +14,7 @@ type IntegrationConfigData = components["schemas"]["IntegrationConfigData"]
 export function integrationOverview(
   config: IntegrationConfigData,
 ): IntegrationCredentialsOverview {
+  if (!Array.isArray(config.ai_accounts)) throw refuse("integration_ai_invalid", "AI 账号列表未确认，请更新服务并刷新后重试")
   const ai_accounts = config.ai_accounts.map((row) => ({
     id: row.id,
     label: row.label,
@@ -22,29 +24,15 @@ export function integrationOverview(
     base_url: row.base_url,
     api_format: row.api_format,
     model: row.model,
-    thinking: row.thinking ?? "provider_default",
-    thinking_format: row.thinking_format ?? "none",
+    thinking: row.thinking === "disabled" ? false as const : row.thinking,
+    thinking_format: row.thinking_format,
     priority: row.priority ?? 0,
-  }));
-  const media_accounts = config.storage_buckets.map((row) => ({
-    id: row.id,
-    label: row.label,
-    role: row.role,
-    provider: row.provider ?? "cloudflare",
-    ref_id: row.id,
-    configured: true,
-    active: row.active,
-    endpoint: row.endpoint,
-    region: row.region,
-    bucket: row.bucket,
-    key_prefix: row.key_prefix,
-    public_base_url: row.public_base_url,
-    force_path_style: row.force_path_style,
+    purpose: row.purpose === "ocr" || row.purpose === "image" ? row.purpose : null,
   }));
   return {
     ai_default_model: config.ai_default_model,
     ai_accounts,
-    media_accounts,
+    ai_runtime: isAiRuntime(config.ai_runtime) ? config.ai_runtime : null,
   };
 }
 
@@ -52,12 +40,11 @@ export function integrationOverview(
 export async function writeIntegrationConfig(
   config: IntegrationConfigData,
   aiCredential?: [string, string],
-  mediaCredential?: MediaCredential,
 ): Promise<IntegrationCredentialsOverview> {
   return integrationOverview(
     await api.put<IntegrationConfigData>(
       route("adminIntegrationsConfig"),
-      replaceIntegrationConfigRequest(config, aiCredential, mediaCredential),
+      replaceIntegrationConfigRequest(config, aiCredential),
     ),
   );
 }

@@ -69,6 +69,7 @@ export function PriceEditor({
           </TabsList>
         </Tabs>
 
+        <div className="flex flex-col gap-3 rounded-xl border border-border bg-muted/30 p-3.5">
         {draft.billing.mode === "token" ? (
           <>
             <BillingYuanInput
@@ -128,6 +129,7 @@ export function PriceEditor({
             }
           />
         )}
+        </div>
         {supported && modelKey !== defaultModel ? (
           <label className="flex w-fit cursor-pointer items-center gap-2 text-compact text-muted-foreground">
             <Checkbox
@@ -139,11 +141,11 @@ export function PriceEditor({
             发布后设为当前识图
           </label>
         ) : null}
-        <p className="flex flex-wrap items-baseline justify-between gap-3 text-meta text-muted-foreground">
+        <p className="flex flex-wrap items-baseline justify-between gap-3 rounded-lg bg-muted px-3 py-2 text-meta text-muted-foreground">
           <span>保存后立即按此价格计费。</span>
           {estimate !== undefined ? (
             <span
-              className="shrink-0 font-mono tabular-nums"
+              className="shrink-0 font-mono text-compact font-medium tabular-nums text-foreground"
               title="按典型识图 4 万输入 + 3.5 千输出估算"
             >
               ≈ ¥{formatYuan(estimate)}/次

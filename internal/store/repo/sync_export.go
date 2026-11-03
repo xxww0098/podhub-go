@@ -6,8 +6,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/xxww0098/podhub-go/internal/platform/jobsched"
 	"github.com/xxww0098/podhub-go/internal/platform/seal"
+	queuecontract "github.com/xxww0098/podhub-go/internal/queue/contract"
 	"github.com/xxww0098/podhub-go/internal/store/domain"
 )
 
@@ -183,7 +183,7 @@ func StoreCurrencyTx(ctx context.Context, tx pgx.Tx, state domain.SyncSnapshot) 
 
 // SettleJobTx moves this Job to a terminal state inside the caller's
 // transaction, behind the same lease fence the standalone settle uses.
-func SettleJobTx(ctx context.Context, tx pgx.Tx, lease jobsched.Lease, terminal string, result []byte) error {
+func SettleJobTx(ctx context.Context, tx pgx.Tx, lease queuecontract.Lease, terminal string, result []byte) error {
 	tag, err := tx.Exec(ctx, `
 		UPDATE public.jobs
 		   SET state = $4,
@@ -312,34 +312,4 @@ func SetSyncNextDueTx(ctx context.Context, tx pgx.Tx, orgID int64, storeUUID str
 		UPDATE public.store_product_sync SET next_due_at_ms = $3
 		 WHERE store_id = $1::uuid AND org_id = $2`, storeUUID, orgID, nextDueMS)
 	return err
-}
-
-// CleanupSyncRowsTx is the daily old-data sweep (data-model §7): gone products
-// past thirty days, mirrors of stores soft-deleted past thirty days, pressure
-// incidents past seven. Every statement is one set-based DELETE, safe to
-// re-run.
-func CleanupSyncRowsTx(ctx context.Context, tx pgx.Tx, nowMS int64) error {
-	const day = int64(24 * 60 * 60 * 1000)
-	statements := []struct {
-		sql string
-		arg int64
-	}{
-		{`DELETE FROM public.store_products
-		   WHERE gone_at_ms IS NOT NULL AND gone_at_ms < $1`, nowMS - 30*day},
-		{`DELETE FROM public.store_product_sync p
-		   USING public.organization_stores s
-		   WHERE s.uuid = p.store_id AND s.org_id = p.org_id
-		     AND s.deleted_at_ms IS NOT NULL AND s.deleted_at_ms < $1`, nowMS - 30*day},
-		{`DELETE FROM public.store_products p
-		   USING public.organization_stores s
-		   WHERE s.id = p.store_pk AND s.org_id = p.org_id
-		     AND s.deleted_at_ms IS NOT NULL AND s.deleted_at_ms < $1`, nowMS - 30*day},
-		{`DELETE FROM public.seller_read_incidents WHERE at_ms < $1`, nowMS - 7*day},
-	}
-	for _, statement := range statements {
-		if _, err := tx.Exec(ctx, statement.sql, statement.arg); err != nil {
-			return err
-		}
-	}
-	return nil
 }

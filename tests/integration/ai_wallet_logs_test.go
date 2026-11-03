@@ -20,7 +20,7 @@ import (
 	"github.com/xxww0098/podhub-go/internal/ai"
 	billingrepo "github.com/xxww0098/podhub-go/internal/billing/repo"
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
-	"github.com/xxww0098/podhub-go/internal/platform/llm"
+	"github.com/xxww0098/podhub-go/internal/platform/aiclient"
 	"github.com/xxww0098/podhub-go/internal/platform/writer"
 )
 
@@ -247,12 +247,20 @@ func TestChatWalletRaceAndLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	priceID := insertPrice(t, ctx, pool, "race-model")
+	// Keep the per-request ceiling equal to the fixture balance so the race
+	// still proves that two concurrent holds cannot oversell one wallet.
+	if _, err := pool.Exec(ctx, `UPDATE ai_price_schedules SET max_request_microfen = 1000 WHERE id = $1`, priceID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := billingrepo.Adjust(ctx, pool, org, "seed:96031", 1000, "seed"); err != nil {
 		t.Fatal(err)
 	}
 
-	t.Run("two orgs one wallet", func(t *testing.T) {
-		var calls int
+	chatBody := `{"model":"race-model","messages":[{"role":"user","content":"` + strings.Repeat("x", 3997) + `"}]}`
+	// raceChats sends one chat per entry of orgs concurrently and counts the outcomes.
+	// The hold is the 1000 microfen ceiling, the exact balance of a freshly seeded org.
+	raceChats := func(t *testing.T, orgs []int64, tag string) (ok, denied, calls int) {
+		t.Helper()
 		var mu sync.Mutex
 		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			mu.Lock()
@@ -262,27 +270,24 @@ func TestChatWalletRaceAndLease(t *testing.T) {
 			_, _ = w.Write([]byte(`{"id":"cmpl_race","choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":1000,"completion_tokens":0}}`))
 		}))
 		defer upstream.Close()
-		body := `{"model":"race-model","messages":[{"role":"user","content":"` + strings.Repeat("x", 3997) + `"}]}`
-		limits := ai.Limits{}
-		deps := ai.Deps{Pool: pool, BaseURL: upstream.URL, Limits: &limits, Converter: llm.Default(), Upstream: ai.HTTPUpstream{Client: upstream.Client()}}
+		deps := ai.Deps{Pool: pool, Wallet: aiWalletPort(), Text: serverText(upstream)}
 		raceCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
-		var wg sync.WaitGroup
 		type result struct {
 			org  int64
 			resp ai.Response
 		}
-		out := make(chan result, 2)
-		for i, id := range []int64{org, org2} {
+		var wg sync.WaitGroup
+		out := make(chan result, len(orgs))
+		for i, id := range orgs {
 			wg.Add(1)
 			go func(i int, id int64) {
 				defer wg.Done()
-				out <- result{id, ai.Chat(raceCtx, deps, id, user, fmt.Sprintf("race-%d", i), []byte(body))}
+				out <- result{id, ai.Chat(raceCtx, deps, aiclient.ChatCompletions, id, user, fmt.Sprintf("%s-%d", tag, i), []byte(chatBody))}
 			}(i, id)
 		}
 		wg.Wait()
 		close(out)
-		ok, denied := 0, 0
 		for item := range out {
 			raw, _ := json.Marshal(item.resp.JSON)
 			if bytes.Contains(raw, []byte("40P01")) {
@@ -306,25 +311,79 @@ func TestChatWalletRaceAndLease(t *testing.T) {
 				t.Fatalf("org %d status %d %s", item.org, item.resp.Status, raw)
 			}
 		}
+		return ok, denied, calls
+	}
+	walletState := func(t *testing.T, id int64) (balance, held, holds int64) {
+		t.Helper()
+		if err := pool.QueryRow(ctx, `SELECT balance_microfen, held_microfen FROM workspace_wallets WHERE org_id = $1`, id).Scan(&balance, &held); err != nil {
+			t.Fatal(err)
+		}
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM wallet_ledger WHERE org_id = $1 AND entry_type = 'hold'`, id).Scan(&holds); err != nil {
+			t.Fatal(err)
+		}
+		return balance, held, holds
+	}
+
+	t.Run("two orgs of one owner have separate wallets", func(t *testing.T) {
+		if _, err := billingrepo.Adjust(ctx, pool, org2, "seed:96031:org2", 1000, "seed"); err != nil {
+			t.Fatal(err)
+		}
+		// Only org spends. org2 owns the same user but a different wallet, so it keeps its 1000.
+		ok, denied, calls := raceChats(t, []int64{org}, "iso")
+		if ok != 1 || denied != 0 || calls != 1 {
+			t.Fatalf("ok %d denied %d calls %d", ok, denied, calls)
+		}
+		balance, held, holds := walletState(t, org)
+		if balance != 0 || held != 0 || holds != 1 {
+			t.Fatalf("org balance %d held %d holds %d", balance, held, holds)
+		}
+		balance2, held2, holds2 := walletState(t, org2)
+		if balance2 != 1000 || held2 != 0 || holds2 != 0 {
+			t.Fatalf("org2 changed by org spend: balance %d held %d holds %d", balance2, held2, holds2)
+		}
+		// org is now empty; org2 can still pay for its own request.
+		ok, denied, calls = raceChats(t, []int64{org, org2}, "iso2")
 		if ok != 1 || denied != 1 || calls != 1 {
 			t.Fatalf("ok %d denied %d calls %d", ok, denied, calls)
 		}
-		if walletBalance(t, ctx, pool, user) != 0 {
-			t.Fatalf("balance %d", walletBalance(t, ctx, pool, user))
-		}
-		var held, holds int64
-		if err := pool.QueryRow(ctx, `SELECT held_microfen FROM user_wallets WHERE user_id = $1`, user).Scan(&held); err != nil || held != 0 {
-			t.Fatalf("held %d %v", held, err)
-		}
-		if err := pool.QueryRow(ctx, `SELECT count(*) FROM wallet_ledger WHERE user_id = $1 AND entry_type = 'hold'`, user).Scan(&holds); err != nil || holds != 1 {
-			t.Fatalf("holds %d %v", holds, err)
+		balance, held, holds = walletState(t, org)
+		balance2, held2, holds2 = walletState(t, org2)
+		if balance != 0 || held != 0 || holds != 1 || balance2 != 0 || held2 != 0 || holds2 != 1 {
+			t.Fatalf("org %d/%d/%d org2 %d/%d/%d", balance, held, holds, balance2, held2, holds2)
 		}
 		mismatches, err := billingrepo.CheckInvariant(ctx, pool)
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, row := range mismatches {
-			if row.UserID == user {
+			if row.OrgID == org || row.OrgID == org2 {
+				t.Fatalf("invariant %+v", row)
+			}
+		}
+	})
+
+	t.Run("concurrent chats in one org do not oversell", func(t *testing.T) {
+		if _, err := billingrepo.Adjust(ctx, pool, org, "seed:96031:oversell", 1000, "seed"); err != nil {
+			t.Fatal(err)
+		}
+		_, _, holdsBefore := walletState(t, org)
+		ok, denied, calls := raceChats(t, []int64{org, org}, "oversell")
+		if ok != 1 || denied != 1 || calls != 1 {
+			t.Fatalf("ok %d denied %d calls %d", ok, denied, calls)
+		}
+		balance, held, _ := walletState(t, org)
+		if balance != 0 || held != 0 {
+			t.Fatalf("balance %d held %d", balance, held)
+		}
+		if _, _, holds := walletState(t, org); holds != holdsBefore+1 {
+			t.Fatalf("holds %d, want %d", holds, holdsBefore+1)
+		}
+		mismatches, err := billingrepo.CheckInvariant(ctx, pool)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, row := range mismatches {
+			if row.OrgID == org {
 				t.Fatalf("invariant %+v", row)
 			}
 		}
@@ -358,9 +417,8 @@ func TestChatWalletRaceAndLease(t *testing.T) {
 			VALUES ('billing', 'axum', $1, 1, $2::bigint, $2::bigint + 120000, $2::bigint, 'test')`, id.InstanceID+"-other", now); err != nil {
 			t.Fatal(err)
 		}
-		limits := ai.Limits{}
-		deps := ai.Deps{Pool: pool, BaseURL: "http://127.0.0.1:9", Limits: &limits, Converter: llm.Default(), Upstream: hitUpstream{hit: new(bool)}}
-		resp := ai.Chat(ctx, deps, org, user, "lease-foreign", []byte(`{"model":"race-model","messages":[{"role":"user","content":"hi"}]}`))
+		deps := ai.Deps{Pool: pool, Wallet: aiWalletPort(), Text: hitText(new(bool))}
+		resp := ai.Chat(ctx, deps, aiclient.ChatCompletions, org, user, "lease-foreign", []byte(`{"model":"race-model","messages":[{"role":"user","content":"hi"}]}`))
 		raw, _ := json.Marshal(resp.JSON)
 		if resp.Status != 503 || !bytes.Contains(raw, []byte("WRITES_DISABLED")) || !bytes.Contains(raw, []byte("计费写入未启用")) {
 			t.Fatalf("%d %s", resp.Status, raw)
@@ -381,9 +439,8 @@ func TestChatWalletRaceAndLease(t *testing.T) {
 			_, _ = w.Write([]byte(`{"id":"cmpl_lease","choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":1,"completion_tokens":0}}`))
 		}))
 		defer upstream.Close()
-		deps.BaseURL = upstream.URL
-		deps.Upstream = ai.HTTPUpstream{Client: upstream.Client()}
-		resp = ai.Chat(ctx, deps, org, user, "lease-match", []byte(`{"model":"race-model","messages":[{"role":"user","content":"hi"}]}`))
+		deps.Text = serverText(upstream)
+		resp = ai.Chat(ctx, deps, aiclient.ChatCompletions, org, user, "lease-match", []byte(`{"model":"race-model","messages":[{"role":"user","content":"hi"}]}`))
 		if resp.Status != 200 {
 			raw, _ = json.Marshal(resp.JSON)
 			t.Fatalf("%d %s", resp.Status, raw)
@@ -402,7 +459,7 @@ func TestChatWalletRaceAndLease(t *testing.T) {
 func logRouter(pool *pgxpool.Pool, user, org int64, role string) http.Handler {
 	router := chi.NewRouter()
 	ai.Register(router, ai.HTTPDeps{
-		Deps:   ai.Deps{Pool: pool},
+		Deps:   ai.Deps{Pool: pool, Wallet: aiWalletPort()},
 		Access: access.FixedResolver{Principal: &access.Principal{UserID: user, OrgID: org, WorkspaceRole: role}},
 	})
 	return router

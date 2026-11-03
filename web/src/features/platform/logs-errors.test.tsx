@@ -92,17 +92,18 @@ test("workbench system errors stay on the staff-only platform screen", () => {
   assert.match(staff, /搜索错误日志/)
 })
 
-test("the staff error log shows an empty state before any row arrives", () => {
+test("the staff error log does not claim an empty result before the read completes", () => {
   const html = renderToStaticMarkup(<AdminErrorsScreen />)
-  assert.match(html, /暂无错误日志/)
+  assert.doesNotMatch(html, /暂无错误日志/)
   assert.doesNotMatch(html, /加载失败/)
 })
 
 test("the table names Workspace, email, source and detail and exposes no credential column", () => {
   const source = readFileSync(new URL("./logs.tsx", import.meta.url), "utf8")
-  for (const column of ["Workspace", "用户邮箱", "来源", "错误码", "详情", "指纹", "设备", "版本"]) {
+  for (const column of ["Workspace / 用户邮箱", "来源", "错误码", "详情", "操作"]) {
     assert.match(source, new RegExp(`TableHead[^>]*>${column}`))
   }
+  for (const label of ["指纹", "设备", "版本", "系统"]) assert.match(source, new RegExp(`\\["${label}", row\\.`))
   assert.doesNotMatch(source, /凭据/)
   assert.doesNotMatch(source, /api_key/)
   assert.doesNotMatch(source, /session_token/)
@@ -113,7 +114,7 @@ test("the staff error log has server-backed source filters", () => {
   for (const label of ["搜索错误日志", "按错误来源筛选", "按接收时间筛选"]) {
     assert.match(source, new RegExp(label))
   }
-  assert.match(source, /adminListErrorLogs\(targetPage, PAGE_SIZE, filters\)/)
+  assert.match(source, /adminListErrorLogs\(targetPage, pageSize, effectiveFilters\)/)
   assert.match(source, /没有符合当前筛选条件的错误/)
 })
 

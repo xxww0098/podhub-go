@@ -33,6 +33,13 @@ export function SendConfirmFacts({
           tone: storeToneFor(id, assignments),
         }))
       : [{ id: storeLabel, label: storeLabel, tone: undefined }]
+  const currencies = [
+    ...new Set(
+      storeIds
+        .map((id) => storeMap[id]?.company_currency?.trim().toUpperCase())
+        .filter((currency): currency is string => Boolean(currency)),
+    ),
+  ]
 
   return (
     <div aria-hidden="true" className="grid gap-2 text-xs leading-5">
@@ -50,6 +57,11 @@ export function SendConfirmFacts({
         {storeIds.length > 1 ? (
           <span className="basis-full text-meta text-muted-foreground">
             {storeIds.length} 家店按分配量并发排队
+          </span>
+        ) : null}
+        {currencies.length ? (
+          <span className="basis-full text-meta text-muted-foreground">
+            价格币种 {currencies.join(" / ")}，按各店合同币种提交
           </span>
         ) : null}
       </div>

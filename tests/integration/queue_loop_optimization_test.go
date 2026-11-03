@@ -45,6 +45,40 @@ func TestQueueLoopExecution(t *testing.T) {
 		}
 	})
 
+	for _, missing := range []string{"no callback", "callback unavailable"} {
+		t.Run(missing+" withdraws without success", func(t *testing.T) {
+			jobs := reset(t, 1)
+			opts := queueservice.Options{Owner: "loop-missing", Kinds: []string{"listing.submit"}, Limit: 1}
+			if missing == "callback unavailable" {
+				opts.Work = func(context.Context, *pgxpool.Pool, queuecontract.Claimed) error {
+					return fmt.Errorf("handler: %w", queueservice.ErrWorkNotPorted)
+				}
+			}
+			_, _ = startQueueLoop(t, pool, opts)
+			deadline := time.NewTimer(3 * time.Second)
+			defer deadline.Stop()
+			poll := time.NewTicker(20 * time.Millisecond)
+			defer poll.Stop()
+			for {
+				job := readJob(t, ctx, pool, jobs[0].ID)
+				if job.state == "succeeded" || job.state == "failed" {
+					t.Fatalf("missing handler settled an unexecuted job: %+v", job)
+				}
+				if job.state == "retry_wait" {
+					if job.attempt != 0 || job.errCode == nil || *job.errCode != "admission_unavailable" {
+						t.Fatalf("missing handler consumed an attempt: %+v", job)
+					}
+					return
+				}
+				select {
+				case <-deadline.C:
+					t.Fatalf("missing handler left the job claimed: %+v", job)
+				case <-poll.C:
+				}
+			}
+		})
+	}
+
 	t.Run("bounded parallel execution and refill", func(t *testing.T) {
 		reset(t, 3)
 		started := make(chan uuid.UUID, 3)
@@ -272,6 +306,7 @@ func TestQueueLoopExecution(t *testing.T) {
 
 func startQueueLoop(t *testing.T, pool *pgxpool.Pool, opts queueservice.Options) (context.CancelFunc, <-chan struct{}) {
 	t.Helper()
+	opts.Repo = queueservice.Repository{Claim: queuerepo.Claim, FormatOwner: queuerepo.FormatOwner, ReclaimExpiredRows: queuerepo.ReclaimExpiredRows, RunningOwned: queuerepo.RunningOwned, RequeueJob: queuerepo.RequeueJob}
 	ctx, cancel := context.WithCancel(context.Background())
 	stopped := make(chan struct{})
 	go func() {

@@ -7,6 +7,15 @@ import (
 	"time"
 )
 
+func TestDatabasePasswords(t *testing.T) {
+	t.Setenv(envAPIDBPassword, "api-secret")
+	t.Setenv(envWorkerDBPassword, "worker-secret")
+	cfg := Load()
+	if cfg.APIDBPassword() != "api-secret" || cfg.WorkerDBPassword() != "worker-secret" {
+		t.Fatalf("passwords api=%q worker=%q", cfg.APIDBPassword(), cfg.WorkerDBPassword())
+	}
+}
+
 func TestWriterInstanceID(t *testing.T) {
 	t.Setenv(envInstanceID, "  box-7  ")
 	if got := Load().WriterInstanceID(); got != "box-7" {
@@ -225,38 +234,28 @@ func TestDelegateAutoDispatch(t *testing.T) {
 	}
 }
 
-func TestAIPublicProbeAndSellerBaseStayOffTheProtectedSwitches(t *testing.T) {
+func TestSellerBaseStaysOffTheProtectedSwitches(t *testing.T) {
 	t.Setenv(envOzonKillSwitch, "1")
 	t.Setenv(envMediaGCDelete, "0")
-	t.Setenv(envAIPublic, "sentinel")
-	os.Unsetenv(envAIPublic)
 	t.Setenv(envSellerBase, "sentinel")
 	os.Unsetenv(envSellerBase)
 	cfg := Load()
-	if cfg.AIEgressAllowPublic || cfg.SellerBaseURL() != "" {
-		t.Fatalf("public %v base %q", cfg.AIEgressAllowPublic, cfg.SellerBaseURL())
+	if cfg.SellerBaseURL() != "" {
+		t.Fatalf("base %q", cfg.SellerBaseURL())
 	}
 	if !cfg.OzonWritesDisabled() || cfg.MediaDeleteEnabled() {
-		t.Fatal("unset public probe changed a protected switch")
+		t.Fatal("unset seller base changed a protected switch")
 	}
-	for _, value := range []string{"", "0", "true", "yes", "on", "2"} {
-		t.Setenv(envAIPublic, value)
-		if Load().AIEgressAllowPublic {
-			t.Fatalf("%q must leave the public probe off", value)
-		}
-	}
-	t.Setenv(envAIPublic, "1")
 	t.Setenv(envSellerBase, " http://127.0.0.1:9/ ")
 	cfg = Load()
-	if !cfg.AIEgressAllowPublic || cfg.SellerBaseURL() != "http://127.0.0.1:9/" {
-		t.Fatalf("public %v base %q", cfg.AIEgressAllowPublic, cfg.SellerBaseURL())
+	if cfg.SellerBaseURL() != "http://127.0.0.1:9/" {
+		t.Fatalf("base %q", cfg.SellerBaseURL())
 	}
 	if !cfg.OzonWritesDisabled() || cfg.MediaDeleteEnabled() {
-		t.Fatal("enabling the public probe changed a protected switch")
+		t.Fatal("setting the seller base changed a protected switch")
 	}
-	t.Setenv(envAIPublic, "0")
 	t.Setenv(envSellerBase, "https://api-seller.ozon.ru")
-	if cfg.AIEgressAllowPublic != true || cfg.SellerBaseURL() != "http://127.0.0.1:9/" {
+	if cfg.SellerBaseURL() != "http://127.0.0.1:9/" {
 		t.Fatal("Load was read again")
 	}
 }
@@ -302,6 +301,14 @@ func TestDatabaseHostMustBeLoopback(t *testing.T) {
 	cfg.DatabaseURL = "postgres://postgres@127.0.0.1:5432/podhub?sslmode=disable"
 	if err := cfg.CheckDatabase(); err != nil {
 		t.Fatal(err)
+	}
+	cfg.DatabaseURL = "postgres://podhub_login_api:secret@postgres:5432/podhub?sslmode=disable"
+	if err := cfg.CheckDatabase(); err == nil {
+		t.Fatal("remote host still needs the explicit switch")
+	}
+	cfg.databaseAllowRemote = true
+	if err := cfg.CheckDatabase(); err != nil {
+		t.Fatalf("explicit switch should allow a private database host: %v", err)
 	}
 }
 

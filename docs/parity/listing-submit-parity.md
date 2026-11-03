@@ -20,7 +20,7 @@
 | CancelBeforeDispatch | queued, submitting | cancelled |
 | CancelSubmitting | submitting | cancelled |
 
-`reconciled` / `conflict` / `operator_attested` / `superseded` 不在这张表里。非法边 `Apply` 返回错误，`ApplyStored` 回滚，行数保持 0。表驱动测试在 `internal/listing/submit/intent_test.go`。
+`reconciled` / `conflict` / `operator_attested` / `superseded` 不在这张表里。非法边 `Apply` 返回错误，`ApplyStored` 回滚，行数保持 0。表驱动测试在 `internal/listing/submit/domain/intent_test.go`。
 
 一次 `/v3/product/import` 的分类来自 `submit_dispatch/transport.rs` 和 `submit/outcomes.rs`：
 
@@ -34,7 +34,7 @@
 
 `listing_rows.submission_state` 跟着意图走。`superseded` 把行写成 `none`（行的 CHECK 里没有 `superseded`）。
 
-导入分块 `PlanImportJobs` 按 20 条一块、上限 100。第一块沿用调用方的 job id / batch id / 幂等键，后面的键是 `{batch}:{index}`。三条发送路由在冻结成功后调用它，入队 `listing.submit.batch`。
+导入分块 `PlanImportJobs` 按 Ozon 单次上限 100 条一块；一次 100 行发送只产生一个导入任务和一次回执探测。第一块沿用调用方的 job id / batch id / 幂等键，后面的键是 `{batch}:{index}`。三条发送路由在冻结成功后调用它，入队 `listing.submit.batch`。
 
 ## 流程上和 Rust 不同、结果保持一致的地方
 

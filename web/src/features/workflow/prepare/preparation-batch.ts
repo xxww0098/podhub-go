@@ -1,8 +1,6 @@
-import { readOcrModelChoice, routingForNewTask } from "./ocr-model-preference"
-import { peekOcrCatalogue, type PreparationRequest } from "./ocr-model-routing"
 import { batchErrorFeedback } from "../batch-error-feedback"
 import type { RefObject } from "react"
-import type { WorkflowOperationRowResult } from "@/bindings/commands"
+import type { WorkflowOperationRowResult, WorkflowRowsActionRequest } from "@/bindings/commands"
 import { notifyError } from "@/lib/notify"
 import { preparationOpen, type BatchRowDeps } from "../batch-actions"
 import { openCardSession } from "../card/card-session"
@@ -79,7 +77,6 @@ function reportBatchFailures(failures: string[], verb: string) {
 }
 
 export type PrepareWork = {
-  modelRouting?: import("./ocr-model-routing").OcrModelRouting
   tracks: PreparationTracks
   draftIds: Set<string>
   cancelled: Set<string>
@@ -199,11 +196,6 @@ export function preparationBatch({
    */
   function beginPrepareWork(targets: readonly ListingRow[]) {
     const work: PrepareWork = { tracks: preparationTracks.current, draftIds: new Set(targets.map(row => row.draftId)), cancelled: new Set() }
-    // Freeze before any await: later card edits must not change queued rows in this batch.
-    // 系统默认 has no primary yet — pin the catalogue default onto this task, still without a backup.
-    const preference = peekListingWorkbench().modelRouting ?? readOcrModelChoice()
-    const routing = routingForNewTask(preference, peekOcrCatalogue())
-    work.modelRouting = routing ? { ...routing } : undefined
     activeWork.current.add(work)
     startRows(targets.map(row => row.id), { errorFeedback: undefined })
     if (pendingFailureScope.current !== listingWorkbenchScope()) {
@@ -221,13 +213,13 @@ export function preparationBatch({
   }
 
   function prepareAction(work: PrepareWork, action: (
-    request: PreparationRequest, onRow: (row: WorkflowOperationRowResult) => void,
+    request: WorkflowRowsActionRequest, onRow: (row: WorkflowOperationRowResult) => void,
   ) => Promise<WorkflowOperationRowResult[]>) {
-    return async (request: PreparationRequest, onRow: (row: WorkflowOperationRowResult) => void) => {
+    return async (request: WorkflowRowsActionRequest, onRow: (row: WorkflowOperationRowResult) => void) => {
       const row_ids = request.row_ids.filter(id => !work.cancelled.has(id))
       const skipped = request.row_ids.filter(id => work.cancelled.has(id))
       const expected_revisions = request.expected_revisions.filter(pin => !work.cancelled.has(pin.row_id))
-      const results = row_ids.length ? await action({ ...request, row_ids, expected_revisions, modelRouting: work.modelRouting }, onRow) : []
+      const results = row_ids.length ? await action({ ...request, row_ids, expected_revisions }, onRow) : []
       return [...results, ...skipped.map(row_id => ({ row_id, outcome: "noop" as const, blockers: [], noop_reason: "cancelled" }))]
     }
   }

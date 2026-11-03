@@ -16,6 +16,7 @@ import (
 	"github.com/xxww0098/podhub-go/internal/platform/config"
 	"github.com/xxww0098/podhub-go/internal/platform/db"
 	"github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
+	"github.com/xxww0098/podhub-go/tests/testkit"
 )
 
 func TestSupplierPortalRLS(t *testing.T) {
@@ -34,6 +35,7 @@ func TestSupplierPortalRLS(t *testing.T) {
 		_, _ = pool.Exec(c, `DELETE FROM supplier_withdrawals WHERE source_id = 'src_admin_sup_910201'`)
 		_, _ = pool.Exec(c, `DELETE FROM supplier_wallets WHERE source_id = 'src_admin_sup_910201'`)
 		_, _ = pool.Exec(c, `DELETE FROM sc_sources WHERE source_id = 'src_admin_sup_910201'`)
+		_, _ = pool.Exec(c, `DELETE FROM sc_factories WHERE factory_id = 'fac_admin_sup_910201'`)
 		_, _ = pool.Exec(c, `DELETE FROM account_users WHERE id = ANY($1)`, []int64{userA, userB, userS})
 	})
 	supSeedLease(t, ctx, pool)
@@ -41,9 +43,12 @@ func TestSupplierPortalRLS(t *testing.T) {
 	actorA := contract.Actor{UserID: userA, Role: "admin"}
 	actorB := contract.Actor{UserID: userB, Role: "admin"}
 	actorS := contract.Actor{UserID: userS, Role: "super_admin"}
-	dbRow, _, err := portal.CreateDb(ctx, actorA, domain.NormalizedDb{
-		Name: "隔离印花厂-910201", Country: "CN", ViewPrefs: []byte(`{}`),
-	}, "src_admin_sup_910201", nil, 10, "")
+	if _, err := pool.Exec(ctx, `INSERT INTO sc_factories (factory_id, name, created_at_ms, updated_at_ms) VALUES ('fac_admin_sup_910201','测试工厂-910201',1,1)`); err != nil {
+		t.Fatal(err)
+	}
+	dbRow, err := portal.CreateDb(ctx, actorA, domain.NormalizedDb{
+		Name: "隔离印花厂-910201", FactoryID: "fac_admin_sup_910201", Country: "CN", ViewPrefs: []byte(`{}`),
+	}, "src_admin_sup_910201", nil, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,10 +150,8 @@ var (
 func supParityDB(t testing.TB) (*pgxpool.Pool, context.Context) {
 	t.Helper()
 	dsn := os.Getenv("PODHUB_PARITY_DSN")
-	if dsn == "" {
-		if _, err := os.Stat("/var/run/docker.sock"); err != nil {
-			t.Skip("docker daemon is not available")
-		}
+	if dsn == "" && !testkit.DockerAvailable() {
+		t.Skip("docker daemon is not available")
 	}
 	supOnce.Do(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)

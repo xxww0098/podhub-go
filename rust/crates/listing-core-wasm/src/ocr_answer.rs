@@ -1,116 +1,82 @@
-//! Op 17. Parses one settled OCR completion with `listing_core::ocr_contract`.
-//!
-//! No provider call, no quota, no row write. A contract refusal is
-//! `CORE_REFUSED` carrying the operator sentence, reason code and retry class.
-
-use listing_core::ocr_contract;
-use serde_json::{Value as JsonValue, json};
-
+//! Op 17 validates visual copy or previews a title with immutable product facts.
 use crate::error::CoreError;
-
+use listing_core::ocr_contract::{self, ProductProfile};
+use serde::Deserialize;
+use serde_json::{Value, json};
 pub(crate) const OP_PARSE_OCR_ANSWER: u32 = 17;
-
-pub(crate) fn parse_answer(bytes: &[u8]) -> Result<Vec<u8>, CoreError> {
-    let completion: JsonValue = serde_json::from_slice(bytes).map_err(CoreError::decode)?;
-    let answer = ocr_contract::parse_completion(&completion).map_err(CoreError::ocr_refused)?;
-    serde_json::to_vec(&json!({
-        "ru": answer.ru,
-        "tags": answer.tags,
-        "description": answer.desc,
-        "candidates": answer.candidates,
-    }))
-    .map_err(CoreError::decode)
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CompletionInput {
+    profile: ProductProfile,
+    fixed_tags: Vec<String>,
+    completion: Value,
 }
-
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreviewInput {
+    profile: ProductProfile,
+    fixed_tags: Vec<String>,
+    preview_theme: String,
+}
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Input {
+    Completion(CompletionInput),
+    Preview(PreviewInput),
+}
+pub(crate) fn parse_answer(bytes: &[u8]) -> Result<Vec<u8>, CoreError> {
+    let input: Input = serde_json::from_slice(bytes).map_err(CoreError::decode)?;
+    let answer = match input {
+        Input::Completion(input) => {
+            ocr_contract::parse_completion(&input.profile, &input.fixed_tags, &input.completion)
+        }
+        Input::Preview(input) => {
+            ocr_contract::preview(&input.profile, &input.fixed_tags, &input.preview_theme)
+        }
+    }
+    .map_err(CoreError::ocr_refused)?;
+    serde_json::to_vec(&json!({"ru":answer.ru,"tags":answer.tags,"description":answer.desc,"candidates":answer.candidates})).map_err(CoreError::decode)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const FIVE: &str = "#горы #озеро #закат #сосны #отражение";
-
-    fn completion(content: &str) -> Vec<u8> {
-        serde_json::to_vec(&json!({"choices": [{"message": {"content": content}}]})).unwrap()
-    }
-
-    fn refusal(content: &str) -> JsonValue {
-        let Err(error) = parse_answer(&completion(content)) else {
-            panic!("the answer must be refused");
-        };
-        serde_json::from_slice(&error.to_json_bytes()).unwrap()
-    }
-
     #[test]
-    fn success_returns_folded_fields_and_preserves_candidates() {
-        let tags = FIVE.replace("#горы", "#гopы");
-        let input = json!({
-            "ru": "Чехол кипaрис iPhone",
-            "desc": "Сюжет кипapис.",
-            "tags": tags,
-            "candidates": [{"value": "кипaрис"}],
-        });
-        let output = match parse_answer(&completion(&input.to_string())) {
-            Ok(bytes) => serde_json::from_slice::<JsonValue>(&bytes).unwrap(),
-            Err(error) => panic!("{}", String::from_utf8_lossy(&error.to_json_bytes())),
-        };
-        assert_eq!(output["ru"], "Чехол кипарис iPhone");
-        assert_eq!(output["description"], "Сюжет кипарис.");
-        assert_eq!(output["tags"][0], "#горы");
-        assert_eq!(output["candidates"], input["candidates"]);
-    }
-
-    #[test]
-    fn search_tags_are_canonical_before_accept_and_a_bad_count_retries_once() {
-        let input = json!({
-            "ru": "Чехол",
-            "tags": "#горы, #озеро, #закат, #сосны, #отражение.",
-            "desc": "Сюжет.",
-        });
-        let output = match parse_answer(&completion(&input.to_string())) {
-            Ok(bytes) => serde_json::from_slice::<JsonValue>(&bytes).unwrap(),
-            Err(error) => panic!("{}", String::from_utf8_lossy(&error.to_json_bytes())),
-        };
-        assert_eq!(output["tags"][0], "#горы");
+    fn envelope_and_permanent_refusal() {
+        let scene = "На рисунке кот сидит рядом с чашкой на столе. На заднем плане видны листья и цветы в тёплых тонах.";
+        let copy = json!({"state":"clear","theme_ru":"Кот с чашкой","description_ru":scene,"tags":["#кот","#чашка","#цветы","#листья","#тёплые_тона"]});
+        let mut input = json!({"profile":{"product_type_ru":"Кружка","facts_ru":"330 мл"},"fixed_tags":["#кружка"],"completion":{"choices":[{"message":{"content":copy.to_string()}}]}});
+        let output: Value = serde_json::from_slice(
+            &parse_answer(&serde_json::to_vec(&input).unwrap())
+                .unwrap_or_else(|e| panic!("{}", String::from_utf8_lossy(&e.to_json_bytes()))),
+        )
+        .unwrap();
+        assert_eq!(output["ru"], "Кружка 330 мл \"Кот с чашкой\"");
+        assert_eq!(output["description"], format!("Кружка 330 мл. {scene}"));
         assert_eq!(output["tags"].as_array().unwrap().len(), 5);
-        let short = json!({"ru": "Чехол", "tags": "#горы #озеро", "desc": "Сюжет."});
-        let error = refusal(&short.to_string());
-        assert_eq!(error["reason_code"], "empty");
-        assert_eq!(error["retry_class"], "corrective");
+        input["completion"]["choices"][0]["message"]["content"] =
+            json!({"state":"unclear","theme_ru":"","description_ru":"","tags":[]})
+                .to_string()
+                .into();
+        let err = parse_answer(&serde_json::to_vec(&input).unwrap())
+            .err()
+            .unwrap();
+        let err: Value = serde_json::from_slice(&err.to_json_bytes()).unwrap();
+        assert_eq!(err["retry_class"], "permanent");
+        assert_eq!(err["reason_code"], "unclear_image");
     }
 
     #[test]
-    fn refusals_expose_all_retry_classes_from_the_shared_contract() {
-        for (ru, tags, reason, retry_class) in [
-            ("Картина 山", FIVE, "han", "corrective"),
-            ("Чехол кипiрис", FIVE, "mixed_script", "corrective"),
-            (
-                "Чехол",
-                "#iPhone #озеро #закат #сосны #отражение",
-                "configured_tags",
-                "corrective",
-            ),
-            ("", FIVE, "empty", "blind"),
-        ] {
-            let input = json!({"ru": ru, "tags": tags, "desc": "Сюжет."});
-            let error = refusal(&input.to_string());
-            assert_eq!(error["code"], "CORE_REFUSED");
-            assert!(!error["message"].as_str().unwrap().is_empty());
-            assert_eq!(error["reason_code"], reason);
-            assert_eq!(error["retry_class"], retry_class);
-        }
-        assert_eq!(refusal("not json")["retry_class"], "blind");
-    }
-
-    #[test]
-    fn non_ocr_errors_keep_the_existing_error_shape() {
-        for error in [
-            CoreError::decode("bad json"),
-            CoreError::schema_handle("missing schema"),
-            CoreError::refused("refused"),
-        ] {
-            let value: JsonValue = serde_json::from_slice(&error.to_json_bytes()).unwrap();
-            assert_eq!(value.as_object().unwrap().len(), 2);
-            assert!(value["code"].is_string());
-            assert!(value["message"].is_string());
-        }
+    fn formula_preview_does_not_fabricate_visual_copy() {
+        let input = json!({"profile":{"product_type_ru":"Кружка","facts_ru":"330 мл"},"fixed_tags":["#кружка"],"preview_theme":"Кот с чашкой"});
+        let output: Value = serde_json::from_slice(
+            &parse_answer(&serde_json::to_vec(&input).unwrap())
+                .unwrap_or_else(|e| panic!("{}", String::from_utf8_lossy(&e.to_json_bytes()))),
+        )
+        .unwrap();
+        assert_eq!(output["ru"], "Кружка 330 мл \"Кот с чашкой\"");
+        assert_eq!(output["tags"], json!([]));
+        let mut ambiguous = input;
+        ambiguous["completion"] = json!({});
+        assert!(parse_answer(&serde_json::to_vec(&ambiguous).unwrap()).is_err());
     }
 }

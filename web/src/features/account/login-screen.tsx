@@ -1,6 +1,6 @@
-import { forwardRef, useState, type ComponentProps, type ReactNode } from "react"
+import { forwardRef, useRef, useState, type ComponentProps, type ReactNode } from "react"
 import { motion, useReducedMotion } from "motion/react"
-import { ArrowLeft, Eye, EyeOff, LogIn, UserPlus } from "lucide-react"
+import { Eye, EyeOff, LogIn, UserPlus } from "lucide-react"
 import type { AccountLoginRequest, AccountOverview, AccountRegisterRequest } from "@/bindings/commands"
 import { accountHttp } from "@/bindings/http-account"
 import { Button } from "@/components/ui/button"
@@ -26,8 +26,9 @@ import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { commandErrorCode } from "@/lib/error-message"
-import { notifyCommandError, notifyError, notifySuccess } from "@/lib/notify"
+import { notifyCommandError, notifyError } from "@/lib/notify"
 import { productVersionLabel } from "@/lib/product-version"
+import { PasswordRecoveryButton } from "./login-screen-password-recovery"
 
 const EASE_SETTLE = [0.16, 1, 0.3, 1] as const
 
@@ -97,12 +98,6 @@ const LoginCard = motion.create(
 type LoginScreenProps = {
   onSignedIn: (overview: AccountOverview) => void
   /**
-   * Present when the account switcher sent a signed-in operator here to add
-   * another account: the card offers a way back, and a successful sign-in
-   * stacks the new session on this browser instead of replacing it.
-   */
-  onCancel?: () => void
-  /**
    * The credentials were accepted but Cloud's deny-by-default gate refuses
    * every route until this account's password is changed (doc §4.2). The login
    * write itself succeeded — the Cookie is already in the browser — so the
@@ -113,7 +108,11 @@ type LoginScreenProps = {
   onPasswordChangeRequired?: () => void
 }
 
-type AccessMode = "login" | "register" | "forgot"
+type AccessMode = "login" | "register"
+
+export function initialAccessMode(pathname: string, inviteCode: string): AccessMode {
+  return inviteCode || pathname.replace(/\/+$/, "") === "/register" ? "register" : "login"
+}
 
 export type RegistrationPasswordIssue = {
   field: "password" | "confirmation"
@@ -167,13 +166,18 @@ export function inviteCodeFromSearch(search: string): string {
 
 export function LoginScreen({
   onSignedIn,
-  onCancel,
   onPasswordChangeRequired,
 }: LoginScreenProps) {
+  const emailInput = useRef<HTMLInputElement>(null)
+  const passwordInput = useRef<HTMLInputElement>(null)
+  const confirmationInput = useRef<HTMLInputElement>(null)
   const [inviteCode, setInviteCode] = useState(() =>
     typeof window === "undefined" ? "" : inviteCodeFromSearch(window.location.search),
   )
-  const [mode, setMode] = useState<AccessMode>(inviteCode ? "register" : "login")
+  const [mode, setMode] = useState<AccessMode>(() => initialAccessMode(
+    typeof window === "undefined" ? "/login" : window.location.pathname,
+    inviteCode,
+  ))
   const [name, setName] = useState("")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
@@ -182,13 +186,9 @@ export function LoginScreen({
   const [confirmationError, setConfirmationError] = useState<string>()
   const [emailError, setEmailError] = useState<string>()
   const [showPassword, setShowPassword] = useState(false)
-  const [totpCode, setTotpCode] = useState("")
-  const [totpNeeded, setTotpNeeded] = useState(false)
   const [busy, setBusy] = useState(false)
   let cardTitle = "创建账户"
   if (mode === "login") cardTitle = "登录"
-  if (mode === "forgot") cardTitle = "重置密码"
-  if (onCancel) cardTitle = "添加账号"
 
   function switchMode(nextMode: AccessMode) {
     setMode(nextMode)
@@ -201,13 +201,15 @@ export function LoginScreen({
   }
 
   async function submitAccess() {
-    const empty = emptyAccessCheck(email, mode === "forgot" ? "present" : password)
+    const empty = emptyAccessCheck(email, password)
     if (empty.message) {
       // 空提交反馈不依赖原生 required 气泡（部分嵌入环境不可见）：一次性
       // toast + 只在空字段上打 aria-invalid，错误文案不进 DOM。
       setEmailError(empty.emailMissing ? "请输入邮箱" : undefined)
       setPasswordError(empty.passwordMissing ? "请输入密码" : undefined)
       notifyError(empty.message)
+      const firstInvalid = empty.emailMissing ? emailInput : passwordInput
+      firstInvalid.current?.focus()
       return
     }
     setEmailError(undefined)
@@ -219,22 +221,10 @@ export function LoginScreen({
       )
       if (issue) {
         notifyError(issue.message)
+        const invalidInput = issue.field === "password" ? passwordInput : confirmationInput
+        invalidInput.current?.focus()
         return
       }
-    }
-
-    if (mode === "forgot") {
-      setBusy(true)
-      try {
-        await accountHttp.accountForgotPassword(email.trim())
-        notifySuccess("如果该邮箱已注册，我们已发送重置说明。")
-        switchMode("login")
-      } catch (reason) {
-        notifyCommandError(reason, "无法发送重置说明，请稍后重试。")
-      } finally {
-        setBusy(false)
-      }
-      return
     }
 
     setBusy(true)
@@ -242,7 +232,7 @@ export function LoginScreen({
       const trimmedInvite = inviteCode.trim()
       const request: AccountLoginRequest | AccountRegisterRequest =
         mode === "login"
-          ? { email, password, ...(totpNeeded && totpCode.trim() ? { totpCode: totpCode.trim() } : {}) }
+          ? { email, password }
           : {
               email,
               password,
@@ -257,15 +247,10 @@ export function LoginScreen({
       setPasswordConfirmation("")
       onSignedIn(overview)
     } catch (reason) {
-      if (mode === "login" && commandErrorCode(reason) === "cloud_totp_required") {
-        setTotpNeeded(true)
-      }
-      // Deliberately after the TOTP branch: a second factor still has to be
-      // answered before the password is even looked at. A locked account is not
-      // a failed sign-in either — `accountLogin` already wrote the Cookie and
-      // only the follow-up overview read was refused — so hand it to the forced
-      // password change rather than telling the operator to check credentials
-      // that were in fact correct.
+      // A locked account is not a failed sign-in — `accountLogin` already wrote
+      // the Cookie and only the follow-up overview read was refused — so hand
+      // it to the forced password change rather than telling the operator to
+      // check credentials that were in fact correct.
       if (
         mode === "login" &&
         commandErrorCode(reason) === "cloud_password_change_required"
@@ -345,18 +330,6 @@ export function LoginScreen({
       </aside>
 
       <main className="relative flex items-center justify-center px-6 py-8 sm:px-10 sm:py-12 lg:px-16 lg:py-10">
-        {onCancel ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="absolute left-6 top-6 sm:left-10"
-            onClick={onCancel}
-          >
-            <ArrowLeft data-icon="inline-start" />
-            返回
-          </Button>
-        ) : null}
         <LoginCard
           className="w-full max-w-sm"
           {...(reducedMotion
@@ -396,6 +369,7 @@ export function LoginScreen({
                 <Field data-invalid={Boolean(emailError)}>
                   <FieldLabel htmlFor="access-email">邮箱</FieldLabel>
                   <Input
+                    ref={emailInput}
                     id="access-email"
                     type="email"
                     autoComplete="username"
@@ -408,25 +382,19 @@ export function LoginScreen({
                     }}
                   />
                 </Field>
-                {mode === "login" && totpNeeded ? (
-                  <Field>
-                    <FieldLabel htmlFor="access-totp">验证器验证码</FieldLabel>
-                    <Input
-                      id="access-totp"
-                      type="text"
-                      inputMode="numeric"
-                      autoComplete="one-time-code"
-                      value={totpCode}
-                      onChange={(event) => setTotpCode(event.target.value)}
-                    />
-                  </Field>
-                ) : null}
-                {mode === "forgot" ? null : (
-                <>
                 <Field data-invalid={Boolean(passwordError)}>
-                  <FieldLabel htmlFor="access-password">密码</FieldLabel>
+                  <div className="flex items-center justify-between gap-3">
+                    <FieldLabel htmlFor="access-password">密码</FieldLabel>
+                    {mode === "login" ? (
+                      <PasswordRecoveryButton
+                        email={email}
+                        disabled={busy}
+                      />
+                    ) : null}
+                  </div>
                   <InputGroup>
                     <InputGroupInput
+                      ref={passwordInput}
                       id="access-password"
                       type={showPassword ? "text" : "password"}
                       autoComplete={
@@ -473,6 +441,7 @@ export function LoginScreen({
                       确认密码
                     </FieldLabel>
                     <Input
+                      ref={confirmationInput}
                       id="register-password-confirmation"
                       type={showPassword ? "text" : "password"}
                       autoComplete="new-password"
@@ -505,21 +474,7 @@ export function LoginScreen({
                     </FieldDescription>
                   </Field>
                 ) : null}
-                </>
-                )}
               </FieldGroup>
-
-              {mode === "login" ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  disabled={busy}
-                  onClick={() => switchMode("forgot")}
-                >
-                  忘记密码
-                </Button>
-              ) : null}
 
               <Button type="submit" disabled={busy} className="w-full" size="lg" variant="brand">
                 {busy ? (
@@ -529,12 +484,12 @@ export function LoginScreen({
                 ) : (
                   <UserPlus data-icon="inline-start" />
                 )}
-                {mode === "login" ? "登录" : mode === "forgot" ? "发送重置邮件" : "创建账户"}
+                {mode === "login" ? "登录" : "创建账户"}
               </Button>
             </form>
             <div className="mt-5 flex items-center justify-center gap-1 border-t border-border pt-4 text-sm text-muted-foreground">
               <span>
-                {mode === "login" ? "还没有账户？" : mode === "forgot" ? "想起密码了？" : "已经有账户？"}
+                {mode === "login" ? "还没有账户？" : "已经有账户？"}
               </span>
               <Button
                 type="button"

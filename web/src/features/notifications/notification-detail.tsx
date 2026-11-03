@@ -85,6 +85,23 @@ export function NotificationBody({
       </p>
     )
   }
+  const subscription = notification.subscription
+  if (subscription && notification.kind === "subscription_renewal_due") {
+    return (
+      <p className={cn("text-compact text-muted-foreground", className)}>
+        续费订单{" "}
+        <span className="font-mono text-foreground">{subscription.public_id}</span>
+        （{formatCents(subscription.amount_cents ?? 0)}）已生成，到期前付款才会续上服务；不付款则到期后工作区冻结。
+      </p>
+    )
+  }
+  if (subscription && notification.kind === "subscription_frozen") {
+    return (
+      <p className={cn("text-compact text-muted-foreground", className)}>
+        工作区「{subscription.workspace_name}」的付费服务已到期，所有店铺已冻结。续费后恢复，配置和历史数据保留。
+      </p>
+    )
+  }
   if (delegateEvent) {
     const posting = (
       <span className="font-mono text-foreground">

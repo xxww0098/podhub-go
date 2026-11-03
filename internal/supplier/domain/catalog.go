@@ -28,7 +28,7 @@ func Freshness(fetchedAt, now int64) string {
 }
 
 // ListabilityFacts are the inputs of product_listability.
-// PromptValid is the caller's ocr_prompt::validate_brief result.
+// PromptValid is the injected confirmed-product-profile validation result.
 type ListabilityFacts struct {
 	SourceListed    bool
 	ProductArchived bool

@@ -1,7 +1,0 @@
-package: catalogreads
-output: internal/catalog/http/gen/reads/reads.gen.go
-generate:
-  models: true
-output-options:
-  include-tags:
-    - catalog-reads

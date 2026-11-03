@@ -92,11 +92,9 @@ export function setup(ids: string[], options: { images?: WorkflowImageLifecycle[
   let cancelReply: () => Promise<Response> = async () => reply({ jobs: [{ id: "cancelled-job" }] })
   const previousFetch = globalThis.fetch
   const previousRestore = renderOpfs.workflowRestoreTemplatePsd
-  // This fixture exercises scheduling with a fake render asset. Byte recovery
-  // and digest verification are covered by template-assets.test.ts.
-  renderOpfs.workflowRestoreTemplatePsd = async (assetId, _supplier, cardId) => {
+  // Local template presence and digest verification are covered by render-opfs.test.ts.
+  renderOpfs.workflowRestoreTemplatePsd = async (assetId) => {
     assert.equal(assetId, "template")
-    assert.equal(cardId, CARD_ID)
     return { asset_id: assetId, asset: { handle: assetId, file_name: "template.psd" }, summary: {
       handle: assetId, file_name: "template.psd", canvas: { width: 1, height: 1, bits_per_channel: 8 },
       features: { layers: 0, groups: 0, smart_objects: 0, masks: 0, warped_smart_objects: 0, blend_modes: {} },

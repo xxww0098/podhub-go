@@ -1,4 +1,4 @@
-import type { RefObject, UIEvent } from "react"
+import type { ReactNode, RefObject, UIEvent } from "react"
 import type { WorkflowDraftView } from "@/bindings/commands"
 import type { SaveState } from "@/components/save-state-chip"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -27,12 +27,11 @@ import { WorkbenchGridHud } from "./workbench-grid-hud"
 import { WorkbenchRow } from "./workbench-row"
 import { headClass } from "./workbench-table-classes"
 
-/** The four tableInput card defaults an untouched row shows as its placeholder. */
+/** The tableInput card defaults an untouched row shows as its placeholder. */
 type WorkbenchCardFallbacks = {
   cardPrice: string
   cardOldPrice: string
   cardTheme: string
-  cardRichContent: string
 }
 
 /**
@@ -58,6 +57,7 @@ export function WorkbenchGrid({
   onTableScroll,
   onSelectionChange,
   onImportImages,
+  emptyContent,
 }: {
   rows: ListingRow[]
   productDrafts: Record<string, WorkflowDraftView>
@@ -78,6 +78,7 @@ export function WorkbenchGrid({
   onTableScroll: (event: UIEvent<HTMLDivElement>) => void
   onSelectionChange: (rowIds: string[]) => void
   onImportImages: () => void
+  emptyContent?: ReactNode
 }) {
   const { boundStoreIds, storeMap, storeColorAssignments } = stores
   const { focusedCell, setFocusedCell } = grid
@@ -100,7 +101,7 @@ export function WorkbenchGrid({
         }
       >
         {rows.length === 0 ? (
-          <WorkbenchEmptyState
+          emptyContent ?? <WorkbenchEmptyState
             disabled={importDisabled}
             onImportImages={onImportImages}
           />
@@ -128,7 +129,7 @@ export function WorkbenchGrid({
                     <TableHead key={column.id} className={headClass(column)}>
                       {column.id === "select" ? (
                         <Checkbox
-                          aria-label="选择全部商品"
+                          aria-label="选择当前视图全部商品"
                           checked={allSelected}
                           indeterminate={someSelected}
                           disabled={!rows.length}
@@ -180,7 +181,6 @@ export function WorkbenchGrid({
                       cardPrice={fallbacks.cardPrice}
                       cardOldPrice={fallbacks.cardOldPrice}
                       cardTheme={fallbacks.cardTheme}
-                      cardRichContent={fallbacks.cardRichContent}
                       activeColIndex={focusedCell?.rowIndex === index ? focusedCell.colIndex : null}
                       ripplingCells={grid.ripplingCells}
                     />
@@ -199,13 +199,13 @@ export function WorkbenchGrid({
               </TableBody>
             </Table>
 
-            <WorkbenchGridHud
+            {focusedCell ? <WorkbenchGridHud
               focusedCell={focusedCell}
               selectedMode={selectedMode}
               pickedCount={pickedCount}
               canFillDown={grid.canFillDown}
               onFillDown={grid.runFillDown}
-            />
+            /> : null}
           </div>
         )}
       </ContextMenuTrigger>

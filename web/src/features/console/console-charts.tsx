@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from "react"
-import { LineChart, PieChart } from "echarts/charts"
+import { BarChart, LineChart, PieChart } from "echarts/charts"
 import {
   AriaComponent,
   GridComponent,
@@ -17,6 +17,7 @@ import type { LifecycleSlice } from "./console-products"
 
 echarts.use([
   AriaComponent,
+  BarChart,
   GridComponent,
   LineChart,
   PieChart,
@@ -90,13 +91,13 @@ export type SalesTrendPoint = {
   listedUnits: number
 }
 
-export function salesTrendDescription(points: SalesTrendPoint[]): string {
-  return `近 ${points.length} 日出单与上架走势：${points
+export function salesTrendDescription(points: SalesTrendPoint[], includeListings = true): string {
+  return `近 ${points.length} 日出单与上架提交走势：${points
     .map(
       (point) =>
-        `${point.day} 出单 ${chartNumber.format(point.orderedUnits)} 件、上架 ${chartNumber.format(point.listedUnits)} 件`,
+        `${point.day} 出单 ${chartNumber.format(point.orderedUnits)} 件${includeListings ? `、上架提交 ${chartNumber.format(point.listedUnits)} 次` : ""}`,
     )
-    .join("；")}`
+    .join("；")}${includeListings ? "" : "；上架提交记录可能不完整，未绘制"}`
 }
 
 export function lifecycleDonutDescription(
@@ -142,18 +143,37 @@ function EChart({
   )
 }
 
+/** Empty axes retain the chart's structure without showing fabricated counts. */
+export function EmptySalesTrendChart({ active }: { active: boolean }) {
+  const option = useMemo(() => (palette: ChartPalette): EChartsOption => ({
+    animation: false,
+    grid: { top: 16, right: 8, bottom: 16, left: 16 },
+    xAxis: { type: "value", min: 0, max: 1, splitNumber: 10, axisLabel: { show: false }, axisTick: { show: false }, axisLine: { lineStyle: { color: palette.border } }, splitLine: { lineStyle: { color: palette.border, type: "dashed" } } },
+    yAxis: { type: "value", min: 0, max: 1, splitNumber: 4, axisLabel: { show: false }, axisTick: { show: false }, axisLine: { lineStyle: { color: palette.border } }, splitLine: { lineStyle: { color: palette.border, type: "dashed" } } },
+    series: [],
+  }), [])
+  return <div className="relative min-h-62.5 flex-1">
+    <EChart label="暂无可绘制的每日数据" option={option} active={active} className="absolute inset-0" />
+    <p aria-hidden className="pointer-events-none absolute inset-0 grid place-items-center text-sm text-muted-foreground">暂无可绘制的每日数据</p>
+  </div>
+}
+
 /**
- * 出单量（蓝，面积）× 上架量（琥珀）双线趋势。出单是 Ozon 店铺事实，上架是
+ * 出单量（蓝，面积）× 上架量（紫）双线趋势。出单是 Ozon 店铺事实，上架是
  * 本地账本事实——两条线口径不同，legend 在面板头部用文字标明单位。
  */
 export function SalesTrendChart({
   points,
   active,
+  salesStyle = "line",
+  includeListings = true,
 }: {
   points: SalesTrendPoint[]
   active: boolean
+  salesStyle?: "line" | "bar"
+  includeListings?: boolean
 }) {
-  const description = useMemo(() => salesTrendDescription(points), [points])
+  const description = useMemo(() => salesTrendDescription(points, includeListings), [points, includeListings])
   const option = useMemo(
     () => (palette: ChartPalette, reducedMotion: boolean): EChartsOption => ({
       ...chartAnimation(reducedMotion, 360, 240),
@@ -162,16 +182,16 @@ export function SalesTrendChart({
       tooltip: {
         trigger: "axis",
         confine: true,
-        valueFormatter: (value) => `${chartNumber.format(Number(value))} 件`,
+        valueFormatter: (value) => chartNumber.format(Number(value)),
         backgroundColor: palette.card,
         borderColor: palette.border,
         borderWidth: 1,
         textStyle: { color: palette.foreground, fontFamily: palette.font, fontSize: 12 },
       },
-      grid: { top: 12, right: 12, bottom: 8, left: 8, containLabel: true },
+      grid: { top: 16, right: 8, bottom: 4, left: 0, containLabel: true },
       xAxis: {
         type: "category",
-        boundaryGap: false,
+        boundaryGap: salesStyle === "bar",
         data: points.map((point) => formatShortDay(point.day)),
         axisLine: { lineStyle: { color: palette.border } },
         axisTick: { show: false },
@@ -179,7 +199,7 @@ export function SalesTrendChart({
           color: palette.faint,
           fontFamily: palette.mono,
           fontSize: 10,
-          interval: points.length > 8 ? 1 : 0,
+          interval: salesStyle === "bar" && points.length > 8 ? 1 : 0,
         },
       },
       yAxis: {
@@ -190,36 +210,44 @@ export function SalesTrendChart({
         axisLine: { show: false },
         axisTick: { show: false },
         axisLabel: { color: palette.faint, fontFamily: palette.mono, fontSize: 10 },
-        splitLine: { lineStyle: { color: palette.border, type: "dashed", opacity: 0.72 } },
+        splitLine: { lineStyle: { color: palette.border, type: "dashed", opacity: 0.9 } },
       },
       series: [
         {
-          name: "出单量",
-          type: "line",
-          smooth: 0.24,
-          symbol: "circle",
-          symbolSize: 5,
-          lineStyle: { color: palette.flight, width: 2.5 },
-          itemStyle: { color: palette.flight },
-          areaStyle: { color: palette.flight, opacity: 0.09 },
+          name: "出单量（件）",
+          ...(salesStyle === "bar" ? {
+            type: "bar" as const,
+            barMaxWidth: 18,
+            itemStyle: { color: palette.flight, borderRadius: [2, 2, 0, 0] },
+          } : {
+            type: "line" as const,
+            smooth: 0.1,
+            showSymbol: true,
+            symbol: "circle",
+            symbolSize: 7,
+            lineStyle: { color: palette.flight, width: 2 },
+            itemStyle: { color: palette.flight, borderColor: palette.card, borderWidth: 2 },
+            areaStyle: { color: palette.flight, opacity: 0.1 },
+          }),
           emphasis: { focus: "series" },
           data: points.map((point) => point.orderedUnits),
         },
-        {
-          name: "上架量",
-          type: "line",
-          smooth: 0.24,
+        ...(includeListings ? [{
+          name: "上架提交（次）",
+          type: "line" as const,
+          smooth: 0.1,
+          showSymbol: salesStyle !== "bar",
           symbol: "circle",
-          symbolSize: 5,
-          lineStyle: { color: palette.attest, width: 2.5 },
-          itemStyle: { color: palette.attest },
-          areaStyle: { color: palette.attest, opacity: 0.09 },
-          emphasis: { focus: "series" },
+          symbolSize: 7,
+          lineStyle: { color: palette.unknown, width: 2 },
+          itemStyle: { color: palette.unknown, borderColor: palette.card, borderWidth: 2 },
+          ...(salesStyle === "line" ? { areaStyle: { color: palette.unknown, opacity: 0.06 } } : {}),
+          emphasis: { focus: "series" as const },
           data: points.map((point) => point.listedUnits),
-        },
+        }] : []),
       ],
     }),
-    [description, points],
+    [description, includeListings, points, salesStyle],
   )
 
   return (
@@ -227,7 +255,7 @@ export function SalesTrendChart({
       label={description}
       option={option}
       active={active}
-      className="min-h-62.5 flex-1 w-full"
+      className={cn(salesStyle === "bar" ? "min-h-48" : "min-h-62.5", "flex-1 w-full")}
     />
   )
 }
@@ -267,11 +295,22 @@ export function LedgerTrendChart({ summary, active }: {
   return <EChart label={description} option={option} active={active} className="min-h-62.5 w-full flex-1" />
 }
 
-const LIFECYCLE_TONES: Record<LifecycleSlice["tone"], keyof ChartPalette> = {
-  good: "good",
-  attest: "attest",
+const LIFECYCLE_TONES = {
+  good: "flight",
+  attest: "unknown",
   bad: "bad",
   idle: "idle",
+} as const satisfies Record<LifecycleSlice["tone"], keyof ChartPalette>
+
+const PLATFORM_LIFECYCLE_TONES = {
+  good: "good",
+  attest: "flight",
+  bad: "bad",
+  idle: "idle",
+} as const satisfies Record<LifecycleSlice["tone"], keyof ChartPalette>
+
+export function lifecycleColorTone(tone: LifecycleSlice["tone"], paletteMode: "default" | "platform" = "default") {
+  return (paletteMode === "platform" ? PLATFORM_LIFECYCLE_TONES : LIFECYCLE_TONES)[tone]
 }
 
 /**
@@ -282,10 +321,14 @@ export function LifecycleDonutChart({
   slices,
   total,
   active,
+  paletteMode = "default",
+  className,
 }: {
   slices: LifecycleSlice[]
   total: number
   active: boolean
+  paletteMode?: "default" | "platform"
+  className?: string
 }) {
   const description = useMemo(
     () => lifecycleDonutDescription(slices, total),
@@ -320,12 +363,12 @@ export function LifecycleDonutChart({
             .map((slice) => ({
               name: slice.label,
               value: slice.value,
-              itemStyle: { color: palette[LIFECYCLE_TONES[slice.tone]] },
+              itemStyle: { color: palette[lifecycleColorTone(slice.tone, paletteMode)] },
             })),
         },
       ],
     }),
-    [description, slices, total],
+    [description, slices, total, paletteMode],
   )
 
   return (
@@ -333,7 +376,7 @@ export function LifecycleDonutChart({
       label={description}
       option={option}
       active={active}
-      className="size-[clamp(8rem,26vw,10.5rem)] shrink-0"
+      className={cn("size-28 shrink-0", className)}
     />
   )
 }

@@ -31,16 +31,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
-	"github.com/xxww0098/podhub-go/internal/platform/jobsched"
 	"github.com/xxww0098/podhub-go/internal/platform/seal"
+	queuecontract "github.com/xxww0098/podhub-go/internal/queue/contract"
 	"github.com/xxww0098/podhub-go/internal/store/domain"
 )
 
 // KindProductSync is the queue kind this file's runner executes.
 const KindProductSync = "store.product_sync"
-
-// reasonRateLimited is the queue's requeue reason for an admission refusal.
-const reasonRateLimited = "rate_limited"
 
 // staleLimit bounds how many landings may go stale before this Job concedes to
 // the row's current owner.
@@ -54,7 +51,10 @@ const generationParkMS = int64(10 * 365 * 24 * 60 * 60 * 1000)
 
 // RunProductSync runs one claimed store.product_sync Job. It settles the jobs row itself;
 // a nil return means the loop must not settle again.
-func RunProductSync(ctx context.Context, pool *pgxpool.Pool, job jobsched.Claimed, egress SellerEgress, ring seal.Ring, keyID string, admission func(error) bool) error {
+func RunProductSync(ctx context.Context, pool *pgxpool.Pool, job queuecontract.Claimed, egress SellerEgress, ring seal.Ring, keyID string, admission func(error) bool, queue Queue) error {
+	if queue.Finish == nil || queue.EnqueueOn == nil || queue.Renew == nil || queue.Requeue == nil {
+		return errors.New("product sync queue is unavailable")
+	}
 	var payload struct {
 		StoreID string `json:"storeId"`
 		Purpose string `json:"purpose"`
@@ -66,7 +66,7 @@ func RunProductSync(ctx context.Context, pool *pgxpool.Pool, job jobsched.Claime
 		return errors.New("store.product_sync payload has no storeId")
 	}
 	run := syncRunner{
-		pool: pool, job: job, egress: egress, ring: ring, keyID: keyID,
+		pool: pool, job: job, egress: egress, ring: ring, keyID: keyID, queue: queue,
 		admission: admission,
 		orgID:     job.OrgID, storeUUID: payload.StoreID,
 		purpose: domain.PurposeOf(payload.Purpose),
@@ -77,8 +77,9 @@ func RunProductSync(ctx context.Context, pool *pgxpool.Pool, job jobsched.Claime
 // runner is one Job's in-process walk. The row is the truth; this struct only
 // carries what the loop needs to keep going.
 type syncRunner struct {
+	queue     Queue
 	pool      *pgxpool.Pool
-	job       jobsched.Claimed
+	job       queuecontract.Claimed
 	egress    SellerEgress
 	ring      seal.Ring
 	keyID     string
@@ -116,7 +117,7 @@ func (r syncRunner) loop(ctx context.Context) error {
 			// The reserve committed the Job's terminal state itself.
 			return nil
 		case reserveRequeue:
-			return r.requeue(ctx, string(reasonRateLimited), outcome.wait)
+			return r.requeue(ctx, queuecontract.ReasonRateLimited, outcome.wait)
 		}
 		handOff := !time.Now().Before(deadline)
 		unitName := outcome.unit.Name()
@@ -125,7 +126,7 @@ func (r syncRunner) loop(ctx context.Context) error {
 			return err
 		}
 		if verdict == stepRequeue {
-			return r.requeue(ctx, string(reasonRateLimited), outcome.wait)
+			return r.requeue(ctx, queuecontract.ReasonRateLimited, outcome.wait)
 		}
 		calls++
 		lastUnit = unitName
@@ -153,10 +154,7 @@ func (r syncRunner) loop(ctx context.Context) error {
 		"units": landed, "calls": calls, "stale_inflight": stale,
 		"last_unit": lastUnit, "resting": resting,
 	})
-	if jobsched.Finish == nil {
-		return errors.New("queue kernel is not linked")
-	}
-	_, err := jobsched.Finish(ctx, r.pool, r.job.Lease(), jobsched.StateSucceeded, summary, "")
+	_, err := r.queue.Finish(ctx, r.pool, r.job.Lease(), queuecontract.StateSucceeded, summary, "")
 	return err
 }
 
@@ -321,6 +319,14 @@ func (r syncRunner) execute(ctx context.Context, reserved reserveOutcome, handOf
 			fault = shape
 			break
 		}
+		pagesSeen := reserved.state.PassPagesLive
+		if archived {
+			pagesSeen = reserved.state.PassPagesArchived
+		}
+		if _, err := domain.ListPageDone(page, lastID, pagesSeen); err != nil {
+			fault = &callFault{decode: true, status: status, path: "/v3/product/list"}
+			break
+		}
 		response = page
 	case domain.UnitDetail:
 		body, err := json.Marshal(domain.DetailRequest(reserved.productIDs))
@@ -442,16 +448,22 @@ func (r syncRunner) landList(ctx context.Context, tx pgx.Tx, reserved reserveOut
 		productIDs = append(productIDs, item.ProductID)
 		offerIDs = append(offerIDs, item.OfferID)
 	}
-	if err := StageSyncListingTx(ctx, tx, state, archived, productIDs, offerIDs); err != nil {
-		return stepRest, err
-	}
-	count := int64(len(page.Items))
 	prior := ""
 	if state.CursorLastID != nil {
 		prior = *state.CursorLastID
 	}
 	lastID := strings.TrimSpace(page.LastID)
-	done := domain.ListPageDone(page, prior, count)
+	pagesSeen := state.PassPagesLive
+	if archived {
+		pagesSeen = state.PassPagesArchived
+	}
+	done, err := domain.ListPageDone(page, prior, pagesSeen)
+	if err != nil {
+		return stepRest, err
+	}
+	if err := StageSyncListingTx(ctx, tx, state, archived, productIDs, offerIDs); err != nil {
+		return stepRest, err
+	}
 	var pass string
 	var cursor *string
 	switch {
@@ -467,10 +479,10 @@ func (r syncRunner) landList(ctx context.Context, tx pgx.Tx, reserved reserveOut
 		pass = domain.PassDetail
 	}
 	// Page numbers run continuously across both passes: the key is
-	// (store_pk, generation, page_no) and the archived flag is data. An empty
-	// page stages nothing.
+	// (store_pk, generation, page_no) and the archived flag is data. Empty
+	// continuation pages also count so the page bound survives job handoffs.
 	pageNo := int32(-1)
-	if count > 0 {
+	if len(page.Items) > 0 || !done {
 		if total := state.PassPagesLive + state.PassPagesArchived; total < 1<<31-1 {
 			pageNo = int32(total)
 		}
@@ -632,9 +644,6 @@ func (r syncRunner) release(ctx context.Context, reserved reserveOutcome) error 
 // enqueueContinuationTx queues the next unit of this chain inside the landing's
 // own transaction: "the unit landed" and "its successor exists" are one fact.
 func (r syncRunner) enqueueContinuationTx(ctx context.Context, tx pgx.Tx, state domain.SyncSnapshot, key string) error {
-	if jobsched.EnqueueOn == nil {
-		return errors.New("queue kernel is not linked")
-	}
 	payload := map[string]any{"storeId": state.StoreUUID}
 	if r.purpose == domain.PurposeManual {
 		payload["purpose"] = "manual"
@@ -643,7 +652,7 @@ func (r syncRunner) enqueueContinuationTx(ctx context.Context, tx pgx.Tx, state 
 	if err != nil {
 		return err
 	}
-	_, err = jobsched.EnqueueOn(ctx, tx, []jobsched.NewJob{{
+	_, err = r.queue.EnqueueOn(ctx, tx, []queuecontract.NewJob{{
 		ID:              uuid.New(),
 		OrgID:           state.OrgID,
 		Kind:            KindProductSync,
@@ -670,18 +679,12 @@ func continuationKey(pass string, cursor *string) string {
 
 // heartbeat extends the Job lease. A lost lease means the Job was reclaimed.
 func (r syncRunner) heartbeat(ctx context.Context) (bool, error) {
-	if jobsched.Renew == nil {
-		return false, errors.New("queue kernel is not linked")
-	}
-	return jobsched.Renew(ctx, r.pool, r.job.Lease())
+	return r.queue.Renew(ctx, r.pool, r.job.Lease())
 }
 
 // requeue hands the Job back for the wait an admission refusal named.
-func (r syncRunner) requeue(ctx context.Context, reason string, wait time.Duration) error {
-	if jobsched.Requeue == nil {
-		return errors.New("queue kernel is not linked")
-	}
-	_, err := jobsched.Requeue(ctx, r.pool, r.job.Lease(), reason, wait)
+func (r syncRunner) requeue(ctx context.Context, reason queuecontract.RequeueReason, wait time.Duration) error {
+	_, err := r.queue.Requeue(ctx, r.pool, r.job.Lease(), reason, wait)
 	return err
 }
 
@@ -691,7 +694,7 @@ func (r syncRunner) settleInTx(ctx context.Context, tx pgx.Tx, summary map[strin
 	if err != nil {
 		return err
 	}
-	return SettleJobTx(ctx, tx, r.job.Lease(), jobsched.StateSucceeded, body)
+	return SettleJobTx(ctx, tx, r.job.Lease(), queuecontract.StateSucceeded, body)
 }
 
 // withWorkerTx opens one cross-tenant worker transaction. Every statement the
@@ -764,12 +767,21 @@ func decodeListPage(status int, raw []byte) (domain.SyncListPage, *callFault) {
 		return domain.SyncListPage{}, &callFault{status: status, body: raw}
 	}
 	var envelope struct {
-		Result *domain.SyncListPage `json:"result"`
+		Result *struct {
+			Items  []domain.SyncListItem `json:"items"`
+			LastID *string               `json:"last_id"`
+		} `json:"result"`
 	}
-	if err := json.Unmarshal(raw, &envelope); err != nil || envelope.Result == nil {
+	if err := json.Unmarshal(raw, &envelope); err != nil || envelope.Result == nil ||
+		envelope.Result.Items == nil || envelope.Result.LastID == nil {
 		return domain.SyncListPage{}, &callFault{decode: true, status: status, body: raw}
 	}
-	return *envelope.Result, nil
+	for _, item := range envelope.Result.Items {
+		if item.ProductID <= 0 {
+			return domain.SyncListPage{}, &callFault{decode: true, status: status, body: raw}
+		}
+	}
+	return domain.SyncListPage{Items: envelope.Result.Items, LastID: *envelope.Result.LastID}, nil
 }
 
 // decodeDetailPage reads one /v3/product/info/list answer.
@@ -787,7 +799,7 @@ func decodeDetailPage(status int, raw []byte) (domain.SyncDetailPage, *callFault
 // SweepDueProductSync is the reconcile tick's half: materialize rows for stores that never
 // had one, then wake the due ones. It returns how many jobs were newly
 // enqueued; a dedup re-run is free.
-func SweepDueProductSync(ctx context.Context, pool *pgxpool.Pool, limit int, disabled bool) (int, error) {
+func SweepDueProductSync(ctx context.Context, pool *pgxpool.Pool, limit int, disabled bool, queue Queue) (int, error) {
 	if disabled || limit <= 0 {
 		return 0, nil
 	}
@@ -811,7 +823,7 @@ func SweepDueProductSync(ctx context.Context, pool *pgxpool.Pool, limit int, dis
 	if err != nil {
 		return 0, err
 	}
-	jobs := make([]jobsched.NewJob, 0, len(due))
+	jobs := make([]queuecontract.NewJob, 0, len(due))
 	for _, row := range due {
 		// A manual generation that already committed inside the window covers
 		// the automatic slot that lands there. The press itself is enqueued:
@@ -839,7 +851,7 @@ func SweepDueProductSync(ctx context.Context, pool *pgxpool.Pool, limit int, dis
 		if err != nil {
 			return 0, err
 		}
-		jobs = append(jobs, jobsched.NewJob{
+		jobs = append(jobs, queuecontract.NewJob{
 			ID:              uuid.New(),
 			OrgID:           row.OrgID,
 			Kind:            KindProductSync,
@@ -854,10 +866,10 @@ func SweepDueProductSync(ctx context.Context, pool *pgxpool.Pool, limit int, dis
 		})
 	}
 	if len(jobs) > 0 {
-		if jobsched.EnqueueOn == nil {
-			return 0, errors.New("queue kernel is not linked")
+		if queue.EnqueueOn == nil {
+			return 0, errors.New("queue operation is unavailable")
 		}
-		queued, err := jobsched.EnqueueOn(ctx, tx, jobs, 0)
+		queued, err := queue.EnqueueOn(ctx, tx, jobs, 0)
 		if err != nil {
 			return 0, err
 		}
@@ -888,27 +900,4 @@ func derefInt(value *int64) int64 {
 		return 0
 	}
 	return *value
-}
-
-// CleanupProductSync is the daily old-data sweep: gone products past their retention,
-// mirrors of stores soft-deleted past theirs, and pressure incidents past
-// seven days. Every statement is one set-based DELETE, safe to re-run.
-func CleanupProductSync(ctx context.Context, pool *pgxpool.Pool) error {
-	nowMS := domain.NowMS()
-	_, err := pool.Exec(ctx, `SELECT 1`)
-	if err != nil {
-		return err
-	}
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	if err := tenant.EnterWorker(ctx, tx); err != nil {
-		return err
-	}
-	if err := CleanupSyncRowsTx(ctx, tx, nowMS); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
 }

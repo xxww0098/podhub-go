@@ -1,29 +1,27 @@
 package domain
 
 import (
+	"bytes"
 	"encoding/json"
 	"sort"
-	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/xxww0098/podhub-go/internal/ops/contract"
 )
 
-const (
-	actionsPath    = "/v1/actions"
-	actionProducts = "/v2/actions/products"
-	actionCands    = "/v2/actions/candidates"
-	promoPageLimit = 100
-	maxPromoPages  = 20
-)
+const maxPromoPages = 20
 
 type PromotionsRequest struct {
-	StoreID    string
-	ProductIDs []int64
+	StoreID       string
+	ProductIDs    []int64
+	ActionID      *int64
+	Participating *bool
+	Cursor        string
 }
 
 func DecodePromotions(raw []byte) (PromotionsRequest, error) {
-	m, err := object(raw, "store_id", "product_ids")
+	m, err := object(raw, "store_id", "product_ids", "action_id", "participating", "cursor")
 	if err != nil {
 		return PromotionsRequest{}, err
 	}
@@ -32,228 +30,250 @@ func DecodePromotions(raw []byte) (PromotionsRequest, error) {
 		return PromotionsRequest{}, errJSON
 	}
 	req := PromotionsRequest{StoreID: store}
-	rawIDs, ok := m["product_ids"]
-	if !ok || json.Unmarshal(rawIDs, &req.ProductIDs) != nil {
+	ids, ok := m["product_ids"]
+	if !ok || !bytes.HasPrefix(bytes.TrimSpace(ids), []byte("[")) || json.Unmarshal(ids, &req.ProductIDs) != nil {
 		return PromotionsRequest{}, errJSON
+	}
+	if _, exists := m["action_id"]; exists {
+		id, ok, err := rawI64(m, "action_id")
+		if err != nil || !ok {
+			return PromotionsRequest{}, errJSON
+		}
+		req.ActionID = &id
+	}
+	if _, exists := m["participating"]; exists {
+		value, ok, err := rawBool(m, "participating")
+		if err != nil || !ok {
+			return PromotionsRequest{}, errJSON
+		}
+		req.Participating = &value
+	}
+	if value, exists, err := rawString(m, "cursor"); err != nil {
+		return PromotionsRequest{}, errJSON
+	} else if exists {
+		if string(m["cursor"]) == "null" {
+			return PromotionsRequest{}, errJSON
+		}
+		req.Cursor = value
 	}
 	return req, nil
 }
 
-// PositiveProducts drops non-positive ids. An empty result is a 200 before auth.
-func PositiveProducts(ids []int64) []int64 {
-	var out []int64
-	seen := map[int64]struct{}{}
-	for _, id := range ids {
-		if id <= 0 {
-			continue
-		}
-		if _, ok := seen[id]; ok {
-			continue
-		}
-		seen[id] = struct{}{}
-		out = append(out, id)
+func ValidatePromotions(req PromotionsRequest) *contract.Fail {
+	if len(req.ProductIDs) > 1000 {
+		return contract.Validation("每次最多读取 1000 件商品的活动")
 	}
-	return out
-}
-
-func EmptyPromotions() json.RawMessage {
-	return mustData(struct {
-		Actions []promoAction `json:"actions"`
-		Offers  []promoOffer  `json:"offers"`
-	}{Actions: []promoAction{}, Offers: []promoOffer{}})
-}
-
-type promoAction struct {
-	ActionID                   int64  `json:"action_id"`
-	Title                      string `json:"title"`
-	ActionType                 string `json:"action_type"`
-	DateStart                  string `json:"date_start"`
-	DateEnd                    string `json:"date_end"`
-	FreezeDate                 string `json:"freeze_date"`
-	IsParticipating            bool   `json:"is_participating"`
-	EligibleSelected           int64  `json:"eligible_selected"`
-	ParticipatingSelected      int64  `json:"participating_selected"`
-	PotentialProductsTotal     int64  `json:"potential_products_total"`
-	ParticipatingProductsTotal int64  `json:"participating_products_total"`
-}
-
-type promoOffer struct {
-	ActionID        int64   `json:"action_id"`
-	ProductID       int64   `json:"product_id"`
-	Participating   bool    `json:"participating"`
-	Price           float64 `json:"price"`
-	ActionPrice     float64 `json:"action_price"`
-	MaxActionPrice  float64 `json:"max_action_price"`
-	AddMode         string  `json:"add_mode"`
-	Stock           float64 `json:"stock"`
-	MinStock        float64 `json:"min_stock"`
-	CurrentBoost    float64 `json:"current_boost"`
-	MinBoost        float64 `json:"min_boost"`
-	MaxBoost        float64 `json:"max_boost"`
-	PriceMinElastic float64 `json:"price_min_elastic"`
-	PriceMaxElastic float64 `json:"price_max_elastic"`
-}
-
-func Promotions(ids []int64, fetch Fetch) (json.RawMessage, *contract.Fail) {
-	page := fetch("GET", actionsPath, nil)
-	if f := readPage(page, "读取 Ozon 平台活动", actionsPath, contract.CodeProducts); f != nil {
-		return nil, f
+	for _, id := range req.ProductIDs {
+		if !sellerID(id) {
+			return contract.Validation("促销活动包含无效的商品编号")
+		}
 	}
-	root := asObject(page.Body)
-	rows := arr(root, "result")
-	want := map[int64]struct{}{}
-	for _, id := range ids {
-		want[id] = struct{}{}
+	if len(req.Cursor) > 256 || strings.IndexFunc(req.Cursor, unicode.IsControl) >= 0 {
+		return contract.Validation("活动分页游标无效")
 	}
-	var actions []promoAction
-	var offers []promoOffer
-	for _, row := range rows {
-		id := fieldI64(row, "id")
-		potential := fieldI64(row, "potential_products_count")
-		participating := fieldI64(row, "participating_products_count")
-		if id <= 0 || (potential <= 0 && participating <= 0) {
-			continue
+	if req.ActionID == nil {
+		if req.Participating != nil || req.Cursor != "" {
+			return contract.Validation("活动分页必须指定活动和参加状态")
 		}
-		got, f := promoProducts(id, true, fetch)
-		if f != nil {
-			return nil, f
+	} else if !sellerID(*req.ActionID) || req.Participating == nil || len(req.ProductIDs) != 0 {
+		return contract.Validation("活动分页须指定有效活动、参加状态，且商品选择为空")
+	}
+	return nil
+}
+
+func promotionReadFailure() *contract.Fail {
+	return &contract.Fail{Status: 502, Code: contract.CodeProducts, Message: "Ozon 活动商品资料或分页不完整，请重新读取"}
+}
+
+func Promotions(req PromotionsRequest, read contract.PromotionRead) (json.RawMessage, *contract.Fail) {
+	if fail := ValidatePromotions(req); fail != nil {
+		return nil, fail
+	}
+	if read == nil {
+		return nil, contract.Internal("")
+	}
+	actions, fail := read.Actions()
+	if fail != nil {
+		return nil, fail
+	}
+	offers := []contract.PromotionOffer{}
+	var total *int64
+	var next *string
+	if req.ActionID != nil {
+		var selected *contract.PromotionAction
+		for i := range actions {
+			if actions[i].ActionID == *req.ActionID {
+				selected = &actions[i]
+				break
+			}
 		}
-		cands, f := promoProducts(id, false, fetch)
-		if f != nil {
-			return nil, f
+		if selected == nil {
+			return nil, &contract.Fail{Status: 404, Code: contract.CodeNotFound, Message: "该店铺当前没有此活动"}
 		}
-		seen := map[int64]struct{}{}
-		var selected, joined int64
-		for _, offer := range got {
-			if _, ok := want[offer.ProductID]; !ok {
+		page, fail := promotionPageRead(*req.ActionID, *req.Participating, req.Cursor, read)
+		if fail != nil {
+			return nil, fail
+		}
+		if page.NextCursor != "" && page.NextCursor == req.Cursor {
+			return nil, promotionReadFailure()
+		}
+		actions, offers, total = []contract.PromotionAction{*selected}, page.Offers, &page.Total
+		if page.NextCursor != "" {
+			next = &page.NextCursor
+		}
+	} else if len(req.ProductIDs) > 0 {
+		wanted := map[int64]bool{}
+		for _, id := range req.ProductIDs {
+			wanted[id] = true
+		}
+		selected := []contract.PromotionAction{}
+		for _, action := range actions {
+			if action.PotentialProductsTotal == 0 && action.ParticipatingProductsTotal == 0 {
 				continue
 			}
-			seen[offer.ProductID] = struct{}{}
-			offer.Participating = true
-			offers = append(offers, offer)
-			selected++
-			joined++
-		}
-		for _, offer := range cands {
-			if _, ok := want[offer.ProductID]; !ok {
-				continue
+			missing := make(map[int64]bool, len(wanted))
+			for id := range wanted {
+				missing[id] = true
 			}
-			if _, ok := seen[offer.ProductID]; ok {
-				continue
+			for _, participating := range []bool{true, false} {
+				if len(missing) == 0 {
+					break
+				}
+				rows, fail := promotionProductsFor(action.ActionID, participating, missing, read)
+				if fail != nil {
+					return nil, fail
+				}
+				for _, row := range rows {
+					if !missing[row.ProductID] {
+						continue
+					}
+					delete(missing, row.ProductID)
+					offers = append(offers, row)
+					action.EligibleSelected++
+					if participating {
+						action.ParticipatingSelected++
+					}
+				}
 			}
-			offer.Participating = false
-			offers = append(offers, offer)
-			selected++
+			if action.EligibleSelected > 0 {
+				selected = append(selected, action)
+			}
 		}
-		if selected == 0 {
-			continue
-		}
-		actions = append(actions, promoAction{
-			ActionID: id, Title: fieldString(row, "title"), ActionType: fieldString(row, "action_type"),
-			DateStart: fieldString(row, "date_start"), DateEnd: fieldString(row, "date_end"), FreezeDate: fieldString(row, "freeze_date"),
-			IsParticipating:  fieldBool(row, "is_participating"),
-			EligibleSelected: selected, ParticipatingSelected: joined,
-			PotentialProductsTotal: potential, ParticipatingProductsTotal: participating,
+		actions = selected
+		sort.Slice(actions, func(i, j int) bool {
+			if actions[i].ParticipatingSelected != actions[j].ParticipatingSelected {
+				return actions[i].ParticipatingSelected > actions[j].ParticipatingSelected
+			}
+			if actions[i].EligibleSelected != actions[j].EligibleSelected {
+				return actions[i].EligibleSelected > actions[j].EligibleSelected
+			}
+			return actions[i].Title < actions[j].Title
 		})
 	}
-	sort.Slice(actions, func(i, j int) bool {
-		if actions[i].ParticipatingSelected != actions[j].ParticipatingSelected {
-			return actions[i].ParticipatingSelected > actions[j].ParticipatingSelected
-		}
-		if actions[i].EligibleSelected != actions[j].EligibleSelected {
-			return actions[i].EligibleSelected > actions[j].EligibleSelected
-		}
-		return actions[i].Title < actions[j].Title
-	})
-	if actions == nil {
-		actions = []promoAction{}
+	if fail := promotionDetails(offers, read); fail != nil {
+		return nil, fail
 	}
-	if offers == nil {
-		offers = []promoOffer{}
+	if actions == nil {
+		actions = []contract.PromotionAction{}
 	}
 	return mustData(struct {
-		Actions []promoAction `json:"actions"`
-		Offers  []promoOffer  `json:"offers"`
-	}{Actions: actions, Offers: offers}), nil
+		Actions    []contract.PromotionAction `json:"actions"`
+		Offers     []contract.PromotionOffer  `json:"offers"`
+		Total      *int64                     `json:"total,omitempty"`
+		NextCursor *string                    `json:"next_cursor"`
+	}{actions, offers, total, next}), nil
 }
 
-func promoProducts(actionID int64, participating bool, fetch Fetch) ([]promoOffer, *contract.Fail) {
-	path := actionCands
-	op := "读取活动候选商品"
-	if participating {
-		path = actionProducts
-		op = "读取活动已参加商品"
+func promotionPageRead(actionID int64, participating bool, cursor string, read contract.PromotionRead) (contract.PromotionPage, *contract.Fail) {
+	page, fail := read.Products(actionID, participating, cursor)
+	if fail != nil {
+		return contract.PromotionPage{}, fail
 	}
-	var out []promoOffer
-	var last string
-	for page := 0; page < maxPromoPages; page++ {
-		body := map[string]any{"action_id": actionID, "limit": promoPageLimit}
-		if last != "" {
-			body["last_id"] = last
+	if cursor == "" && int64(len(page.Offers)) == page.Total {
+		page.NextCursor = ""
+	}
+	if page.NextCursor != "" && len(page.Offers) == 0 || cursor == "" && page.NextCursor == "" && int64(len(page.Offers)) != page.Total {
+		return contract.PromotionPage{}, promotionReadFailure()
+	}
+	return page, nil
+}
+
+func promotionProductsFor(actionID int64, participating bool, wanted map[int64]bool, read contract.PromotionRead) ([]contract.PromotionOffer, *contract.Fail) {
+	out := []contract.PromotionOffer{}
+	seen, cursors := map[int64]bool{}, map[string]bool{}
+	found := 0
+	cursor := ""
+	var total int64 = -1
+	for i := 0; i < maxPromoPages; i++ {
+		page, fail := read.Products(actionID, participating, cursor)
+		if fail != nil {
+			return nil, fail
 		}
-		raw, _ := compact(body)
-		got := fetch("POST", path, raw)
-		if f := readPage(got, op, path, contract.CodeProducts); f != nil {
-			return nil, f
-		}
-		root := asObject(got.Body)
-		rows := arr(root, "products")
-		if fieldBool(root, "has_next") || strings.TrimSpace(fieldString(root, "last_id")) != "" {
-			if page == maxPromoPages-1 && (fieldBool(root, "has_next") || len(rows) >= promoPageLimit) {
-				return nil, &contract.Fail{Status: 502, Code: contract.CodeProducts, Message: "活动商品超出读取页数上限，请稍后重试或缩小活动范围"}
+		for _, row := range page.Offers {
+			if seen[row.ProductID] {
+				return nil, promotionReadFailure()
+			}
+			seen[row.ProductID] = true
+			out = append(out, row)
+			if wanted[row.ProductID] {
+				found++
 			}
 		}
-		for _, row := range rows {
-			id := fieldI64(row, "id")
-			if id == 0 {
-				id = fieldI64(row, "product_id")
-			}
-			price := moneyAmount(row, "price")
-			action := moneyAmount(row, "action_price")
-			maxp := moneyAmount(row, "max_action_price")
-			if maxp < action {
-				maxp = action
-			}
-			out = append(out, promoOffer{
-				ActionID: actionID, ProductID: id, Participating: participating,
-				Price: price, ActionPrice: action, MaxActionPrice: maxp,
-				AddMode: fieldString(row, "add_mode"), Stock: fieldF64(row, "stock"), MinStock: fieldF64(row, "min_stock"),
-				CurrentBoost: fieldF64(nested(row, "boosts"), "current"),
-				MinBoost:     fieldF64(nested(row, "boosts"), "min"), MaxBoost: fieldF64(nested(row, "boosts"), "max"),
-				PriceMinElastic: fieldF64(row, "price_min_elastic"), PriceMaxElastic: fieldF64(row, "price_max_elastic"),
-			})
-		}
-		next := strings.TrimSpace(fieldString(root, "last_id"))
-		if next == "" || next == last || len(rows) < promoPageLimit {
+		// Positive target rows prove membership; absence still needs the complete roster.
+		if len(wanted) > 0 && found == len(wanted) {
 			return out, nil
 		}
-		last = next
+		if total >= 0 && total != page.Total {
+			return nil, promotionReadFailure()
+		}
+		total = page.Total
+		if int64(len(out)) > total {
+			return nil, promotionReadFailure()
+		}
+		if int64(len(out)) == total {
+			return out, nil
+		}
+		if page.NextCursor == "" || len(page.Offers) == 0 {
+			return nil, promotionReadFailure()
+		}
+		if cursors[page.NextCursor] {
+			return nil, promotionReadFailure()
+		}
+		cursors[page.NextCursor] = true
+		cursor = page.NextCursor
 	}
-	return nil, &contract.Fail{Status: 502, Code: contract.CodeProducts, Message: "活动商品超出读取页数上限，请稍后重试或缩小活动范围"}
+	return nil, &contract.Fail{Status: 502, Code: contract.CodeProducts, Message: "活动商品超出完整读取页数上限，请使用活动分页管理"}
 }
 
-func moneyAmount(m map[string]json.RawMessage, key string) float64 {
-	raw, ok := m[key]
-	if !ok {
-		return 0
-	}
-	var obj map[string]json.RawMessage
-	if json.Unmarshal(raw, &obj) == nil {
-		if amt, ok := obj["amount"]; ok {
-			var s string
-			if json.Unmarshal(amt, &s) == nil {
-				f, _ := strconv.ParseFloat(s, 64)
-				return f
-			}
-			var n float64
-			if json.Unmarshal(amt, &n) == nil {
-				return n
-			}
+func promotionDetails(offers []contract.PromotionOffer, read contract.PromotionRead) *contract.Fail {
+	ids := []int64{}
+	seen := map[int64]bool{}
+	for _, row := range offers {
+		if !seen[row.ProductID] {
+			ids = append(ids, row.ProductID)
+			seen[row.ProductID] = true
 		}
 	}
-	var n float64
-	if json.Unmarshal(raw, &n) == nil {
-		return n
+	details := map[int64]contract.PromotionIdentity{}
+	for start := 0; start < len(ids); start += 100 {
+		end := start + 100
+		if end > len(ids) {
+			end = len(ids)
+		}
+		rows, fail := read.Details(ids[start:end])
+		if fail != nil {
+			return fail
+		}
+		for _, row := range rows {
+			details[row.ProductID] = row
+		}
 	}
-	return 0
+	for i := range offers {
+		row, ok := details[offers[i].ProductID]
+		if !ok {
+			return promotionReadFailure()
+		}
+		offers[i].OfferID, offers[i].Name, offers[i].SKU = row.OfferID, row.Name, row.SKU
+	}
+	return nil
 }

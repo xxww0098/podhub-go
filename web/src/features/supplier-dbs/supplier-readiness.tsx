@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils"
 /** 检查键 → 中文缺项名（表格/行页面共用同一份文案）。 */
 export const READINESS_LABELS: Record<keyof SupplierDbReadiness, string> = {
   category: "类目",
-  prompt: "提示词",
+  prompt: "识图事实",
   fixedTags: "固定 tags",
   platformPrice: "平台价",
   ozonConfig: "Ozon 配置未校验",
@@ -35,7 +35,7 @@ const OZON_CONFIG_DENIAL_LABELS: Partial<
 }
 
 /**
- * 普通字段即时预览；提示词（`validate_brief`）与 Ozon 配置必须由服务端判定，
+ * 普通字段即时预览；提示词（`CanonicalProfile`）与 Ozon 配置必须由服务端判定，
  * 缺失时不视为就绪——前端不镜像商品说明格式。
  */
 export function computeReadiness(row: SupplierDbRow): SupplierDbReadiness {
@@ -51,7 +51,7 @@ export function computeReadiness(row: SupplierDbRow): SupplierDbReadiness {
 /** 未过检查项的中文标签列表（按声明顺序）。 */
 export function missingReadiness(row: SupplierDbRow): string[] {
   const readiness = computeReadiness(row)
-  return (Object.keys(READINESS_LABELS) as Array<keyof SupplierDbReadiness>)
+  const missing = (Object.keys(READINESS_LABELS) as Array<keyof SupplierDbReadiness>)
     .filter((key) => !readiness[key])
     .map((key) =>
       key === "ozonConfig"
@@ -60,6 +60,8 @@ export function missingReadiness(row: SupplierDbRow): string[] {
           READINESS_LABELS[key]
         : READINESS_LABELS[key],
     )
+  if (!row.gallery.length) missing.push("图集")
+  return missing
 }
 
 /** 服务端 400 的缺项清单（SupplierDbErrorResponse.missing）→ 中文标签。 */
@@ -71,7 +73,7 @@ export function missingFromRefusal(reason: unknown): string[] {
   if (!Array.isArray(missing)) return []
   return missing
     .filter((key): key is string => typeof key === "string")
-    .map((key) => READINESS_LABELS[key as keyof SupplierDbReadiness] ?? key)
+    .map((key) => key === "gallery" ? "图集" : READINESS_LABELS[key as keyof SupplierDbReadiness] ?? key)
 }
 
 /**

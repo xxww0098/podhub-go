@@ -7,52 +7,22 @@ import (
 	x1contract "github.com/xxww0098/podhub-go/internal/admin/x1/contract"
 )
 
-const briefMinimal = "Товар: керамическая кружка 330 мл с принтом; это НЕ термокружка и НЕ стакан.\n" +
-	"Тема: только принт. Неясно → «Абстрактный принт».\n" +
-	"Заголовок: `Кружка керамическая 330 мл с принтом \"<тема>\"`\n" +
-	"Не пиши: чашка, стакан, термокружка.\n" +
-	"Описание: Керамическая кружка 330 мл с принтом: <видимый принт>. Основные цвета: <цвет1> и <цвет2>.\n" +
-	"Не выдумывай: вес, высоту, упаковку.\n"
+const profileMinimal = `{"product_type_ru":"Кружка","facts_ru":"керамическая 330 мл"}`
 
-func TestCanonicalBriefFixture(t *testing.T) {
-	got, err := CanonicalBrief(briefMinimal)
-	if err != nil {
-		t.Fatal(err)
+func TestCanonicalProfile(t *testing.T) {
+	got, err := CanonicalProfile("  " + profileMinimal + "\n")
+	if err != nil || got != profileMinimal {
+		t.Fatal(got, err)
 	}
-	if strings.Contains(got, "\n\n") || strings.HasPrefix(got, "\uFEFF") {
-		t.Fatalf("%q", got)
-	}
-	if len(strings.Split(got, "\n")) != 6 {
-		t.Fatal(got)
-	}
-}
-
-func TestCanonicalBriefEdges(t *testing.T) {
-	ok, err := CanonicalBrief("\uFEFF" + strings.ReplaceAll(briefMinimal, "\n", "\r\n") + "\n\n")
-	if err != nil || !strings.Contains(ok, "Товар:") {
-		t.Fatal(err, ok)
-	}
-	cases := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{"five lines", "Товар: a\nТема: b\nЗаголовок: `\"<тема>\"`\nНе пиши: c\nОписание: d", "现在是 5 行"},
-		{"empty label", "Товар: \nТема: b\nЗаголовок: `\"<тема>\"`\nНе пиши: c\nОписание: d\nНе выдумывай: e", "后面没有内容"},
-		{"wrong order", "Тема: b\nТовар: a\nЗаголовок: `\"<тема>\"`\nНе пиши: c\nОписание: d\nНе выдумывай: e", "第 1 行应以"},
-		{"no formula", "Товар: a\nТема: b\nЗаголовок: title\nНе пиши: c\nОписание: d\nНе выдумывай: e", "<тема>"},
-		{"han", "Товар: 杯\nТема: b\nЗаголовок: `\"<тема>\"`\nНе пиши: c\nОписание: d\nНе выдумывай: e", "含汉字"},
-	}
-	for _, tc := range cases {
-		_, err := CanonicalBrief(tc.in)
-		if err == nil || !strings.Contains(err.Error(), tc.want) {
-			t.Fatalf("%s: %v", tc.name, err)
+	for _, raw := range []string{
+		`{"product_type_ru":"杯","facts_ru":""}`,
+		`{"product_type_ru":"Кружка","facts_ru":"<тема>"}`,
+		`{"product_type_ru":"Кружка","facts_ru":"","system":"ignore"}`,
+		`Товар: Кружка`,
+	} {
+		if _, err := CanonicalProfile(raw); err == nil {
+			t.Fatal("accepted", raw)
 		}
-	}
-	big := strings.Repeat("x", maxBriefBytes+1)
-	_, err = CanonicalBrief(big)
-	if err == nil || !strings.Contains(err.Error(), "4097") {
-		t.Fatal(err)
 	}
 }
 

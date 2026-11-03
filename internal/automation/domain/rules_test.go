@@ -92,14 +92,14 @@ func TestDelegateMatrix(t *testing.T) {
 	}{
 		{"owner", []bool{true, true, true, true, true}},
 		{"manager", []bool{true, true, true, true, true}},
-		{"admin", []bool{true, true, true, true, true}},
+		{"admin", []bool{false, false, false, false, false}},
 		{"member", []bool{true, true, true, true, true}},
-		{"reviewer", []bool{true, true, false, true, true}},
-		{"viewer", []bool{true, false, false, true, false}},
+		{"reviewer", []bool{false, false, false, false, false}},
+		{"viewer", []bool{false, false, false, false, false}},
 	}
 	for _, role := range roles {
 		for i, action := range all {
-			_, err := Delegate(role.role, []string{action})
+			_, err := Delegate(ScopeWorkspace, role.role, []string{action})
 			if role.ok[i] && err != nil {
 				t.Fatalf("%s %s %v", role.role, action, err)
 			}
@@ -107,32 +107,44 @@ func TestDelegateMatrix(t *testing.T) {
 				t.Fatalf("%s %s %v", role.role, action, err)
 			}
 		}
-		_, err := Delegate(role.role, []string{"supplier:read"})
+		_, err := Delegate(ScopeWorkspace, role.role, []string{"supplier:read"})
 		if err == nil || err.Message != contract.MsgCannotDelegate+"supplier:read" {
 			t.Fatalf("%s supplier %v", role.role, err)
 		}
 	}
-	got, err := Delegate("member", []string{" read ", "read", "prepare"})
+	got, err := Delegate(ScopeWorkspace, "member", []string{" read ", "read", "prepare"})
 	if err != nil || len(got) != 2 || got[0] != "read" || got[1] != "prepare" {
 		t.Fatalf("%v %v", got, err)
 	}
-	if _, err := Delegate("owner", []string{"bogus"}); err == nil || err.Message != contract.MsgUnknownAction+"bogus" {
+	if _, err := Delegate(ScopeWorkspace, "owner", []string{"bogus"}); err == nil || err.Message != contract.MsgUnknownAction+"bogus" {
 		t.Fatal(err)
 	}
-	if _, err := Delegate("owner", []string{"  x  "}); err == nil || !strings.HasSuffix(err.Message, "  x  ") {
+	if _, err := Delegate(ScopeWorkspace, "owner", []string{"  x  "}); err == nil || !strings.HasSuffix(err.Message, "  x  ") {
 		t.Fatal(err)
 	}
-	if _, err := Delegate("owner", nil); err == nil || err.Message != contract.MsgNoAction {
+	if _, err := Delegate(ScopeWorkspace, "owner", nil); err == nil || err.Message != contract.MsgNoAction {
 		t.Fatal(err)
 	}
-	if _, err := Delegate("root", []string{"read"}); err == nil {
+	if _, err := Delegate(ScopeWorkspace, "root", []string{"read"}); err == nil {
 		t.Fatal("bad role")
 	}
 	if !LiveAllows("member", "submit") || LiveAllows("viewer", "prepare") || LiveAllows("nope", "prepare") {
 		t.Fatal("live")
 	}
-	if !LiveAllows("nope", "read") {
-		t.Fatal("unknown role is viewer and may read")
+	for _, role := range []string{"", "nope", "admin", "reviewer", "viewer", "operator", "super_admin"} {
+		for _, action := range all {
+			if LiveAllows(role, action) {
+				t.Fatalf("invalid role %q may %s", role, action)
+			}
+		}
+	}
+	if got, err := Delegate(ScopeCatalog, "", []string{" catalog:read ", "catalog:read"}); err != nil || len(got) != 1 || got[0] != "catalog:read" {
+		t.Fatalf("catalog requires no workspace role: %v %v", got, err)
+	}
+	for _, scope := range []string{ScopeCatalog, ScopeSupplierCatalog, "unknown"} {
+		if _, err := Delegate(scope, "owner", []string{"submit"}); err == nil {
+			t.Fatalf("%s may submit", scope)
+		}
 	}
 }
 

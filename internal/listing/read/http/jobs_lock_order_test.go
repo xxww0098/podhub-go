@@ -24,7 +24,6 @@ import (
 	"github.com/xxww0098/podhub-go/internal/platform/db"
 	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
 	"github.com/xxww0098/podhub-go/internal/platform/httpx/jsonwire"
-	_ "github.com/xxww0098/podhub-go/internal/queue"
 	queuerepo "github.com/xxww0098/podhub-go/internal/queue/repo"
 	"github.com/xxww0098/podhub-go/tests/testkit"
 )
@@ -215,7 +214,7 @@ func testClaimSameResult(t *testing.T, ctx context.Context, pool *pgxpool.Pool) 
 		t.Fatalf("media left %s %v", mediaState, err)
 	}
 	emptyPage := callWindow(h, emptyBody).Body.String()
-	if !strings.Contains(emptyPage, `"queuedCost":72`) || !strings.Contains(emptyPage, `"runningCost":8`) {
+	if !strings.Contains(emptyPage, `"queued_cost":72`) || !strings.Contains(emptyPage, `"running_cost":8`) {
 		t.Fatal(emptyPage)
 	}
 
@@ -699,7 +698,7 @@ func marshalWindow(t *testing.T, out []browserClaim, level *queueLevelView) []by
 	}
 	raw, err := jsonwire.Marshal(struct {
 		Data       []browserClaim  `json:"data"`
-		QueueLevel *queueLevelView `json:"queueLevel,omitempty"`
+		QueueLevel *queueLevelView `json:"queue_level,omitempty"`
 	}{Data: out, QueueLevel: level})
 	if err != nil {
 		t.Fatal(err)
@@ -709,12 +708,12 @@ func marshalWindow(t *testing.T, out []browserClaim, level *queueLevelView) []by
 
 var (
 	ownerRe = regexp.MustCompile(`"owner":"[^"]*"`)
-	msRe    = regexp.MustCompile(`"updatedAtMs":\d+`)
+	msRe    = regexp.MustCompile(`"updated_at_ms":\d+`)
 )
 
 func canonClaimJSON(raw []byte) string {
 	s := ownerRe.ReplaceAllString(string(raw), `"owner":"OWNER"`)
-	return msRe.ReplaceAllString(s, `"updatedAtMs":0`)
+	return msRe.ReplaceAllString(s, `"updated_at_ms":0`)
 }
 
 func readClaims(t *testing.T, raw []byte) ([]string, []seenClaim) {
@@ -729,7 +728,7 @@ func readClaims(t *testing.T, raw []byte) ([]string, []seenClaim) {
 			Lease struct {
 				Epoch int64 `json:"epoch"`
 			} `json:"lease"`
-			LeaseSeconds int64 `json:"leaseSeconds"`
+			LeaseSeconds int64 `json:"lease_seconds"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &body); err != nil {

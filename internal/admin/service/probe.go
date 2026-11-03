@@ -30,6 +30,8 @@ type probeTarget struct {
 	Format string
 	Model  string
 	Key    string
+	// Public is the stored allow_public_egress switch read at probe time.
+	Public bool
 }
 
 func (a *API) ListModels(ctx context.Context, in ProbeIn) (any, *contract.Fault) {
@@ -43,7 +45,7 @@ func (a *API) ListModels(ctx context.Context, in ProbeIn) (any, *contract.Fault)
 	}
 	type option struct {
 		ID    string `json:"id"`
-		Owned string `json:"ownedBy"`
+		Owned string `json:"owned_by"`
 	}
 	out := make([]option, 0, len(models))
 	for _, m := range models {
@@ -70,11 +72,11 @@ func (a *API) VerifyModel(ctx context.Context, in ProbeIn) (any, *contract.Fault
 	return struct {
 		Data struct {
 			Verified bool `json:"verified"`
-			Present  bool `json:"modelPresent"`
+			Present  bool `json:"model_present"`
 		} `json:"data"`
 	}{Data: struct {
 		Verified bool `json:"verified"`
-		Present  bool `json:"modelPresent"`
+		Present  bool `json:"model_present"`
 	}{true, domain.ModelPresent(models, target.Model)}}, nil
 }
 
@@ -128,7 +130,21 @@ func (a *API) resolveProbe(ctx context.Context, in ProbeIn, needModel bool) (pro
 	if msg := domain.PublicEndpoint(base, a.Loopback); msg != "" {
 		return probeTarget{}, contract.Validation(msg)
 	}
-	return probeTarget{Base: base, Format: format, Model: model, Key: key}, nil
+	public, fault := a.publicEgress(ctx)
+	if fault != nil {
+		return probeTarget{}, fault
+	}
+	return probeTarget{Base: base, Format: format, Model: model, Key: key, Public: public}, nil
+}
+
+// publicEgress is the stored public-dial switch. No stored configuration
+// means off; an unreadable one fails the probe closed.
+func (a *API) publicEgress(ctx context.Context) (bool, *contract.Fault) {
+	snap, fault := a.readSnapshot(ctx, true)
+	if fault != nil {
+		return false, fault
+	}
+	return snap != nil && snap.AIRuntime.AllowPublicEgress, nil
 }
 
 func (a *API) fetchModels(ctx context.Context, target probeTarget) ([]domain.ModelOption, *contract.Fault) {
@@ -139,7 +155,7 @@ func (a *API) fetchModels(ctx context.Context, target probeTarget) ([]domain.Mod
 	if !ok {
 		return nil, contract.Validation("接口地址不是允许的公网 https 端点")
 	}
-	status, body, dnsRefused, err := a.Fetch.Fetch(ctx, endpoint, target.Format, target.Key)
+	status, body, dnsRefused, err := a.Fetch.Fetch(ctx, endpoint, target.Format, target.Key, target.Public)
 	if dnsRefused {
 		return nil, contract.Validation("接口地址不是允许的公网 https 端点")
 	}

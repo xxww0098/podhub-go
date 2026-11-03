@@ -4,49 +4,22 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 
-	"github.com/tetratelabs/wazero"
-	"github.com/tetratelabs/wazero/api"
+	"github.com/xxww0098/podhub-go/internal/listing/core"
 )
 
 func TestWasmMatchesNativeOracle(t *testing.T) {
-	engine := openTags(t, embeddedTagsWASM)
-	t.Cleanup(func() { _ = engine.Close(context.Background()) })
-	assertOracle(t, engine)
-	logImports(t, embeddedTagsWASM)
-}
-
-func TestReadEnvFileResolvesRepoRelativePath(t *testing.T) {
-	t.Setenv("LISTING_TAGS_WASM", "rust/crates/listing-tags/testdata/oracle.json")
-	data, err := TagsWASMFromEnv()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Contains(data, []byte(`"name"`)) {
-		t.Fatalf("oracle not read from module root, %d bytes", len(data))
-	}
-}
-
-func TestRebuiltWasmMatchesNativeOracle(t *testing.T) {
-	raw, err := TagsWASMFromEnv()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if raw == nil {
-		t.Skip("LISTING_TAGS_WASM is unset")
-	}
-	engine := openTags(t, raw)
-	t.Cleanup(func() { _ = engine.Close(context.Background()) })
-	assertOracle(t, engine)
+	assertOracle(t, openTags(t))
 }
 
 func TestSubmitGateDivergesFromRustFreeze(t *testing.T) {
-	engine := openTags(t, embeddedTagsWASM)
-	t.Cleanup(func() { _ = engine.Close(context.Background()) })
+	engine := openTags(t)
 	rules := []Rule{{Term: "сигарета", MatchMode: "stem"}}
 	version, err := RulesVersion(rules)
 	if err != nil {
@@ -86,8 +59,7 @@ func TestSubmitGateDivergesFromRustFreeze(t *testing.T) {
 }
 
 func TestPhraseStripMatchesPreSendAndSubmitRejectsIt(t *testing.T) {
-	engine := openTags(t, embeddedTagsWASM)
-	t.Cleanup(func() { _ = engine.Close(context.Background()) })
+	engine := openTags(t)
 	rules := []Rule{{Term: "электронная_сигарета", MatchMode: "stem"}}
 	version, err := RulesVersion(rules)
 	if err != nil {
@@ -120,65 +92,14 @@ func TestPhraseStripMatchesPreSendAndSubmitRejectsIt(t *testing.T) {
 	}
 }
 
-func TestWazeroHostSatisfiesFillRandom(t *testing.T) {
-	// The host probe is a test-only module. It is committed under
-	// wasm/dist/test/ and is not part of the embedded production set.
-	committed, err := os.ReadFile(repoFile("wasm/dist/test/host-probe.wasm"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	exerciseProbe(t, committed)
-	raw, err := ProbeWASMFromEnv()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if raw != nil {
-		exerciseProbe(t, raw)
-	}
-}
-
-func exerciseProbe(t *testing.T, wasm []byte) {
+func openTags(t *testing.T) *Engine {
 	t.Helper()
-	ctx := context.Background()
-	rt := wazero.NewRuntime(ctx)
-	t.Cleanup(func() { _ = rt.Close(context.Background()) })
-	_, err := rt.NewHostModuleBuilder("env").
-		NewFunctionBuilder().
-		WithFunc(func(_ context.Context, mod api.Module, ptr, n uint32) {
-			buf := bytes.Repeat([]byte{7}, int(n))
-			if !mod.Memory().Write(ptr, buf) {
-				t.Errorf("fill_random write")
-			}
-		}).
-		Export("fill_random").
-		Instantiate(ctx)
+	mod, err := core.OpenEmbedded(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	mod, err := rt.InstantiateWithConfig(ctx, wasm, wazero.NewModuleConfig().WithName("probe"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	sum, err := mod.ExportedFunction("sum_random").Call(ctx, 4)
-	if err != nil || len(sum) != 1 || sum[0] != 28 {
-		t.Fatalf("sum %v %v", sum, err)
-	}
-	hits, err := mod.ExportedFunction("hits").Call(ctx)
-	if err != nil || hits[0] != 1 {
-		t.Fatalf("hits %v %v", hits, err)
-	}
-	if _, err := mod.ExportedFunction("boom").Call(ctx); err == nil {
-		t.Fatal("panic must trap")
-	}
-}
-
-func openTags(t *testing.T, wasm []byte) *Engine {
-	t.Helper()
-	engine, err := Open(context.Background(), wasm)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return engine
+	t.Cleanup(func() { _ = mod.Close(context.Background()) })
+	return New(mod)
 }
 
 func assertOracle(t *testing.T, engine *Engine) {
@@ -188,7 +109,7 @@ func assertOracle(t *testing.T, engine *Engine) {
 		Request  json.RawMessage `json:"request"`
 		Response json.RawMessage `json:"response"`
 	}
-	raw, err := os.ReadFile(repoFile("rust/crates/listing-tags/testdata/oracle.json"))
+	raw, err := os.ReadFile(repoFile("rust/crates/listing-core-wasm/tests/fixtures/banned_tags/oracle.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,26 +142,40 @@ func assertOracle(t *testing.T, engine *Engine) {
 	}
 }
 
-func logImports(t *testing.T, wasm []byte) {
-	t.Helper()
-	ctx := context.Background()
-	rt := wazero.NewRuntime(ctx)
-	defer rt.Close(ctx)
-	compiled, err := rt.CompileModule(ctx, wasm)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var names []string
-	for _, fn := range compiled.ImportedFunctions() {
-		names = append(names, fn.ModuleName()+"."+fn.Name())
-	}
-	t.Logf("listing-tags imports: %v", names)
-}
-
 func repoFile(rel string) string {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		return rel
 	}
 	return filepath.Join(filepath.Dir(file), "..", "..", "..", "..", "..", rel)
+}
+
+// Tag calls share the listing-core guest pool. Under contention every call
+// must still see its own result, in input order.
+func TestBannedOutcomeOrderUnderSharedPool(t *testing.T) {
+	engine := openTags(t)
+	rules := []Rule{{Term: "сигарета", MatchMode: "stem"}}
+	tags := []string{"#роза", "#сигареты", "#море"}
+	var wg sync.WaitGroup
+	errs := make(chan error, 64)
+	for i := 0; i < 64; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			got, err := engine.Call(context.Background(), "partition", "", "", "", tags, rules)
+			if err != nil {
+				errs <- err
+				return
+			}
+			if len(got.Kept) != 2 || got.Kept[0] != "#роза" || got.Kept[1] != "#море" ||
+				len(got.Rejected) != 1 || got.Rejected[0] != "#сигареты" {
+				errs <- fmt.Errorf("order %+v", got)
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
 }

@@ -2,6 +2,8 @@ package scans
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -9,6 +11,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	delegaterepo "github.com/xxww0098/podhub-go/internal/delegate/repo"
+	delegatesvc "github.com/xxww0098/podhub-go/internal/delegate/service"
+	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
 	queuecontract "github.com/xxww0098/podhub-go/internal/queue/contract"
 	queuedomain "github.com/xxww0098/podhub-go/internal/queue/domain"
 	queuerepo "github.com/xxww0098/podhub-go/internal/queue/repo"
@@ -29,8 +34,8 @@ func DelegateBucket(now time.Time, interval time.Duration) int64 {
 }
 
 // EnqueueDelegateSync inserts one delegate.posting_sync job per org that still
-// has an order outside done and cancelled. The key is bucket:{n}. The worker
-// cancels the job; this function does not dial and does not change orders.
+// has an unfinished order. Oldest unserved workspaces run first; an active job
+// excludes a second claim. The key is bucket:{n}.
 func EnqueueDelegateSync(ctx context.Context, pool *pgxpool.Pool, limit int, interval time.Duration) (int, error) {
 	if limit <= 0 {
 		return 0, nil
@@ -44,13 +49,16 @@ func EnqueueDelegateSync(ctx context.Context, pool *pgxpool.Pool, limit int, int
 	var orgs []org
 	err := asWorker(ctx, pool, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
-			SELECT DISTINCT o.id, o.owner_user_id, o.uuid
+			SELECT o.id, o.owner_user_id, o.uuid
 			  FROM organizations o
-			  JOIN delegate_orders d ON d.org_id = o.id
-			 WHERE d.state NOT IN ('done', 'cancelled')
+			  LEFT JOIN LATERAL (SELECT max(created_at) AS last_sync FROM jobs
+			    WHERE org_id=o.id AND kind='delegate.posting_sync') h ON true
+			 WHERE EXISTS (SELECT 1 FROM delegate_orders d WHERE d.org_id=o.id AND d.state NOT IN ('done','cancelled'))
 			   AND o.dissolved_at IS NULL
 			   AND o.owner_user_id > 0
-			 ORDER BY o.id
+			   AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.org_id=o.id AND j.kind='delegate.posting_sync'
+			     AND j.state IN ('queued','running','retry_wait'))
+			 ORDER BY h.last_sync ASC NULLS FIRST,o.id
 			 LIMIT $1`, limit)
 		if err != nil {
 			return err
@@ -98,12 +106,52 @@ func EnqueueDelegateSync(ctx context.Context, pool *pgxpool.Pool, limit int, int
 	return n, nil
 }
 
-// CancelDelegate finishes delegate.posting_sync as cancelled. It does not
-// mark the job succeeded, does not dial, and does not update delegate_orders.
-func CancelDelegate(ctx context.Context, pool *pgxpool.Pool, job queuecontract.Claimed) error {
+// RunDelegate reads outside transactions and applies each receipt under the job's epoch fence.
+func RunDelegate(ctx context.Context, pool *pgxpool.Pool, job queuecontract.Claimed, repo delegaterepo.Repo, seller delegatesvc.Seller) error {
 	if job.Kind != "delegate.posting_sync" {
 		return queueservice.ErrWorkNotPorted
 	}
-	_, err := queuerepo.Finish(ctx, pool, job.Lease(), queuerepo.StateCancelled, []byte(`{"reason":"body_not_ported"}`), "not_ported")
+	targets, err := repo.SyncTargets(ctx, job.OrgID)
+	if err != nil {
+		return err
+	}
+	applied, skipped := 0, 0
+	var failures []error
+	for _, target := range targets {
+		update, err := seller.ReadPosting(ctx, delegatesvc.Actor{OrgID: job.OrgID, UserID: job.SubmitterUserID, CanManage: true}, target)
+		if err != nil {
+			failures = append(failures, fmt.Errorf("posting %s: %w", target.PostingNumber, err))
+			continue
+		}
+		changed := false
+		owned, err := queuerepo.MutateRunning(ctx, pool, job.Lease(), func(ctx context.Context, tx pgx.Tx) error {
+			if err := tenant.EnterApp(ctx, tx, job.OrgID); err != nil {
+				return err
+			}
+			var err error
+			changed, err = repo.ApplyPostingOn(ctx, tx, job.OrgID, job.SubmitterUserID, target, update, time.Now().UnixMilli(), seller.Auto)
+			return err
+		})
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		if !owned {
+			return nil
+		}
+		if changed {
+			applied++
+		} else {
+			skipped++
+		}
+	}
+	if len(failures) != 0 {
+		return errors.Join(failures...)
+	}
+	result, err := json.Marshal(map[string]int{"applied": applied, "skipped": skipped})
+	if err != nil {
+		return err
+	}
+	_, err = queuerepo.Finish(ctx, pool, job.Lease(), queuerepo.StateSucceeded, result, "")
 	return err
 }

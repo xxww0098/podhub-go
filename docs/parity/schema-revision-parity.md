@@ -1,12 +1,12 @@
 # schema_revision 误报修复
 
-这是用户批准的有意行为变化。Rust 的 `semantic_schema_revision` 仍把字段顺序算进 sha256。Go 不改 wasm 字节，在调用前把字段按 attribute id 排好，版本号就不再跟着 Ozon 缓存的返回顺序变。
+本文记录首次误报修复及当时的测试证据；本轮文档清理未重跑测试，也未验证生产状态。这是用户批准的有意行为变化。Rust 的 `semantic_schema_revision` 仍把字段顺序算进 sha256。Go 不改 wasm 字节，在调用前把字段按 attribute id 排好，版本号就不再跟着 Ozon 缓存的返回顺序变。
 
 ## 缺陷与根因
 
-2026-10-16 19:35 SGT，上架被拦：「类目字段已更新，这个商品仍是按旧版字段填写的（schema_revision）」。必填、类型、约束、选项都没变，变的是 `/v1/description-category/attribute` 的字段顺序（缓存 TTL 24 小时）。`listing_core::schema::semantic_schema_revision` 把这个顺序哈希进去。浏览器 `freeze_listing` 和服务端 draft-submit 见 `row.schema_revision != current` 就拒绝。约 14 个组织、10+ 类目、每天触发。
+2026-10-16 19:35 SGT，当次 15 件商品上架被拦：「类目字段已更新，这个商品仍是按旧版字段填写的（schema_revision）」。必填、类型、约束、选项都没变，变的是 `/v1/description-category/attribute` 的字段顺序（59 个字段约 40 个位置变化，缓存 TTL 24 小时）。`listing_core::schema::semantic_schema_revision` 把这个顺序哈希进去。浏览器 `freeze_listing` 和服务端 draft-submit 见 `row.schema_revision != current` 就拒绝。约 14 个组织、10+ 类目、每天触发。
 
-哈希在 `rust/crates/listing-core/src/schema.rs`。`option_ids` 会排序，字段顺序和 `field_keys` 按给定顺序保留。`schema/tests.rs` 的 `semantic_schema_revision_tracks_field_order` 把「顺序不同则哈希不同」锁进了 Rust 测试。
+哈希在 `rust/crates/listing-core/src/schema.rs`。`option_ids` 会排序，字段顺序和 `field_keys` 按给定顺序保留。`schema/tests.rs` 的 `semantic_schema_revision_tracks_field_order` 把「顺序不同则哈希不同」锁进了 Rust 测试；同文件的 `semantic_schema_revision_ignores_option_id_order` 则断言选项 id 的顺序不改变哈希。
 
 ## 做法
 
@@ -18,9 +18,9 @@ wasm 仍是原来的 `snapshot_from_fields`。`(*Module).Snapshot`（`internal/l
 
 `(*Module).LegacyRevision` 用缓存的原始顺序再调一次同一个 wasm，得到 Rust 旧算法的版本号。
 
-发送（`internal/listing/submit/draft.go` 的 `decideSchema`）是浏览器和服务端共用的那一条规则。响应里的 `acceptedSchemaRevisions` 就是这条规则：当前版本，以及和它不同的旧算法版本。行上的 `schemaRevision` 等于其中任意一个，视为没变。
+发送（`internal/listing/submit/schema_revision.go` 的 `decideSchema`）是浏览器和服务端共用的那一条规则。响应里的 `accepted_schema_revisions` 就是这条规则：当前版本，以及和它不同的旧算法版本。行上的 `schemaRevision` 等于其中任意一个，视为没变。
 
-对不上时，不直接 `schema_stale`。把行上的版本改写成当前版本后再冻结，让 wasm 里的字符串相等检查和这条规则一致，然后按当前字段校验。只有「现在必填、以前不是（或不存在）、商品没有值」才拦，`skipReason` 仍是 `schema_stale`，并多一个 `fields` 数组写出字段 key。已经必填的空字段仍走原来的 `validation_failed` / `required`。
+对不上时，不直接 `schema_stale`。把行上的版本改写成当前版本后再冻结，让 wasm 里的字符串相等检查和这条规则一致，然后按当前字段校验。只有「现在必填、以前不是（或不存在）、商品没有值」才拦，`skip_reason` 仍是 `schema_stale`，并多一个 `fields` 数组写出字段 key。已经必填的空字段仍走原来的 `validation_failed` / `required`。
 
 `listing_schema_revisions` 只在能证明语义变了时插入当前版本（`ON CONFLICT DO NOTHING`）。只是顺序变化时 `Record` 为 false，不插入。没有旧快照时也不插入，避免把一次顺序刷新写成新版本行。没有改 `db/migrations`。
 
@@ -39,9 +39,9 @@ wasm 仍是原来的 `snapshot_from_fields`。`(*Module).Snapshot`（`internal/l
 
 顺序这一行是用户批准的分叉。改约束（`collection` + `max_value_count`）由 `TestTypeOptionConstraintChangeRevision` 覆盖，版本号会变。
 
-## 旧哈希兼容
+## 现存旧哈希处理
 
-不迁移库里已有的 revision。发送时同时算：
+这描述现存实现，不是新工作的兼容要求；是否移除双算统一见 [决策 O3](../decisions.md)。发送时同时算：
 
 - 新算法：排序后的 `Snapshot.schema_revision`
 - 旧算法：缓存当前顺序下的 `LegacyRevision`
@@ -50,16 +50,16 @@ wasm 仍是原来的 `snapshot_from_fields`。`(*Module).Snapshot`（`internal/l
 
 只认「当前顺序的旧哈希」盖不住「行是用更早一次顺序哈希的」那种线上误报。那种情况两个当前哈希都对不上。发送不把它当成新必填，也不写版本行，改绑后按当前字段校验；字段内容没变就能继续。这是 `TestCacheRefreshOrderChangeStillSendable` 和 `TestHistoricalOrderWithoutSnapshotStillSendable`。
 
-## wasm sha256
+## 首次修复时的 wasm sha256
 
-没有改 `rust/`，没有重编 wasm。
+首次修复没有改 `rust/`、没有重编 wasm。下表仅保留当时证据；后续重编后的当前哈希以 [SOURCES.sha256](../../wasm/dist/SOURCES.sha256) 为准。
 
 | | sha256 |
 | --- | --- |
 | 前 | `3a99fa89dca739430e69d10d3c40a924a3ba9345716d57152c54e2d59b72520f` |
-| 后 | 相同。`wasm/dist/SOURCES.sha256` 里 `server/listing-core.wasm` 的哈希未改。`internal/listing/core/host_test.go` 的 `TestCommittedWasmMatchesItsChecksum` 读这份清单比对，通过 |
+| 后 | 当时相同。`wasm/dist/SOURCES.sha256` 里 `server/listing-core.wasm` 的哈希未改。`internal/listing/core/host_test.go` 的 `TestCommittedWasmMatchesItsChecksum` 读这份清单比对，通过 |
 
-浏览器那份 wasm 不导出 `snapshot_from_fields`。op 10 只读已经加载的快照上的版本号。服务端下发的快照用新版本号。浏览器不应自己用字符串不等就拒绝；发送响应里的 `acceptedSchemaRevisions` 和拦住时的 `fields` 就是规则。服务端在调用 op 11 之前改绑，所以 wasm 的 `schema_stale` 不会和这条规则各走一边。`TestRebindStopsWasmSchemaStale` 用 `freeze_oracle.json` 的 golden 行证明：版本对不上时 wasm 仍返回 `schema_stale`，改绑到快照版本后同一行变成 `frozen`。
+浏览器那份 wasm 不导出 `snapshot_from_fields`。op 10 只读已经加载的快照上的版本号。服务端下发的快照用新版本号。浏览器不应自己用字符串不等就拒绝；发送响应里的 `accepted_schema_revisions` 和拦住时的 `fields` 就是规则。服务端在调用 op 11 之前改绑，所以 wasm 的 `schema_stale` 不会和这条规则各走一边。`TestRebindStopsWasmSchemaStale` 用 `freeze_oracle.json` 的 golden 行证明：版本对不上时 wasm 仍返回 `schema_stale`，改绑到快照版本后同一行变成 `frozen`。
 
 ## 回归测试
 
@@ -73,7 +73,7 @@ go test -count=1 -timeout 120s ./internal/listing/core/ ./internal/listing/submi
 | `TestDisplayOrderIsKeptWhenRevisionIgnoresOrder` | 通过。快照字段仍是 color、size 的传入顺序 |
 | `TestCacheRefreshOrderChangeStillSendable` | 通过。内容未变，已填的行改绑后可发送，不写版本行 |
 | `TestHistoricalOrderWithoutSnapshotStillSendable` | 通过。库里没有旧快照时，顺序造成的旧哈希不拦、不写行 |
-| `TestNewRequiredFieldBlocksAndNamesField` | 通过。新增必填 `brand` 且没有值，`fields` 为 `["brand"]`，`skipReason` 仍是 `schema_stale` |
+| `TestNewRequiredFieldBlocksAndNamesField` | 通过。新增必填 `brand` 且没有值，`fields` 为 `["brand"]`，`skip_reason` 仍是 `schema_stale` |
 | `TestNewRequiredFieldSatisfiedContinues` | 通过。新必填已有值则继续 |
 | `TestOrderOnlyDoesNotWriteSchemaRevision` | 通过。两种顺序 `Record` 都是 false |
 | `TestTypeOptionConstraintChangeRevision` | 通过。改类型、改选项、改约束，版本号都变 |
@@ -88,6 +88,6 @@ go test -count=1 -timeout 120s ./internal/listing/core/ ./internal/listing/submi
 
 ## 需要用户决定
 
-1. 浏览器安装包若仍在本地把 `freeze_listing` 的 `schema_stale` 当成最终拒绝，会在请求服务端之前拦住只是顺序变了的行。本仓库的发送路径已经改绑并下发 `acceptedSchemaRevisions` 与 `fields`。浏览器应只展示服务端结果。本 PR 没有改 wasm，也没有改 podhub 前端。
-2. `listing_schema_revisions` 在生产 head 上是空的。没有旧快照时，发送不插入新行，因此「以前不是必填」只能在表里已经有该 revision 的快照时精确判断。没有快照时，缺的必填由 wasm 校验以 `required` 报出，并写入响应的 `fields`。若要在类目缓存刷新时用新算法补写这张表，需要另开任务；本 PR 不写迁移。
+1. 浏览器安装包若仍在本地把 `freeze_listing` 的 `schema_stale` 当成最终拒绝，会在请求服务端之前拦住只是顺序变了的行。本仓库的发送路径已经改绑并下发 `accepted_schema_revisions` 与 `fields`。浏览器应只展示服务端结果。首次修复没有改 wasm 或前端；前端现已并入 `web/src`，这里不据历史测试声称当前浏览器链路已验收。
+2. 首次故障调查记录中，`listing_schema_revisions` 在当时生产 head 上是空的；本轮未重新查询生产库。没有旧快照时，发送不插入新行，因此「以前不是必填」只能在表里已经有该 revision 的快照时精确判断。没有快照时，缺的必填由 wasm 校验以 `required` 报出，并写入响应的 `fields`。若要在类目缓存刷新时用新算法补写这张表，需要另开任务；本 PR 不写迁移。
 3. 没有 attribute id 的字段（固定字段）按 key 排序后哈希。Ozon 属性字段按数值 id 排序。若固定字段的 key 本身被改名，版本号会变，这和改字段标识是一回事。

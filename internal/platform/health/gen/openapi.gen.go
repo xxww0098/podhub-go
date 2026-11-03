@@ -42,7 +42,9 @@ type HealthResponse struct {
 // WriterLeaseHealth defines model for WriterLeaseHealth.
 type WriterLeaseHealth struct {
 	Domain         string  `json:"domain"`
+	ExpiresAtMs    *int64  `json:"expires_at_ms,omitempty"`
 	FenceToken     *int64  `json:"fence_token,omitempty"`
+	HeartbeatAtMs  *int64  `json:"heartbeat_at_ms,omitempty"`
 	Holder         *string `json:"holder,omitempty"`
 	HolderInstance *string `json:"holder_instance,omitempty"`
 }

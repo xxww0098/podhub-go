@@ -205,7 +205,7 @@ export async function runWorkflowOperationBatch(
       } else if (failed) {
         deps.patchRow(target.id, { status: "failed", log: message })
       }
-      feedback.settle(target, failed, row.error, message)
+      feedback.settle(target, failed, row.error ?? { message, blockers: row.blockers }, message)
       deps.settleProgress(target.id, failed)
     } catch (reason) {
       failRow(target, reason)
@@ -255,7 +255,7 @@ export async function runWorkflowOperationBatch(
     applyFeedback(result ?? { row_id: target.draftId, outcome: "blocked", blockers: [], preparation_progress: [] })
     if (result?.product) deps.commitProduct(target.draftId, result.product)
     const { message, failed } = settledRowMessage(result, completedLog)
-    feedback.settle(target, failed, result?.error, message)
+    feedback.settle(target, failed, result?.error ?? { message, blockers: result?.blockers }, message)
     if (failed) failures.set(target.id, `${target.imageName}：${message}`)
     if (result?.product && !failed) {
       deps.settleProgress(target.id, false)

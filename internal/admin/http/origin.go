@@ -8,13 +8,13 @@ import (
 	"github.com/xxww0098/podhub-go/internal/platform/r2"
 )
 
-// LoopbackOrigin performs a presigned storage call. A host that is not
-// loopback is refused before the dial. Redirects are not followed.
-type LoopbackOrigin struct{}
+// R2Origin performs a presigned call to the configured storage account.
+type R2Origin struct{}
 
-func (LoopbackOrigin) Do(ctx context.Context, req service.ObjectRequest) (service.ObjectResponse, error) {
-	resp, err := r2.Exchange(ctx, r2.Request{
+func (R2Origin) Do(ctx context.Context, req service.ObjectRequest) (service.ObjectResponse, error) {
+	resp, err := r2.ExchangeAccount(ctx, req.Account, r2.Request{
 		Method: req.Method, URL: req.URL, Headers: req.Headers, Body: req.Body, Timeout: req.Timeout,
+		MaxBytes: req.MaxBytes, NoCompress: true, StrictRead: true,
 	})
 	if err != nil {
 		return service.ObjectResponse{}, err

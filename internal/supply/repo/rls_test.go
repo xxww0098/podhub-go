@@ -16,9 +16,10 @@ import (
 	"github.com/xxww0098/podhub-go/internal/platform/db"
 	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
 	"github.com/xxww0098/podhub-go/internal/supply/contract"
+	"github.com/xxww0098/podhub-go/tests/testkit"
 )
 
-func TestBindingOrgFilterAndMissingRLS(t *testing.T) {
+func TestBindingOrgFilterAndRLS(t *testing.T) {
 	pool, ctx := parityDB(t)
 	userA, userB := int64(883001), int64(883002)
 	orgA := seedOrg(t, ctx, pool, userA, "bind-a")
@@ -60,8 +61,20 @@ func TestBindingOrgFilterAndMissingRLS(t *testing.T) {
 	if err := bare.QueryRow(ctx, `SELECT count(*) FROM sc_listing_bindings WHERE listing_row_id IN ($1, $2)`, rowA, rowB).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
-	if n != 2 {
-		t.Fatalf("sc_listing_bindings RLS changed; bare app role sees %d", n)
+	if n != 0 {
+		t.Fatalf("sc_listing_bindings RLS is not enforced; bare app role sees %d", n)
+	}
+
+	scoped, err := tenant.BeginApp(ctx, pool.Begin, orgA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer scoped.Rollback(ctx)
+	if err := scoped.QueryRow(ctx, `SELECT count(*) FROM sc_listing_bindings WHERE listing_row_id IN ($1, $2)`, rowA, rowB).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("sc_listing_bindings tenant sees %d rows, want 1", n)
 	}
 }
 
@@ -127,10 +140,8 @@ var (
 func parityDB(t *testing.T) (*pgxpool.Pool, context.Context) {
 	t.Helper()
 	dsn := os.Getenv("PODHUB_PARITY_DSN")
-	if dsn == "" {
-		if _, err := os.Stat("/var/run/docker.sock"); err != nil {
-			t.Skip("docker daemon is not available")
-		}
+	if dsn == "" && !testkit.DockerAvailable() {
+		t.Skip("docker daemon is not available")
 	}
 	parityOnce.Do(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)

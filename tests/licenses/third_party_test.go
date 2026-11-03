@@ -10,24 +10,29 @@ import (
 	"testing"
 )
 
-// gnuAGPLv3SHA256 is the SHA-256 of https://www.gnu.org/licenses/agpl-3.0.txt.
-const gnuAGPLv3SHA256 = "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0"
+// proprietaryLicenseSHA256 is the SHA-256 of the committed proprietary LICENSE.
+const proprietaryLicenseSHA256 = "c15e3e20ce5ac388b7f2177d024a08deaaff02ae6492aa3e19d79ad50ef677a9"
 
-func TestRootLicenseIsAGPL3Only(t *testing.T) {
+func TestRootLicenseIsProprietary(t *testing.T) {
 	root := repoRoot(t)
 	license, err := os.ReadFile(filepath.Join(root, "LICENSE"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256(license)
-	if got := hex.EncodeToString(sum[:]); got != gnuAGPLv3SHA256 {
-		t.Fatalf("LICENSE sha256 %s, want unmodified GNU AGPL-3.0 text %s", got, gnuAGPLv3SHA256)
+	if got := hex.EncodeToString(sum[:]); got != proprietaryLicenseSHA256 {
+		t.Fatalf("LICENSE sha256 %s, want committed proprietary text %s", got, proprietaryLicenseSHA256)
+	}
+	for _, part := range []string{"All rights reserved", "SPDX-License-Identifier: LicenseRef-Proprietary"} {
+		if !strings.Contains(string(license), part) {
+			t.Fatalf("LICENSE does not contain %q", part)
+		}
 	}
 	notice, err := os.ReadFile(filepath.Join(root, "NOTICE"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Copyright (C) 2026 xxww", "SPDX-License-Identifier: AGPL-3.0-only"} {
+	for _, want := range []string{"Copyright (C) 2026 xxww", "SPDX-License-Identifier: LicenseRef-Proprietary"} {
 		if !strings.Contains(string(notice), want) {
 			t.Fatalf("NOTICE does not contain %q", want)
 		}
@@ -36,7 +41,7 @@ func TestRootLicenseIsAGPL3Only(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	row := "| github.com/xxww0098/podhub-go | (main) | AGPL-3.0-only | LICENSE | " + gnuAGPLv3SHA256 + " | - |"
+	row := "| github.com/xxww0098/podhub-go | (main) | LicenseRef-Proprietary | LICENSE | " + proprietaryLicenseSHA256 + " | - |"
 	if !strings.Contains(string(list), row) {
 		t.Fatalf("THIRD-PARTY-LICENSES.md has no main-module row %q", row)
 	}

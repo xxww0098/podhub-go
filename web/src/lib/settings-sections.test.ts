@@ -26,13 +26,17 @@ test("section ids stay unique, known and fully described", () => {
     assert.equal(SETTINGS_ROWS.filter((other) => other.id === row.id).length, 1)
   }
   assert.equal(isSettingsSection("agent"), false)
+  assert.equal(isSettingsSection("ocr"), false)
+  assert.equal(isSettingsSection("prompts"), false)
+  assert.equal(isSettingsSection("notifications"), false)
+  assert.equal(isSettingsSection("media"), false)
   assert.equal(SETTINGS_ROWS.find((row) => row.id === "account")?.account, true)
 })
 
 test("platform management panes are one super_admin group", () => {
   assert.deepEqual(
     ADMIN_SETTINGS_ROWS.map((row) => row.id),
-    ["users", "supplier-accounts", "ocr", "ai-accounts", "media", "payment", "proxy", "prompts", "banned-tags", "categories", "redeem-codes", "agents", "admin-logs", "plan-orders"],
+    ["users", "supplier-accounts", "ai-accounts", "payment", "proxy", "banned-tags", "categories", "redeem-codes", "agents", "admin-logs", "plan-orders"],
   )
   assert.equal(new Set(ADMIN_SETTINGS_ROWS.map((row) => row.group)).size, 1)
   assert.equal(ADMIN_SETTINGS_ROWS[0].group, "平台管理")
@@ -85,6 +89,11 @@ test("no platform-management pane can be painted for a non-super_admin actor", (
       { kind: "pane", section: row.id },
       row.id,
     )
+    assert.deepEqual(
+      resolveSettingsPane({ requested: row.id, available: operator, adminSurface: false }),
+      { kind: "pane", section: "account" },
+      row.id,
+    )
   }
   /* The sheet's "no pane" sentinel must never collide with a real section id. */
   assert.equal(isSettingsSection(""), false)
@@ -95,16 +104,16 @@ test("the admin surface refuses an unavailable pane instead of repainting one", 
     (row) => !row.admin,
   )
   assert.deepEqual(
-    resolveSettingsPane({ requested: "media", available, adminSurface: true }),
-    { kind: "refused", section: "media" },
+    resolveSettingsPane({ requested: "payment", available, adminSurface: true }),
+    { kind: "refused", section: "payment" },
   )
   assert.deepEqual(
-    resolveSettingsPane({ requested: "media", available, adminSurface: false }),
+    resolveSettingsPane({ requested: "payment", available, adminSurface: false }),
     { kind: "pane", section: "account" },
   )
   const all: readonly SettingsSectionRow[] = SETTINGS_ROWS
   assert.deepEqual(
-    resolveSettingsPane({ requested: "media", available: all, adminSurface: true }),
-    { kind: "pane", section: "media" },
+    resolveSettingsPane({ requested: "payment", available: all, adminSurface: true }),
+    { kind: "pane", section: "payment" },
   )
 })

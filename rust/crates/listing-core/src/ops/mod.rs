@@ -67,7 +67,7 @@ pub use invalidation::{
 pub use lean_row::LeanRow;
 pub use media::{RenderManifest, RenderRecord, record_render};
 pub use recognition::{RecognitionAnswer, settle_recognition};
-pub use seed::seed_row;
+pub use seed::{seed_associated_row, seed_row};
 pub use submit::SubmitDraft;
 pub use verdict::{Edited, Verdict, revalidate};
 

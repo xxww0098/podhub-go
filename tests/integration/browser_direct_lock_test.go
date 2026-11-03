@@ -23,9 +23,9 @@ import (
 	"github.com/xxww0098/podhub-go/internal/listing/submit"
 	"github.com/xxww0098/podhub-go/internal/platform/config"
 	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
-	queue "github.com/xxww0098/podhub-go/internal/platform/jobsched"
 	loadmode "github.com/xxww0098/podhub-go/internal/platform/loadmode"
 	"github.com/xxww0098/podhub-go/internal/platform/seal"
+	queue "github.com/xxww0098/podhub-go/internal/queue/contract"
 )
 
 // These tests lock the browser-direct grant. They dial only a loopback
@@ -346,6 +346,19 @@ func TestBrowserDirectTenantAndCapability(t *testing.T) {
 	userB, orgB := insertWorkspace(t, ctx, pool, "ten-b-"+uuid.NewString()+"@example.com", "Ten B")
 	ring := seal.Ring{Primary: seal.DeriveKEK("browser-direct-fixture-kek")}
 	shop := newGrantShop(t, ctx, pool, orgA, userA, ring, false, farExpiry())
+	seedPaidGrantWorkspace(t, ctx, pool, orgB, userB)
+
+	member := int64(97752)
+	seedCompanyMember(t, ctx, pool, orgA, member, "member", 2)
+	memberHandler := shop.handler(orgA, member, "member", false)
+	deniedMember := callJSON(memberHandler, http.MethodPost, "/api/listing/browser/grant", shop.body("offer-member", "op-member", shop.row(t, ctx)))
+	assertNoKey(t, deniedMember, http.StatusForbidden, "forbidden")
+	staleManager := shop.handler(orgA, member, "manager", false)
+	deniedStale := callJSON(staleManager, http.MethodPost, "/api/listing/browser/grant", shop.body("offer-stale", "op-stale", shop.row(t, ctx)))
+	assertNoKey(t, deniedStale, http.StatusForbidden, "forbidden")
+	if shop.opens.Load() != 0 || shop.intentCount(t, ctx) != 0 {
+		t.Fatalf("member grant opened %d keys and wrote %d intents", shop.opens.Load(), shop.intentCount(t, ctx))
+	}
 
 	other := shop.handler(orgB, userB, "owner", false)
 	cross := callJSON(other, http.MethodPost, "/api/listing/browser/grant", shop.body("offer-x", "op-x", shop.row(t, ctx)))
@@ -424,7 +437,7 @@ func TestBrowserDirectWorkerDoesNotDialSubmitting(t *testing.T) {
 	}
 	lease := runningJob(t, ctx, pool, seed, user, false)
 	tr := &writeCounter{}
-	err := submit.Work(ctx, pool, queue.Claimed{
+	err := listingSubmit().Work(ctx, pool, queue.Claimed{
 		ID: lease.ID, OrgID: org, Kind: "listing.submit", SubmitterUserID: user,
 		Attempt: 1, MaxAttempts: 8, Epoch: lease.Epoch, Owner: lease.Owner,
 		Payload: jobPayload(seed, false),

@@ -1,6 +1,6 @@
 package adminhttp
 
-// Route table for this file. Do not edit by hand.
+// Supplier routes and their session guards.
 
 // Guard is which session check runs before the 501 body.
 type Guard string
@@ -33,18 +33,23 @@ type Route struct {
 // SupplierRoutes is the route table for this file.
 func SupplierRoutes() []Route {
 	return []Route{
+		{Method: "GET", Path: "/api/admin/factories", OperationID: "list_factories", Guard: GuardStaff, Source: "internal/admin/service/factories.go"},
+		{Method: "POST", Path: "/api/admin/factories", OperationID: "create_factory", Guard: GuardSuper, Source: "internal/admin/service/factories.go"},
+		{Method: "PUT", Path: "/api/admin/factories/{factory_id}", OperationID: "update_factory", Guard: GuardSuper, Source: "internal/admin/service/factories.go"},
+		{Method: "DELETE", Path: "/api/admin/factories/{factory_id}", OperationID: "delete_factory", Guard: GuardSuper, Source: "internal/admin/service/factories.go"},
 		{Method: "GET", Path: "/api/admin/supplier-accounts", OperationID: "list_supplier_accounts", RustOperationID: "list_supplier_accounts", Guard: GuardStaff, Source: "src/supplier_portal/accounts.rs"},
 		{Method: "POST", Path: "/api/admin/supplier-accounts", OperationID: "create_supplier_account", RustOperationID: "create_supplier_account", Guard: GuardSuper, Source: "src/supplier_portal/accounts.rs"},
 		{Method: "DELETE", Path: "/api/admin/supplier-accounts/{member_id}", OperationID: "delete_supplier_account", RustOperationID: "delete_supplier_account", Guard: GuardSuper, Source: "src/supplier_portal/accounts.rs"},
 		{Method: "PATCH", Path: "/api/admin/supplier-accounts/{member_id}", OperationID: "patch_supplier_account", RustOperationID: "patch_supplier_account", Guard: GuardSuper, Source: "src/supplier_portal/accounts.rs"},
-		{Method: "GET", Path: "/api/admin/supplier-automation/grants", OperationID: "supplier_automation_grants_list", RustOperationID: "supplier_automation_grants_list", Guard: GuardSuper, Source: "src/automation/api/platform_grants.rs"},
-		{Method: "POST", Path: "/api/admin/supplier-automation/grants", OperationID: "supplier_automation_grant_create", RustOperationID: "supplier_automation_grant_create", Guard: GuardSuper, Source: "src/automation/api/platform_grants.rs"},
-		{Method: "POST", Path: "/api/admin/supplier-automation/grants/{id}/revoke", OperationID: "supplier_automation_grant_revoke", RustOperationID: "supplier_automation_grant_revoke", Guard: GuardSuper, Source: "src/automation/api/platform_grants.rs"},
+		{Method: "GET", Path: "/api/admin/supplier-automation/grants", OperationID: "supplier_automation_grants_list", RustOperationID: "supplier_automation_grants_list", Guard: GuardStaff, Source: "src/automation/api/platform_grants.rs"},
+		{Method: "POST", Path: "/api/admin/supplier-automation/grants", OperationID: "supplier_automation_grant_create", RustOperationID: "supplier_automation_grant_create", Guard: GuardStaff, Source: "src/automation/api/platform_grants.rs"},
+		{Method: "POST", Path: "/api/admin/supplier-automation/grants/{id}/revoke", OperationID: "supplier_automation_grant_revoke", RustOperationID: "supplier_automation_grant_revoke", Guard: GuardStaff, Source: "src/automation/api/platform_grants.rs"},
 		{Method: "POST", Path: "/api/admin/supplier-db-storage/directories", OperationID: "admin_supplier_db_storage_directories_create", RustOperationID: "admin_supplier_db_storage_directories_create", Guard: GuardSuper, Source: "src/platform/supplier_dbs/storage_objects.rs"},
 		{Method: "GET", Path: "/api/admin/supplier-db-storage/objects", OperationID: "admin_supplier_db_storage_objects_list", RustOperationID: "admin_supplier_db_storage_objects_list", Guard: GuardSuper, Source: "src/platform/supplier_dbs/storage_objects.rs"},
 		{Method: "POST", Path: "/api/admin/supplier-db-storage/objects/delete", OperationID: "admin_supplier_db_storage_objects_delete", RustOperationID: "admin_supplier_db_storage_objects_delete", Guard: GuardSuper, Source: "src/platform/supplier_dbs/storage_objects.rs"},
 		{Method: "POST", Path: "/api/admin/supplier-db-storage/objects/move", OperationID: "admin_supplier_db_storage_objects_move", RustOperationID: "admin_supplier_db_storage_objects_move", Guard: GuardSuper, Source: "src/platform/supplier_dbs/storage_objects.rs"},
 		{Method: "POST", Path: "/api/admin/supplier-db-storage/uploads", OperationID: "admin_supplier_db_storage_uploads_create", RustOperationID: "admin_supplier_db_storage_uploads_create", Guard: GuardSuper, Source: "src/platform/supplier_dbs/storage_uploads.rs"},
+		{Method: "POST", Path: "/api/admin/supplier-db-storage/uploads/confirm", OperationID: "confirm_supplier_db_storage_upload", Guard: GuardSuper, Source: "src/platform/supplier_dbs/storage_uploads.rs"},
 		{Method: "GET", Path: "/api/admin/supplier-dbs", OperationID: "list_supplier_dbs", RustOperationID: "list_supplier_dbs", Guard: GuardStaff, Source: "src/platform/supplier_dbs/databases.rs"},
 		{Method: "POST", Path: "/api/admin/supplier-dbs", OperationID: "create_supplier_db", RustOperationID: "create_supplier_db", Guard: GuardStaff, Source: "src/platform/supplier_dbs/databases.rs"},
 		{Method: "DELETE", Path: "/api/admin/supplier-dbs/{source_id}", OperationID: "delete_supplier_db", RustOperationID: "delete_supplier_db", Guard: GuardStaff, Source: "src/platform/supplier_dbs/databases.rs"},
@@ -59,17 +64,12 @@ func SupplierRoutes() []Route {
 		{Method: "GET", Path: "/api/admin/supplier-dbs/{source_id}/rows/{product_id}/ozon-config", OperationID: "get_supplier_ozon_config", RustOperationID: "get_supplier_ozon_config", Guard: GuardStaff, Source: "src/platform/supplier_dbs/ozon_config_api.rs"},
 		{Method: "PUT", Path: "/api/admin/supplier-dbs/{source_id}/rows/{product_id}/ozon-config", OperationID: "put_supplier_ozon_config", RustOperationID: "put_supplier_ozon_config", Guard: GuardStaff, Source: "src/platform/supplier_dbs/ozon_config_api.rs"},
 		{Method: "POST", Path: "/api/admin/supplier-dbs/{source_id}/rows/{product_id}/price", OperationID: "adjust_supplier_db_price", RustOperationID: "adjust_supplier_db_price", Guard: GuardSuper, Source: "src/platform/supplier_dbs/rows.rs"},
-		{Method: "GET", Path: "/api/admin/supplier-dbs/{source_id}/rows/{product_id}/prompt/diff", OperationID: "diff_supplier_prompt", RustOperationID: "diff_supplier_prompt", Guard: GuardStaff, Source: "src/platform/supplier_dbs/prompt_authoring.rs"},
 		{Method: "POST", Path: "/api/admin/supplier-dbs/{source_id}/rows/{product_id}/prompt/preview", OperationID: "preview_supplier_prompt", RustOperationID: "preview_supplier_prompt", Guard: GuardStaff, Source: "src/platform/supplier_dbs/prompt_authoring.rs"},
-		{Method: "POST", Path: "/api/admin/supplier-dbs/{source_id}/rows/{product_id}/prompt/publish", OperationID: "publish_supplier_prompt_revision", RustOperationID: "publish_supplier_prompt_revision", Guard: GuardStaff, Source: "src/platform/supplier_dbs/prompt_authoring.rs"},
-		{Method: "POST", Path: "/api/admin/supplier-dbs/{source_id}/rows/{product_id}/publish", OperationID: "publish_supplier_db_row", RustOperationID: "publish_supplier_db_row", Guard: GuardStaff, Source: "src/platform/supplier_dbs/rows.rs"},
-		{Method: "POST", Path: "/api/admin/supplier-dbs/{source_id}/rows/{product_id}/unpublish", OperationID: "unpublish_supplier_db_row", RustOperationID: "unpublish_supplier_db_row", Guard: GuardStaff, Source: "src/platform/supplier_dbs/rows.rs"},
+		{Method: "POST", Path: "/api/admin/supplier-dbs/{source_id}/rows/{product_id}/publish", OperationID: "publish_supplier_db_row", RustOperationID: "publish_supplier_db_row", Guard: GuardSuper, Source: "src/platform/supplier_dbs/rows.rs"},
+		{Method: "POST", Path: "/api/admin/supplier-dbs/{source_id}/rows/{product_id}/unpublish", OperationID: "unpublish_supplier_db_row", RustOperationID: "unpublish_supplier_db_row", Guard: GuardSuper, Source: "src/platform/supplier_dbs/rows.rs"},
 		{Method: "POST", Path: "/api/admin/supplier-dbs/{source_id}/uploads", OperationID: "presign_supplier_db_upload", RustOperationID: "presign_supplier_db_upload", Guard: GuardStaff, Source: "src/platform/supplier_dbs/uploads.rs"},
 		{Method: "POST", Path: "/api/admin/supplier-dbs/{source_id}/uploads/abort", OperationID: "abort_supplier_db_upload", RustOperationID: "abort_supplier_db_upload", Guard: GuardStaff, Source: "src/platform/supplier_dbs/uploads.rs"},
 		{Method: "POST", Path: "/api/admin/supplier-dbs/{source_id}/uploads/confirm", OperationID: "confirm_supplier_db_upload", RustOperationID: "confirm_supplier_db_upload", Guard: GuardStaff, Source: "src/platform/supplier_dbs/uploads.rs"},
-		{Method: "GET", Path: "/api/admin/supplier-prompts", OperationID: "list_supplier_prompts", RustOperationID: "list_supplier_prompts", Guard: GuardStaff, Source: "src/platform/supplier_dbs/prompts.rs"},
-		{Method: "POST", Path: "/api/admin/supplier-prompts/sync", OperationID: "sync_supplier_prompts", RustOperationID: "sync_supplier_prompts", Guard: GuardSuper, Source: "src/platform/supplier_dbs/prompt_sync.rs"},
-		{Method: "PATCH", Path: "/api/admin/supplier-prompts/{product_id}", OperationID: "patch_supplier_prompt", RustOperationID: "patch_supplier_prompt", Guard: GuardStaff, Source: "src/platform/supplier_dbs/prompts.rs"},
 		{Method: "GET", Path: "/api/admin/supplier-withdrawals", OperationID: "list_factory_withdrawals", RustOperationID: "list_factory_withdrawals", Guard: GuardStaff, Source: "src/supplier_portal/wallet.rs"},
 		{Method: "POST", Path: "/api/admin/supplier-withdrawals/{withdrawal_id}/pay", OperationID: "pay_withdrawal", RustOperationID: "pay_withdrawal", Guard: GuardStaff, Source: "src/supplier_portal/wallet.rs"},
 		{Method: "POST", Path: "/api/admin/supplier-withdrawals/{withdrawal_id}/reject", OperationID: "reject_withdrawal", RustOperationID: "reject_withdrawal", Guard: GuardStaff, Source: "src/supplier_portal/wallet.rs"},

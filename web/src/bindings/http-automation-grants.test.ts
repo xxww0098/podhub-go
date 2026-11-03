@@ -3,7 +3,7 @@ import test from "node:test"
 import { route } from "@/api/routes"
 import { createAutomationGrant, listAutomationGrants, revokeAutomationGrant } from "./http-automation-grants"
 
-const row = { id: "grant-id", name: "assistant", actions: ["supplier:read"], tokenPrefix: "opa_safe…", createdAtMs: 1, expiresAtMs: null, lastUsedAtMs: null, revokedAtMs: null, scopeKind: "supplier_catalog", sourceIds: [] }
+const row = { id: "grant-id", name: "assistant", actions: ["supplier:read"], token_prefix: "opa_safe…", created_at_ms: 1, expires_at_ms: null, last_used_at_ms: null, revoked_at_ms: null, scope_kind: "supplier_catalog", source_ids: [] }
 
 test("supplier grant requests preserve explicit all/none ranges and default to none", async () => {
   const previous = globalThis.fetch
@@ -18,7 +18,7 @@ test("supplier grant requests preserve explicit all/none ranges and default to n
       const created = await createAutomationGrant("supplier_catalog", { name: "assistant", actions: ["supplier:read"], expiresInDays: 30, sourceIds })
       assert.equal(created.token, "opa_one_time_secret")
     }
-    assert.deepEqual(observed.map((request) => (request.body as { sourceIds: unknown }).sourceIds), [[], [], null, ["source-1"]])
+    assert.deepEqual(observed.map((request) => (request.body as { source_ids: unknown }).source_ids), [[], [], null, ["source-1"]])
     assert.ok(observed.every((request) => request.path === route("adminSupplierAutomationGrants")))
   } finally { globalThis.fetch = previous }
 })
@@ -29,7 +29,7 @@ test("catalog uses account routes and later views contain only a prefix", async 
   globalThis.fetch = async (input, init) => {
     observed.push(`${init?.method} ${String(input)}`)
     if (init?.method === "POST") return Response.json({ data: { id: "grant-id", revoked: true } })
-    return Response.json({ data: { grants: [{ ...row, scopeKind: "catalog", actions: ["catalog:read"], sourceIds: null }] } })
+    return Response.json({ data: { grants: [{ ...row, scope_kind: "catalog", actions: ["catalog:read"], source_ids: null }] } })
   }
   try {
     const grants = await listAutomationGrants("catalog")

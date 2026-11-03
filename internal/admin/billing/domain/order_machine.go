@@ -4,23 +4,22 @@ package domain
 type ConfirmEdge string
 
 const (
+	EdgeSubscription  ConfirmEdge = "subscription"
 	EdgeWalletTopup   ConfirmEdge = "wallet_topup"
 	EdgePlatformGoods ConfirmEdge = "platform_goods"
-	EdgeMemberSeats   ConfirmEdge = "member_seats"
 	EdgeInvalid       ConfirmEdge = "invalid"
 )
 
-// ConfirmProduct matches settle's product switch. member_seats requires seats and days.
-func ConfirmProduct(product string, memberSeats, durationDays int64) ConfirmEdge {
+// ConfirmProduct matches settle's product switch.
+func ConfirmProduct(product string) ConfirmEdge {
 	switch product {
+	case "subscription":
+		return EdgeSubscription
 	case "wallet_topup":
 		return EdgeWalletTopup
 	case "platform_goods":
 		return EdgePlatformGoods
 	default:
-		if product == "member_seats" && memberSeats >= 1 && durationDays >= 1 {
-			return EdgeMemberSeats
-		}
 		return EdgeInvalid
 	}
 }
@@ -43,18 +42,8 @@ func CancelPending(found bool, status, provider string) CancelEdge {
 	if status != "pending" {
 		return CancelHandled
 	}
-	if provider != "manual" {
+	if provider != "manual" && provider != "unselected" {
 		return CancelUpstream
 	}
 	return CancelApply
-}
-
-// SeatTier is a member-seat plan key the lot CHECK accepts.
-func SeatTier(plan string) bool {
-	switch plan {
-	case "pro", "max", "ultra":
-		return true
-	default:
-		return false
-	}
 }

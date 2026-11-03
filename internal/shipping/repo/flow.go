@@ -6,6 +6,8 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/xxww0098/podhub-go/internal/platform/db"
 	"github.com/xxww0098/podhub-go/internal/shipping/contract"
 	"github.com/xxww0098/podhub-go/internal/shipping/domain"
 )
@@ -79,13 +81,16 @@ func (r Repo) verify(ctx context.Context, row row, preset domain.Preset, secret 
 		}
 	}
 	if opID != "" {
-		if err := r.finish(ctx, row, status, mutate, "", opID, "verify", now); err != nil {
-			return nil, err
-		}
-		if _, err := r.Pool.Exec(ctx, `
+		if err := db.InTx(ctx, r.Pool, db.App(row.OrgID), func(tx pgx.Tx) error {
+			if err := finishTx(ctx, tx, row, status, mutate, "", opID, "verify", now); err != nil {
+				return err
+			}
+			_, err := tx.Exec(ctx, `
 			UPDATE shipping_shop_injections
 			SET warehouse_id = $3, delivery_method_id = $4, updated_at_ms = $5
-			WHERE store_uuid = $1::uuid AND preset_id = $2`, row.Store, row.Preset, warehouse, delivery, now); err != nil {
+			WHERE store_uuid = $1::uuid AND preset_id = $2`, row.Store, row.Preset, warehouse, delivery, now)
+			return err
+		}); err != nil {
 			return nil, mapDB(err)
 		}
 	} else if err := r.persist(ctx, row, status, mutate, warehouse, delivery, false, now, "verify"); err != nil {

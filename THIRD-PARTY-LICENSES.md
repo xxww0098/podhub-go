@@ -5,28 +5,20 @@
 检查模式发现与重新扫描的结果不一致时退出码为 1。
 
 本清单只记录每个 Go 模块自己的许可证文件。它不是法律意见。
-podhub-go 本身是 `AGPL-3.0-only`，版权持有人 xxww，见根目录 `LICENSE` 与 `NOTICE`。
-根目录 `LICENSE` 须与 gnu.org 的 AGPL-3.0 原文逐字节一致，否则脚本退出。
+podhub-go 本身是专有软件（`LicenseRef-Proprietary`），版权持有人 xxww，见根目录 `LICENSE` 与 `NOTICE`。
+根目录 `LICENSE` 须与已提交的专有声明逐字节一致，否则脚本退出。
 
-## AGPL-3.0 兼容性
+## 闭源兼容性
 
-每个模块的许可证须在下列集合内：0BSD、AGPL-3.0、Apache-2.0、BSD-2-Clause、BSD-3-Clause、BSL-1.0、ISC、MIT、MPL-2.0、PostgreSQL、public-domain、Unlicense、Zlib。
+每个模块的许可证须在下列集合内：0BSD、Apache-2.0、BSD-2-Clause、BSD-3-Clause、BSL-1.0、ISC、MIT、MPL-2.0、PostgreSQL、public-domain、Unlicense、Zlib。
 集合外的许可证只有逐条复核过的才放行，见下表；其余任何一条都会让脚本退出。
+AGPL、GPL 和 LGPL 不在集合内。
 
 | Module | Version | License | 复核结论 |
 | --- | --- | --- | --- |
 | github.com/iris-contrib/schema | v0.0.6 | NOASSERTION | 无许可证文件；README.md 的 License 一节是 BSD-3-Clause。不被任何包导入。 |
 | github.com/opencontainers/go-digest | v1.0.0 | CC-BY-SA-4.0 | LICENSE.docs 只覆盖文档，代码是 Apache-2.0。只在集成测试中使用。 |
 | modernc.org/memory | v1.12.1 | UNKNOWN | LICENSE-LOGO 只是 logo.png 的来源链接，不涉及代码。 |
-
-## AGPL 模块
-
-这些模块与本仓库同为 GNU AGPL-3.0。用户不购买 RelayKit 商业授权，它们按 AGPL-3.0 使用。说明见根目录 `NOTICE`。
-
-| Module | Version | Replace |
-| --- | --- | --- |
-| github.com/QuantumNous/new-api | v0.0.0 | ./third_party/new-api |
-| github.com/QuantumNous/new-api/relaykit | v0.3.4 | - |
 
 ## 全部模块
 
@@ -47,8 +39,6 @@ podhub-go 本身是 `AGPL-3.0-only`，版权持有人 xxww，见根目录 `LICEN
 | github.com/CloudyKit/jet/v6 | v6.2.0 | Apache-2.0 | LICENSE | b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1 | - |
 | github.com/Joker/jade | v1.1.3 | BSD-3-Clause | LICENSE.md | 119c8eaebb0e0ea931e6ebec91ca47e0f140f9b7e132e5a9fc26f5146a864c2b | - |
 | github.com/Microsoft/go-winio | v0.6.3 | MIT | LICENSE | cf248820bf1178370bb4f1670a59f8748d46bc96d0f64080cd631511c6046409 | - |
-| github.com/QuantumNous/new-api | v0.0.0 | AGPL-3.0 | LICENSE | 8486a10c4393cee1c25392769ddd3b2d6c242d6ec7928e1414efff7dfb2f07ef | ./third_party/new-api |
-| github.com/QuantumNous/new-api/relaykit | v0.3.4 | AGPL-3.0 | LICENSE | 8486a10c4393cee1c25392769ddd3b2d6c242d6ec7928e1414efff7dfb2f07ef | - |
 | github.com/RaveNoX/go-jsoncommentstrip | v1.0.0 | MIT | LICENSE.md | 80c0c1f258e2364312f46c5f6dc1a6ced27593f889d2146369e0b1ae033ecff6 | - |
 | github.com/Shopify/goreferrer | v0.0.0-20220729165902-8cddb4f5de06 | MIT | LICENSE | 50f1455a8c576e9d1c1cc2cc987fe4a22ca35a6b7f2ba3a40e7edc874d31c252 | - |
 | github.com/andybalholm/brotli | v1.2.6 | MIT | LICENSE | 3d180008e36922a4e8daec11c34c7af264fed5962d07924aea928c38e8663c94 | - |
@@ -91,7 +81,7 @@ podhub-go 本身是 `AGPL-3.0-only`，版权持有人 xxww，见根目录 `LICEN
 | github.com/containerd/typeurl/v2 | v2.2.0 | Apache-2.0 | LICENSE | 4bbe3b885e8cd1907ab4cf9a41e862e74e24b5422297a4f2fe524e6a30ada2b4 | - |
 | github.com/cpuguy83/dockercfg | v0.3.2 | MIT | LICENSE | 6b29b5887ad910cc1743f03989210e1efc5c02297998fbf80960cfc051a8c330 | - |
 | github.com/creack/pty | v1.1.24 | MIT | LICENSE | a2a1cea59d9c2d71908082f516f86bb560abf857646ecf69d70c121ead14aef4 | - |
-| github.com/davecgh/go-spew | v1.1.2-0.20180830191138-d8f796af33cc | ISC | LICENSE | 1b93a317849ee09d3d7e4f1d20c2b78ddb230b4becb12d7c224c927b9d470251 | - |
+| github.com/davecgh/go-spew | v1.1.1 | ISC | LICENSE | 1b93a317849ee09d3d7e4f1d20c2b78ddb230b4becb12d7c224c927b9d470251 | - |
 | github.com/distribution/reference | v0.6.0 | Apache-2.0 | LICENSE | cb5e8e7e5f4a3988e1063c142c60dc2df75605f4c46515e776e3aca6df976e14 | - |
 | github.com/docker/go-connections | v0.8.2 | Apache-2.0 | LICENSE | ba3065d2f4b11bb42a0f7b708b021d1c28fa45d097b3eab3e7db9ab4745040d1 | - |
 | github.com/docker/go-units | v0.5.0 | Apache-2.0 | LICENSE | ba3065d2f4b11bb42a0f7b708b021d1c28fa45d097b3eab3e7db9ab4745040d1 | - |
@@ -99,7 +89,6 @@ podhub-go 本身是 `AGPL-3.0-only`，版权持有人 xxww，见根目录 `LICEN
 | github.com/ebitengine/purego | v0.10.1 | Apache-2.0 | LICENSE | b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1 | - |
 | github.com/elastic/go-sysinfo | v1.15.5 | Apache-2.0 | LICENSE.txt | cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 | - |
 | github.com/elastic/go-windows | v1.0.2 | Apache-2.0 | LICENSE.txt | cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 | - |
-| github.com/expr-lang/expr | v1.17.8 | MIT | LICENSE | f2c369e1796dc84c37cf34a966033e8850e535567fde32ef74b672726ed61d23 | - |
 | github.com/fatih/structs | v1.1.0 | MIT | LICENSE | 8f09e42906e1a3c7bd39629a17225b3b62f25783444d8d75ad5d6657916915df | - |
 | github.com/felixge/httpsnoop | v1.1.0 | MIT | LICENSE.txt | 8108e14b5cb2b6bcd51583d3849ef0c2b5c4de61758256c20308bc70d1775dbb | - |
 | github.com/flosch/pongo2/v4 | v4.0.2 | MIT | LICENSE | a2f7125b57367cc989d799010f65d329a1c49572174fc3996716db6d0cabb4bd | - |
@@ -187,7 +176,7 @@ podhub-go 本身是 `AGPL-3.0-only`，版权持有人 xxww，见根目录 `LICEN
 | github.com/pelletier/go-toml/v2 | v2.2.2 | MIT | LICENSE | 26844e4b53c5adec04e557fd7dfef281cc0205a7d355626b1c68b778b99e9e7b | - |
 | github.com/pierrec/lz4/v4 | v4.1.33 | BSD-3-Clause | LICENSE | 6a358d2540ca14048f02d366f23787c0a480157e58f058113f0e27168dd4e447 | - |
 | github.com/pkg/browser | v0.0.0-20240102092130-5ac0b6a4141c | BSD-2-Clause | LICENSE | 4801bb0c5d70b980b3e1f63d1d2df8d84fec22548e3d73f03a68df1fb808791f | - |
-| github.com/pmezard/go-difflib | v1.0.1-0.20181226105442-5d4384ee4fb2 | BSD-2-Clause | LICENSE | 2eb550be6801c1ea434feba53bf6d12e7c71c90253e0a9de4a4f46cf88b56477 | - |
+| github.com/pmezard/go-difflib | v1.0.0 | BSD-2-Clause | LICENSE | 2eb550be6801c1ea434feba53bf6d12e7c71c90253e0a9de4a4f46cf88b56477 | - |
 | github.com/power-devops/perfstat | v0.0.0-20240221224432-82ca36839d55 | MIT | LICENSE | d2568033889c7eb3666ef1cb1f47f84bd49d25847aaad5dd87f18df384238079 | - |
 | github.com/pressly/goose/v3 | v3.29.0 | MIT | LICENSE | f23985556a879c0e68bb4e136ee4b88a550d26fa33db77a65d76b721c93093ef | - |
 | github.com/prometheus/procfs | v0.22.0 | Apache-2.0 | LICENSE | c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4 | - |
@@ -202,7 +191,6 @@ podhub-go 本身是 `AGPL-3.0-only`，版权持有人 xxww，见根目录 `LICEN
 | github.com/russross/blackfriday | v1.6.0 | BSD-2-Clause | LICENSE.txt | 449ac384ca2d2262c28c71b402d24ddad03fe42b7e10d03ec1fb1aed604ad771 | - |
 | github.com/russross/blackfriday/v2 | v2.1.0 | BSD-2-Clause | LICENSE.txt | 75e1ca97a84a9da6051dee0114333388216f2c4a5a028296b882ff3d57274735 | - |
 | github.com/ryszard/goskiplist | v0.0.0-20150312221310-2dfbae5fcf46 | Apache-2.0 | LICENSE | cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 | - |
-| github.com/samber/lo | v1.53.0 | MIT | LICENSE | adb3ac2e3e382989de6befdd489f4714785af8aca47c01193a9892e8b26b3860 | - |
 | github.com/santhosh-tekuri/jsonschema/v5 | v5.3.1 | Apache-2.0 | LICENSE | c8858a5a76440bbca484e134cf7df46385d090dd18b2c58e650f939258802e5b | - |
 | github.com/schollz/closestmatch | v2.1.0+incompatible | MIT | LICENSE | 0c27314bc4294775c1c7768690fa90b1884a3e27b72b92376ee505963f916e8a | - |
 | github.com/segmentio/asm | v1.2.1 | MIT | LICENSE | cca993712df289a5958bdef69031a5dac0f951ac15afeb313f9eeea55ed59443 | - |
@@ -233,7 +221,7 @@ podhub-go 本身是 `AGPL-3.0-only`，版权持有人 xxww，见根目录 `LICEN
 | github.com/vertica/vertica-sql-go | v1.3.8 | Apache-2.0 | LICENSE | 88a5d07171e46b1b28e43d70f74f192add36743e4ee652259e1ae7f3c6b43048 | - |
 | github.com/vmihailenco/msgpack/v5 | v5.4.1 | BSD-2-Clause | LICENSE | 1530185dd39cdde7cb2f786a7a5fcf8bc34368b6ae73c15e72bafe88fd80b9a2 | - |
 | github.com/vmihailenco/tagparser/v2 | v2.0.0 | BSD-2-Clause | LICENSE | 0f02aac22084ef463aa5f42f566feeec6aa4c99653519744a8c25cb079da5b5d | - |
-| github.com/xxww0098/podhub-go | (main) | AGPL-3.0-only | LICENSE | 0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0 | - |
+| github.com/xxww0098/podhub-go | (main) | LicenseRef-Proprietary | LICENSE | c15e3e20ce5ac388b7f2177d024a08deaaff02ae6492aa3e19d79ad50ef677a9 | - |
 | github.com/yandex-cloud/go-genproto | v0.126.0 | MIT | LICENSE | 00570e62134ecae0503fcf6539bab28a975270dd8a5144be3ae5a8525568eb21 | - |
 | github.com/ydb-platform/ydb-go-genproto | v0.0.0-20260810123728-f0c151ab31b9 | Apache-2.0 | LICENSE | 84785548f214a0a07183d331b9e09e0935826c20dbf5272e3fc069064ced0023 | - |
 | github.com/ydb-platform/ydb-go-sdk-auth-environ | v0.5.3 | Apache-2.0 | LICENSE | 84785548f214a0a07183d331b9e09e0935826c20dbf5272e3fc069064ced0023 | - |

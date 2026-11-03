@@ -13,7 +13,6 @@ import (
 
 	"github.com/xxww0098/podhub-go/internal/platform/config"
 	"github.com/xxww0098/podhub-go/internal/platform/httpx"
-	sellerdomain "github.com/xxww0098/podhub-go/internal/seller/domain"
 )
 
 func TestDelegateSellerBytesMatchPlain(t *testing.T) {
@@ -30,11 +29,8 @@ func TestDelegateSellerBytesMatchPlain(t *testing.T) {
 	for _, key := range []string{"HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"} {
 		t.Setenv(key, "")
 	}
-	if httpx.Base(delegateSellerClient.Transport) != httpx.Ozon() || httpx.Ozon() == httpx.Restricted() {
-		t.Fatal("delegate seller client is not the ozon client")
-	}
 	body := []byte(`{"filter":{}}`)
-	req, err := http.NewRequest(http.MethodPost, srv.URL+"/v3/posting/fbs/list", strings.NewReader(string(body)))
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/v3/posting/fbs/get", strings.NewReader(string(body)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +44,7 @@ func TestDelegateSellerBytesMatchPlain(t *testing.T) {
 	oldRaw, _ := io.ReadAll(res.Body)
 	res.Body.Close()
 	oldSeen := seen
-	status, raw, kind, err := postDelegateSeller(context.Background(), srv.URL, "cid", "key", "/v3/posting/fbs/list", body)
+	status, raw, kind, err := delegateTestSeller(cfgForDelegateTest(t, srv.URL), "cid", "key", "/v3/posting/fbs/get", body)
 	if err != nil || kind != "" || status != res.StatusCode || string(raw) != string(oldRaw) || seen != oldSeen {
 		t.Fatalf("status %d/%d body %q/%q seen %q/%q kind %s err %v", status, res.StatusCode, raw, oldRaw, seen, oldSeen, kind, err)
 	}
@@ -78,13 +74,13 @@ func TestDelegateSellerSkipsRedirectAndProxy(t *testing.T) {
 	t.Cleanup(hop308.Close)
 	hits := serveProxy(t)
 	for _, base := range []string{hop307.URL, hop308.URL} {
-		status, raw, kind, err := postDelegateSeller(context.Background(), base, "cid", "key", "/v3/posting/fbs/list", []byte(`{}`))
-		if err == nil || kind != "connect" || status != 0 || raw != nil || err.Error() != "redirect left loopback" {
+		status, raw, kind, err := delegateTestSeller(cfgForDelegateTest(t, base), "cid", "key", "/v3/posting/fbs/get", []byte(`{}`))
+		if err == nil || kind != "connect" || status < 300 || status >= 400 || raw != nil {
 			t.Fatalf("base %s status %d kind %s body %q err %v", base, status, kind, raw, err)
 		}
 	}
 	t.Setenv("CLOUD_SELLER_BASE_URL", "https://api-seller.ozon.ru")
-	status, _, kind, err := postDelegateSeller(context.Background(), sellerdomain.ResolveBaseURL(config.Load().SellerBaseURL()), "cid", "key", "/v1", []byte(`{}`))
+	status, _, kind, err := delegateTestSeller(config.Load(), "cid", "key", "/v1/product/import/prices", []byte(`{}`))
 	if err == nil || kind != "connect" || status != 0 {
 		t.Fatalf("official status %d kind %s err %v", status, kind, err)
 	}
@@ -125,4 +121,14 @@ func serveProxy(t *testing.T) *atomic.Int32 {
 	}
 	res.Body.Close()
 	return &hits
+}
+
+func cfgForDelegateTest(t *testing.T, base string) config.Config {
+	t.Helper()
+	t.Setenv("CLOUD_SELLER_BASE_URL", base+"/")
+	return config.Load()
+}
+
+func delegateTestSeller(cfg config.Config, clientID, key, path string, body []byte) (int, []byte, string, error) {
+	return delegateEdge(cfg, nil).Seller(context.Background(), clientID, key, path, body)
 }

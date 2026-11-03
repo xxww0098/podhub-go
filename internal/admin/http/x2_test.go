@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/xxww0098/podhub-go/internal/admin/domain"
+	billing "github.com/xxww0098/podhub-go/internal/billing/contract"
 	delegatec "github.com/xxww0098/podhub-go/internal/delegate/contract"
 )
 
@@ -21,14 +22,10 @@ func x2Resolve(p *Session, ref *Refusal, err error) Resolve {
 }
 
 type x2Standing struct {
-	standing domain.Standing
 	publicID string
 	err      error
 }
 
-func (s x2Standing) Standing(context.Context, int64, string) (domain.Standing, error) {
-	return s.standing, s.err
-}
 func (s x2Standing) PublicID(context.Context, int64) (string, error) { return s.publicID, s.err }
 func (s x2Standing) ListPlans(context.Context, domain.Actor) ([]byte, error) {
 	return nil, nil
@@ -43,7 +40,14 @@ func (s x2Standing) ConfirmOrder(context.Context, domain.Actor, string) ([]byte,
 func (s x2Standing) CancelOrder(context.Context, domain.Actor, string) ([]byte, error) {
 	return nil, nil
 }
-func (s x2Standing) ListRedeem(context.Context, domain.Actor) ([]byte, error) { return nil, nil }
+func (s x2Standing) ListRedeem(context.Context, domain.Actor) ([]byte, error)  { return nil, nil }
+func (s x2Standing) ListCoupons(context.Context, domain.Actor) ([]byte, error) { return nil, nil }
+func (s x2Standing) CreateCoupon(context.Context, domain.Actor, billing.CouponSpec) ([]byte, error) {
+	return nil, nil
+}
+func (s x2Standing) SetCouponEnabled(context.Context, domain.Actor, string, bool) ([]byte, error) {
+	return nil, nil
+}
 func (s x2Standing) CreateRedeem(context.Context, domain.Actor, domain.RedeemSpec) ([]byte, error) {
 	return nil, nil
 }
@@ -111,13 +115,13 @@ func (f *delegateFake) Cancel(_ context.Context, _ int64, orderID string, _ int6
 	return f.body, f.err
 }
 
-func x2Router(p *Session, d DelegateWrites, s ShippingWrites, standing domain.Standing) http.Handler {
+func x2Router(p *Session, d DelegateWrites, s ShippingWrites) http.Handler {
 	r := chi.NewRouter()
 	Mount(r, Deps{
 		Resolve:        x2Resolve(p, nil, nil),
 		DelegateWrites: d,
 		ShippingWrites: s,
-		AdminB:         x2Standing{standing: standing, publicID: "pub_1"},
+		AdminB:         x2Standing{publicID: "pub_1"},
 	})
 	return r
 }
@@ -133,7 +137,7 @@ func TestDelegateAdminBytes(t *testing.T) {
 	okBody := []byte(`{"data":{"order":{"state":"dispatched"}}}`)
 	staff := &Session{UserID: 7, OrgID: 1, PlatformRole: "admin"}
 	order := "/api/admin/delegate-orders/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-	h := x2Router(staff, &delegateFake{body: okBody}, nil, domain.Standing{})
+	h := x2Router(staff, &delegateFake{body: okBody}, nil)
 
 	rec := x2Call(h, http.MethodPost, order+"/dispatch", `{}`)
 	if rec.Code != 200 || rec.Body.String() != string(okBody) || rec.Header().Get("Content-Type") != "application/json" {
@@ -187,11 +191,11 @@ func TestDelegateAdminBytes(t *testing.T) {
 	if rec.Code != 400 || rec.Body.String() != `{"error":"请求格式无效","code":"validation"}` {
 		t.Fatalf("oversize %d %s", rec.Code, rec.Body.String())
 	}
-	rec = x2Call(x2Router(staff, nil, nil, domain.Standing{}), http.MethodPost, order+"/cancel", ``)
+	rec = x2Call(x2Router(staff, nil, nil), http.MethodPost, order+"/cancel", ``)
 	if rec.Code != 501 || rec.Body.String() != `{"error":"not_ported","code":"not_ported"}` {
 		t.Fatalf("nil %d %s", rec.Code, rec.Body.String())
 	}
-	rec = x2Call(x2Router(staff, &delegateFake{}, nil, domain.Standing{}), http.MethodGet, "/api/admin/delegate-orders", ``)
+	rec = x2Call(x2Router(staff, &delegateFake{}, nil), http.MethodGet, "/api/admin/delegate-orders", ``)
 	if rec.Code != 501 || rec.Body.String() != `{"error":"not_ported","code":"not_ported"}` {
 		t.Fatalf("list stays 501 %d %s", rec.Code, rec.Body.String())
 	}

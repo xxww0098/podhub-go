@@ -8,10 +8,17 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
+	"github.com/xxww0098/podhub-go/internal/platform/db"
+	"github.com/xxww0098/podhub-go/internal/platform/db/sqlc"
 )
 
 func (s *Service) resolveToken(ctx context.Context, token string) (account, bool, error) {
-	row, err := s.q(ctx).ResolveAccount(ctx, hashToken(token))
+	var row sqlc.ResolveAccountRow
+	err := db.InTx(ctx, s.pool, db.Staff(), func(tx pgx.Tx) error {
+		var err error
+		row, err = sqlc.New(tx).ResolveAccount(ctx, hashToken(token))
+		return err
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return account{}, false, nil
 	}
@@ -29,9 +36,7 @@ func (s *Service) resolveToken(ctx context.Context, token string) (account, bool
 // Resolve implements access.Resolver. The workspace role is the stored
 // membership string from the same lateral join as the session. A database
 // error is returned as err so the read handlers answer 500. Logged out is
-// a nil principal. Confirmed TOTP step-up is not applied here: login already
-// refuses to issue a session when a super admin's totp row is confirmed, and
-// an existing session is not re-checked.
+// a nil principal. Management handlers check the platform role themselves.
 func (s *Service) Resolve(r *http.Request) (*access.Principal, *access.Refusal, error) {
 	if s == nil || s.pool == nil {
 		if SessionCredentials(r.Header).Presented() == "" {
@@ -59,17 +64,15 @@ func (s *Service) Resolve(r *http.Request) (*access.Principal, *access.Refusal, 
 
 func (s *Service) resolveRequest(r *http.Request) (Credentials, string, account, error) {
 	cred := SessionCredentials(r.Header)
-	var zero account
-	for _, token := range cred.Candidates() {
-		acc, ok, err := s.resolveToken(r.Context(), token)
-		if err != nil {
-			return cred, "", zero, err
-		}
-		if ok {
-			return cred, token, acc, nil
-		}
+	token := cred.Presented()
+	if token == "" {
+		return cred, "", account{}, nil
 	}
-	return cred, "", zero, nil
+	acc, ok, err := s.resolveToken(r.Context(), token)
+	if err != nil || !ok {
+		return cred, "", account{}, err
+	}
+	return cred, token, acc, nil
 }
 
 func (s *Service) requireAccount(r *http.Request) (Credentials, string, account, Result, bool) {

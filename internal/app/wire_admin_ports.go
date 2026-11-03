@@ -8,8 +8,9 @@ import (
 	"net/http"
 
 	delegatesvc "github.com/xxww0098/podhub-go/internal/delegate/service"
-	ozon "github.com/xxww0098/podhub-go/internal/platform/egressgate"
-	"github.com/xxww0098/podhub-go/internal/seller"
+
+	sellercontract "github.com/xxww0098/podhub-go/internal/seller/contract"
+	seller "github.com/xxww0098/podhub-go/internal/seller/ozon"
 	"github.com/xxww0098/podhub-go/internal/shipping/domain"
 	shippingsvc "github.com/xxww0098/podhub-go/internal/shipping/service"
 )
@@ -47,7 +48,7 @@ func (p shippingOzon) Post(ctx context.Context, path string, body []byte, write 
 	}
 	reply, err := p.egress.Call(ctx, http.MethodPost, path, body, write, true, clientID, apiKey)
 	if err != nil {
-		if errors.Is(err, ozon.ErrWritesDisabled) {
+		if errors.Is(err, sellercontract.ErrWritesDisabled) {
 			return 0, nil, errors.New("OZON_WRITE_KILL_SWITCH 已启用，Ozon 实时写入已停止")
 		}
 		ce := &domain.CallError{Transport: true}

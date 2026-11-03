@@ -23,13 +23,18 @@ SELECT id, domain, holder, holder_instance, fence_token, granted_at_ms,
        expires_at_ms, heartbeat_at_ms, revoked_at_ms, grant_reason
 FROM writer_leases`
 
-// LeaseStatus reads the seven domains and audits {"count":7}.
+// LeaseStatus reads every lease domain and audits the current count.
 func (s *Store) LeaseStatus(ctx context.Context, actor domain.Actor) ([]domain.LeaseRow, []bool, *contract.Fault) {
+	tx, err := BeginAdmin(ctx, s.pool)
+	if err != nil {
+		return nil, nil, dbFault(err)
+	}
+	defer tx.Rollback(ctx)
 	var rows []domain.LeaseRow
 	var ever []bool
 	for _, name := range domain.LeaseDomains {
 		var item domain.LeaseRow
-		err := s.pool.QueryRow(ctx, leaseCols+`
+		err := tx.QueryRow(ctx, leaseCols+`
 WHERE domain = $1 AND revoked_at_ms IS NULL
 ORDER BY id DESC LIMIT 1`, name).Scan(&item.ID, &item.Domain, &item.Holder, &item.HolderInstance, &item.Fence,
 			&item.GrantedAt, &item.ExpiresAt, &item.HeartbeatAt, &item.RevokedAt, &item.Reason)
@@ -41,15 +46,20 @@ ORDER BY id DESC LIMIT 1`, name).Scan(&item.ID, &item.Domain, &item.Holder, &ite
 		}
 		rows = append(rows, item)
 		var exists bool
-		if err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM writer_leases WHERE domain = $1)`, name).Scan(&exists); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM writer_leases WHERE domain = $1)`, name).Scan(&exists); err != nil {
 			return nil, nil, dbFault(err)
 		}
 		ever = append(ever, exists)
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, nil, dbFault(err)
+	}
 	if err := s.auditAfter(ctx, auditRow{
 		OrgID: orgFloor(actor.OrgID), UserID: actor.ID, Module: "admin", EntityType: "writer_lease",
 		EntityID: "*", Method: "GET", Path: "/api/admin/writer-leases", Action: "writer_lease_status_listed",
-		Message: `{"count":7}`,
+		Message: jsonText(struct {
+			Count int `json:"count"`
+		}{len(domain.LeaseDomains)}),
 	}); err != nil {
 		return nil, nil, dbFault(err)
 	}
@@ -77,7 +87,7 @@ FOR UPDATE`, name))
 // GrantLease runs the grant transaction. It does not use the admin writer gate.
 func (s *Store) GrantLease(ctx context.Context, actor domain.Actor, name, holder, instance, reason string, expected *int64) (domain.LeaseRow, *contract.Fault) {
 	var out domain.LeaseRow
-	tx, err := s.pool.Begin(ctx)
+	tx, err := BeginAdmin(ctx, s.pool)
 	if err != nil {
 		return domain.LeaseRow{}, dbFault(err)
 	}
@@ -157,7 +167,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 
 // RevokeLease revokes the live row. A missing row with no expected fence still audits.
 func (s *Store) RevokeLease(ctx context.Context, actor domain.Actor, name, reason string, expected *int64) (*domain.LeaseRow, *contract.Fault) {
-	tx, err := s.pool.Begin(ctx)
+	tx, err := BeginAdmin(ctx, s.pool)
 	if err != nil {
 		return nil, dbFault(err)
 	}

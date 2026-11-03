@@ -53,8 +53,8 @@ func TestMustChangePasswordBlocksEverythingElse(t *testing.T) {
 		{http.MethodPost, "/api/admin/users"},
 		{http.MethodPost, "/api/admin/users/{uuid}/password"},
 		{http.MethodPost, "/api/admin/users/u-1/password"},
-		{http.MethodGet, "/api/supplier/dispatches"},
-		{http.MethodPost, "/api/supplier/dispatches"},
+		{http.MethodGet, "/api/supplier/workspaces/factory/dispatches"},
+		{http.MethodGet, "/api/supplier/workspaces/factory/dashboard"},
 		// The wallet and withdrawal routes are gone (F1: a supplier has no funds
 		// surface at all). These two are the supplier reads and writes that still
 		// exist, so the gate still has real supplier paths to block.
@@ -66,11 +66,9 @@ func TestMustChangePasswordBlocksEverythingElse(t *testing.T) {
 		{http.MethodPost, "/api/auth/register"},
 		{http.MethodPost, "/api/auth/forgot"},
 		{http.MethodPost, "/api/auth/reset"},
-		{http.MethodPost, "/api/auth/switch"},
-		{http.MethodPost, "/api/auth/verify"},
-		{http.MethodPost, "/api/auth/verify/resend"},
+
 		{http.MethodPut, "/api/auth/name"},
-		{http.MethodDelete, "/api/auth/accounts/u-1"},
+
 		{http.MethodGet, "/api/workspaces"},
 		{http.MethodPost, "/api/workspaces"},
 		{http.MethodGet, "/api/notifications"},
@@ -109,7 +107,7 @@ func TestMustChangePasswordBlocksEverythingElse(t *testing.T) {
 func TestRefuseWhileLockedBody(t *testing.T) {
 	acc := account{id: 7, mustChangePassword: true}
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/supplier/dispatches", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/supplier/workspaces/factory/dispatches", nil)
 	if !refuseWhileLocked(rec, req, acc) {
 		t.Fatal("locked account must be refused")
 	}
@@ -206,7 +204,6 @@ func TestSessionWireCarriesTheLock(t *testing.T) {
 		Authenticated:      true,
 		Workspaces:         []workspaceWire{},
 		UnusableWorkspaces: []workspaceWire{},
-		Accounts:           []sessionAccountWire{},
 		AccountKind:        string(AccountKindSupplier),
 		MustChangePassword: true,
 	}})
@@ -221,9 +218,8 @@ func TestSessionWireCarriesTheLock(t *testing.T) {
 	if bytes.Contains(raw, []byte("accountKind")) || bytes.Contains(raw, []byte("mustChangePassword")) {
 		t.Fatalf("camelCase leaked into the session body: %s", raw)
 	}
-	// False is omitted rather than sent as false: absence reads as false, the
-	// same shape email_verified already uses.
-	unlocked, err := json.Marshal(sessionWire{Data: sessionDataWire{Authenticated: true, Workspaces: []workspaceWire{}, UnusableWorkspaces: []workspaceWire{}, Accounts: []sessionAccountWire{}, AccountKind: string(AccountKindPlatform)}})
+	// False is omitted rather than sent as false: absence reads as false.
+	unlocked, err := json.Marshal(sessionWire{Data: sessionDataWire{Authenticated: true, Workspaces: []workspaceWire{}, UnusableWorkspaces: []workspaceWire{}, AccountKind: string(AccountKindPlatform)}})
 	if err != nil {
 		t.Fatal(err)
 	}

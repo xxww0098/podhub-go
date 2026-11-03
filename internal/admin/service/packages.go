@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/xxww0098/podhub-go/internal/admin/domain"
+	"github.com/xxww0098/podhub-go/internal/platform/db"
 )
 
 // Official is one ozon_listing_field_templates row.
@@ -48,22 +49,22 @@ func (d Deps) ReadOfficial(ctx context.Context, actor Actor, category string) (*
 	if d.Pool == nil {
 		return nil, fail(500, "INTERNAL", "服务暂不可用")
 	}
-	o, err := scanOfficial(d.Pool.QueryRow(ctx, `SELECT `+packageCols+`
-FROM ozon_listing_field_templates WHERE category_id = $1 AND scope = $2 LIMIT 1`, category, "official"))
-	found := true
 	var out *Official
-	if errors.Is(err, pgx.ErrNoRows) {
-		found = false
-	} else if err != nil {
+	err := db.InTx(ctx, d.Pool, db.AppRole(), func(tx pgx.Tx) error {
+		o, err := scanOfficial(tx.QueryRow(ctx, `SELECT `+packageCols+`
+FROM ozon_listing_field_templates WHERE category_id = $1 AND scope = $2 LIMIT 1`, category, "official"))
+		if err == nil {
+			out = &o
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		return writeAudit(ctx, tx, Lease{}, 0, actor.UserID, "admin", "official_package", category, "GET", "/api/admin/listing/packages/official", "official_package_read", map[string]any{
+			"found":   out != nil,
+			"summary": "读取官方字段包 " + category,
+		}, nil)
+	})
+	if err != nil {
 		return nil, mapDB(err, 500, "INTERNAL", "服务暂不可用")
-	} else {
-		out = &o
-	}
-	if err := d.audit(ctx, 0, actor.UserID, "admin", "official_package", category, "GET", "/api/admin/listing/packages/official", "official_package_read", map[string]any{
-		"found":   found,
-		"summary": "读取官方字段包 " + category,
-	}); err != nil {
-		return nil, err
 	}
 	return out, nil
 }
@@ -119,84 +120,4 @@ RETURNING `+packageCols, int64(0), name, category, "published", in.Defaults, in.
 		return Official{}, fail(500, "INTERNAL", "创建官方默认字段失败")
 	}
 	return row, err
-}
-
-// ReplaceOfficial updates one official package when the category matches.
-func (d Deps) ReplaceOfficial(ctx context.Context, actor Actor, id int64, in PackageWrite) (Official, error) {
-	var out Official
-	err := d.under(ctx, "管理域写入未启用", func(g *gate) error {
-		name, err := domain.PackageName(in.Name)
-		if err != nil {
-			return fail(400, "VALIDATION", err.Error())
-		}
-		if err := domain.JSONObject(in.Defaults); err != nil {
-			return fail(400, "VALIDATION", err.Error())
-		}
-		if err := domain.JSONArray(in.Dataset); err != nil {
-			return fail(400, "VALIDATION", err.Error())
-		}
-		category := strings.TrimSpace(in.CategoryID)
-		existing, err := scanOfficial(g.tx.QueryRow(ctx, `SELECT `+packageCols+`
-FROM ozon_listing_field_templates WHERE id = $1 AND scope = $2 LIMIT 1`, id, "official"))
-		if errors.Is(err, pgx.ErrNoRows) || (err == nil && existing.CategoryID != category) {
-			return fail(404, "NOT_FOUND", "官方默认字段不存在")
-		}
-		if err != nil {
-			return err
-		}
-		var snap int64
-		err = g.tx.QueryRow(ctx, `SELECT id FROM ozon_listing_schema_snapshots
-WHERE category_id = $1 ORDER BY updated_at_ms DESC, id DESC LIMIT 1`, category).Scan(&snap)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return fail(400, "VALIDATION", "该类目尚无 Schema 快照，请先同步 Schema")
-		}
-		if err != nil {
-			return err
-		}
-		now := d.nowMS()
-		out, err = scanOfficial(g.tx.QueryRow(ctx, `UPDATE ozon_listing_field_templates
-SET name = $1, defaults_json = $2, dataset_json = $3, updated_at_ms = $4, published_at = $4, schema_snapshot_id = $7
-WHERE id = $5 AND scope = $6
-RETURNING `+packageCols, name, in.Defaults, in.Dataset, now, id, "official", snap))
-		if errors.Is(err, pgx.ErrNoRows) {
-			return fail(404, "NOT_FOUND", "官方默认字段不存在")
-		}
-		if err != nil {
-			return err
-		}
-		return g.audit(ctx, 0, actor.UserID, "admin", "official_package", strconv.FormatInt(out.ID, 10), "PUT", "/api/admin/listing/packages/official/{id}", "official_package_replaced", map[string]any{
-			"summary": "替换官方字段包 " + out.Name + " (" + out.CategoryID + ")",
-		})
-	})
-	return out, err
-}
-
-// DeleteOfficial removes one official package when the category matches.
-func (d Deps) DeleteOfficial(ctx context.Context, actor Actor, id int64, category string) error {
-	category = strings.TrimSpace(category)
-	if category == "" {
-		return fail(400, "VALIDATION", "category_id 无效")
-	}
-	return d.under(ctx, "管理域写入未启用", func(g *gate) error {
-		existing, err := scanOfficial(g.tx.QueryRow(ctx, `SELECT `+packageCols+`
-FROM ozon_listing_field_templates WHERE id = $1 AND scope = $2 LIMIT 1`, id, "official"))
-		if errors.Is(err, pgx.ErrNoRows) || (err == nil && existing.CategoryID != category) {
-			return fail(404, "NOT_FOUND", "官方默认字段不存在")
-		}
-		if err != nil {
-			return err
-		}
-		tag, err := g.tx.Exec(ctx, `DELETE FROM ozon_listing_field_templates
-WHERE id = $1 AND scope = $2 AND category_id = $3`, id, "official", category)
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() == 0 {
-			return fail(404, "NOT_FOUND", "官方默认字段不存在")
-		}
-		return g.audit(ctx, 0, actor.UserID, "admin", "official_package", strconv.FormatInt(id, 10), "DELETE", "/api/admin/listing/packages/official/{id}", "official_package_deleted", map[string]any{
-			"category_id": category,
-			"summary":     "删除官方字段包 #" + strconv.FormatInt(id, 10),
-		})
-	})
 }

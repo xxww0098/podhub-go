@@ -11,6 +11,7 @@ import (
 // recoverStuckSubmitting is the safety net for a submitting intent whose
 // job has already failed. The reconciler only claims unknown and accepted,
 // so without this a failed job would leave the intent in submitting forever.
+// It also requeues policy-split heads that are proven entirely unsent.
 // A stored task id is accepted without another seller request. A missing
 // task id is parked to unknown so the existing probe can run. The unknown
 // stamp statements are not used here.
@@ -18,11 +19,18 @@ func recoverStuckSubmitting(ctx context.Context, pool *pgxpool.Pool, limit int) 
 	if limit <= 0 {
 		limit = 16
 	}
-	rows, err := claimStuck(ctx, pool, limit)
-	if err != nil || len(rows) == 0 {
-		return len(rows), err
+	recovered, err := recoverPolicySplits(ctx, pool, limit)
+	if err != nil {
+		return recovered, err
 	}
-	n := 0
+	if recovered >= limit {
+		return recovered, nil
+	}
+	rows, err := claimStuck(ctx, pool, limit-recovered)
+	if err != nil || len(rows) == 0 {
+		return recovered, err
+	}
+	n := recovered
 	for _, row := range rows {
 		if err := applyStuck(ctx, pool, row); err != nil {
 			return n, err
@@ -106,11 +114,11 @@ func applyStuck(ctx context.Context, pool *pgxpool.Pool, row stuckIntent) error 
 		tag, err := tx.Exec(ctx, `
 			UPDATE public.submission_intents
 			   SET state = 'accepted',
-			       reconcile_after = NULL,
+			       reconcile_after = clock_timestamp() + ($3::bigint * interval '1 second'),
 			       reconcile_claim_until = NULL,
 			       updated_at = clock_timestamp()
 			 WHERE org_id = $1 AND id = $2::uuid AND state = 'submitting'
-			   AND external_task_id IS NOT NULL`, row.OrgID, row.ID)
+			   AND external_task_id IS NOT NULL`, row.OrgID, row.ID, ImportReconcileFirstWait)
 		if err != nil {
 			return err
 		}
@@ -125,11 +133,11 @@ func applyStuck(ctx context.Context, pool *pgxpool.Pool, row stuckIntent) error 
 		UPDATE public.submission_intents
 		   SET state = 'unknown',
 		       last_error_code = $3,
-		       reconcile_after = clock_timestamp() + interval '30 seconds',
+		       reconcile_after = clock_timestamp() + ($4::bigint * interval '1 second'),
 		       reconcile_claim_until = NULL,
 		       updated_at = clock_timestamp()
 		 WHERE org_id = $1 AND id = $2::uuid AND state = 'submitting'
-		   AND external_task_id IS NULL`, row.OrgID, row.ID, CodeSubmitInFlight)
+		   AND external_task_id IS NULL`, row.OrgID, row.ID, CodeSubmitInFlight, ImportUnknownFirstWait)
 	if err != nil {
 		return err
 	}

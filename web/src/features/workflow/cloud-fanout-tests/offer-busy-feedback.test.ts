@@ -59,7 +59,7 @@ for (const storedStore of [null, "old-store", "store"] as const) test(`offer_bus
     assert.ok(closedIds.includes(progressIds[0]!))
     assert.match(errors[0]!, /已受理/)
     assert.doesNotMatch(errors[0]!, /释放|未完成发送/)
-    assert.match(descriptions[0]!, /编号<\/dt><dd[^>]*>[0-9]{20}/)
+    assert.match(descriptions[0]!, /编号<\/dt><dd[^>]*>[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{5}/)
     assert.doesNotMatch(descriptions[0]!, /错误代码|offer_busy/)
     for (const row of current.rows) {
       assert.match(row.log, /整块未入队.*不表示块内每个货号都冲突/)

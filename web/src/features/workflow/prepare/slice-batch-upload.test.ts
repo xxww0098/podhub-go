@@ -28,7 +28,7 @@ function overview() {
 }
 
 function pending(digest: string): { request: DeliverMediaObjectRequest, delivered: DeliveredMediaObject } {
-  const objectKey = `images/teams/${workspace}/sha256/${digest}.jpg`
+  const objectKey = `uploads/2026-10-15/1792094400000-22222222-2222-4222-8222-222222222222/${digest}.jpg`
   return {
     request: {
       digest,
@@ -76,11 +76,10 @@ test("one failed object does not discard the siblings a complete-batch already c
           },
         }
         : { error: { status: 429, code: "UNAVAILABLE", error: "媒体并发已满，请稍后重试", retry_after: 1 } })
-      return new Response(JSON.stringify({ data: { objects } }), { status: 200, headers: { "Content-Type": "application/json" } })
+      return new Response(JSON.stringify({ objects }), { status: 200, headers: { "Content-Type": "application/json" } })
     }
     if (url.endsWith("/complete")) {
       return new Response(JSON.stringify({
-        data: {
           transport: "ready",
           workspace_uuid: workspace,
           account_id: body.account_id,
@@ -89,7 +88,6 @@ test("one failed object does not discard the siblings a complete-batch already c
           storage_revision: body.storage_revision,
           byte_length: body.byte_length,
           deduplicated: false,
-        },
       }), { status: 200, headers: { "Content-Type": "application/json" } })
     }
     return new Response("missing", { status: 500 })

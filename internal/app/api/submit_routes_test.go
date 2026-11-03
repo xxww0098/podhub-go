@@ -32,7 +32,7 @@ func TestSubmitSelectsBranchByBodyShape(t *testing.T) {
 
 	rec = httptest.NewRecorder()
 	submitHandler(&access.Principal{UserID: 1, OrgID: 2, WorkspaceRole: "viewer"}).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/listing/submit", strings.NewReader(batch)))
-	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "当前角色无权执行此操作") {
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "工作空间角色无效") {
 		t.Fatalf("viewer batch %d %s", rec.Code, rec.Body.String())
 	}
 
@@ -53,6 +53,15 @@ func TestSubmitSelectsBranchByBodyShape(t *testing.T) {
 	submitHandler(&access.Principal{UserID: 1, OrgID: 2, WorkspaceRole: "owner"}).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/listing/submit", strings.NewReader(batch)))
 	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "服务暂不可用") {
 		t.Fatalf("batch pool %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestBrowserGrantRejectsMembers(t *testing.T) {
+	router := chi.NewRouter()
+	RegisterBrowserDirect(router, &Server{Access: access.FixedResolver{Principal: &access.Principal{UserID: 1, OrgID: 2, WorkspaceRole: "member"}}})
+	rec := post(router, "/api/listing/browser/grant", `{}`)
+	if rec.Code != http.StatusForbidden || strings.Contains(rec.Body.String(), "apiKey") {
+		t.Fatalf("member grant: %d %s", rec.Code, rec.Body.String())
 	}
 }
 

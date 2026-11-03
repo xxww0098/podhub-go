@@ -1,13 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
-import { RefreshCw } from "lucide-react"
+import { BarChart3, LoaderCircle, RefreshCw } from "lucide-react"
 
 import { type WalletView } from "@/bindings/commands"
-import { loadWallet, useWallet } from "@/features/usage/wallet-cache"
+import { loadWallet, useWallet, useWalletLedger } from "@/features/usage/wallet-cache"
+import { AiLogTable } from "@/features/usage/ai-log-table"
+import { WalletLedgerTable } from "@/features/usage/wallet-ledger-table"
 import { useScreenActive } from "@/components/screen-pane"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Spinner } from "@/components/ui/spinner"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import {
   DateRangePicker,
@@ -69,7 +78,7 @@ function StatCard({
   return (
     <div
       className={cn(
-        "flex flex-col gap-3 rounded-xl bg-card border border-border p-5",
+        "flex flex-col gap-1.5 rounded-xl bg-card border border-border p-3",
         className,
       )}
     >
@@ -77,9 +86,9 @@ function StatCard({
         <span className="text-compact text-muted-foreground">{label}</span>
         {aside}
       </div>
-      <div className="flex flex-wrap items-end justify-between gap-3">
+      <div className="flex flex-wrap items-end justify-between gap-2">
         <div className="flex items-baseline gap-1.5">
-          <span className="font-mono text-3xl font-semibold tracking-tight text-foreground tabular-nums">
+          <span className="font-mono text-xl font-semibold tracking-tight text-foreground tabular-nums">
             {value}
           </span>
           {unit ? (
@@ -103,7 +112,7 @@ function ChartCard({
   children: ReactNode
 }) {
   return (
-    <div className="flex flex-col gap-3 rounded-xl bg-card border border-border p-5">
+    <div className="flex flex-col gap-2 rounded-xl bg-card border border-border p-3">
       <div className="flex items-baseline gap-2">
         <span className="text-sm font-semibold text-foreground">{title}</span>
         <span className="font-mono text-sm text-muted-foreground tabular-nums">{total}</span>
@@ -138,7 +147,7 @@ function WalletCards({
   const depleted = wallet !== null && wallet !== undefined && wallet.available_microfen <= 0
 
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
       <StatCard
         label="充值余额"
         value={
@@ -167,7 +176,7 @@ function WalletCards({
         }
         footnote={
           onTopUp ? (
-            <Button size="sm" className="rounded-full px-4" onClick={onTopUp}>
+            <Button size="sm" onClick={onTopUp}>
               去充值
             </Button>
           ) : null
@@ -199,6 +208,9 @@ export function UsageStatsPanel({
     preset: "last30",
   }))
   const wallet = useWallet()
+  const ledger = useWalletLedger()
+  const [walletFailed, setWalletFailed] = useState(false)
+  const [logReload, setLogReload] = useState(0)
   const [loading, setLoading] = useState(false)
   const requestGenerationRef = useRef(0)
   const retryRef = useRef<() => void>(() => {})
@@ -207,7 +219,10 @@ export function UsageStatsPanel({
 
   const refreshWallet = useCallback(() => {
     if (workspaceId === undefined) return
-    void loadWallet().catch(() => {})
+    void loadWallet().then(
+      () => setWalletFailed(false),
+      () => setWalletFailed(true),
+    )
   }, [workspaceId])
 
   const loadStats = useCallback(
@@ -268,6 +283,7 @@ export function UsageStatsPanel({
   const reload = useCallback(() => {
     if (!active || workspaceId === undefined) return
     refreshWallet()
+    setLogReload((token) => token + 1)
     const generation = ++requestGenerationRef.current
     void loadStats(workspaceId, dateRange.from, dateRange.to, true, generation)
   }, [active, loadStats, refreshWallet, dateRange.from, dateRange.to, workspaceId])
@@ -310,16 +326,23 @@ export function UsageStatsPanel({
   const partialSeries = Boolean(stats && stats.message_count > stats.requests.length)
 
   return (
-    <section className="flex flex-col gap-5" aria-label={"Workspace " + (workspaceName ?? "用量")}>
+    <section className="flex flex-col gap-3" aria-label={"Workspace " + (workspaceName ?? "用量")}>
       <WalletCards wallet={wallet} onTopUp={onTopUp} />
+      {workspaceId !== undefined ? (
+        <WalletLedgerTable ledger={ledger} failed={walletFailed} onRetry={refreshWallet} />
+      ) : null}
 
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2">
+        <div className="flex flex-wrap items-center gap-2">
           <DateRangePicker value={dateRange} onChange={setDateRange} />
-          <Button variant="ghost" size="xs" disabled={loading} onClick={reload}>
-            {loading ? <Spinner className="size-3.5" /> : <RefreshCw className="size-3.5" />}
-            刷新
-          </Button>
+          <IconButton
+            icon={loading ? LoaderCircle : RefreshCw}
+            iconClassName={loading ? "animate-spin" : undefined}
+            label="刷新"
+            size="icon-sm"
+            disabled={loading}
+            onClick={reload}
+          />
         </div>
         <p className="text-compact text-muted-foreground">
           {`${dateRange.from} 至 ${dateRange.to}（UTC）`}
@@ -330,21 +353,30 @@ export function UsageStatsPanel({
       </div>
 
       {!workspaceId ? (
-        <Alert role="status">
-          <AlertTitle>尚未选择 Workspace</AlertTitle>
-          <AlertDescription>请先在 Workspace 下拉菜单中选择一个 Workspace。</AlertDescription>
-        </Alert>
+        <div className="flex min-h-80 w-full flex-col items-center justify-center rounded-xl border border-border bg-card p-8 text-center sm:p-12">
+          <Empty role="status" className="min-h-0 border-0 bg-transparent p-0">
+            <EmptyHeader className="max-w-md">
+              <EmptyMedia variant="icon">
+                <BarChart3 className="size-6 text-primary" />
+              </EmptyMedia>
+              <EmptyTitle>尚未选择 Workspace</EmptyTitle>
+              <EmptyDescription>
+                AI 额度、Token 消耗走势与费用明细均基于具体工作空间进行统计。请先在左侧栏选择或创建工作空间以查看数据。
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        </div>
       ) : null}
 
       {firstLoad ? (
-        <div className="flex flex-col gap-5">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <Skeleton className="h-[6.5rem] rounded-xl" />
-            <Skeleton className="h-[6.5rem] rounded-xl" />
-            <Skeleton className="h-[6.5rem] rounded-xl" />
+        <div className="flex flex-col gap-3">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <Skeleton className="h-20 rounded-xl" />
+            <Skeleton className="h-20 rounded-xl" />
+            <Skeleton className="h-20 rounded-xl" />
           </div>
           <Skeleton className="h-[18rem] rounded-xl" />
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
             <Skeleton className="h-[18rem] rounded-xl" />
             <Skeleton className="h-[18rem] rounded-xl" />
           </div>
@@ -353,7 +385,7 @@ export function UsageStatsPanel({
 
       {stats ? (
         <>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             <StatCard
               label="消费金额"
               value={formatYuan(summary.cost)}
@@ -371,7 +403,7 @@ export function UsageStatsPanel({
             <CostBarChart points={points} />
           </ChartCard>
 
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
             <ChartCard
               title="API 请求次数"
               total={summary.count.toLocaleString("zh-CN")}
@@ -385,8 +417,12 @@ export function UsageStatsPanel({
         </>
       ) : null}
 
+      {workspaceId !== undefined ? (
+        <AiLogTable key={workspaceId} workspaceId={workspaceId} enabled={active} reloadToken={logReload} />
+      ) : null}
+
       {!loading && !stats && workspaceId ? (
-        <div className="rounded-xl bg-muted/40 px-4 py-10 text-center text-compact text-muted-foreground">
+        <div className="rounded-xl bg-muted/40 px-3 py-4 text-center text-compact text-muted-foreground">
           尚未加载用量数据。点刷新重试，或检查本机是否已连上 Cloud。
         </div>
       ) : null}

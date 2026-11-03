@@ -13,6 +13,7 @@ import (
 
 	"github.com/xxww0098/podhub-go/internal/catalog/domain"
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
+	"github.com/xxww0098/podhub-go/internal/platform/db"
 	"github.com/xxww0098/podhub-go/internal/platform/httpx/jsonwire"
 )
 
@@ -28,14 +29,15 @@ func (h Host) visibleStore(w http.ResponseWriter, r *http.Request, p access.Prin
 	var assignee *int64
 	var membershipID *int64
 	var role *string
-	err := h.queryOne(r.Context(), `
+	err := db.InTx(r.Context(), h.Pool, db.App(p.OrgID), func(tx pgx.Tx) error {
+		return tx.QueryRow(r.Context(), `
 		SELECT s.assignee_membership_id, m.id, m.role
 		FROM organization_stores s
 		LEFT JOIN organization_members m
 		  ON m.org_id = s.org_id AND m.user_id = $3 AND m.status = 'active' AND NOT m.manual_disabled AND NOT m.quota_suspended
 		WHERE s.org_id = $1 AND s.uuid = $2::uuid AND s.deleted_at_ms IS NULL
-		LIMIT 1`, p.OrgID, storeID, p.UserID,
-		[]any{&assignee, &membershipID, &role})
+		LIMIT 1`, p.OrgID, storeID, p.UserID).Scan(&assignee, &membershipID, &role)
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeErr(w, http.StatusNotFound, "Store 不存在", "not_found")
 		return false
@@ -97,36 +99,22 @@ func (h Host) schema(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, access.MsgUnavailable, "internal")
 		return
 	}
-	var payload []byte
+	var fields json.RawMessage
 	var fetched int64
+	var revision string
 	err := h.queryOne(r.Context(), `
-		SELECT payload, fetched_at_ms FROM public.ozon_catalog_schema_cache
+		SELECT fields, fetched_at_ms, COALESCE(schema_revision, '') FROM public.ozon_category_current
 		WHERE description_category_id = $1 AND type_id = $2 AND language = $3`,
 		category, typeID, language,
-		[]any{&payload, &fetched})
+		[]any{&fields, &fetched, &revision})
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		slog.Error("catalog schema", "err", err)
 		writeErr(w, http.StatusInternalServerError, access.MsgUnavailable, "internal")
 		return
 	}
 	if err == nil && Fresh(h.Now(), fetched) {
-		fields, decErr := domain.DecodeSchemaFields(payload)
-		if decErr != nil {
-			writeErr(w, http.StatusInternalServerError, "类目字段缓存损坏，请稍后重试", "internal")
-			return
-		}
-		h.writeSchemaMaterial(w, r, category, typeID, language, fetched, fields)
+		h.writeSchemaMaterial(w, r, category, typeID, language, fetched, fields, revision)
 		return
-	}
-	if err == nil {
-		if _, delErr := h.exec(r.Context(), `
-			DELETE FROM public.ozon_catalog_schema_cache
-			WHERE description_category_id = $1 AND type_id = $2 AND language = $3 AND fetched_at_ms = $4`,
-			category, typeID, language, fetched); delErr != nil {
-			slog.Error("catalog schema delete", "err", delErr)
-			writeErr(w, http.StatusInternalServerError, access.MsgUnavailable, "internal")
-			return
-		}
 	}
 	var usable bool
 	if err := h.queryOne(r.Context(), `
@@ -190,12 +178,6 @@ type fetchKey struct {
 	Disabled         bool   `json:"disabled"`
 }
 
-type fetchWB struct {
-	Configured         bool   `json:"configured"`
-	CredentialRevision int64  `json:"credential_revision"`
-	LastVerifiedAtMs   *int64 `json:"last_verified_at_ms"`
-}
-
 type fetchFreshness struct {
 	Total   int64 `json:"total"`
 	Fresh   int64 `json:"fresh"`
@@ -211,9 +193,7 @@ type fetchView struct {
 	WindowStartMinute   int32          `json:"window_start_minute"`
 	WindowEndMinute     int32          `json:"window_end_minute"`
 	UTCOffsetMinutes    int32          `json:"utc_offset_minutes"`
-	Language            string         `json:"language"`
 	Keys                []fetchKey     `json:"keys"`
-	WBCredential        fetchWB        `json:"wb_credential"`
 	NextRunAtMs         *int64         `json:"next_run_at_ms"`
 	LastRunAtMs         *int64         `json:"last_run_at_ms"`
 	LastStatus          *string        `json:"last_status"`
@@ -232,21 +212,19 @@ func (h Host) loadFetchConfig(r *http.Request) (fetchView, error) {
 	view := fetchView{
 		ScheduleMode: "fixed", AtMinute: domain.FetchAtMinute,
 		WindowStartMinute: domain.FetchWindowStart, WindowEndMinute: domain.FetchWindowEnd,
-		UTCOffsetMinutes: domain.FetchUTCOffset, Language: domain.FetchLanguage,
-		Keys: []fetchKey{}, WBCredential: fetchWB{}, LastError: "",
+		UTCOffsetMinutes: domain.FetchUTCOffset,
+		Keys:             []fetchKey{}, LastError: "",
 	}
 	var lease *int64
 	err := h.queryOne(r.Context(), `
 		SELECT enabled, schedule_mode, at_minute, window_start_minute, window_end_minute, utc_offset_minutes,
-		       language, next_run_at_ms, last_run_at_ms, last_status, last_error, last_duration_ms, last_root_nodes,
-		       last_key_client_id, last_key_attempts, failure_streak, updated_at_ms, lease_until_ms,
-		       (wb_token_nonce IS NOT NULL AND wb_token_ciphertext IS NOT NULL), wb_credential_revision, wb_last_verified_at_ms
+		       next_run_at_ms, last_run_at_ms, last_status, last_error, last_duration_ms, last_root_nodes,
+		       last_key_client_id, last_key_attempts, failure_streak, updated_at_ms, lease_until_ms
 		FROM public.platform_catalog_fetch_config WHERE singleton = true`, []any{
 		&view.Enabled, &view.ScheduleMode, &view.AtMinute, &view.WindowStartMinute, &view.WindowEndMinute,
-		&view.UTCOffsetMinutes, &view.Language, &view.NextRunAtMs, &view.LastRunAtMs, &view.LastStatus,
+		&view.UTCOffsetMinutes, &view.NextRunAtMs, &view.LastRunAtMs, &view.LastStatus,
 		&view.LastError, &view.LastDurationMs, &view.LastRootNodes, &view.LastKeyClientID, &view.LastKeyAttempts,
-		&view.FailureStreak, &view.UpdatedAtMs, &lease, &view.WBCredential.Configured, &view.WBCredential.CredentialRevision,
-		&view.WBCredential.LastVerifiedAtMs})
+		&view.FailureStreak, &view.UpdatedAtMs, &lease})
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = nil
 	}
@@ -279,10 +257,6 @@ func (h Host) loadFetchConfig(r *http.Request) (fetchView, error) {
 	if err != nil {
 		return fetchView{}, err
 	}
-	language := view.Language
-	if language == "" {
-		language = domain.FetchLanguage
-	}
 	// sc_products is under FORCE RLS (00365) and has no grant on a bare
 	// login connection, so the sample must also run in an app session.
 	now := h.Now().UnixMilli()
@@ -297,7 +271,7 @@ func (h Host) loadFetchConfig(r *http.Request) (fetchView, error) {
 			LEFT JOIN public.ozon_category_current cat
 			  ON cat.description_category_id = refs.description_category_id
 			 AND cat.type_id = refs.type_id
-			 AND cat.language = $2`, domain.FreshnessSample, language)
+			 AND cat.language = $2`, domain.FreshnessSample, domain.FetchLanguage)
 		if qErr != nil {
 			return qErr
 		}

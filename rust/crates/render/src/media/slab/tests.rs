@@ -287,6 +287,7 @@ fn capability_document(mode: &str, with_clip: bool, with_mask: bool) -> RenderDo
             bottom: 12,
             default_color: 0,
             disabled: false,
+            density: 1.0,
             image_data: Some(Bitmap {
                 data: mask,
                 width: 12,
@@ -345,6 +346,25 @@ fn uniform_mask_matches_the_independent_alpha_equation() {
     document.children[0].children.pop();
     let (_, pixels) = collect_document(document, SlabConfig { rows: 3 });
     assert_eq!(&pixels[..4], &[180, 180, 180, 128]);
+}
+
+#[test]
+fn mask_density_matches_alpha_coverage_across_slab_boundaries() {
+    for (density, alpha) in [(0.0, 255), (128.0 / 255.0, 191), (1.0, 128)] {
+        for rows in [1, 3, 64] {
+            let mut document = capability_document("normal", false, true);
+            document.children[0].children.pop();
+            document.children[0].children[0]
+                .mask
+                .as_mut()
+                .unwrap()
+                .density = density;
+            let (_, pixels) = collect_document(document, SlabConfig { rows });
+            for pixel in pixels.chunks_exact(4) {
+                assert_eq!(pixel, [180, 180, 180, alpha]);
+            }
+        }
+    }
 }
 
 #[test]

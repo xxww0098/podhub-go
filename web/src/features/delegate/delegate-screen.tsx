@@ -8,9 +8,9 @@
  * 店面沿用 ops-shipping 的 roster 纪律（成员只见指派店——服务端
  * `visible_store_ids` 已过滤，这里只排除不可用的云店）。
  */
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { Package } from "lucide-react"
-
+import { StoreIcon } from "@/components/store-icon"
 import type { DelegateSource } from "./delegate-http"
 import { delegateHttp } from "./delegate-http"
 import { DelegatePostingsView } from "./delegate-postings-view"
@@ -25,7 +25,6 @@ import {
   useStoreRoster,
 } from "@/features/stores/store-roster-cache"
 import { PageToolbar } from "@/components/page-toolbar"
-import { Section } from "@/components/section"
 import { useScreenActive } from "@/components/screen-pane"
 import {
   Select,
@@ -42,6 +41,13 @@ import {
 } from "@/components/ui/tabs"
 import { notifyCommandError } from "@/lib/notify"
 import { errorMessage } from "@/lib/error-message"
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty"
 
 type DelegateTab = "postings" | "orders" | "bindings"
 
@@ -69,7 +75,9 @@ export function DelegateOrdersScreen({
   const [hasUnavailableStores, setHasUnavailableStores] = useState(false)
   const [rosterRetry, setRosterRetry] = useState(0)
   const [storeUid, setStoreUid] = useState("")
-  const [tab, setTab] = useState<DelegateTab>("postings")
+  const [tab, setTab] = useState<DelegateTab>("orders")
+  const tabListRef = useRef<HTMLDivElement>(null)
+  const restoreTabFocus = useRef(false)
   const [sources, setSources] = useState<DelegateSource[]>([])
   const [refreshKey, setRefreshKey] = useState(0)
   const storesRef = useRef(stores)
@@ -78,6 +86,12 @@ export function DelegateOrdersScreen({
   storeUidRef.current = storeUid
 
   const bumpRefresh = useCallback(() => setRefreshKey((value) => value + 1), [])
+
+  useLayoutEffect(() => {
+    if (!restoreTabFocus.current) return
+    restoreTabFocus.current = false
+    tabListRef.current?.querySelector<HTMLElement>('[role="tab"][data-active]')?.focus({ preventScroll: true })
+  }, [tab])
 
   useEffect(() => {
     if (!active) return
@@ -141,59 +155,77 @@ export function DelegateOrdersScreen({
 
   const storeName = stores.find((store) => store.storeUid === storeUid)?.name ?? ""
 
+  if (!workspaceId) {
+    return (
+      <div className="flex min-h-80 w-full flex-col items-center justify-center rounded-xl border border-border bg-card p-8 text-center sm:p-12">
+        <Empty role="status" className="min-h-0 border-0 bg-transparent p-0">
+          <EmptyHeader className="max-w-md">
+            <EmptyMedia variant="icon">
+              <Package className="size-6 text-primary" />
+            </EmptyMedia>
+            <EmptyTitle>尚未选择工作空间</EmptyTitle>
+            <EmptyDescription>
+              委托订单与采购发货基于工作空间管理。请先在左侧栏选择或创建工作空间以处理订单。
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      </div>
+    )
+  }
+
+  const scopeControls = (
+    <Select
+      value={storeUid}
+      onValueChange={(next) => {
+        if (!next || next === storeUid) return
+        setStoreUid(next)
+      }}
+    >
+      <SelectTrigger size="sm" className="w-36 sm:w-52" aria-label="当前店铺" title={storeName || undefined}>
+        <StoreIcon aria-hidden className="size-4 text-muted-foreground" />
+        <SelectValue>
+          {storeName ? storeName : "选择已接入店铺"}
+        </SelectValue>
+      </SelectTrigger>
+      <SelectContent>
+        {stores.map((store) => (
+          <SelectItem key={store.storeUid} value={store.storeUid}>
+            {store.name}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  )
+  const viewTabs = (
+    <Tabs
+      value={tab}
+      onValueChange={(next) => {
+        const parsed = TABS.find((item) => item.value === next)
+        if (!parsed || parsed.value === tab) return
+        restoreTabFocus.current = tabListRef.current?.contains(document.activeElement) ?? false
+        setTab(parsed.value)
+      }}
+    >
+      <div className="rounded-lg border border-border bg-card px-3">
+        <TabsList ref={tabListRef} variant="line" aria-label="委托订单视图">
+          <TabsIndicator variant="line" />
+          {TABS.map((item) => (
+            <TabsTrigger key={item.value} value={item.value} variant="line">
+              {item.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </div>
+    </Tabs>
+  )
+
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden scroll-pt-14">
-      <Section
-        className="min-h-0 flex-1 overflow-hidden"
-        title="委托订单"
-        action={
-          stores.length > 0 ? (
-            <PageToolbar
-              primary={
-                <Select
-                  value={storeUid}
-                  onValueChange={(next) => {
-                    if (!next || next === storeUid) return
-                    setStoreUid(next)
-                  }}
-                >
-                  <SelectTrigger size="sm" className="min-w-52" aria-label="当前店铺">
-                    <SelectValue>
-                      {storeName ? storeName : "选择已接入店铺"}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {stores.map((store) => (
-                      <SelectItem key={store.storeUid} value={store.storeUid}>
-                        {store.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              }
-              secondary={
-                <Tabs
-                  value={tab}
-                  onValueChange={(next) => {
-                    const parsed = TABS.find((item) => item.value === next)
-                    if (!parsed || parsed.value === tab) return
-                    setTab(parsed.value)
-                  }}
-                >
-                  <TabsList aria-label="委托订单视图">
-                    <TabsIndicator />
-                    {TABS.map((item) => (
-                      <TabsTrigger key={item.value} value={item.value}>
-                        {item.label}
-                      </TabsTrigger>
-                    ))}
-                  </TabsList>
-                </Tabs>
-              }
-            />
-          ) : null
-        }
-      >
+      <section className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
+        <h1 className="sr-only">委托订单</h1>
+        {storesLoading && stores.length > 0 ? (
+          <><PageToolbar secondary={scopeControls} />{viewTabs}</>
+        ) : null}
         <StoreGate
           loading={storesLoading}
           error={storesError}
@@ -206,6 +238,8 @@ export function DelegateOrdersScreen({
         >
           {tab === "postings" ? (
             <DelegatePostingsView
+              scopeControls={scopeControls}
+              viewTabs={viewTabs}
               storeId={storeUid}
               sources={sources}
               refreshKey={refreshKey}
@@ -213,17 +247,19 @@ export function DelegateOrdersScreen({
             />
           ) : null}
           {tab === "orders" ? (
-            <DelegateOrdersView storeId={storeUid} refreshKey={refreshKey} />
+            <DelegateOrdersView key={storeUid} storeId={storeUid} refreshKey={refreshKey} scopeControls={scopeControls} viewTabs={viewTabs} />
           ) : null}
           {tab === "bindings" ? (
             <DelegateBindingsView
+              scopeControls={scopeControls}
+              viewTabs={viewTabs}
               storeId={storeUid}
               sources={sources}
               onChanged={bumpRefresh}
             />
           ) : null}
         </StoreGate>
-      </Section>
+      </section>
     </div>
   )
 }

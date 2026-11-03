@@ -1,7 +1,7 @@
 /** Database and property writes reconcile through the store's session fence. */
 import type { SupplierDb, SupplierDbDetail, SupplierDbPropDef, UpsertSupplierDbRequest, UpsertSupplierDbPropRequest } from "@/bindings/http-supplier-dbs"
 import { dbToUpsert, type SupplierDbsClient, type SupplierDbsState, type SupplierDbsStore, type SupplierDbDraft, type MutationResult } from "./supplier-dbs-model"
-import { failed, deleteDbMessage, validateDbDraft } from "./supplier-dbs-errors"
+import { failed, validateDbDraft } from "./supplier-dbs-errors"
 
 export function databaseCommands({ client, getState, generation, applyDb, emit, applyDetail, draftBody, savePropImpl, reorderPropsImpl }: {
   client: SupplierDbsClient
@@ -17,10 +17,7 @@ export function databaseCommands({ client, getState, generation, applyDb, emit, 
   return {
     createDb: async (draft) => {
       const issues = validateDbDraft(draft)
-      const email = draft.accountEmail?.trim() ?? ""
-      if (!email || !email.includes("@")) {
-        issues.push({ field: "accountEmail", message: "请填写厂家登录邮箱" })
-      }
+      if (!draft.factoryId?.trim()) issues.push({ field: "factoryId", message: "请选择工厂" })
       if (issues.length) return { ok: false, issues }
       const stamp = generation()
       try {
@@ -29,10 +26,9 @@ export function databaseCommands({ client, getState, generation, applyDb, emit, 
         return {
           ok: true,
           value: data.db,
-          initialPassword: data.initialPassword || undefined,
         }
       } catch (reason) {
-        return failed(reason, "创建平台货源失败")
+        return failed(reason, "创建平台商品库失败")
       }
     },
     updateDb: async (sourceId, patch) => {
@@ -40,31 +36,21 @@ export function databaseCommands({ client, getState, generation, applyDb, emit, 
         getState().details[sourceId]?.detail?.db ??
         getState().dbs.find((row) => row.sourceId === sourceId)
       if (!current) {
-        return { ok: false, issues: [{ field: "", message: "平台货源不存在" }] }
+        return { ok: false, issues: [{ field: "", message: "平台商品库不存在" }] }
       }
       const merged = { ...dbToUpsert(current), ...patch }
       const body: UpsertSupplierDbRequest = {
-        ...merged,
         name: merged.name.trim(),
         country: merged.country.trim().toUpperCase(),
         contact: merged.contact.trim(),
         internalNote: merged.internalNote.trim(),
         icon: merged.icon.trim(),
+        listed: merged.listed,
+        acceptsDelegate: merged.acceptsDelegate,
+        viewPrefs: merged.viewPrefs,
+        ...(patch.factoryId ? { factoryId: patch.factoryId } : {}),
       }
       const issues = body.name ? [] : [{ field: "name", message: "请填写库名称" }]
-      if (patch.accountEmail !== undefined) {
-        const email = patch.accountEmail.trim().toLowerCase()
-        const currentEmail = (current.accountEmail ?? "").trim().toLowerCase()
-        if (email !== currentEmail) {
-          if (!email.includes("@")) {
-            issues.push({ field: "accountEmail", message: "请填写厂家登录邮箱" })
-          } else {
-            body.accountEmail = email
-          }
-        } else {
-          delete body.accountEmail
-        }
-      }
       if (issues.length) return { ok: false, issues }
       const stamp = generation()
       try {
@@ -73,10 +59,9 @@ export function databaseCommands({ client, getState, generation, applyDb, emit, 
         return {
           ok: true,
           value: data.db,
-          initialPassword: data.initialPassword || undefined,
         }
       } catch (reason) {
-        return failed(reason, "保存平台货源失败")
+        return failed(reason, "保存平台商品库失败")
       }
     },
     deleteDb: async (sourceId) => {
@@ -94,11 +79,7 @@ export function databaseCommands({ client, getState, generation, applyDb, emit, 
         }
         return { ok: true, value: undefined }
       } catch (reason) {
-        return {
-          ok: false,
-          issues: [{ field: "", message: deleteDbMessage(reason) }],
-          reason,
-        }
+        return failed(reason, "删除平台商品库失败")
       }
     },
     saveProp: savePropImpl,

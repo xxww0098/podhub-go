@@ -3,13 +3,20 @@ package domain
 import (
 	"encoding/json"
 	"fmt"
+	"math/big"
+	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/xxww0098/podhub-go/internal/platform/uuidx"
 
 	"github.com/xxww0098/podhub-go/internal/ops/contract"
 )
 
 const sellerNumberMax int64 = 9007199254740991
+
+var priceAmount = regexp.MustCompile(`^(0|[1-9]\d{0,9})(\.\d{1,2})?$`)
+var priceCurrency = regexp.MustCompile(`^[A-Z]{3}$`)
 
 type Mutation struct {
 	OperationID string
@@ -36,22 +43,30 @@ type priceItem struct {
 }
 
 type joinItem struct {
-	ProductID   int64   `json:"product_id"`
-	OfferID     string  `json:"offer_id"`
-	ActionPrice float64 `json:"action_price"`
-	Stock       float64 `json:"stock"`
+	ProductID    int64  `json:"product_id"`
+	OfferID      string `json:"offer_id"`
+	ActionPrice  string `json:"action_price"`
+	CurrencyCode string `json:"currency_code"`
+	Stock        *int64 `json:"stock"`
+}
+
+type joinBody struct {
+	ActionID   int64      `json:"action_id"`
+	ActionType string     `json:"action_type"`
+	Items      []joinItem `json:"items"`
 }
 
 type exitPrice struct {
-	ProductID int64   `json:"product_id"`
-	ExitPrice float64 `json:"exit_price"`
+	ProductID    int64  `json:"product_id"`
+	ExitPrice    string `json:"exit_price"`
+	CurrencyCode string `json:"currency_code"`
 }
 
 type leaveBody struct {
-	ActionID   int64
-	ProductIDs []int64
-	ActionType string
-	ExitPrices []exitPrice
+	ActionID   int64       `json:"action_id"`
+	ProductIDs []int64     `json:"product_ids"`
+	ActionType string      `json:"action_type"`
+	ExitPrices []exitPrice `json:"exit_prices"`
 }
 
 func DecodeMutation(raw []byte) (Mutation, error) {
@@ -87,7 +102,7 @@ func DecodeMutation(raw []byte) (Mutation, error) {
 }
 
 func ValidateMutation(m Mutation) *contract.Fail {
-	if _, ok := NormalizeUUID(m.OperationID); !ok {
+	if _, ok := uuidx.StrictUUID(m.OperationID); !ok {
 		return contract.Validation("商品操作缺少有效 operation ID")
 	}
 	if strings.TrimSpace(m.StoreID) == "" {
@@ -113,16 +128,6 @@ func ValidateMutation(m Mutation) *contract.Fail {
 
 func sellerID(n int64) bool { return n >= 1 && n <= sellerNumberMax }
 
-func finitePositive(s string) bool {
-	f, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
-	return err == nil && finite(f) && f > 0
-}
-
-func finiteNonNeg(s string) bool {
-	f, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
-	return err == nil && finite(f) && f >= 0
-}
-
 func validateStock(raw json.RawMessage) *contract.Fail {
 	var body struct {
 		Items []stockItem `json:"items"`
@@ -133,10 +138,18 @@ func validateStock(raw json.RawMessage) *contract.Fail {
 	if len(body.Items) == 0 || len(body.Items) > 100 {
 		return contract.Validation("库存操作每次必须包含 1–100 个商品仓库组合")
 	}
+	products := map[[2]int64]bool{}
+	offers := map[string]bool{}
 	for _, it := range body.Items {
 		if strings.TrimSpace(it.OfferID) == "" || !sellerID(it.ProductID) || it.WarehouseID <= 0 || it.Stock < 0 {
 			return contract.Validation("库存操作包含无效商品、仓库或负数库存")
 		}
+		product := [2]int64{it.ProductID, it.WarehouseID}
+		offer := strings.TrimSpace(it.OfferID) + "\x00" + strconv.FormatInt(it.WarehouseID, 10)
+		if products[product] || offers[offer] {
+			return contract.Validation("每个商品仓库组合只能提交一次库存修改")
+		}
+		products[product], offers[offer] = true, true
 	}
 	return nil
 }
@@ -151,10 +164,18 @@ func validatePrice(raw json.RawMessage) *contract.Fail {
 	if len(body.Items) == 0 || len(body.Items) > 1000 {
 		return contract.Validation("优惠操作每次必须包含 1–1000 个商品")
 	}
+	offers, products := map[string]bool{}, map[int64]bool{}
 	for _, it := range body.Items {
-		if strings.TrimSpace(it.OfferID) == "" || it.ProductID <= 0 || strings.TrimSpace(it.CurrencyCode) == "" || !finitePositive(it.Price) || !finiteNonNeg(it.OldPrice) {
+		price, old := strings.TrimSpace(it.Price), strings.TrimSpace(it.OldPrice)
+		if strings.TrimSpace(it.OfferID) == "" || !sellerID(it.ProductID) || !priceCurrency.MatchString(strings.TrimSpace(it.CurrencyCode)) || !priceAmount.MatchString(price) || !priceAmount.MatchString(old) {
 			return contract.Validation("优惠操作包含无效商品、币种或价格")
 		}
+		p, _ := new(big.Rat).SetString(price)
+		o, _ := new(big.Rat).SetString(old)
+		if p.Sign() <= 0 || o.Sign() > 0 && o.Cmp(p) <= 0 || offers[strings.TrimSpace(it.OfferID)] || products[it.ProductID] {
+			return contract.Validation("价格必须大于零、小于非零划线价，且每个商品只能提交一次")
+		}
+		offers[strings.TrimSpace(it.OfferID)], products[it.ProductID] = true, true
 	}
 	return nil
 }
@@ -196,64 +217,80 @@ func validateOffers(raw json.RawMessage) *contract.Fail {
 }
 
 func validateJoin(raw json.RawMessage) *contract.Fail {
-	var body struct {
-		ActionID int64      `json:"action_id"`
-		Items    []joinItem `json:"items"`
-	}
+	var body joinBody
 	if json.Unmarshal(raw, &body) != nil {
-		return contract.NotPorted()
+		return contract.Validation("加入活动的商品、价格、币种或库存格式无效")
 	}
-	if !sellerID(body.ActionID) {
-		return contract.Validation("加入活动缺少有效的活动 ID")
+	if !sellerID(body.ActionID) || !promotionType(body.ActionType) {
+		return contract.Validation("加入活动缺少有效的活动 ID 或不支持该活动类型")
 	}
 	if len(body.Items) == 0 || len(body.Items) > 100 {
 		return contract.Validation("加入活动每次必须包含 1–100 个商品")
 	}
+	products, offers := map[int64]bool{}, map[string]bool{}
 	for _, it := range body.Items {
-		if strings.TrimSpace(it.OfferID) == "" || !sellerID(it.ProductID) || !finite(it.ActionPrice) || it.ActionPrice <= 0 || !finite(it.Stock) || it.Stock < 0 {
-			return contract.Validation("加入活动包含无效商品、活动价或活动库存")
+		offer := strings.TrimSpace(it.OfferID)
+		if offer == "" || !sellerID(it.ProductID) || !promotionMoney(it.ActionPrice, it.CurrencyCode) || it.Stock == nil || *it.Stock < 0 {
+			return contract.Validation("加入活动包含无效商品、价格、币种或非整数库存")
 		}
+		if body.ActionType != "PROMOCODE" && *it.Stock != 0 {
+			return contract.Validation("该活动类型不能设置活动库存")
+		}
+		if products[it.ProductID] || offers[offer] {
+			return contract.Validation("加入活动每个商品只能提交一次")
+		}
+		products[it.ProductID], offers[offer] = true, true
 	}
 	return nil
 }
 
 func validateLeave(raw json.RawMessage) *contract.Fail {
-	body, ok := parseLeave(raw)
-	if !ok {
-		return contract.NotPorted()
+	var body leaveBody
+	if json.Unmarshal(raw, &body) != nil {
+		return contract.Validation("退出活动的商品、退出价或币种格式无效")
 	}
-	if !sellerID(body.ActionID) {
-		return contract.Validation("退出活动缺少有效的活动 ID")
+	if !sellerID(body.ActionID) || !promotionType(body.ActionType) {
+		return contract.Validation("退出活动缺少有效的活动 ID 或不支持该活动类型")
 	}
 	if len(body.ProductIDs) == 0 || len(body.ProductIDs) > 100 {
 		return contract.Validation("退出活动每次必须包含 1–100 个有效商品")
 	}
-	set := map[int64]struct{}{}
+	products := map[int64]bool{}
 	for _, id := range body.ProductIDs {
-		if !sellerID(id) {
-			return contract.Validation("退出活动每次必须包含 1–100 个有效商品")
+		if !sellerID(id) || products[id] {
+			return contract.Validation("退出活动每次必须包含 1–100 个不重复的有效商品")
 		}
-		set[id] = struct{}{}
+		products[id] = true
 	}
-	for _, ex := range body.ExitPrices {
-		if _, ok := set[ex.ProductID]; !ok || !sellerID(ex.ProductID) || !finite(ex.ExitPrice) || ex.ExitPrice <= 0 {
-			return contract.Validation("退出活动包含无效的退出价")
+	if body.ActionType == "PROMOCODE" {
+		if len(body.ExitPrices) != 0 {
+			return contract.Validation("优惠码活动退出不能提交退出价")
 		}
+		return nil
+	}
+	if len(body.ExitPrices) != len(body.ProductIDs) {
+		return contract.Validation("退出活动必须为每个商品提交退出价和币种")
+	}
+	seen := map[int64]bool{}
+	for _, ex := range body.ExitPrices {
+		if !products[ex.ProductID] || seen[ex.ProductID] || !promotionMoney(ex.ExitPrice, ex.CurrencyCode) {
+			return contract.Validation("退出价必须与商品一一对应，且包含有效价格和币种")
+		}
+		seen[ex.ProductID] = true
 	}
 	return nil
 }
 
-func parseLeave(raw json.RawMessage) (leaveBody, bool) {
-	var body struct {
-		ActionID   int64       `json:"action_id"`
-		ProductIDs []int64     `json:"product_ids"`
-		ActionType string      `json:"action_type"`
-		ExitPrices []exitPrice `json:"exit_prices"`
+func promotionType(kind string) bool {
+	return kind == "PROMOCODE" || kind == "ELASTIC_BOOSTING" || kind == "STOCK_DISCOUNT"
+}
+
+func promotionMoney(amount, currency string) bool {
+	if !priceAmount.MatchString(amount) || !priceCurrency.MatchString(currency) {
+		return false
 	}
-	if json.Unmarshal(raw, &body) != nil {
-		return leaveBody{}, false
-	}
-	return leaveBody{ActionID: body.ActionID, ProductIDs: body.ProductIDs, ActionType: body.ActionType, ExitPrices: body.ExitPrices}, true
+	value, _ := new(big.Rat).SetString(amount)
+	return value.Sign() > 0
 }
 
 type itemResult struct {
@@ -322,74 +359,76 @@ func dispatchStock(m Mutation, fetch Fetch) (json.RawMessage, *contract.Fail, bo
 	if f := decided(page, "/v2/products/stocks"); f != nil {
 		return nil, f, false
 	}
-	items := stockResults(body.Items, page.Body)
-	if needsUnarchive(page.Body) {
-		ids := make([]int64, 0, len(body.Items))
-		for _, it := range body.Items {
-			if it.ProductID > 0 {
-				ids = append(ids, it.ProductID)
-			}
-		}
-		restore, _ := compact(map[string]any{"product_id": ids})
-		again := fetch("POST", "/v1/product/unarchive", restore)
-		if und := undecided(again); und {
-			return nil, writeUnknown(m.OperationID, again, "/v1/product/unarchive"), true
-		}
-		if again.Status >= 200 && again.Status < 300 {
-			page = fetch("POST", "/v2/products/stocks", raw)
-			if und := undecided(page); und {
-				return nil, writeUnknown(m.OperationID, page, "/v2/products/stocks"), true
-			}
-			if f := decided(page, "/v2/products/stocks"); f != nil {
-				return nil, f, false
-			}
-			items = stockResults(body.Items, page.Body)
-		} else {
-			msg := "商品已归档，无法修改库存"
-			if strings.Contains(strings.ToLower(again.Body), "restore limit exceeded") || strings.Contains(strings.ToLower(again.Body), "total limit exceeded") {
-				// keep the short message
-			} else if t := strings.TrimSpace(again.Body); t != "" {
-				msg = "商品已归档，无法修改库存：" + MessageZH(jsonMessage(again.Body))
-			}
-			for i := range items {
-				items[i].Succeeded = false
-				items[i].Message = msg
-			}
-		}
+	items, ok := stockResults(body.Items, page.Body)
+	if !ok {
+		return nil, &contract.Fail{Status: 409, Code: contract.CodeSellerUnknown, Message: "Ozon 库存回执缺失或与商品仓库不匹配，请同步核对库存；不要重复提交"}, true
 	}
 	return viewOf(m.OperationID, items), nil, false
 }
 
-func needsUnarchive(body string) bool {
-	low := strings.ToLower(body)
-	return strings.Contains(low, "archived_product") || strings.Contains(low, "archived product") || strings.Contains(low, "архив")
-}
-
-func stockResults(items []stockItem, body string) []itemResult {
+func stockResults(items []stockItem, body string) ([]itemResult, bool) {
+	var reply struct {
+		Result []struct {
+			ProductID   int64  `json:"product_id"`
+			OfferID     string `json:"offer_id"`
+			WarehouseID int64  `json:"warehouse_id"`
+			Updated     *bool  `json:"updated"`
+			Errors      *[]struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"errors"`
+		} `json:"result"`
+	}
+	if json.Unmarshal([]byte(body), &reply) != nil || len(reply.Result) != len(items) {
+		return nil, false
+	}
+	requested := make(map[[2]int64]stockItem, len(items))
+	for _, item := range items {
+		requested[[2]int64{item.ProductID, item.WarehouseID}] = item
+	}
+	results := make(map[[2]int64]itemResult, len(items))
+	for _, row := range reply.Result {
+		key := [2]int64{row.ProductID, row.WarehouseID}
+		item, matched := requested[key]
+		if !matched || row.OfferID != strings.TrimSpace(item.OfferID) || row.Updated == nil || row.Errors == nil || *row.Updated && len(*row.Errors) != 0 {
+			return nil, false
+		}
+		if _, duplicate := results[key]; duplicate {
+			return nil, false
+		}
+		result := itemResult{Identity: fmt.Sprintf("%d/%d", row.ProductID, row.WarehouseID), Succeeded: *row.Updated}
+		if !result.Succeeded {
+			result.Message = "Ozon 未确认该商品仓库的库存更新"
+			for _, issue := range *row.Errors {
+				if message := localizeStock(issue.Code, issue.Message); message != "" {
+					result.Message = message
+					break
+				}
+			}
+		}
+		results[key] = result
+	}
 	out := make([]itemResult, 0, len(items))
-	for _, it := range items {
-		out = append(out, itemResult{Identity: strconv.FormatInt(it.ProductID, 10), Succeeded: true, Message: localizeStock(body)})
+	for _, item := range items {
+		out = append(out, results[[2]int64{item.ProductID, item.WarehouseID}])
 	}
-	if len(out) == 1 && out[0].Message != "" && (strings.Contains(strings.ToLower(body), "archived") || strings.Contains(body, "архив") || strings.Contains(body, "discount_for_average") || strings.Contains(body, "TOO_MANY")) {
-		out[0].Succeeded = false
-	}
-	return out
+	return out, true
 }
 
-func localizeStock(body string) string {
-	low := strings.ToLower(body)
+func localizeStock(code, message string) string {
+	low := strings.ToLower(code + " " + message)
 	switch {
 	case strings.Contains(low, "discount_for_average_price_is_too_small"):
 		return "优惠率低于 Ozon 对当前价格区间的最低要求"
-	case strings.Contains(body, "TOO_MANY_REQUESTS"):
+	case strings.Contains(low, "too_many_requests"):
 		return "该商品在此仓库的库存改得太频繁，Ozon 暂时拒绝；请稍后重试"
 	case strings.Contains(low, "archived_product") || strings.Contains(low, "archived product") || strings.Contains(low, "архив"):
-		return "商品已归档，无法修改库存"
+		return "商品已归档，无法修改库存；请先确认是否需要恢复商品"
 	default:
-		if msg := jsonMessage(body); strings.TrimSpace(msg) != "" && (strings.Contains(body, "error") || strings.Contains(body, "errors")) {
-			return MessageZH(msg)
+		if strings.TrimSpace(message) != "" {
+			return MessageZH(message)
 		}
-		return ""
+		return MessageZH(code)
 	}
 }
 
@@ -402,18 +441,81 @@ func dispatchPrice(m Mutation, fetch Fetch) (json.RawMessage, *contract.Fail, bo
 	for _, it := range body.Items {
 		prices = append(prices, map[string]any{
 			"product_id": it.ProductID, "offer_id": strings.TrimSpace(it.OfferID),
-			"price": it.Price, "old_price": it.OldPrice, "currency_code": strings.TrimSpace(it.CurrencyCode),
+			"price": strings.TrimSpace(it.Price), "old_price": strings.TrimSpace(it.OldPrice), "currency_code": strings.TrimSpace(it.CurrencyCode),
 		})
 	}
 	raw, _ := compact(map[string]any{"prices": prices})
 	page := fetch("POST", "/v1/product/import/prices", raw)
-	return settledItems(m, page, "/v1/product/import/prices", func() []itemResult {
-		out := make([]itemResult, 0, len(body.Items))
-		for _, it := range body.Items {
-			out = append(out, itemResult{Identity: strings.TrimSpace(it.OfferID), Succeeded: true})
+	if undecided(page) {
+		return nil, writeUnknown(m.OperationID, page, "/v1/product/import/prices"), true
+	}
+	if f := decided(page, "/v1/product/import/prices"); f != nil {
+		return nil, f, false
+	}
+	items, ok := priceResults(body.Items, page.Body)
+	if !ok {
+		return nil, &contract.Fail{Status: 409, Code: contract.CodeSellerUnknown, Message: "Ozon 改价回执缺失或与商品不匹配，请同步核对价格；不要重复提交"}, true
+	}
+	return viewOf(m.OperationID, items), nil, false
+}
+
+func priceResults(items []priceItem, raw string) ([]itemResult, bool) {
+	var reply struct {
+		Result []struct {
+			ProductID int64           `json:"product_id"`
+			OfferID   string          `json:"offer_id"`
+			Updated   *bool           `json:"updated"`
+			Errors    json.RawMessage `json:"errors"`
+		} `json:"result"`
+	}
+	if json.Unmarshal([]byte(raw), &reply) != nil || len(reply.Result) != len(items) {
+		return nil, false
+	}
+	byOffer := make(map[string]itemResult, len(items))
+	for _, row := range reply.Result {
+		if row.Updated == nil || len(row.Errors) == 0 || row.Errors[0] != '[' {
+			return nil, false
 		}
-		return out
-	})
+		var issues []struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(row.Errors, &issues) != nil {
+			return nil, false
+		}
+		if *row.Updated && len(issues) != 0 {
+			return nil, false
+		}
+		matched := false
+		for _, item := range items {
+			if row.OfferID == strings.TrimSpace(item.OfferID) && row.ProductID == item.ProductID {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return nil, false
+		}
+		if _, duplicate := byOffer[row.OfferID]; duplicate {
+			return nil, false
+		}
+		result := itemResult{Identity: row.OfferID, Succeeded: *row.Updated && len(issues) == 0}
+		if !result.Succeeded {
+			result.Message = "Ozon 未确认该商品的价格更新"
+			for _, issue := range issues {
+				if message := strings.TrimSpace(issue.Message); message != "" {
+					result.Message = MessageZH(message)
+					break
+				}
+			}
+		}
+		byOffer[row.OfferID] = result
+	}
+	out := make([]itemResult, 0, len(items))
+	for _, item := range items {
+		out = append(out, byOffer[strings.TrimSpace(item.OfferID)])
+	}
+	return out, true
 }
 
 func dispatchArchive(m Mutation, archive bool, fetch Fetch) (json.RawMessage, *contract.Fail, bool) {
@@ -474,70 +576,38 @@ type money struct {
 	Currency string `json:"currency"`
 }
 
-func moneyText(v float64) money {
-	return money{Amount: fmt.Sprintf("%.2f", v), Currency: "CNY"}
+type promotionProduct struct {
+	ProductID   int64  `json:"product_id"`
+	ActionPrice money  `json:"action_price"`
+	Stock       *int64 `json:"stock,omitempty"`
 }
 
 func dispatchJoin(m Mutation, fetch Fetch) (json.RawMessage, *contract.Fail, bool) {
-	var body struct {
-		ActionID int64      `json:"action_id"`
-		Items    []joinItem `json:"items"`
+	if fail := validateJoin(m.Raw); fail != nil {
+		return nil, fail, false
 	}
+	var body joinBody
 	_ = json.Unmarshal(m.Raw, &body)
-	type product struct {
-		ProductID   int64  `json:"product_id"`
-		ActionPrice money  `json:"action_price"`
-		Stock       *int64 `json:"stock,omitempty"`
-	}
-	var products []product
+	products := make([]promotionProduct, 0, len(body.Items))
+	ids := make([]int64, 0, len(body.Items))
 	for _, it := range body.Items {
-		row := product{ProductID: it.ProductID, ActionPrice: moneyText(it.ActionPrice)}
-		if it.Stock != 0 {
-			n := int64(it.Stock)
-			row.Stock = &n
+		row := promotionProduct{ProductID: it.ProductID, ActionPrice: money{Amount: it.ActionPrice, Currency: it.CurrencyCode}}
+		if body.ActionType == "PROMOCODE" {
+			row.Stock = it.Stock
 		}
 		products = append(products, row)
+		ids = append(ids, it.ProductID)
 	}
-	raw, _ := compact(struct {
-		ActionID int64     `json:"action_id"`
-		Products []product `json:"products"`
-	}{ActionID: body.ActionID, Products: products})
-	page := fetch("POST", "/v1/actions/products/update", raw)
-	return settledItems(m, page, "/v1/actions/products/update", func() []itemResult {
-		return joinResults(body.Items, page.Body)
-	})
-}
-
-func joinResults(items []joinItem, body string) []itemResult {
-	out := make([]itemResult, 0, len(items))
-	low := body
-	for _, it := range items {
-		msg := ""
-		ok := true
-		switch {
-		case strings.Contains(low, "移出") || strings.Contains(strings.ToLower(low), "deactivated"):
-			ok = false
-			msg = "活动价超过该商品上限，Ozon 将其移出了活动"
-		case strings.Contains(strings.ToLower(low), "rejected"):
-			ok = false
-			msg = MessageZH(jsonMessage(body))
-		case strings.Contains(low, "不会产生变更") || strings.Contains(strings.ToLower(low), "missing"):
-			ok = false
-			msg = "Ozon 未接受该商品加入活动；若活动价与当前一致则不会产生变更"
-		}
-		out = append(out, itemResult{Identity: strconv.FormatInt(it.ProductID, 10), Succeeded: ok, Message: msg})
-	}
-	return out
+	return dispatchPromotionUpdate(m, body.ActionID, ids, products, true, fetch)
 }
 
 func dispatchLeave(m Mutation, fetch Fetch) (json.RawMessage, *contract.Fail, bool) {
-	body, _ := parseLeave(m.Raw)
-	label := strings.TrimSpace(body.ActionType)
-	if label == "" {
-		label = "未知"
+	if fail := validateLeave(m.Raw); fail != nil {
+		return nil, fail, false
 	}
-	switch body.ActionType {
-	case "PROMOCODE":
+	var body leaveBody
+	_ = json.Unmarshal(m.Raw, &body)
+	if body.ActionType == "PROMOCODE" {
 		ids := make([]string, len(body.ProductIDs))
 		for i, id := range body.ProductIDs {
 			ids[i] = strconv.FormatInt(id, 10)
@@ -546,66 +616,184 @@ func dispatchLeave(m Mutation, fetch Fetch) (json.RawMessage, *contract.Fail, bo
 			ActionID   int64    `json:"action_id"`
 			ProductIDs []string `json:"product_ids"`
 		}{ActionID: body.ActionID, ProductIDs: ids})
-		page := fetch("POST", "/v2/actions/products/deactivate", raw)
-		return settledItems(m, page, "/v2/actions/products/deactivate", func() []itemResult {
-			out := make([]itemResult, 0, len(body.ProductIDs))
-			for _, id := range body.ProductIDs {
-				out = append(out, itemResult{Identity: strconv.FormatInt(id, 10), Succeeded: true})
-			}
-			return out
-		})
-	case "ELASTIC_BOOSTING", "STOCK_DISCOUNT":
-		exits := map[int64]float64{}
-		for _, ex := range body.ExitPrices {
-			exits[ex.ProductID] = ex.ExitPrice
+		const path = "/v2/actions/products/deactivate"
+		page := fetch("POST", path, raw)
+		if fail, unknown := promotionPage(m.OperationID, page, path); fail != nil {
+			return nil, fail, unknown
 		}
-		out := make([]itemResult, 0, len(body.ProductIDs))
-		type product struct {
-			ProductID   int64 `json:"product_id"`
-			ActionPrice money `json:"action_price"`
+		items, ok := promotionDeactivateResults(body.ProductIDs, page.Body)
+		if !ok {
+			return nil, promotionReceiptUnknown(), true
 		}
-		var products []product
-		for _, id := range body.ProductIDs {
-			price, ok := exits[id]
-			if !ok {
-				out = append(out, itemResult{Identity: strconv.FormatInt(id, 10), Succeeded: false, Message: "缺少该商品的退出价，未执行退出"})
-				continue
-			}
-			products = append(products, product{ProductID: id, ActionPrice: moneyText(price)})
-		}
-		if len(products) == 0 {
-			return viewOf(m.OperationID, out), nil, false
-		}
-		raw, _ := compact(struct {
-			ActionID int64     `json:"action_id"`
-			Products []product `json:"products"`
-		}{ActionID: body.ActionID, Products: products})
-		page := fetch("POST", "/v1/actions/products/update", raw)
-		view, fail, unknown := settledItems(m, page, "/v1/actions/products/update", func() []itemResult {
-			for _, p := range products {
-				msg := ""
-				ok := true
-				if strings.Contains(page.Body, "仍以该价") || strings.Contains(strings.ToLower(page.Body), "active") {
-					ok = false
-					msg = "退出价未超过该商品上限，商品仍以该价留在活动中"
-				}
-				if w := jsonMessage(page.Body); w != "" && strings.Contains(strings.ToLower(page.Body), "warning") {
-					ok = false
-					msg = "Ozon 未移出该商品：" + w
-				}
-				out = append(out, itemResult{Identity: strconv.FormatInt(p.ProductID, 10), Succeeded: ok, Message: msg})
-			}
-			return out
-		})
-		return view, fail, unknown
-	default:
-		out := make([]itemResult, 0, len(body.ProductIDs))
-		msg := "该活动类型（" + label + "）不支持在系统内退出，请到 Ozon 卖家后台操作"
-		for _, id := range body.ProductIDs {
-			out = append(out, itemResult{Identity: strconv.FormatInt(id, 10), Succeeded: false, Message: msg})
-		}
-		return viewOf(m.OperationID, out), nil, false
+		return viewOf(m.OperationID, items), nil, false
 	}
+	exits := make(map[int64]exitPrice, len(body.ExitPrices))
+	for _, ex := range body.ExitPrices {
+		exits[ex.ProductID] = ex
+	}
+	products := make([]promotionProduct, 0, len(body.ProductIDs))
+	for _, id := range body.ProductIDs {
+		ex := exits[id]
+		products = append(products, promotionProduct{ProductID: id, ActionPrice: money{Amount: ex.ExitPrice, Currency: ex.CurrencyCode}})
+	}
+	return dispatchPromotionUpdate(m, body.ActionID, body.ProductIDs, products, false, fetch)
+}
+
+func dispatchPromotionUpdate(m Mutation, actionID int64, ids []int64, products []promotionProduct, joining bool, fetch Fetch) (json.RawMessage, *contract.Fail, bool) {
+	raw, _ := compact(struct {
+		ActionID int64              `json:"action_id"`
+		Products []promotionProduct `json:"products"`
+	}{ActionID: actionID, Products: products})
+	const path = "/v1/actions/products/update"
+	page := fetch("POST", path, raw)
+	if fail, unknown := promotionPage(m.OperationID, page, path); fail != nil {
+		return nil, fail, unknown
+	}
+	items, ok := promotionUpdateResults(ids, page.Body, joining)
+	if !ok {
+		return nil, promotionReceiptUnknown(), true
+	}
+	return viewOf(m.OperationID, items), nil, false
+}
+
+func promotionPage(operationID string, page Page, path string) (*contract.Fail, bool) {
+	if undecided(page) {
+		return writeUnknown(operationID, page, path), true
+	}
+	if fail := decided(page, path); fail != nil {
+		return fail, false
+	}
+	if page.Status != 200 {
+		return promotionReceiptUnknown(), true
+	}
+	return nil, false
+}
+
+func promotionReceiptUnknown() *contract.Fail {
+	return &contract.Fail{Status: 409, Code: contract.CodeSellerUnknown, Message: "Ozon 活动回执缺失或与商品不匹配，请同步核对活动及商品卡片统一价格；不要重复提交"}
+}
+
+func promotionUpdateResults(ids []int64, raw string, joining bool) ([]itemResult, bool) {
+	type issue struct {
+		ProductID json.Number `json:"product_id"`
+		Reason    string      `json:"reason"`
+	}
+	var reply struct {
+		Active      *[]json.Number `json:"active_product_ids"`
+		Deactivated *[]json.Number `json:"deactivated_product_ids"`
+		Rejected    *[]issue       `json:"rejected"`
+		Warnings    *[]issue       `json:"warnings"`
+	}
+	if json.Unmarshal([]byte(raw), &reply) != nil || reply.Active == nil || reply.Deactivated == nil || reply.Rejected == nil || reply.Warnings == nil {
+		return nil, false
+	}
+	requested := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		if !sellerID(id) || requested[id] {
+			return nil, false
+		}
+		requested[id] = true
+	}
+	results := make(map[int64]itemResult, len(ids))
+	deactivated := make(map[int64]bool, len(ids))
+	record := func(rawID json.Number, state, reason string) bool {
+		id, err := rawID.Int64()
+		if err != nil || !requested[id] {
+			return false
+		}
+		if _, duplicate := results[id]; duplicate {
+			return false
+		}
+		result := itemResult{Identity: strconv.FormatInt(id, 10)}
+		switch state {
+		case "active":
+			result.Succeeded = joining
+			if !joining {
+				result.Message = "Ozon 回执显示商品仍在活动中；请核对商品卡片统一价格"
+			}
+		case "deactivated":
+			deactivated[id] = true
+			result.Succeeded = !joining
+			if joining {
+				result.Message = "Ozon 已将该商品移出活动；请核对商品卡片统一价格"
+			}
+		case "rejected":
+			result.Message = "Ozon 拒绝该商品更新"
+			if message := MessageZH(reason); message != "" {
+				result.Message += "：" + message
+			}
+		}
+		results[id] = result
+		return true
+	}
+	for _, id := range *reply.Active {
+		if !record(id, "active", "") {
+			return nil, false
+		}
+	}
+	for _, id := range *reply.Deactivated {
+		if !record(id, "deactivated", "") {
+			return nil, false
+		}
+	}
+	for _, row := range *reply.Rejected {
+		if !record(row.ProductID, "rejected", row.Reason) {
+			return nil, false
+		}
+	}
+	warned := make(map[int64]bool, len(*reply.Warnings))
+	for _, row := range *reply.Warnings {
+		id, err := row.ProductID.Int64()
+		if err != nil || !deactivated[id] || warned[id] {
+			return nil, false
+		}
+		warned[id] = true
+		if message := MessageZH(row.Reason); message != "" {
+			result := results[id]
+			if result.Message == "" {
+				result.Message = "Ozon 已将该商品移出活动"
+			}
+			result.Message += "：" + message
+			results[id] = result
+		}
+	}
+	if len(results) != len(ids) {
+		return nil, false
+	}
+	out := make([]itemResult, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, results[id])
+	}
+	return out, true
+}
+
+func promotionDeactivateResults(ids []int64, raw string) ([]itemResult, bool) {
+	var reply struct {
+		ProductIDs *[]json.Number `json:"product_ids"`
+	}
+	if json.Unmarshal([]byte(raw), &reply) != nil || reply.ProductIDs == nil || len(*reply.ProductIDs) != len(ids) {
+		return nil, false
+	}
+	requested := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		if !sellerID(id) || requested[id] {
+			return nil, false
+		}
+		requested[id] = true
+	}
+	seen := make(map[int64]bool, len(ids))
+	for _, rawID := range *reply.ProductIDs {
+		id, err := rawID.Int64()
+		if err != nil || !requested[id] || seen[id] {
+			return nil, false
+		}
+		seen[id] = true
+	}
+	out := make([]itemResult, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, itemResult{Identity: strconv.FormatInt(id, 10), Succeeded: true})
+	}
+	return out, true
 }
 
 func settledItems(m Mutation, page Page, path string, build func() []itemResult) (json.RawMessage, *contract.Fail, bool) {
@@ -619,13 +807,7 @@ func settledItems(m Mutation, page Page, path string, build func() []itemResult)
 }
 
 func undecided(page Page) bool {
-	if page.Err != nil && page.Status == 0 {
-		return true
-	}
-	if page.Status == 429 || page.Status >= 500 || page.Status == 0 {
-		return true
-	}
-	return false
+	return page.Err != nil || page.Status < 200 || page.Status >= 300 && page.Status < 400 || page.Status == 429 || page.Status >= 500
 }
 
 func decided(page Page, path string) *contract.Fail {
@@ -664,24 +846,28 @@ func ValidateSend(chatID, text string) *contract.Fail {
 	return nil
 }
 
-func DecodeSend(raw []byte) (store, chat, text string, err error) {
-	m, err := object(raw, "store_id", "chat_id", "text")
+func DecodeSend(raw []byte) (operation, store, chat, text string, err error) {
+	m, err := object(raw, "operation_id", "store_id", "chat_id", "text")
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", "", err
 	}
-	store, ok, err := rawString(m, "store_id")
+	operation, ok, err := rawString(m, "operation_id")
 	if err != nil || !ok {
-		return "", "", "", errJSON
+		return "", "", "", "", errJSON
+	}
+	store, ok, err = rawString(m, "store_id")
+	if err != nil || !ok {
+		return "", "", "", "", errJSON
 	}
 	chat, ok, err = rawString(m, "chat_id")
 	if err != nil || !ok {
-		return "", "", "", errJSON
+		return "", "", "", "", errJSON
 	}
 	text, ok, err = rawString(m, "text")
 	if err != nil || !ok {
-		return "", "", "", errJSON
+		return "", "", "", "", errJSON
 	}
-	return store, chat, text, nil
+	return operation, store, chat, text, nil
 }
 
 func SendMessage(chatID, text string, fetch Fetch) (string, *contract.Fail, bool) {
@@ -695,5 +881,9 @@ func SendMessage(chatID, text string, fetch Fetch) (string, *contract.Fail, bool
 		return "", f, false
 	}
 	root := asObject(page.Body)
-	return fieldString(root, "result"), nil, false
+	result := strings.TrimSpace(fieldString(root, "result"))
+	if result == "" {
+		return "", &contract.Fail{Status: 409, Code: contract.CodeSellerUnknown, Message: "Ozon 消息回执缺失，请读取会话核对；不要重复发送"}, true
+	}
+	return result, nil, false
 }

@@ -11,17 +11,13 @@ import (
 const SubmitMaxAgeDays = 28
 
 // UploadKey is the structural read of a batched image key.
-// Source: crates/media-core/src/object_key/parse.rs in xxww0098/podhub;
-// media-core has no crate in this repository's rust/crates/.
 type UploadKey struct {
-	WorkspaceUUID string
-	BatchMS       int64
-	Digest        string
+	BatchMS int64
+	Digest  string
 }
 
 // ParseUploadKey reads a canonical batch image key out of a key or a URL.
-// Anything else is false. The rules are transcribed from parse_upload_key
-// at a03d735; media-core is not linked into this module.
+// Anything else is false. Workspace ownership comes from the verified lease.
 func ParseUploadKey(key string) (UploadKey, bool) {
 	for _, segment := range strings.Split(key, "/") {
 		if segment == "." || segment == ".." {
@@ -37,13 +33,10 @@ func ParseUploadKey(key string) (UploadKey, bool) {
 		return UploadKey{}, false
 	}
 	parts := strings.Split(tail, "/")
-	if len(parts) != 7 {
+	if len(parts) != 3 {
 		return UploadKey{}, false
 	}
-	date, batch, class, teams, workspace, shaSeg, file := parts[0], parts[1], parts[2], parts[3], parts[4], parts[5], parts[6]
-	if class != "images" || teams != "teams" || shaSeg != "sha256" || !isUUIDv4(workspace) {
-		return UploadKey{}, false
-	}
+	date, batch, file := parts[0], parts[1], parts[2]
 	digest, ext, ok := strings.Cut(file, ".")
 	if !ok || (ext != "jpg" && ext != "png") || !isDigest(digest) {
 		return UploadKey{}, false
@@ -60,7 +53,7 @@ func ParseUploadKey(key string) (UploadKey, bool) {
 	if when.Format("2006-01-02") != date {
 		return UploadKey{}, false
 	}
-	return UploadKey{WorkspaceUUID: workspace, BatchMS: batchMS, Digest: digest}, true
+	return UploadKey{BatchMS: batchMS, Digest: digest}, true
 }
 
 // MediaSkip is a draft image the server will not send.
@@ -71,10 +64,9 @@ const (
 	MediaExpired MediaSkip = "media_expired"
 )
 
-// ImageIssue is media_key_issue for one draft's images. Videos are not
-// judged here: the supplier and pool checks live in submit_drafts_media.rs
-// and are not called.
-func ImageIssue(images []string, workspace string, nowMS int64) (MediaSkip, bool) {
+// ImageIssue checks slice shape and age; the caller checks workspace ownership
+// and verified readiness against the stored lease.
+func ImageIssue(images []string, nowMS int64) (MediaSkip, bool) {
 	maxAge := int64(SubmitMaxAgeDays) * 24 * 60 * 60 * 1000
 	for _, raw := range images {
 		url := strings.TrimSpace(raw)
@@ -82,7 +74,7 @@ func ImageIssue(images []string, workspace string, nowMS int64) (MediaSkip, bool
 			continue
 		}
 		key, ok := ParseUploadKey(url)
-		if !ok || !strings.EqualFold(key.WorkspaceUUID, workspace) {
+		if !ok {
 			return MediaForeign, true
 		}
 		if nowMS-key.BatchMS > maxAge {
@@ -111,25 +103,6 @@ func digits(value string) bool {
 		}
 	}
 	return value != ""
-}
-
-func isUUIDv4(value string) bool {
-	if len(value) != 36 || value[14] != '4' {
-		return false
-	}
-	for i := 0; i < len(value); i++ {
-		switch i {
-		case 8, 13, 18, 23:
-			if value[i] != '-' {
-				return false
-			}
-		default:
-			if !isHexByte(value[i]) {
-				return false
-			}
-		}
-	}
-	return true
 }
 
 func uuidAny(value string) bool {

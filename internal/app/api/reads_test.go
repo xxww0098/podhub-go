@@ -10,7 +10,9 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
+	readdomain "github.com/xxww0098/podhub-go/internal/listing/read/domain"
 	"github.com/xxww0098/podhub-go/internal/platform/db/sqlc"
+	"github.com/xxww0098/podhub-go/internal/platform/httpx/jsonwire"
 	"github.com/xxww0098/podhub-go/tests/parity"
 )
 
@@ -69,7 +71,7 @@ func TestReadErrorsMatchRustEnvelopes(t *testing.T) {
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/listing/jobs", nil))
 	if err := parity.DiffHTTP(parity.Exchange{Status: rec.Code, Body: rec.Body.Bytes()}, parity.Exchange{
-		Status: http.StatusForbidden, Body: []byte(`{"error":"当前角色无权执行此操作","code":"forbidden"}`),
+		Status: http.StatusForbidden, Body: []byte(`{"error":"工作空间角色无效","code":"forbidden"}`),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +89,7 @@ func TestReadErrorsMatchRustEnvelopes(t *testing.T) {
 }
 
 func TestUsageAndRunGoldens(t *testing.T) {
-	stats, err := marshalJSON(usageStatsResponse{Data: usageStatsWire{
+	stats, err := jsonwire.Marshal(usageStatsResponse{Data: usageStatsWire{
 		Days: 30, From: "2026-07-23", To: "2026-08-21",
 		Page: 1, PageSize: 25, TotalPages: 1,
 		Requests:      []usageRequestWire{},
@@ -103,7 +105,7 @@ func TestUsageAndRunGoldens(t *testing.T) {
 
 	errClass := "rate_limited"
 	settled := "2026-08-21T17:30:00.000Z"
-	row, err := marshalJSON(usageRequestWire{
+	row, err := jsonwire.Marshal(usageRequestWire{
 		RequestID: "req_1", Model: "m", Operation: "ocr", Status: "settled",
 		InputTokens: 3, OutputTokens: 1, CachedInputTokens: 2, ReasoningOutputTokens: 0,
 		CacheHitRateBps: 6667, TotalMicrofen: 9, ChargedMicrofen: 4, AbsorbedMicrofen: 5,
@@ -116,7 +118,7 @@ func TestUsageAndRunGoldens(t *testing.T) {
 	if err := parity.DiffHTTP(parity.Exchange{Status: 200, Body: row}, parity.Exchange{Status: 200, Body: []byte(wantRow)}); err != nil {
 		t.Fatal(err)
 	}
-	omitted, err := marshalJSON(usageRequestWire{
+	omitted, err := jsonwire.Marshal(usageRequestWire{
 		RequestID: "req_1", Model: "m", Operation: "ocr", Status: "failed",
 		InputTokens: 3, OutputTokens: 0, CachedInputTokens: 0,
 		CreatedAt: "2026-08-21T17:30:00.000Z",
@@ -130,7 +132,7 @@ func TestUsageAndRunGoldens(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	payload, err := canonicalJSON([]byte(`{"b": 1, "a": "x&y"}`))
+	payload, err := jsonwire.Canonical([]byte(`{"b": 1, "a": "x&y"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,11 +145,11 @@ func TestUsageAndRunGoldens(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := marshalJSON(listingRunResponse{Data: view})
+	raw, err := jsonwire.Marshal(listingRunResponse{Data: view})
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantRun := `{"data":{"id":"11111111-1111-4111-8111-111111111111","kind":"ai.recognize","aggregateType":"listing_row","aggregateId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","inputRevision":3,"state":"succeeded","attempt":1,"idempotencyKey":"prep-1","payload":{"a":"x&y","b":1},"updatedAtMs":1787333400000}}`
+	wantRun := `{"data":{"id":"11111111-1111-4111-8111-111111111111","kind":"ai.recognize","aggregate_type":"listing_row","aggregate_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","input_revision":3,"state":"succeeded","attempt":1,"idempotency_key":"prep-1","payload":{"a":"x&y","b":1},"updated_at_ms":1787333400000}}`
 	if err := parity.DiffHTTP(parity.Exchange{Status: 200, Body: raw}, parity.Exchange{Status: 200, Body: []byte(wantRun)}); err != nil {
 		t.Fatal(err)
 	}
@@ -197,10 +199,10 @@ func TestQueryAlgebra(t *testing.T) {
 	if page != 50 || fetch != 51 {
 		t.Fatal(page, fetch)
 	}
-	if micros, id := parseCursor(strPtr("nope")); micros != 0 || id != "" {
+	if micros, id := readdomain.ParseCursor("nope"); micros != 0 || id != "" {
 		t.Fatal("bad cursor")
 	}
-	if micros, id := parseCursor(strPtr("1787333400000000:11111111-1111-4111-8111-111111111111")); micros != 1787333400000000 || id != "11111111-1111-4111-8111-111111111111" {
+	if micros, id := readdomain.ParseCursor("1787333400000000:11111111-1111-4111-8111-111111111111"); micros != 1787333400000000 || id != "11111111-1111-4111-8111-111111111111" {
 		t.Fatalf("%d %s", micros, id)
 	}
 	if _, err := parseLimit(strPtr("abc")); err == nil {
@@ -211,7 +213,7 @@ func TestQueryAlgebra(t *testing.T) {
 		{UserID: 8, Metric: "ai.input_tokens", Unit: "token", Verification: "reported", Total: 5},
 		{UserID: 7, Metric: "ai.input_tokens", Unit: "token", Verification: "reported", Total: 10},
 	}, 7)
-	raw, err := marshalJSON(usageStatsWire{Days: 30, From: "2026-08-01", To: "2026-08-31", Organization: org, Member: member})
+	raw, err := jsonwire.Marshal(usageStatsWire{Days: 30, From: "2026-08-01", To: "2026-08-31", Organization: org, Member: member})
 	if err != nil {
 		t.Fatal(err)
 	}

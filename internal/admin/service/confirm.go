@@ -135,7 +135,7 @@ func (d Deps) verifyObject(ctx context.Context, account sign.Account, key string
 	if err != nil {
 		return fail(503, "UNAVAILABLE", "对象存储确认暂不可用，请稍后重试确认")
 	}
-	status, header, body, err := d.exchange(ctx, methodGet, raw, nil, nil, confirmTimeout, true, true, int64(verified.ByteLength))
+	status, header, body, err := d.exchange(ctx, account, methodGet, raw, nil, nil, confirmTimeout, true, true, int64(verified.ByteLength))
 	if err != nil && strings.Contains(err.Error(), "exceeds limit") {
 		return fail(409, "CONFLICT", "上传对象超过授权长度")
 	}
@@ -183,7 +183,7 @@ func (d Deps) promote(ctx context.Context, account sign.Account, stage, destinat
 	if err != nil {
 		return fail(503, "UNAVAILABLE", "对象存储确认暂不可用，请重试确认")
 	}
-	getStatus, _, body, err := d.exchange(ctx, methodGet, raw, nil, nil, confirmTimeout, true, true, int64(verified.ByteLength))
+	getStatus, _, body, err := d.exchange(ctx, account, methodGet, raw, nil, nil, confirmTimeout, true, true, int64(verified.ByteLength))
 	if err != nil || getStatus < 200 || getStatus >= 300 {
 		return fail(503, "UNAVAILABLE", "对象存储确认暂不可用，请重试确认")
 	}
@@ -204,7 +204,7 @@ func (d Deps) promote(ctx context.Context, account sign.Account, stage, destinat
 		"content-type": verified.ContentType, "content-length": strconv.FormatUint(verified.ByteLength, 10),
 		"if-none-match": "*", "x-amz-meta-podhub-upload": marker,
 	}
-	putStatus, _, _, err := d.exchange(ctx, methodPut, putURL, sent, body, confirmTimeout, true, true, 0)
+	putStatus, _, _, err := d.exchange(ctx, account, methodPut, putURL, sent, body, confirmTimeout, true, true, 0)
 	if err != nil {
 		return fail(503, "UNAVAILABLE", "对象存储确认暂不可用，请重试确认")
 	}

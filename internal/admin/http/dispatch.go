@@ -1,6 +1,8 @@
 package adminhttp
 
 import (
+	"encoding/json"
+	"math"
 	"net/http"
 	"strconv"
 
@@ -17,19 +19,16 @@ const (
 	familyAdmin family = iota
 	familyAI
 	familyIntegration
-	familyAuth
 )
 
 func errorFamily(method, path string) family {
 	switch method + " " + path {
 	case "GET /api/admin/ai-requests", "GET /api/admin/ai-requests/summary",
-		"PUT /api/admin/ai/prices", "DELETE /api/admin/ai/prices",
+		"GET /api/admin/ai/prices", "PUT /api/admin/ai/prices", "DELETE /api/admin/ai/prices",
 		"POST /api/admin/integrations/ai/models", "POST /api/admin/integrations/ai/verify":
 		return familyAI
-	case "PUT /api/admin/integrations/config":
+	case "GET /api/admin/integrations/config", "PUT /api/admin/integrations/config":
 		return familyIntegration
-	case "POST /api/admin/totp/enroll", "POST /api/admin/totp/confirm", "POST /api/admin/step-up":
-		return familyAuth
 	default:
 		return familyAdmin
 	}
@@ -40,27 +39,16 @@ func implemented(method, path string) bool {
 	case "GET /api/admin/users", "POST /api/admin/users",
 		"POST /api/admin/users/{uuid}/status", "POST /api/admin/users/{uuid}/admin",
 		"POST /api/admin/users/{uuid}/password", "POST /api/admin/users/{uuid}/seats",
-		"POST /api/admin/users/{uuid}/member-seats/preview", "POST /api/admin/users/{uuid}/member-seats/apply",
 		"POST /api/admin/workspaces/{uuid}/dissolve",
 		"GET /api/admin/support-grants", "POST /api/admin/support-grants", "POST /api/admin/support-grants/{id}/revoke",
 		"GET /api/admin/writer-leases", "POST /api/admin/writer-leases", "POST /api/admin/writer-leases/revoke",
 		"GET /api/admin/ai-requests", "GET /api/admin/ai-requests/summary",
-		"PUT /api/admin/ai/prices", "DELETE /api/admin/ai/prices",
+		"GET /api/admin/ai/prices", "PUT /api/admin/ai/prices", "DELETE /api/admin/ai/prices",
 		"POST /api/admin/integrations/ai/models", "POST /api/admin/integrations/ai/verify",
-		"PUT /api/admin/integrations/config",
-		"POST /api/admin/totp/enroll", "POST /api/admin/totp/confirm", "POST /api/admin/step-up":
+		"GET /api/admin/integrations/config", "PUT /api/admin/integrations/config":
 		return true
 	default:
 		return false
-	}
-}
-
-func wantsStepUp(method, path string) bool {
-	switch method + " " + path {
-	case "POST /api/admin/totp/enroll", "POST /api/admin/totp/confirm", "POST /api/admin/step-up":
-		return false
-	default:
-		return implemented(method, path)
 	}
 }
 
@@ -90,21 +78,6 @@ func writeAuthStatus(w http.ResponseWriter, fam family, status int, message stri
 	writeErr(w, status, message, code)
 }
 
-func writeAuthFault(w http.ResponseWriter, fam family, fault *contract.Fault) {
-	if fault == nil {
-		writeAuthStatus(w, fam, http.StatusInternalServerError, msgUnavailable)
-		return
-	}
-	if fam == familyAdmin || fam == familyAuth || fault.Status == http.StatusForbidden || (fam == familyAI && fault.Status == http.StatusUnauthorized) {
-		if fam == familyAI && fault.Status == http.StatusUnauthorized {
-			fault = contract.Coded(http.StatusUnauthorized, "AUTH_REQUIRED", fault.Message)
-		}
-		writeFault(w, fault)
-		return
-	}
-	writeAuthStatus(w, fam, fault.Status, fault.Message)
-}
-
 func (h handler) dispatchPlatform(w http.ResponseWriter, r *http.Request, rt Route, actor domain.Actor) {
 	ctx := r.Context()
 	var (
@@ -125,10 +98,6 @@ func (h handler) dispatchPlatform(w http.ResponseWriter, r *http.Request, rt Rou
 		body, fault = h.setPassword(r, actor)
 	case "POST /api/admin/users/{uuid}/seats":
 		body, fault = h.setSeats(r, actor)
-	case "POST /api/admin/users/{uuid}/member-seats/preview":
-		body, fault = h.previewSeats(r, actor)
-	case "POST /api/admin/users/{uuid}/member-seats/apply":
-		body, fault = h.applySeats(r, actor)
 	case "POST /api/admin/workspaces/{uuid}/dissolve":
 		body, fault = h.dissolve(r, actor)
 	case "GET /api/admin/support-grants":
@@ -148,7 +117,9 @@ func (h handler) dispatchPlatform(w http.ResponseWriter, r *http.Request, rt Rou
 		body, fault = h.API.ListUsage(ctx, actor, q.Get("q"), q.Get("status"), q.Get("api_format"), q.Get("operation"), q.Get("since"), q.Get("page"), q.Get("page_size"))
 	case "GET /api/admin/ai-requests/summary":
 		q := r.URL.Query()
-		body, fault = h.API.SummarizeUsage(ctx, q.Get("q"), q.Get("status"), q.Get("api_format"), q.Get("operation"), q.Get("since"))
+		body, fault = h.API.SummarizeUsage(ctx, actor, q.Get("q"), q.Get("status"), q.Get("api_format"), q.Get("operation"), q.Get("since"))
+	case "GET /api/admin/ai/prices":
+		body, fault = h.API.Prices(ctx)
 	case "PUT /api/admin/ai/prices":
 		body, fault = h.publishPrice(r, actor)
 	case "DELETE /api/admin/ai/prices":
@@ -159,12 +130,8 @@ func (h handler) dispatchPlatform(w http.ResponseWriter, r *http.Request, rt Rou
 		body, fault = h.probe(r, true)
 	case "PUT /api/admin/integrations/config":
 		body, fault = h.replaceConfig(r, actor)
-	case "POST /api/admin/totp/enroll":
-		body, fault = h.API.Enroll(ctx, actor)
-	case "POST /api/admin/totp/confirm":
-		body, fault = h.totpCode(r, actor, true)
-	case "POST /api/admin/step-up":
-		body, fault = h.totpCode(r, actor, false)
+	case "GET /api/admin/integrations/config":
+		body, fault = h.API.GetConfig(ctx)
 	default:
 		writeErr(w, http.StatusNotImplemented, contract.ErrNotPorted.Error(), "not_ported")
 		return
@@ -248,80 +215,11 @@ func (h handler) setSeats(r *http.Request, actor domain.Actor) (any, *contract.F
 	if fault != nil {
 		return nil, fault
 	}
-	seats, fault := obj.i64("seats")
+	seats, fault := obj.nullableI64("seats")
 	if fault != nil {
 		return nil, fault
 	}
 	return h.API.SetSeats(r.Context(), actor, chi.URLParam(r, "uuid"), seats)
-}
-
-func seatIntent(obj object) (domain.SeatIntent, *contract.Fault) {
-	member, fault := obj.optI64("member_seats_override")
-	if fault != nil {
-		return domain.SeatIntent{}, fault
-	}
-	store, fault := obj.optI64("store_limit_override")
-	if fault != nil {
-		return domain.SeatIntent{}, fault
-	}
-	followMembers, fault := obj.boolean("follow_plan_member_seats", false)
-	if fault != nil {
-		return domain.SeatIntent{}, fault
-	}
-	followStores, fault := obj.boolean("follow_plan_store_limit", false)
-	if fault != nil {
-		return domain.SeatIntent{}, fault
-	}
-	return domain.SeatIntent{
-		MemberOverride: member, FollowMembers: followMembers,
-		StoreOverride: store, FollowStores: followStores,
-	}, nil
-}
-
-func (h handler) previewSeats(r *http.Request, actor domain.Actor) (any, *contract.Fault) {
-	obj, fault := readObject(r, nil, []string{
-		"workspace_id", "member_seats_override", "follow_plan_member_seats",
-		"store_limit_override", "follow_plan_store_limit",
-	})
-	if fault != nil {
-		return nil, fault
-	}
-	intent, fault := seatIntent(obj)
-	if fault != nil {
-		return nil, fault
-	}
-	workspace, fault := obj.optI64("workspace_id")
-	if fault != nil {
-		return nil, fault
-	}
-	return h.API.PreviewSeats(r.Context(), actor, chi.URLParam(r, "uuid"), intent, workspace)
-}
-
-func (h handler) applySeats(r *http.Request, actor domain.Actor) (any, *contract.Fault) {
-	obj, fault := readObject(r, []string{"expected_store_limit", "revision"}, []string{
-		"workspace_id", "member_seats_override", "follow_plan_member_seats",
-		"store_limit_override", "follow_plan_store_limit",
-	})
-	if fault != nil {
-		return nil, fault
-	}
-	intent, fault := seatIntent(obj)
-	if fault != nil {
-		return nil, fault
-	}
-	workspace, fault := obj.optI64("workspace_id")
-	if fault != nil {
-		return nil, fault
-	}
-	stores, fault := obj.i64("expected_store_limit")
-	if fault != nil {
-		return nil, fault
-	}
-	revision, fault := obj.i64("revision")
-	if fault != nil {
-		return nil, fault
-	}
-	return h.API.ApplySeats(r.Context(), actor, chi.URLParam(r, "uuid"), intent, workspace, revision, stores)
 }
 
 func (h handler) dissolve(r *http.Request, actor domain.Actor) (any, *contract.Fault) {
@@ -500,22 +398,22 @@ func (h handler) unpublishPrice(r *http.Request, actor domain.Actor) (any, *cont
 }
 
 func (h handler) probe(r *http.Request, verify bool) (any, *contract.Fault) {
-	obj, fault := readObject(r, nil, []string{"accountId", "baseUrl", "apiKey", "apiFormat", "model"})
+	obj, fault := readObject(r, nil, []string{"account_id", "base_url", "api_key", "api_format", "model"})
 	if fault != nil {
 		return nil, fault
 	}
 	in := service.ProbeIn{}
-	if s, fault := obj.optStr("accountId"); fault != nil {
+	if s, fault := obj.optStr("account_id"); fault != nil {
 		return nil, fault
 	} else if s != nil {
 		in.AccountID = *s
 	}
-	if s, fault := obj.optStr("baseUrl"); fault != nil {
+	if s, fault := obj.optStr("base_url"); fault != nil {
 		return nil, fault
 	} else if s != nil {
 		in.BaseURL = *s
 	}
-	if s, fault := obj.optStr("apiKey"); fault != nil {
+	if s, fault := obj.optStr("api_key"); fault != nil {
 		return nil, fault
 	} else if s != nil {
 		in.APIKey = *s
@@ -525,8 +423,8 @@ func (h handler) probe(r *http.Request, verify bool) (any, *contract.Fault) {
 	} else if s != nil {
 		in.Model = *s
 	}
-	if _, ok := obj["apiFormat"]; ok {
-		format, present, fault := obj.rawString("apiFormat", true)
+	if _, ok := obj["api_format"]; ok {
+		format, present, fault := obj.rawString("api_format", true)
 		if fault != nil {
 			return nil, fault
 		}
@@ -546,41 +444,22 @@ func (h handler) probe(r *http.Request, verify bool) (any, *contract.Fault) {
 	return h.API.ListModels(r.Context(), in)
 }
 
-func (h handler) totpCode(r *http.Request, actor domain.Actor, confirm bool) (any, *contract.Fault) {
-	obj, fault := readObject(r, []string{"code"}, nil)
-	if fault != nil {
-		return nil, fault
-	}
-	code, fault := obj.str("code")
-	if fault != nil {
-		return nil, fault
-	}
-	if confirm {
-		return h.API.Confirm(r.Context(), actor, code)
-	}
-	return h.API.StepUp(r.Context(), actor, code)
-}
-
 func (h handler) replaceConfig(r *http.Request, actor domain.Actor) (any, *contract.Fault) {
-	obj, fault := readObject(r, []string{"expectedRevision", "aiAccounts", "storageBuckets"}, []string{
-		"aiDefaultModel",
+	obj, fault := readObject(r, []string{"expected_revision", "ai_accounts"}, []string{
+		"ai_default_model", "ai_runtime",
 	})
 	if fault != nil {
 		return nil, fault
 	}
-	expected, fault := obj.i64("expectedRevision")
+	expected, fault := obj.i64("expected_revision")
 	if fault != nil {
 		return nil, fault
 	}
-	aiDefault, fault := obj.optStr("aiDefaultModel")
+	aiDefault, fault := obj.optStr("ai_default_model")
 	if fault != nil {
 		return nil, fault
 	}
-	ais, fault := obj.objects("aiAccounts")
-	if fault != nil {
-		return nil, fault
-	}
-	buckets, fault := obj.objects("storageBuckets")
+	ais, fault := obj.objects("ai_accounts")
 	if fault != nil {
 		return nil, fault
 	}
@@ -589,9 +468,10 @@ func (h handler) replaceConfig(r *http.Request, actor domain.Actor) (any, *contr
 	if fault != nil {
 		return nil, fault
 	}
-	in.Buckets, fault = decodeBuckets(buckets)
-	if fault != nil {
-		return nil, fault
+	if raw, ok := obj["ai_runtime"]; ok {
+		if in.Runtime, fault = decodeRuntime(raw); fault != nil {
+			return nil, fault
+		}
 	}
 	return h.API.ReplaceConfig(r.Context(), actor, in)
 }
@@ -599,7 +479,7 @@ func (h handler) replaceConfig(r *http.Request, actor domain.Actor) (any, *contr
 func decodeAIs(rows []object) ([]service.AIIn, *contract.Fault) {
 	out := make([]service.AIIn, 0, len(rows))
 	for _, row := range rows {
-		if fault := onlyKeys(row, []string{"id", "label", "baseUrl", "apiFormat", "model", "apiKey", "active"}, []string{"thinking", "thinkingFormat", "priority"}); fault != nil {
+		if fault := onlyKeys(row, []string{"id", "label", "base_url", "api_format", "model", "api_key", "active", "purpose"}, []string{"thinking", "thinking_format", "priority"}); fault != nil {
 			return nil, fault
 		}
 		item := service.AIIn{Thinking: "provider_default", ThinkingFormat: "none"}
@@ -610,19 +490,22 @@ func decodeAIs(rows []object) ([]service.AIIn, *contract.Fault) {
 		if item.Label, fault = row.str("label"); fault != nil {
 			return nil, fault
 		}
-		if item.BaseURL, fault = row.str("baseUrl"); fault != nil {
+		if item.BaseURL, fault = row.str("base_url"); fault != nil {
 			return nil, fault
 		}
-		if item.APIFormat, fault = row.str("apiFormat"); fault != nil {
+		if item.APIFormat, fault = row.str("api_format"); fault != nil {
 			return nil, fault
 		}
 		if item.Model, fault = row.str("model"); fault != nil {
 			return nil, fault
 		}
-		if item.APIKey, fault = row.str("apiKey"); fault != nil {
+		if item.APIKey, fault = row.str("api_key"); fault != nil {
 			return nil, fault
 		}
 		if item.Active, fault = row.boolean("active", true); fault != nil {
+			return nil, fault
+		}
+		if item.Purpose, fault = row.str("purpose"); fault != nil {
 			return nil, fault
 		}
 		if _, ok := row["thinking"]; ok {
@@ -630,8 +513,8 @@ func decodeAIs(rows []object) ([]service.AIIn, *contract.Fault) {
 				return nil, fault
 			}
 		}
-		if _, ok := row["thinkingFormat"]; ok {
-			if item.ThinkingFormat, fault = row.str("thinkingFormat"); fault != nil {
+		if _, ok := row["thinking_format"]; ok {
+			if item.ThinkingFormat, fault = row.str("thinking_format"); fault != nil {
 				return nil, fault
 			}
 		}
@@ -645,70 +528,45 @@ func decodeAIs(rows []object) ([]service.AIIn, *contract.Fault) {
 	return out, nil
 }
 
-func decodeBuckets(rows []object) ([]domain.BucketIn, *contract.Fault) {
-	out := make([]domain.BucketIn, 0, len(rows))
-	for _, row := range rows {
-		item, fault := decodeBucket(row)
+// decodeRuntime reads the ai_runtime object: every key is required and must
+// be an integer (a boolean for allow_public_egress). Range checks live in the
+// service.
+func decodeRuntime(raw json.RawMessage) (*domain.AIRuntime, *contract.Fault) {
+	obj, fault := decodeObject(raw)
+	if fault != nil {
+		return nil, fault
+	}
+	if fault := onlyKeys(obj, []string{
+		"max_concurrency_global", "max_concurrency_user", "max_concurrency_account",
+		"user_rate_per_minute", "lease_ttl_seconds", "allow_public_egress",
+	}, nil); fault != nil {
+		return nil, fault
+	}
+	var out domain.AIRuntime
+	for _, field := range []struct {
+		key  string
+		into *int
+	}{
+		{"max_concurrency_global", &out.MaxConcurrencyGlobal},
+		{"max_concurrency_user", &out.MaxConcurrencyUser},
+		{"max_concurrency_account", &out.MaxConcurrencyAccount},
+		{"user_rate_per_minute", &out.UserRatePerMinute},
+		{"lease_ttl_seconds", &out.LeaseTTLSeconds},
+	} {
+		n, fault := obj.i64(field.key)
 		if fault != nil {
 			return nil, fault
 		}
-		out = append(out, item)
+		if n < math.MinInt32 || n > math.MaxInt32 {
+			return nil, invalidBody()
+		}
+		*field.into = int(n)
 	}
-	return out, nil
-}
-
-func decodeBucket(row object) (domain.BucketIn, *contract.Fault) {
-	if fault := onlyKeys(row, []string{
-		"id", "label", "role", "provider", "endpoint", "region", "bucket", "keyPrefix",
-		"publicBaseUrl", "forcePathStyle", "accessKeyId", "secretAccessKey", "sessionToken", "active",
-	}, nil); fault != nil {
-		return domain.BucketIn{}, fault
+	var fault2 *contract.Fault
+	if out.AllowPublicEgress, fault2 = obj.boolean("allow_public_egress", true); fault2 != nil {
+		return nil, fault2
 	}
-	var item domain.BucketIn
-	var fault *contract.Fault
-	if item.ID, fault = row.str("id"); fault != nil {
-		return domain.BucketIn{}, fault
-	}
-	if item.Label, fault = row.str("label"); fault != nil {
-		return domain.BucketIn{}, fault
-	}
-	if item.Role, fault = row.str("role"); fault != nil {
-		return domain.BucketIn{}, fault
-	}
-	if item.Provider, fault = row.str("provider"); fault != nil {
-		return domain.BucketIn{}, fault
-	}
-	if item.Endpoint, fault = row.str("endpoint"); fault != nil {
-		return domain.BucketIn{}, fault
-	}
-	if item.Region, fault = row.str("region"); fault != nil {
-		return domain.BucketIn{}, fault
-	}
-	if item.Bucket, fault = row.str("bucket"); fault != nil {
-		return domain.BucketIn{}, fault
-	}
-	if item.KeyPrefix, fault = row.str("keyPrefix"); fault != nil {
-		return domain.BucketIn{}, fault
-	}
-	if item.PublicBase, fault = row.str("publicBaseUrl"); fault != nil {
-		return domain.BucketIn{}, fault
-	}
-	if item.ForcePath, fault = row.boolean("forcePathStyle", true); fault != nil {
-		return domain.BucketIn{}, fault
-	}
-	if item.AccessKey, fault = row.str("accessKeyId"); fault != nil {
-		return domain.BucketIn{}, fault
-	}
-	if item.SecretKey, fault = row.str("secretAccessKey"); fault != nil {
-		return domain.BucketIn{}, fault
-	}
-	if item.Session, fault = row.str("sessionToken"); fault != nil {
-		return domain.BucketIn{}, fault
-	}
-	if item.Active, fault = row.boolean("active", true); fault != nil {
-		return domain.BucketIn{}, fault
-	}
-	return item, nil
+	return &out, nil
 }
 
 func onlyKeys(obj object, required, optional []string) *contract.Fault {

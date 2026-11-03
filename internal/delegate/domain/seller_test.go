@@ -8,7 +8,7 @@ import (
 
 func TestValidateFile(t *testing.T) {
 	sha := strings.Repeat("ab", 32)
-	ext, got, err := ValidateFile("  "+strings.ToUpper(sha)+" ", "image/png", "a.JPEG", 1)
+	ext, got, err := ValidateFile("  "+strings.ToUpper(sha)+" ", "image/jpeg", "a.JPEG", 1)
 	if err != nil || ext != "jpg" || got != sha {
 		t.Fatalf("ext %s sha %s err %v", ext, got, err)
 	}
@@ -21,14 +21,19 @@ func TestValidateFile(t *testing.T) {
 	if _, _, err := ValidateFile(sha, "image/png", "a.png", MaxAssetBytes+1); err == nil {
 		t.Fatal("oversize")
 	}
-	if _, _, err := ValidateFile(sha, "image/png", "a.gif", 1); err == nil || err.Error() != "只支持 jpg/png/webp/psd 原图文件" {
+	if _, _, err := ValidateFile(sha, "image/png", "a.gif", 1); err == nil || err.Error() != "只支持 jpg/png/webp 委托图片" {
 		t.Fatal(err)
 	}
 	if _, _, err := ValidateFile(sha, "text/plain", "a.png", 1); err == nil || err.Error() != "文件类型与内容不符" {
 		t.Fatal(err)
 	}
-	if _, _, err := ValidateFile(sha, "application/octet-stream", "a.psd", 1); err != nil {
-		t.Fatal(err)
+	for _, mime := range []string{"application/octet-stream", "image/vnd.adobe.photoshop", "image/png"} {
+		if _, _, err := ValidateFile(sha, mime, "a.PSD", 1); err == nil {
+			t.Fatal("PSD must not be uploaded as a delegate image")
+		}
+	}
+	if _, _, err := ValidateFile(sha, "image/png", "a.jpg", 1); err == nil {
+		t.Fatal("extension and MIME must match")
 	}
 	if MimeMatchesExtension("", "psd") || MimeMatchesExtension(strings.Repeat("a", 129), "psd") {
 		t.Fatal("mime length")
@@ -84,15 +89,6 @@ func TestReplayAndNotes(t *testing.T) {
 }
 
 func TestCursorMergeAndSelect(t *testing.T) {
-	id := "11111111-1111-4111-8111-111111111111"
-	raw := EncodeCursor(9, id)
-	ms, got, ok := DecodeCursor(raw)
-	if !ok || ms != 9 || got != id {
-		t.Fatalf("%d %s %v", ms, got, ok)
-	}
-	if _, _, ok := DecodeCursor("nope"); ok {
-		t.Fatal("bad cursor")
-	}
 	lines := AssembleLines([]PostingProduct{
 		{OfferID: "  ", Quantity: 2},
 		{OfferID: " B ", Quantity: 0},
@@ -152,7 +148,7 @@ func TestWindowAndRole(t *testing.T) {
 	if _, err := CanManage(""); err == nil {
 		t.Fatal("empty role")
 	}
-	manage, err := CanManage(" admin ")
+	manage, err := CanManage(" manager ")
 	if err != nil || !manage {
 		t.Fatal(manage, err)
 	}
@@ -160,8 +156,10 @@ func TestWindowAndRole(t *testing.T) {
 	if err != nil || manage {
 		t.Fatal(manage, err)
 	}
-	if _, err := CanManage("intern"); err == nil || err.Error() != "工作空间角色无效" {
-		t.Fatal(err)
+	for _, role := range []string{"intern", "admin", "reviewer", "viewer", "operator", "super_admin"} {
+		if _, err := CanManage(role); err == nil || err.Error() != "工作空间角色无效" {
+			t.Fatalf("%s: %v", role, err)
+		}
 	}
 	if ClampLimit(0, 50) != 1 || ClampLimit(99, 50) != 50 || PageLimit(nil) != 20 {
 		t.Fatal("clamp")

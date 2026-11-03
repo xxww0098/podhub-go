@@ -3,6 +3,8 @@ package domain
 import (
 	"strconv"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 // MaxCursorMicros is 2100-01-01T00:00:00Z. A later boundary is treated as no cursor.
@@ -59,27 +61,15 @@ func ParseCursor(raw string) (int64, string) {
 	return micros, id
 }
 
-// CanonicalUUID accepts a hyphenated or 32-hex uuid and returns the hyphenated form.
+// CanonicalUUID parses a uuid in any of google/uuid's accepted spellings
+// (hyphenated, 32-hex, braced, urn-prefixed) and returns the lowercase
+// hyphenated form. Anything else is not an id.
 func CanonicalUUID(raw string) (string, bool) {
-	s := strings.TrimSpace(strings.ToLower(raw))
-	s = strings.TrimPrefix(s, "urn:uuid:")
-	s = strings.TrimPrefix(s, "{")
-	s = strings.TrimSuffix(s, "}")
-	hex := strings.ReplaceAll(s, "-", "")
-	if len(hex) != 32 {
+	id, err := uuid.Parse(strings.TrimSpace(raw))
+	if err != nil {
 		return "", false
 	}
-	for _, c := range hex {
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return "", false
-		}
-	}
-	if strings.Contains(s, "-") {
-		if len(s) != 36 || s[8] != '-' || s[13] != '-' || s[18] != '-' || s[23] != '-' {
-			return "", false
-		}
-	}
-	return hex[0:8] + "-" + hex[8:12] + "-" + hex[12:16] + "-" + hex[16:20] + "-" + hex[20:], true
+	return id.String(), true
 }
 
 // FormatCursor is `micros:uuid`, the card and job page boundary.

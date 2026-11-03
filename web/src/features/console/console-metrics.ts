@@ -210,6 +210,7 @@ export type StoreRosterRow = {
   name: string
   clientId: string
   orderedUnits: number | null
+  previousOrderedUnits?: number | null
   daySeries: number[]
   lastSyncAtMs: number
   throughDay: string
@@ -418,6 +419,7 @@ export function summarizeStoreRoster(
       name: store.name,
       clientId: store.clientId,
       orderedUnits: store.orderedUnits,
+      previousOrderedUnits: store.previousOrderedUnits,
       daySeries: store.daySeries,
       lastSyncAtMs: store.lastSyncAtMs,
       throughDay: store.throughDay,
@@ -445,7 +447,7 @@ export function summarizeStoreRoster(
   const totals = {
     orderedUnits: readable.reduce((sum, store) => sum + (store.orderedUnits ?? 0), 0),
   }
-  const cohort = readable.filter((store) => store.previousOrderedUnits !== undefined)
+  const cohort = readable.filter((store) => store.previousOrderedUnits != null)
   const cohortDelta: CohortDelta =
     readable.length === 0
       ? { kind: "incomparable", reason: "当前无成功指标" }

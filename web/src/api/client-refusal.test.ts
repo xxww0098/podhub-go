@@ -24,7 +24,7 @@ test("HTTP status and exact server code retain one mapping across all transports
     { status: 500, serverCode: "FUTURE_DOMAIN_CODE", code: "cloud_future_domain_code" },
     { status: 503, serverCode: undefined, code: "cloud_request_failed" },
   ]) {
-    await withFetch(async () => Response.json({ code: serverCode, error: "服务端说明", ocrRecovery: { requestId: "ocr-purchase" } }, {
+    await withFetch(async () => Response.json({ code: serverCode, error: "服务端说明", ocr_recovery: { request_id: "ocr-purchase" } }, {
       status, headers: { "x-request-id": "http-trace", "Retry-After": "2" },
     }), async () => {
       for (const transport of transports) {

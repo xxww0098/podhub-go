@@ -61,7 +61,7 @@ func pepper() [32]byte {
 }
 
 // DeriveSessionToken is the labeled SHA-256 used when Idempotency-Key is present.
-// seed is the stored password hash. key is the header value.
+// seed combines the stored password hash and session revision. key is the header value.
 func DeriveSessionToken(seed, key string) string {
 	return deriveWith(pepper(), seed, key)
 }

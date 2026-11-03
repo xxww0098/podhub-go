@@ -48,8 +48,8 @@ const TAB_ID = crypto.randomUUID()
 type GrantView = {
   id: string
   actions: string[]
-  expiresAtMs?: number
-  revokedAtMs?: number
+  expires_at_ms?: number
+  revoked_at_ms?: number
 }
 
 type ClaimedCommand = {
@@ -63,7 +63,7 @@ type ClaimedCommand = {
 
 type Claimed = {
   commands: ClaimedCommand[]
-  leaseSeconds: number
+  lease_seconds: number
 }
 
 type RuntimeHandle = {
@@ -72,8 +72,8 @@ type RuntimeHandle = {
 }
 
 function isLiveGrant(grant: GrantView): boolean {
-  if (grant.revokedAtMs) return false
-  if (grant.expiresAtMs && grant.expiresAtMs <= Date.now()) return false
+  if (grant.revoked_at_ms) return false
+  if (grant.expires_at_ms && grant.expires_at_ms <= Date.now()) return false
   return true
 }
 
@@ -89,14 +89,14 @@ async function listGrants(): Promise<GrantView[]> {
 }
 
 async function registerRuntime(grantId: string, label: string): Promise<RuntimeHandle> {
-  const data = await request<{ runtime: { id: string }, claimLeaseSeconds: number }>(
+  const data = await request<{ runtime: { id: string }, claim_lease_seconds: number }>(
     "POST",
     route("automationRuntimes"),
     { grantId, label, rendererContract: RENDERER_CONTRACT_VERSION },
     {},
     10_000,
   )
-  return { runtimeId: data.runtime.id, leaseSeconds: data.claimLeaseSeconds }
+  return { runtimeId: data.runtime.id, leaseSeconds: data.claim_lease_seconds }
 }
 
 async function heartbeat(runtimeId: string): Promise<void> {

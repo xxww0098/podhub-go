@@ -1,3 +1,4 @@
+import { route } from "@/api/routes"
 import type { WorkflowProductLifecycle } from "@/bindings/commands"
 import { listingProjection } from "../../../tests/listing-row-fixture"
 import { device } from "./prepare/execution-context"
@@ -34,7 +35,7 @@ export function installFetch(reply: (call: Call) => unknown): { calls: Call[], r
     // has to handle, and it belongs in the same recorded transcript.
     const replied = reply(call)
     if (replied instanceof Response) return replied
-    return new Response(JSON.stringify({ data: replied }), {
+    return new Response(JSON.stringify(call.method === "GET" && call.url.startsWith(`${route("catalogSchema")}?`) ? replied : { data: replied }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     })
@@ -144,23 +145,22 @@ export async function publishRepairFixture() {
   const { patchListingWorkbench } = await import("./workbench/listing-workbench-store")
   resetSendState()
   const account = {
-    session: { authenticated: true }, owned_count: 1, owned_limit: 1,
-    accounts: [{ active: true, uuid: "test-actor", email: "actor@example.test", name: "Test" }],
+    session: { authenticated: true, uuid: "test-actor", email: "actor@example.test" }, owned_count: 1, owned_limit: 1,
     active_workspace: { id: 1, uuid: "test-workspace", is_owned: true, name: "Test", plan: "test", role: "owner" }, workspaces: [],
   }
   rememberAccountOverview(account)
   const store: import("@/bindings/commands").OzonStoreView = {
     id: "store", cloud_store_uuid: "store", active: true, label: "Test", configured: true, cloud_status: "active",
-    can_manage: true, can_edit_credential: false, assignee_key_manage: false, client_id: "", advertising_client_id: "",
+    can_manage: true, can_edit_credential: false, client_id: "", advertising_client_id: "",
     advertising_configured: false, needs_reentry: false, ref_id: "", secret_status: "present", updated_at_ms: 1, watermark_name: "",
-    permissions: { manage_store: true, manage_key: false, manage_key_grants: false, delete_store: false, edit_name: false, manage_tags: false, test_key: false },
+    permissions: { manage_store: true, manage_key: false, delete_store: false, edit_name: false, manage_tags: false, test_key: false },
   }
   rememberStoreRoster({ stores: [store] }, 1)
   const schema = { ...goldenSchema, fields: [...goldenSchema.fields, {
     ...goldenSchema.fields.find((field) => field.key === "name")!, key: "native_search_tags", attribute_id: "23171", complex_id: null, required: false,
   }] }
   const warm = serve(() => ({ description_category_id: schema.description_category_id, type_id: schema.type_id,
-    language: "default", fetched_at_ms: 1, fields: [], nativeMaterial: { snapshot: schema, searchMaterials: [] } }))
+    language: "default", fetched_at_ms: 1, fields: [], native_material: { snapshot: schema, search_materials: [] } }))
   try { await readCategorySchema({ descriptionCategoryId: schema.description_category_id, typeId: schema.type_id, language: "default" }) }
   finally { warm.restore() }
   const payload = structuredClone(golden.row)

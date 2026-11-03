@@ -52,7 +52,7 @@ func TestAlipayFrozenVector(t *testing.T) {
 	if err := verifyRSA(pub, []byte(frozenAlipay), sig); err != nil {
 		t.Fatal(err)
 	}
-	cents, err := yuanToCents("699.00")
+	cents, err := PaymentCents("699.00")
 	if err != nil || cents != 69900 {
 		t.Fatalf("cents %d %v", cents, err)
 	}

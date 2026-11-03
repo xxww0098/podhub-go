@@ -1,9 +1,6 @@
 // Package transit composes and reads the transit bucket's batch keys.
 //
-// The key shape is a three-way protocol: the browser wasm composes it, the
-// SQL media recognition reads it, and the send path re-validates it. This
-// package is the Go side of that same string, so it calls objectkey rather
-// than re-implementing the rule.
+// The server composes keys and the send and cleanup paths validate them.
 package transit
 
 import (
@@ -11,7 +8,7 @@ import (
 	"github.com/xxww0098/podhub-go/internal/media/domain/objectkey"
 )
 
-// UploadKey composes {prefix}uploads/{UTC-date}/{batch}/images/teams/...
+// UploadKey composes {prefix}uploads/{UTC-date}/{batch}/{digest}.{extension}.
 // Batch is "{unixMillis}.{uuid}". Only jpg and png are rendered.
 func UploadKey(prefix, workspace, digest, extension, batch string) (string, error) {
 	ext, err := contract.NormalizeExtension(extension)

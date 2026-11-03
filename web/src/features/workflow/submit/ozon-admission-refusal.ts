@@ -51,7 +51,11 @@ export function ozonAdmissionFailure(reason: unknown, storeId: string, rowIds: r
   const serverCode = typeof refusal?.serverCode === "string" ? refusal.serverCode : undefined
   const traceId = typeof refusal?.traceId === "string" ? refusal.traceId : undefined
   const admission = draftAdmissionRefusal(reason)
-  const unconfirmed = status === undefined || status >= 500 || (status === 409 && !admission && serverCode !== "schema_sync_required")
+  // Cloud refuses a currency mismatch before creating an intent, so it is a
+  // definite block, not an unknown write: never tell the operator to reconcile
+  // with Ozon for a request that never left.
+  const currencyMismatch = serverCode === "currency_mismatch"
+  const unconfirmed = status === undefined || status >= 500 || (status === 409 && !admission && serverCode !== "schema_sync_required" && !currencyMismatch)
     || refusal?.code === "cloud_bad_response" || refusal?.code === "cloud_unavailable"
   const code = status === 429 ? "cloud_rate_limited" : typeof refusal?.code === "string" ? refusal.code : "cloud_request_failed"
   return {
@@ -60,10 +64,12 @@ export function ozonAdmissionFailure(reason: unknown, storeId: string, rowIds: r
     traceId,
     message: admission === "offer_busy"
       ? offerBusySolution.reason
-      : unconfirmed ? "本次提交结果未确认，请核对原店铺的发送记录" : "云端拒绝了本次请求，本块未获受理；请核对请求范围和提交条件",
+      : currencyMismatch ? (refusal?.message?.trim() || "商品币种与店铺合同币种不一致，本批未发送")
+        : unconfirmed ? "本次提交结果未确认，请核对原店铺的发送记录" : "云端拒绝了本次请求，本块未获受理；请核对请求范围和提交条件",
     remediation: admission === "offer_busy" ? offerBusySolution.steps.join("；")
-      : unconfirmed ? "核对该店铺原 Intent 和平台记录；结果未确认时不要重复发送。"
-        : "检查所选店铺和商品的提交条件并重新校验；仍被拒绝时携带请求标识联系管理员。",
+      : currencyMismatch ? "在店铺列表测试连接刷新合同币种，或修改商品币种后重试。"
+        : unconfirmed ? "核对该店铺原 Intent 和平台记录；结果未确认时不要重复发送。"
+          : "检查所选店铺和商品的提交条件并重新校验；仍被拒绝时携带请求标识联系管理员。",
     requestCause: { kind: unconfirmed ? "result_unconfirmed" : "request_refusal", scope: "request", storeId, rowIds: [...rowIds], status, serverCode, traceId, admission },
   }
 }

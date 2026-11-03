@@ -3,21 +3,16 @@ package api
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
-	"strconv"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5"
-
+	"github.com/xxww0098/podhub-go/internal/admin/domain"
 	"github.com/xxww0098/podhub-go/internal/admin/service"
-	"github.com/xxww0098/podhub-go/internal/identity"
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
+	rules "github.com/xxww0098/podhub-go/internal/listing/rules"
 	"github.com/xxww0098/podhub-go/internal/platform/config"
 	"github.com/xxww0098/podhub-go/internal/platform/httpx/jsonwire"
 )
@@ -29,17 +24,15 @@ const (
 	confirmDeadline        = 3900 * time.Second
 )
 
-// adminHost serves the ported admin B routes. Standing is nil in production
-// and runs the session SQL; tests can replace it.
+// adminHost serves the ported admin B routes.
 type adminHost struct {
-	access   access.Resolver
-	deps     service.Deps
-	standing func(ctx context.Context, hash string, userID int64) (bool, bool, error)
+	access access.Resolver
+	deps   service.Deps
 }
 
 // AdminPorted returns the handlers that replace 501 for listing packages,
 // prompts, videos, and media admin. Keys are "METHOD path".
-func AdminPorted(s *Server) map[string]http.HandlerFunc {
+func AdminPorted(s *Server, accounts []domain.CloudAccount) map[string]http.HandlerFunc {
 	if s == nil {
 		return nil
 	}
@@ -48,7 +41,7 @@ func AdminPorted(s *Server) map[string]http.HandlerFunc {
 		access: s.Access,
 		deps: service.Deps{
 			Pool: s.Pool, Now: now, Holder: "axum", Instance: writerInstance(),
-			Key: config.Load().IntegrationConfigKey, Engine: s.Engine,
+			Accounts: accounts, Engine: s.Engine, BannedTags: rules.EnabledBannedTags,
 			Origin: originCaller{}, Tickets: adminTickets{},
 		},
 	}
@@ -100,65 +93,11 @@ func (h *adminHost) admit(w http.ResponseWriter, r *http.Request) (service.Actor
 		writeFail(w, service.NewFail(http.StatusUnauthorized, "AUTH_INVALID", "未登录"))
 		return service.Actor{}, false
 	}
-	cred := identity.SessionCredentials(r.Header)
-	candidates := cred.Candidates()
-	enrolled, elevated := false, false
-	if len(candidates) > 0 {
-		found := false
-		for _, token := range candidates {
-			var rowErr error
-			enrolled, elevated, rowErr = h.stand(r.Context(), sessionHash(token), principal.UserID)
-			if errors.Is(rowErr, pgx.ErrNoRows) {
-				continue
-			}
-			if rowErr != nil {
-				writeFail(w, asFail(service.MapDatabase(rowErr, http.StatusInternalServerError, "INTERNAL", "服务暂不可用")))
-				return service.Actor{}, false
-			}
-			found = true
-			break
-		}
-		if !found {
-			writeFail(w, service.NewFail(http.StatusInternalServerError, "INTERNAL", "服务暂不可用"))
-			return service.Actor{}, false
-		}
-	}
 	if !access.IsSuperAdmin(principal.PlatformRole) {
 		writeFail(w, service.NewFail(http.StatusForbidden, "FORBIDDEN", "需要超级管理员权限"))
 		return service.Actor{}, false
 	}
-	if len(candidates) > 0 {
-		if !enrolled {
-			writeFail(w, service.NewFail(http.StatusForbidden, "FORBIDDEN", "请先绑定验证器"))
-			return service.Actor{}, false
-		}
-		if !elevated {
-			writeFail(w, service.NewFail(http.StatusForbidden, "FORBIDDEN", "管理操作需要重新验证"))
-			return service.Actor{}, false
-		}
-	}
 	return service.Actor{UserID: principal.UserID, OrgID: principal.OrgID}, true
-}
-
-func (h *adminHost) stand(ctx context.Context, hash string, userID int64) (bool, bool, error) {
-	if h.standing != nil {
-		return h.standing(ctx, hash, userID)
-	}
-	if h.deps.Pool == nil {
-		return false, false, errors.New("no pool")
-	}
-	var enrolled, elevated bool
-	err := h.deps.Pool.QueryRow(ctx, `SELECT (t.confirmed_at IS NOT NULL) AS enrolled,
-       COALESCE(s.admin_step_up_until > clock_timestamp(), false) AS elevated
-FROM account_sessions s
-LEFT JOIN account_admin_totp t ON t.user_id = s.user_id
-WHERE s.token_hash = $1 AND s.user_id = $2 AND s.expires_at > clock_timestamp()`, hash, userID).Scan(&enrolled, &elevated)
-	return enrolled, elevated, err
-}
-
-func sessionHash(token string) string {
-	sum := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(sum[:])
 }
 
 func (h *adminHost) ctx(w http.ResponseWriter, r *http.Request, limit time.Duration) (context.Context, context.CancelFunc, bool) {
@@ -291,15 +230,6 @@ func tagsField(fields map[string]json.RawMessage) ([]string, bool) {
 		return nil, false
 	}
 	return tags, true
-}
-
-func pathID(r *http.Request) (int64, bool) {
-	raw := chi.URLParam(r, "id")
-	if raw == "" || raw[0] == '+' {
-		return 0, false
-	}
-	n, err := strconv.ParseInt(raw, 10, 64)
-	return n, err == nil
 }
 
 func badRequest(w http.ResponseWriter) {

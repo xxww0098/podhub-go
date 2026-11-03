@@ -1,7 +1,5 @@
 import type { ComponentType, ReactNode } from "react"
 import {
-  ChevronLeft,
-  ChevronRight,
   RefreshCw,
   Search,
   X,
@@ -56,10 +54,10 @@ export function PlatformAdminSurface({
 }) {
   return (
     <section className={cn("flex min-h-0 min-w-0 flex-1 flex-col", className)}>
-      {summary ? (
-        <PlatformAdminSummary className="pb-3">{summary}</PlatformAdminSummary>
-      ) : null}
-      {toolbar ? <PageToolbar primary={toolbar} className="pb-3" /> : null}
+      {summary || toolbar ? <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 pb-2">
+        {summary ? <PlatformAdminSummary className="min-w-0 flex-1 basis-full sm:basis-auto">{summary}</PlatformAdminSummary> : null}
+        {toolbar ? <PageToolbar primary={toolbar} className="min-w-0 flex-1 basis-80" /> : null}
+      </div> : null}
       <div
         className={cn(
           "min-h-0 min-w-0 flex-1 border-t border-border",
@@ -83,41 +81,12 @@ export function PlatformAdminSummary({
   return (
     <div
       className={cn(
-        "flex flex-wrap items-center gap-x-4 gap-y-1 text-compact text-muted-foreground",
+        "flex flex-wrap items-center gap-x-3 gap-y-1 text-compact text-muted-foreground",
         className,
       )}
     >
       {children}
     </div>
-  )
-}
-
-/**
- * One fact in the summary strip. The label stays quiet so a row of them reads
- * as a tally, and the value carries the weight — never the other way round.
- */
-export function PlatformAdminFact({
-  label,
-  value,
-  mono = false,
-}: {
-  label: string
-  value: ReactNode
-  /** Counts, money and identifiers get the tabular face. */
-  mono?: boolean
-}) {
-  return (
-    <span className="flex min-w-0 items-baseline gap-1.5">
-      <span className="shrink-0 text-faint-foreground">{label}</span>
-      <span
-        className={cn(
-          "min-w-0 truncate font-medium text-foreground",
-          mono && "font-mono tabular-nums",
-        )}
-      >
-        {value}
-      </span>
-    </span>
   )
 }
 
@@ -150,62 +119,6 @@ export function PlatformAdminTab({
     >
       {children}
     </button>
-  )
-}
-
-/**
- * One single-select status filter for a pane's toolbar. A recessed track with
- * a raised pill on the current choice, because only one of these can ever be
- * on — five flat toggles would claim otherwise.
- */
-export function PlatformAdminFilter<T extends string>({
-  label,
-  value,
-  options,
-  onValueChange,
-  className,
-}: {
-  label: string
-  value: T
-  options: readonly { id: T; label: string; count: number }[]
-  onValueChange: (id: T) => void
-  className?: string
-}) {
-  return (
-    <div
-      role="group"
-      aria-label={label}
-      className={cn(
-        "inline-flex w-fit shrink-0 items-center gap-0.5 rounded-lg border border-border bg-muted/50 p-0.5",
-        className,
-      )}
-    >
-      {options.map((option) => {
-        const active = value === option.id
-        return (
-          <Button
-            key={option.id}
-            type="button"
-            variant="ghost"
-            size="sm"
-            aria-pressed={active}
-            aria-label={`筛选${option.label}，${option.count} 个`}
-            className={cn(
-              "h-7 cursor-pointer gap-1.5 rounded-md px-2 text-compact",
-              active
-                ? "bg-card text-foreground hover:bg-card"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-            onClick={() => onValueChange(option.id)}
-          >
-            {option.label}
-            <span className="font-mono tabular-nums opacity-65">
-              {option.count}
-            </span>
-          </Button>
-        )
-      })}
-    </div>
   )
 }
 
@@ -244,7 +157,7 @@ export function PlatformAdminSection({
         {action ? <div className="flex items-center gap-2">{action}</div> : null}
       </div>
       {description ? (
-        <p className="pb-3 text-meta leading-relaxed text-muted-foreground">{description}</p>
+        <p className="pb-2 text-meta text-muted-foreground">{description}</p>
       ) : null}
       {children}
     </section>
@@ -279,7 +192,7 @@ export function PlatformAdminEmpty({
   return (
     <Empty
       role={busy ? "status" : undefined}
-      className={cn("min-h-64 rounded-none border-0", className)}
+      className={cn("min-h-32 rounded-none border-0", className)}
     >
       <EmptyHeader>
         <EmptyMedia variant="icon">
@@ -315,7 +228,7 @@ export function PlatformAdminSearch({
   className?: string
 }) {
   return (
-    <InputGroup className={cn("h-8 min-w-48 flex-1 sm:max-w-sm", className)}>
+    <InputGroup className={cn("h-9 min-w-48 flex-1 sm:max-w-sm", className)}>
       <InputGroupAddon>
         <InputGroupText>
           <Search className="size-3.5" />
@@ -385,65 +298,5 @@ export function PlatformAdminRefresh({
       </TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>
     </Tooltip>
-  )
-}
-
-/**
- * The ledger's closing band: a row count on the left, previous/next on the
- * right. Every paged pane ends on this same line instead of re-inventing it.
- */
-export function PlatformAdminPagination({
-  page,
-  pageCount,
-  total,
-  pageSize,
-  busy = false,
-  onPage,
-  className,
-}: {
-  page: number
-  pageCount: number
-  total: number
-  /** Rendered as "每页 N 条"; omit for client-paged lists. */
-  pageSize?: number
-  busy?: boolean
-  onPage: (page: number) => void
-  className?: string
-}) {
-  return (
-    <div
-      className={cn(
-        "flex items-center justify-between border-t border-border px-2.5 py-2.5",
-        className,
-      )}
-    >
-      <span className="text-compact text-muted-foreground">
-        共 {total.toLocaleString("zh-CN")} 条
-        {pageSize ? ` · 每页 ${pageSize} 条` : ""}
-      </span>
-      <div className="flex items-center gap-2">
-        <Button
-          variant="outline"
-          size="xs"
-          disabled={busy || page <= 1}
-          onClick={() => onPage(page - 1)}
-        >
-          <ChevronLeft className="size-3.5" />
-          上一页
-        </Button>
-        <span className="min-w-10 text-center font-mono text-compact tabular-nums text-muted-foreground">
-          {page} / {pageCount}
-        </span>
-        <Button
-          variant="outline"
-          size="xs"
-          disabled={busy || page >= pageCount}
-          onClick={() => onPage(page + 1)}
-        >
-          下一页
-          <ChevronRight className="size-3.5" />
-        </Button>
-      </div>
-    </div>
   )
 }

@@ -54,24 +54,8 @@ func TestPlanMembersEdges(t *testing.T) {
 	})
 }
 
-func TestPlanStoresOrdersLeastRecentlyUsedSuspend(t *testing.T) {
-	rows := []StoreRow{
-		{ID: 1, UUID: "a", CreateOrder: 1, LastUsed: 10},
-		{ID: 2, UUID: "b", CreateOrder: 2, LastUsed: 1},
-		{ID: 3, UUID: "c", CreateOrder: 3, LastUsed: 1, ManualDisabled: true, QuotaSuspended: true},
-	}
-	plan := PlanStores(1, rows)
-	if plan.Used != 2 || plan.Suspended != 1 || len(plan.Suspend) != 1 || plan.Suspend[0].UUID != "b" {
-		t.Fatalf("%+v", plan)
-	}
-	if StoreQuotaFor("lite", 9) != 1 || StoreQuotaFor("pro", 3) != 15 || StoreQuotaFor("pro", 100) != 100 {
-		t.Fatal("quota")
-	}
-	if !SeatRange(1) || SeatRange(0) || SeatRange(201) {
+func TestSeatRange(t *testing.T) {
+	if !SeatRange(1) || !SeatRange(10) || SeatRange(0) || SeatRange(11) {
 		t.Fatal("range")
-	}
-	ov := int64(4)
-	if EffectiveSeats(0, &ov) != 4 || EffectiveSeats(0, nil) != 1 || EffectiveTier(nil) != "lite" || EffectiveTier([]string{"pro", "ultra", "max"}) != "ultra" {
-		t.Fatal("effective")
 	}
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { RefreshCw } from "lucide-react"
+import { Loader2Icon, RefreshCw } from "lucide-react"
 
 import { opsHttp } from "@/bindings/http-ops"
 import {
@@ -15,7 +15,7 @@ import {
 } from "@/features/ops/ops-store-roster"
 import { PageToolbar } from "@/components/page-toolbar"
 import { useScreenActive } from "@/components/screen-pane"
-import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import {
   Tabs,
   TabsContent,
@@ -23,7 +23,7 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs"
-import { Spinner } from "@/components/ui/spinner"
+import { cn } from "@/lib/utils"
 import { errorMessage } from "@/lib/error-message"
 import { clearLive, notifyLive } from "@/lib/notify"
 import { StoreGate } from "@/features/stores/store-gate"
@@ -215,28 +215,39 @@ export function VoiceScreen({ workspaceId, onOpenStores }: VoiceScreenProps) {
     reviews.loading === "replace" || questions.loading === "replace"
 
   return (
-    <div className="flex min-h-0 w-full flex-1 flex-col gap-4 overflow-hidden scroll-pt-14">
+    <Tabs defaultValue="reviews" className="min-h-0 w-full flex-1 overflow-hidden scroll-pt-14">
       <PageToolbar
         primary={
-          <OpsStoreSelect
-            value={storeUid}
-            stores={stores}
-            onChange={(next) => {
-              selectStore(next)
-              void refresh(next)
-            }}
-          />
+          <>
+            <OpsStoreSelect
+              value={storeUid}
+              stores={stores}
+              onChange={(next) => {
+                selectStore(next)
+                void refresh(next)
+              }}
+            />
+            <TabsList aria-label="口碑队列">
+              <TabsIndicator />
+              <TabsTrigger value="reviews" className="h-7 px-2.5">
+                评价
+              </TabsTrigger>
+              <TabsTrigger value="questions" className="h-7 px-2.5">
+                提问
+              </TabsTrigger>
+            </TabsList>
+          </>
         }
         secondary={
-          <Button
-            size="sm"
+          <IconButton
+            icon={refreshing ? Loader2Icon : RefreshCw}
+            label="刷新"
             variant="outline"
+            size="icon-sm"
             disabled={!storeUid.trim() || busy}
+            className={cn(refreshing && "[&_svg]:animate-spin")}
             onClick={() => void refresh(storeUid)}
-          >
-            {refreshing ? <Spinner /> : <RefreshCw />}
-            {refreshing ? "正在读取…" : "刷新"}
-          </Button>
+          />
         }
       />
 
@@ -249,20 +260,8 @@ export function VoiceScreen({ workspaceId, onOpenStores }: VoiceScreenProps) {
         onRetry={retryStores}
         onOpenStores={onOpenStores}
       >
-        <Tabs defaultValue="reviews" className="gap-3">
-          <p className="text-compact text-muted-foreground">
-            会话请到 消息。口碑只处理评价和提问。
-          </p>
-          <TabsList aria-label="口碑队列">
-            <TabsIndicator />
-            <TabsTrigger value="reviews" className="h-7 px-2.5">
-              评价
-            </TabsTrigger>
-            <TabsTrigger value="questions" className="h-7 px-2.5">
-              提问
-            </TabsTrigger>
-          </TabsList>
-          <TabsContent value="reviews">
+        <>
+          <TabsContent value="reviews" className="min-h-0">
             <ReviewsSection
               {...reviews}
               onRetry={() => {
@@ -275,7 +274,7 @@ export function VoiceScreen({ workspaceId, onOpenStores }: VoiceScreenProps) {
               }}
             />
           </TabsContent>
-          <TabsContent value="questions">
+          <TabsContent value="questions" className="min-h-0">
             <QuestionsSection
               {...questions}
               onRetry={() => {
@@ -288,8 +287,8 @@ export function VoiceScreen({ workspaceId, onOpenStores }: VoiceScreenProps) {
               }}
             />
           </TabsContent>
-        </Tabs>
+        </>
       </StoreGate>
-    </div>
+    </Tabs>
   )
 }

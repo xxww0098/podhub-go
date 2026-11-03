@@ -215,7 +215,7 @@ func TestDispatchAssetsOrgZero(t *testing.T) {
 	memberA := int64(880703)
 	orgA := seedOrg(t, ctx, pool, sellerA, "dda-a")
 	orgB := seedOrg(t, ctx, pool, sellerB, "dda-b")
-	seedUser(t, ctx, pool, memberA, "dda-ma")
+	seedSupplierUser(t, ctx, pool, memberA, "dda-ma")
 	sourceA, sourceB := "src_dda_a", "src_dda_b"
 	seedSource(t, ctx, pool, sourceA, "dda-a")
 	seedSource(t, ctx, pool, sourceB, "dda-b")
@@ -241,7 +241,7 @@ func TestDispatchAssetsOrgZero(t *testing.T) {
 		err := tx.QueryRow(ctx, `
 			SELECT (SELECT count(*) FROM delegate_dispatch_assets),
 			       (SELECT count(*) FROM delegate_dispatches),
-			       (SELECT count(*) FROM sc_source_members)`).Scan(&assets, &dispatches, &members)
+			       (SELECT count(*) FROM sc_factory_members)`).Scan(&assets, &dispatches, &members)
 		return fmt.Sprintf("assets=%d dispatches=%d members=%d", assets, dispatches, members), err
 	}
 	oldTx, err := tenant.BeginApp(ctx, pool.Begin, 0)

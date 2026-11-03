@@ -43,6 +43,14 @@ func TestBoundaryIsFixedFourAMShanghai(t *testing.T) {
 	}
 }
 
+func TestClaimBoundaryUsesStoredSchedule(t *testing.T) {
+	want := time.Date(2026, 10, 16, 7, 30, 0, 0, time.UTC)
+	claim := &PG{claim: Claim{RunDay: time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC), BoundaryAt: want}}
+	if got := claim.Boundary(); !got.Equal(want) {
+		t.Fatalf("claim boundary = %s, want %s", got, want)
+	}
+}
+
 func TestNextCheckTopsTheMinute(t *testing.T) {
 	early := time.Date(2026, 10, 15, 19, 59, 59, 500_000_000, time.UTC)
 	if NextCheck(early) != 500*time.Millisecond {
@@ -59,7 +67,7 @@ func TestGenerationChangesAtFourShanghai(t *testing.T) {
 	boundary := time.Date(2026, 10, 15, 20, 0, 0, 0, time.UTC)
 	key := func(issued time.Time) string {
 		ms := issued.UnixMilli()
-		return "root/uploads/" + issued.UTC().Format("2006-01-02") + "/" + itoa(ms) + "-550e8400-e29b-41d4-a716-446655440000/images/teams/550e8400-e29b-41d4-a716-446655440000/sha256/" + repeatA() + ".jpg"
+		return "root/uploads/" + issued.UTC().Format("2006-01-02") + "/" + itoa(ms) + "-550e8400-e29b-41d4-a716-446655440000/" + repeatA() + ".jpg"
 	}
 	if KeyCurrent(key(before), boundary) {
 		t.Fatal("before the boundary must be stale")

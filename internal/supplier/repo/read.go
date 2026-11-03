@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -11,19 +13,21 @@ import (
 	"github.com/xxww0098/podhub-go/internal/supplier/domain"
 )
 
-const memberSQL = `
-SELECT m.source_id, COALESCE(s.name, ''), COALESCE(s.country, ''), COALESCE(s.icon, '')
-FROM sc_source_members m
-JOIN sc_sources s ON s.source_id = m.source_id
-WHERE m.user_id = $1 AND m.status = 'active'
-ORDER BY m.source_id`
-
 func (r Repo) Me(ctx context.Context, userID int64) (contract.MeData, error) {
 	var out contract.MeData
 	err := r.withTx(ctx, 0, userID, func(tx pgx.Tx) error {
-		rows, err := r.loadMembers(ctx, tx, userID)
+		rows, err := loadFulfillerSources(ctx, tx)
 		if err != nil {
 			return err
+		}
+		if len(rows) == 0 {
+			var member bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM public.sc_factory_members WHERE user_id=$1 AND status='active')`, userID).Scan(&member); err != nil {
+				return mapDB(err)
+			}
+			if !member {
+				return fail(403, "forbidden", "账号不是有效的工厂成员")
+			}
 		}
 		out.Sources = rows
 		return nil
@@ -31,8 +35,8 @@ func (r Repo) Me(ctx context.Context, userID int64) (contract.MeData, error) {
 	return out, err
 }
 
-func (r Repo) loadMembers(ctx context.Context, tx pgx.Tx, userID int64) ([]contract.SourceCard, error) {
-	rows, err := tx.Query(ctx, memberSQL, userID)
+func loadFulfillerSources(ctx context.Context, tx pgx.Tx) ([]contract.SourceCard, error) {
+	rows, err := tx.Query(ctx, `SELECT source_id, name, country, icon FROM supplier_fulfiller_sources()`)
 	if err != nil {
 		return nil, mapDB(err)
 	}
@@ -48,97 +52,214 @@ func (r Repo) loadMembers(ctx context.Context, tx pgx.Tx, userID int64) ([]contr
 	if err := rows.Err(); err != nil {
 		return nil, mapDB(err)
 	}
-	if len(out) == 0 {
-		return nil, fail(403, "forbidden", "账号没有可用的厂家成员身份")
+	if out == nil {
+		out = []contract.SourceCard{}
 	}
 	return out, nil
 }
 
-func (r Repo) ListDispatches(ctx context.Context, userID int64, state string, cursor domain.Cursor) (contract.DispatchListData, error) {
+func authorizeWorkspace(ctx context.Context, tx pgx.Tx, sourceID string) error {
+	sources, err := loadFulfillerSources(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if len(sources) == 0 {
+		return fail(403, "forbidden", "账号没有可用的履约授权或历史派单")
+	}
+	for _, source := range sources {
+		if source.SourceID == sourceID {
+			return nil
+		}
+	}
+	return fail(404, "not_found", "工厂工作空间不存在")
+}
+
+const dispatchPageSize = 20
+
+func (r Repo) ListDispatches(ctx context.Context, userID int64, sourceID, view, search, status, reason string, cursor domain.Cursor, now time.Time) (contract.DispatchListData, error) {
 	var out contract.DispatchListData
 	err := r.withTx(ctx, 0, userID, func(tx pgx.Tx) error {
-		if _, err := r.loadMembers(ctx, tx, userID); err != nil {
+		if err := authorizeWorkspace(ctx, tx, sourceID); err != nil {
 			return err
 		}
-		raw := ""
-		if cursor.ID != "" {
-			var deadline *string
-			if !cursor.NoDeadline {
-				deadline = &cursor.Deadline
-			}
-			raw = domain.EncodeCursor(deadline, cursor.ID)
-		}
-		rows, err := tx.Query(ctx, listDispatchSQL, state, raw)
+		page, deadlines, err := queryDispatches(ctx, tx, sourceID, view, search, status, reason, cursor, now, dispatchPageSize+1)
 		if err != nil {
-			return mapDB(err)
-		}
-		defer rows.Close()
-		var page []contract.DispatchRow
-		var ids []string
-		for rows.Next() {
-			var row contract.DispatchRow
-			var lines []byte
-			var deadline *string
-			if err := rows.Scan(&row.DispatchID, &row.DispatchNo, &row.State, &row.PostingNumber, &deadline, &lines); err != nil {
-				return mapDB(err)
-			}
-			row.Deadline = deadline
-			row.Lines = parseListLines(lines)
-			row.PostingNumber = empty(row.PostingNumber)
-			page = append(page, row)
-			ids = append(ids, row.DispatchID)
-		}
-		if err := rows.Err(); err != nil {
-			return mapDB(err)
-		}
-		hasMore := len(page) > 100
-		if hasMore {
-			page = page[:100]
-			ids = ids[:100]
-		}
-		if err := attachPayouts(ctx, tx, page, ids, "读取"); err != nil {
 			return err
+		}
+		hasMore := len(page) > dispatchPageSize
+		if hasMore {
+			page = page[:dispatchPageSize]
 		}
 		out.Dispatches = page
-		if out.Dispatches == nil {
-			out.Dispatches = []contract.DispatchRow{}
-		}
 		out.HasMore = hasMore
 		if hasMore && len(page) > 0 {
 			last := page[len(page)-1]
-			out.Cursor = domain.EncodeCursor(last.Deadline, last.DispatchID)
+			var due *string
+			if deadlines[len(page)-1] != nil {
+				formatted := deadlines[len(page)-1].UTC().Format(time.RFC3339Nano)
+				due = &formatted
+			}
+			out.Cursor = domain.EncodeCursor(due, last.DispatchID)
 		}
 		return nil
 	})
 	return out, err
 }
 
-const listDispatchSQL = `
-SELECT d.dispatch_id::text, d.dispatch_no, d.state,
-       COALESCE(d.payload->>'posting_number', ''),
-       d.payload->'logistics'->>'shipment_date',
-       d.payload->'lines'
-FROM delegate_dispatches d
-WHERE ($1 = '' OR d.state = $1)
-  AND ($2 = ''
-       OR (
-            (d.payload->'logistics'->>'shipment_date' IS NULL),
-            COALESCE(d.payload->'logistics'->>'shipment_date', ''),
-            d.dispatch_id::text
-          ) > (
-            split_part($2, '|', 1) = '1',
-            split_part($2, '|', 2),
-            split_part($2, '|', 3)
-          ))
-ORDER BY (d.payload->'logistics'->>'shipment_date' IS NULL) ASC,
-         COALESCE(d.payload->'logistics'->>'shipment_date', '') ASC,
-         d.dispatch_id ASC
-LIMIT 101`
+func (r Repo) Dashboard(ctx context.Context, userID int64, sourceID string, now time.Time) (contract.DashboardData, error) {
+	var out contract.DashboardData
+	err := r.withTx(ctx, 0, userID, func(tx pgx.Tx) error {
+		if err := authorizeWorkspace(ctx, tx, sourceID); err != nil {
+			return err
+		}
+		rows, err := tx.Query(ctx, dashboardSQL, sourceID, now)
+		if err != nil {
+			return mapDB(err)
+		}
+		defer rows.Close()
+		out.UrgentOrders = []contract.DispatchRow{}
+		var ids []string
+		for rows.Next() {
+			var id, number, state, deadline *string
+			var posting string
+			var lines []byte
+			if err := rows.Scan(&out.Counts.Pending, &out.Counts.Producing, &out.Counts.Urgent, &out.Counts.Shipped,
+				&id, &number, &state, &posting, &deadline, &lines); err != nil {
+				return mapDB(err)
+			}
+			if id == nil {
+				continue
+			}
+			lineViews, thumbnail := parseListLines(*id, lines)
+			out.UrgentOrders = append(out.UrgentOrders, contract.DispatchRow{
+				DispatchID: *id, DispatchNo: *number, State: *state,
+				PostingNumber: posting, Deadline: deadline, Lines: lineViews, ThumbnailURL: thumbnail,
+			})
+			ids = append(ids, *id)
+		}
+		if err := rows.Err(); err != nil {
+			return mapDB(err)
+		}
+		rows.Close()
+		return attachPayouts(ctx, tx, out.UrgentOrders, ids, "读取")
+	})
+	return out, err
+}
+
+func queryDispatches(ctx context.Context, tx pgx.Tx, sourceID, view, search, status, reason string, cursor domain.Cursor, now time.Time, limit int) ([]contract.DispatchRow, []*time.Time, error) {
+	var cursorDue *time.Time
+	if cursor.ID != "" && !cursor.NoDeadline {
+		due, err := time.Parse(time.RFC3339Nano, cursor.Deadline)
+		if err != nil {
+			return nil, nil, fail(400, "validation", "分页游标无效")
+		}
+		cursorDue = &due
+	}
+	rows, err := tx.Query(ctx, listDispatchSQL, sourceID, now, view, search, status, reason, cursor.ID, cursor.NoDeadline, cursorDue, limit)
+	if err != nil {
+		return nil, nil, mapDB(err)
+	}
+	defer rows.Close()
+	page := []contract.DispatchRow{}
+	deadlines := []*time.Time{}
+	ids := []string{}
+	for rows.Next() {
+		var row contract.DispatchRow
+		var lines []byte
+		var due *time.Time
+		if err := rows.Scan(&row.DispatchID, &row.DispatchNo, &row.State, &row.PostingNumber, &row.Deadline, &lines, &due); err != nil {
+			return nil, nil, mapDB(err)
+		}
+		row.Lines, row.ThumbnailURL = parseListLines(row.DispatchID, lines)
+		page = append(page, row)
+		deadlines = append(deadlines, due)
+		ids = append(ids, row.DispatchID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, mapDB(err)
+	}
+	rows.Close()
+	if len(page) > dispatchPageSize {
+		ids = ids[:dispatchPageSize]
+	}
+	if err := attachPayouts(ctx, tx, page, ids, "读取"); err != nil {
+		return nil, nil, err
+	}
+	return page, deadlines, nil
+}
+
+// Only valid ISO dates are cast; upstream payloads can contain malformed dates.
+const dispatchBaseSQL = `
+WITH source_rows AS (
+  SELECT d.dispatch_id, d.dispatch_no, d.state, d.payload, d.nudge_count,
+         d.payload->'logistics'->>'shipment_date' AS deadline
+  FROM delegate_dispatches d
+  WHERE d.source_id = $1 AND d.state IN ('dispatched', 'accepted', 'shipped')
+),
+timed AS (
+  SELECT *,
+    CASE
+      WHEN deadline ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+           AND pg_input_is_valid(deadline, 'date')
+        THEN (deadline || 'T23:59:59Z')::timestamptz
+      WHEN deadline ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$'
+           AND pg_input_is_valid(deadline, 'timestamp with time zone')
+        THEN deadline::timestamptz
+      ELSE NULL
+    END AS due_at
+  FROM source_rows
+),
+projected AS (
+  SELECT *, state IN ('dispatched', 'accepted')
+            AND (nudge_count > 0 OR due_at <= $2::timestamptz + interval '12 hours') AS urgent
+  FROM timed
+)
+`
+
+const dashboardSQL = dispatchBaseSQL + `,
+totals AS (
+  SELECT count(*) FILTER (WHERE state = 'dispatched') AS pending,
+         count(*) FILTER (WHERE state = 'accepted') AS producing,
+         count(*) FILTER (WHERE urgent) AS urgent_count,
+         count(*) FILTER (WHERE state = 'shipped') AS shipped
+  FROM projected
+),
+top_urgent AS (
+  SELECT * FROM projected WHERE urgent ORDER BY due_at ASC NULLS LAST, dispatch_id ASC LIMIT 3
+)
+SELECT totals.pending, totals.producing, totals.urgent_count, totals.shipped,
+       u.dispatch_id::text, u.dispatch_no, u.state, COALESCE(u.payload->>'posting_number', ''),
+       u.deadline, u.payload->'lines'
+FROM totals LEFT JOIN top_urgent u ON TRUE
+ORDER BY u.due_at ASC NULLS LAST, u.dispatch_id ASC`
+
+const listDispatchSQL = dispatchBaseSQL + `
+SELECT dispatch_id::text, dispatch_no, state, COALESCE(payload->>'posting_number', ''),
+       deadline, payload->'lines', due_at
+FROM projected
+WHERE (($3 = 'pending' AND state = 'dispatched')
+    OR ($3 = 'producing' AND state = 'accepted')
+    OR ($3 = 'urgent' AND urgent)
+    OR ($3 = 'shipped' AND state = 'shipped'))
+  AND ($4 = '' OR strpos(lower(dispatch_no), lower($4)) > 0
+       OR strpos(lower(COALESCE(payload->>'posting_number', '')), lower($4)) > 0
+       OR EXISTS (
+         SELECT 1 FROM jsonb_array_elements(
+           CASE WHEN jsonb_typeof(payload->'lines') = 'array' THEN payload->'lines' ELSE '[]'::jsonb END
+         ) AS line WHERE strpos(lower(COALESCE(line->>'name', '')), lower($4)) > 0
+       ))
+  AND ($5 = '' OR state = $5)
+  AND ($6 = '' OR ($6 = 'nudge' AND nudge_count > 0)
+       OR ($6 = 'deadline' AND due_at <= $2::timestamptz + interval '12 hours'))
+  AND ($7::text = '' OR (due_at IS NULL, COALESCE(due_at, 'infinity'::timestamptz), dispatch_id) >
+      ($8::boolean, COALESCE($9::timestamptz, 'infinity'::timestamptz), NULLIF($7, '')::uuid))
+ORDER BY due_at ASC NULLS LAST, dispatch_id ASC
+LIMIT $10`
 
 func (r Repo) GetDispatch(ctx context.Context, userID int64, dispatchID string) (contract.DispatchDetail, error) {
 	var out contract.DispatchDetail
 	err := r.withTx(ctx, 0, userID, func(tx pgx.Tx) error {
-		if _, err := r.loadMembers(ctx, tx, userID); err != nil {
+		if _, err := loadFulfillerSources(ctx, tx); err != nil {
 			return err
 		}
 		var payload, receipt []byte
@@ -168,23 +289,43 @@ func (r Repo) GetDispatch(ctx context.Context, userID int64, dispatchID string) 
 	return out, err
 }
 
-func empty(s string) string { return s }
-
-func parseListLines(raw []byte) []contract.DispatchLine {
+func parseListLines(dispatchID string, raw []byte) ([]contract.DispatchLine, *string) {
 	if len(raw) == 0 || string(raw) == "null" {
-		return []contract.DispatchLine{}
+		return []contract.DispatchLine{}, nil
 	}
 	var rows []map[string]any
 	if err := json.Unmarshal(raw, &rows); err != nil {
-		return []contract.DispatchLine{}
+		return []contract.DispatchLine{}, nil
 	}
 	out := make([]contract.DispatchLine, 0, len(rows))
+	var thumbnail *string
 	for _, row := range rows {
 		out = append(out, contract.DispatchLine{
 			OfferID: asString(row["offer_id"]), Name: asString(row["name"]), Quantity: asInt32(row["quantity"]),
 		})
+		if thumbnail != nil {
+			continue
+		}
+		assets, _ := row["assets"].([]any)
+		for _, item := range assets {
+			asset, _ := item.(map[string]any)
+			mime, id, key := asString(asset["mime"]), asString(asset["asset_id"]), asString(asset["object_key"])
+			if mime != "image/jpeg" && mime != "image/png" && mime != "image/webp" {
+				continue
+			}
+			canonical, err := domain.ParseUUID(id)
+			if err != nil || canonical != id || strings.TrimSpace(key) == "" {
+				continue
+			}
+			if _, ok := asset["bytes"].(float64); !ok && asset["bytes"] != nil {
+				continue
+			}
+			url := "/api/supplier/dispatches/" + dispatchID + "/assets/" + id
+			thumbnail = &url
+			break
+		}
 	}
-	return out
+	return out, thumbnail
 }
 
 func asString(v any) string {
@@ -364,30 +505,9 @@ SELECT d.dispatch_id::text,
        d.nudged_at_ms,
        s.amount_cents,
        s.state,
-       COALESCE((
-           SELECT SUM(GREATEST(COALESCE(l.quantity, 1), 1) * priced.unit_cents)
-           FROM jsonb_to_recordset(COALESCE(d.payload->'lines', '[]'::jsonb))
-                AS l(offer_id text, quantity int)
-           JOIN LATERAL (
-               SELECT COALESCE(o.cost_cents, 0) + COALESCE(o.shipping_cost_cents, 0) AS unit_cents
-               FROM sc_skus k
-               JOIN sc_source_offers o ON o.sku_id = k.sku_id AND o.source_id = d.source_id
-               WHERE k.platform_code = l.offer_id
-               LIMIT 1
-           ) priced ON priced.unit_cents > 0
-       ), 0)::bigint,
-       (
-           SELECT COUNT(*)
-           FROM jsonb_to_recordset(COALESCE(d.payload->'lines', '[]'::jsonb))
-                AS l(offer_id text, quantity int)
-           WHERE NOT EXISTS (
-               SELECT 1
-               FROM sc_skus k
-               JOIN sc_source_offers o ON o.sku_id = k.sku_id AND o.source_id = d.source_id
-               WHERE k.platform_code = l.offer_id
-                 AND COALESCE(o.cost_cents, 0) + COALESCE(o.shipping_cost_cents, 0) > 0
-           )
-       )::bigint
+       q.total_cents,
+       q.missing_count::bigint
 FROM delegate_dispatches d
 LEFT JOIN delegate_settlements s ON s.dispatch_id = d.dispatch_id
+CROSS JOIN LATERAL supplier_dispatch_quote(d.dispatch_id) q
 WHERE d.dispatch_id = ANY($1::uuid[])`

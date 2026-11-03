@@ -1,7 +1,6 @@
 package contract
 
 import (
-	"crypto/sha256"
 	"encoding/hex"
 	"strings"
 )
@@ -75,18 +74,21 @@ func ObjectKey(prefix string, purpose Purpose, digest string, ext Extension) (st
 	if !allExtensions[ext] {
 		return "", ErrExtension
 	}
+	if purpose.Bucket == RolePrivate && ext == ExtPSD {
+		return "", ErrExtension
+	}
 	digest = strings.ToLower(strings.TrimSpace(digest))
 	if !isDigest(digest) {
 		return "", ErrKey
 	}
 	switch purpose.Kind {
-	case PurposeOrgFile:
-		return normalized + "orgs/" + purpose.ID + "/files/" + digest + "." + string(ext), nil
-	case PurposeOrgTemplate:
-		if ext != ExtPSD {
+	case PurposeListingImage:
+		if ext != ExtJPG {
 			return "", ErrExtension
 		}
-		return normalized + "orgs/" + purpose.ID + "/templates/" + digest + "." + string(ext), nil
+		return normalized + "orgs/" + purpose.ID + "/images/" + digest + ".jpg", nil
+	case PurposeOrgFile:
+		return normalized + "orgs/" + purpose.ID + "/files/" + digest + "." + string(ext), nil
 	case PurposeDelegateBinding:
 		return normalized + "orgs/" + itoa(purpose.OrgID) + "/originals/" + purpose.ID + "/" + digest + "." + string(ext), nil
 	case PurposeSource:
@@ -99,59 +101,6 @@ func ObjectKey(prefix string, purpose Purpose, digest string, ext Extension) (st
 	default:
 		return "", ErrPurpose
 	}
-}
-
-// IsKey reports whether a key matches the role's path shape. It is the check
-// a proxy or a management screen runs before touching an object.
-func IsKey(role Role, key string) bool {
-	parts := strings.Split(key, "/")
-	for _, part := range parts {
-		if part == "" || part == "." || part == ".." {
-			return false
-		}
-	}
-	switch role {
-	case RoleAssets:
-		return hasDigestTail(parts) && (findSegment(parts, "sources") >= 0 || findSegment(parts, "catalog") >= 0)
-	case RolePrivate:
-		return hasDigestTail(parts) && findSegment(parts, "orgs") >= 0
-	case RoleTransit:
-		return hasBatchShape(parts)
-	default:
-		return false
-	}
-}
-
-// hasDigestTail reports a final segment that is "{64 hex}.{ext}".
-func hasDigestTail(parts []string) bool {
-	if len(parts) == 0 {
-		return false
-	}
-	last := parts[len(parts)-1]
-	dot := strings.LastIndexByte(last, '.')
-	if dot < 0 {
-		return false
-	}
-	if !isDigest(last[:dot]) {
-		return false
-	}
-	_, err := NormalizeExtension(last[dot+1:])
-	return err == nil
-}
-
-// hasBatchShape is the transit key shape: uploads/{date}/{batch}/images/...
-func hasBatchShape(parts []string) bool {
-	at := findSegment(parts, "uploads")
-	return at >= 0 && at+3 < len(parts) && findSegment(parts[at:], "images") >= 0
-}
-
-func findSegment(parts []string, want string) int {
-	for i, part := range parts {
-		if part == want {
-			return i
-		}
-	}
-	return -1
 }
 
 func isDigest(value string) bool {
@@ -181,12 +130,4 @@ func DigestBytes(value string) []byte {
 		return nil
 	}
 	return raw
-}
-
-// DigestHex is the inverse of DigestBytes and the value a HEAD compares to.
-func DigestHex(raw []byte) string {
-	if len(raw) != sha256.Size {
-		return ""
-	}
-	return hex.EncodeToString(raw)
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/xxww0098/podhub-go/internal/delegate/contract"
 	"github.com/xxww0098/podhub-go/internal/delegate/domain"
 	"github.com/xxww0098/podhub-go/internal/delegate/service"
+	"github.com/xxww0098/podhub-go/internal/platform/httpx/jsonwire"
 )
 
 // Principal is the account the session already resolved.
@@ -57,7 +58,7 @@ type SellerAPI interface {
 	Presign(ctx context.Context, actor service.Actor, bindingID, sha, mime, fileName string, bytes int64, checksum bool) (contract.UploadTarget, error)
 	Finalize(ctx context.Context, actor service.Actor, bindingID, ticket, fileName string, position int32) (contract.Asset, error)
 	DeleteAsset(ctx context.Context, actor service.Actor, assetID string) (string, bool, error)
-	Orders(ctx context.Context, actor service.Actor, storeID, state, cursor string, limit *int64) ([]contract.Order, bool, string, error)
+	Orders(ctx context.Context, actor service.Actor, storeID, state, search, cursor string, limit *int64) ([]contract.Order, bool, string, error)
 	Order(ctx context.Context, actor service.Actor, orderID string) (contract.Order, error)
 	CreateOrder(ctx context.Context, actor service.Actor, storeID, postingNumber, sellerNote, idempotency string, offerIDs []string, offerIDsSet bool) (contract.Order, error)
 	Postings(ctx context.Context, actor service.Actor, storeID string, windowDays, limit int64, cursor string) (string, []contract.PostingView, bool, string, error)
@@ -191,7 +192,7 @@ func (d Deps) sources(w http.ResponseWriter, r *http.Request, actor service.Acto
 	if rows == nil {
 		rows = []contract.Source{}
 	}
-	writeJSON(w, http.StatusOK, struct {
+	jsonwire.Write(w, http.StatusOK, struct {
 		Data struct {
 			Sources []contract.Source `json:"sources"`
 		} `json:"data"`
@@ -202,11 +203,11 @@ func (d Deps) sources(w http.ResponseWriter, r *http.Request, actor service.Acto
 
 func (d Deps) bindings(w http.ResponseWriter, r *http.Request, actor service.Actor) {
 	q := r.URL.Query()
-	if !q.Has("storeId") {
-		writeQuery(w, "storeId")
+	if !q.Has("store_id") {
+		writeQuery(w, "store_id")
 		return
 	}
-	rows, err := d.Seller.Bindings(r.Context(), actor, q.Get("storeId"))
+	rows, err := d.Seller.Bindings(r.Context(), actor, q.Get("store_id"))
 	if err != nil {
 		writeAPI(w, err, false)
 		return
@@ -219,7 +220,7 @@ func (d Deps) bindings(w http.ResponseWriter, r *http.Request, actor service.Act
 			rows[i].Assets = []contract.Asset{}
 		}
 	}
-	writeJSON(w, http.StatusOK, struct {
+	jsonwire.Write(w, http.StatusOK, struct {
 		Data struct {
 			Bindings []contract.Binding `json:"bindings"`
 		} `json:"data"`
@@ -234,9 +235,9 @@ func (d Deps) createBinding(w http.ResponseWriter, r *http.Request, actor servic
 		return
 	}
 	var body struct {
-		StoreID  *json.RawMessage `json:"storeId"`
-		OfferID  *json.RawMessage `json:"offerId"`
-		SourceID *json.RawMessage `json:"sourceId"`
+		StoreID  *json.RawMessage `json:"store_id"`
+		OfferID  *json.RawMessage `json:"offer_id"`
+		SourceID *json.RawMessage `json:"source_id"`
 		Note     *json.RawMessage `json:"note"`
 	}
 	if !decodeStrict(raw, &body) {
@@ -259,7 +260,7 @@ func (d Deps) createBinding(w http.ResponseWriter, r *http.Request, actor servic
 	if row.Assets == nil {
 		row.Assets = []contract.Asset{}
 	}
-	writeJSON(w, http.StatusOK, dataBinding(row))
+	jsonwire.Write(w, http.StatusOK, dataBinding(row))
 }
 
 func (d Deps) patchBinding(w http.ResponseWriter, r *http.Request, actor service.Actor) {
@@ -268,10 +269,10 @@ func (d Deps) patchBinding(w http.ResponseWriter, r *http.Request, actor service
 		return
 	}
 	var body struct {
-		SourceID *json.RawMessage `json:"sourceId"`
+		SourceID *json.RawMessage `json:"source_id"`
 		Note     *json.RawMessage `json:"note"`
 		Active   *json.RawMessage `json:"active"`
-		Expected *json.RawMessage `json:"expectedRevision"`
+		Expected *json.RawMessage `json:"expected_revision"`
 	}
 	if !decodeStrict(raw, &body) {
 		invalidJSON(w, false)
@@ -293,7 +294,7 @@ func (d Deps) patchBinding(w http.ResponseWriter, r *http.Request, actor service
 	if row.Assets == nil {
 		row.Assets = []contract.Asset{}
 	}
-	writeJSON(w, http.StatusOK, dataBinding(row))
+	jsonwire.Write(w, http.StatusOK, dataBinding(row))
 }
 
 func (d Deps) deleteBinding(w http.ResponseWriter, r *http.Request, actor service.Actor) {
@@ -302,14 +303,14 @@ func (d Deps) deleteBinding(w http.ResponseWriter, r *http.Request, actor servic
 		writeAPI(w, err, false)
 		return
 	}
-	normalized, _ := domain.NormalizeUUID(id)
-	writeJSON(w, http.StatusOK, struct {
+	normalized, _ := contract.NormalizeUUID(id)
+	jsonwire.Write(w, http.StatusOK, struct {
 		Data struct {
-			BindingID string `json:"bindingId"`
+			BindingID string `json:"binding_id"`
 			Deleted   bool   `json:"deleted"`
 		} `json:"data"`
 	}{Data: struct {
-		BindingID string `json:"bindingId"`
+		BindingID string `json:"binding_id"`
 		Deleted   bool   `json:"deleted"`
 	}{BindingID: normalized, Deleted: true}})
 }
@@ -320,11 +321,11 @@ func (d Deps) presign(w http.ResponseWriter, r *http.Request, actor service.Acto
 		return
 	}
 	var body struct {
-		BindingID *json.RawMessage `json:"bindingId"`
+		BindingID *json.RawMessage `json:"binding_id"`
 		SHA       *json.RawMessage `json:"sha256"`
 		Bytes     *json.RawMessage `json:"bytes"`
 		Mime      *json.RawMessage `json:"mime"`
-		FileName  *json.RawMessage `json:"fileName"`
+		FileName  *json.RawMessage `json:"file_name"`
 	}
 	if !decodeStrict(raw, &body) {
 		invalidJSON(w, true)
@@ -339,13 +340,13 @@ func (d Deps) presign(w http.ResponseWriter, r *http.Request, actor service.Acto
 		invalidJSON(w, true)
 		return
 	}
-	target, err := d.Seller.Presign(r.Context(), actor, bindingID, sha, mime, fileName, size, checksumRequested(r, sha))
+	target, err := d.Seller.Presign(r.Context(), actor, bindingID, sha, mime, fileName, size, checksumRequested(r))
 	if err != nil {
 		writeAPI(w, err, true)
 		return
 	}
 	w.Header().Set("Cache-Control", "private, no-store")
-	writeJSON(w, http.StatusOK, struct {
+	jsonwire.Write(w, http.StatusOK, struct {
 		Data struct {
 			Upload contract.UploadTarget `json:"upload"`
 		} `json:"data"`
@@ -360,9 +361,9 @@ func (d Deps) finalize(w http.ResponseWriter, r *http.Request, actor service.Act
 		return
 	}
 	var body struct {
-		BindingID *json.RawMessage `json:"bindingId"`
-		Ticket    *json.RawMessage `json:"uploadTicket"`
-		FileName  *json.RawMessage `json:"fileName"`
+		BindingID *json.RawMessage `json:"binding_id"`
+		Ticket    *json.RawMessage `json:"upload_ticket"`
+		FileName  *json.RawMessage `json:"file_name"`
 		Position  *json.RawMessage `json:"position"`
 	}
 	if !decodeStrict(raw, &body) {
@@ -398,7 +399,7 @@ func (d Deps) finalize(w http.ResponseWriter, r *http.Request, actor service.Act
 		writeAPI(w, err, true)
 		return
 	}
-	writeJSON(w, http.StatusOK, struct {
+	jsonwire.Write(w, http.StatusOK, struct {
 		Data struct {
 			Asset contract.Asset `json:"asset"`
 		} `json:"data"`
@@ -413,13 +414,13 @@ func (d Deps) deleteAsset(w http.ResponseWriter, r *http.Request, actor service.
 		writeAPI(w, err, false)
 		return
 	}
-	writeJSON(w, http.StatusOK, struct {
+	jsonwire.Write(w, http.StatusOK, struct {
 		Data struct {
-			AssetID   string `json:"assetId"`
+			AssetID   string `json:"asset_id"`
 			Reclaimed bool   `json:"reclaimed"`
 		} `json:"data"`
 	}{Data: struct {
-		AssetID   string `json:"assetId"`
+		AssetID   string `json:"asset_id"`
 		Reclaimed bool   `json:"reclaimed"`
 	}{AssetID: id, Reclaimed: reclaimed}})
 }
@@ -435,7 +436,7 @@ func (d Deps) orders(w http.ResponseWriter, r *http.Request, actor service.Actor
 		}
 		limit = &n
 	}
-	rows, hasNext, cursor, err := d.Seller.Orders(r.Context(), actor, q.Get("storeId"), q.Get("state"), q.Get("cursor"), limit)
+	rows, hasNext, cursor, err := d.Seller.Orders(r.Context(), actor, q.Get("store_id"), q.Get("state"), q.Get("search"), q.Get("cursor"), limit)
 	if err != nil {
 		writeAPI(w, err, false)
 		return
@@ -448,15 +449,15 @@ func (d Deps) orders(w http.ResponseWriter, r *http.Request, actor service.Actor
 			rows[i].Lines = []contract.OrderLine{}
 		}
 	}
-	writeJSON(w, http.StatusOK, struct {
+	jsonwire.Write(w, http.StatusOK, struct {
 		Data struct {
 			Orders  []contract.Order `json:"orders"`
-			HasNext bool             `json:"hasNext"`
+			HasNext bool             `json:"has_next"`
 			Cursor  string           `json:"cursor"`
 		} `json:"data"`
 	}{Data: struct {
 		Orders  []contract.Order `json:"orders"`
-		HasNext bool             `json:"hasNext"`
+		HasNext bool             `json:"has_next"`
 		Cursor  string           `json:"cursor"`
 	}{Orders: rows, HasNext: hasNext, Cursor: cursor}})
 }
@@ -470,7 +471,7 @@ func (d Deps) order(w http.ResponseWriter, r *http.Request, actor service.Actor)
 	if row.Lines == nil {
 		row.Lines = []contract.OrderLine{}
 	}
-	writeJSON(w, http.StatusOK, dataOrder(row))
+	jsonwire.Write(w, http.StatusOK, dataOrder(row))
 }
 
 func (d Deps) createOrder(w http.ResponseWriter, r *http.Request, actor service.Actor) {
@@ -479,10 +480,10 @@ func (d Deps) createOrder(w http.ResponseWriter, r *http.Request, actor service.
 		return
 	}
 	var body struct {
-		StoreID    *json.RawMessage `json:"storeId"`
-		Posting    *json.RawMessage `json:"postingNumber"`
-		OfferIDs   *json.RawMessage `json:"offerIds"`
-		SellerNote *json.RawMessage `json:"sellerNote"`
+		StoreID    *json.RawMessage `json:"store_id"`
+		Posting    *json.RawMessage `json:"posting_number"`
+		OfferIDs   *json.RawMessage `json:"offer_ids"`
+		SellerNote *json.RawMessage `json:"seller_note"`
 	}
 	if !decodeStrict(raw, &body) {
 		invalidJSON(w, false)
@@ -509,7 +510,7 @@ func (d Deps) createOrder(w http.ResponseWriter, r *http.Request, actor service.
 	if row.Lines == nil {
 		row.Lines = []contract.OrderLine{}
 	}
-	writeJSON(w, http.StatusOK, dataOrder(row))
+	jsonwire.Write(w, http.StatusOK, dataOrder(row))
 }
 
 func (d Deps) cancel(w http.ResponseWriter, r *http.Request, actor service.Actor) {
@@ -535,7 +536,7 @@ func writeOrder(w http.ResponseWriter, row contract.Order, err error) {
 	if row.Lines == nil {
 		row.Lines = []contract.OrderLine{}
 	}
-	writeJSON(w, http.StatusOK, dataOrder(row))
+	jsonwire.Write(w, http.StatusOK, dataOrder(row))
 }
 
 func (d Deps) postings(w http.ResponseWriter, r *http.Request, actor service.Actor) {
@@ -544,8 +545,8 @@ func (d Deps) postings(w http.ResponseWriter, r *http.Request, actor service.Act
 		return
 	}
 	var body struct {
-		StoreID *json.RawMessage `json:"storeId"`
-		Window  *json.RawMessage `json:"windowDays"`
+		StoreID *json.RawMessage `json:"store_id"`
+		Window  *json.RawMessage `json:"window_days"`
 		Cursor  *json.RawMessage `json:"cursor"`
 		Limit   *json.RawMessage `json:"limit"`
 	}
@@ -569,32 +570,32 @@ func (d Deps) postings(w http.ResponseWriter, r *http.Request, actor service.Act
 	if rows == nil {
 		rows = []contract.PostingView{}
 	}
-	writeJSON(w, http.StatusOK, struct {
+	jsonwire.Write(w, http.StatusOK, struct {
 		Data struct {
-			StoreID  string                 `json:"storeId"`
+			StoreID  string                 `json:"store_id"`
 			Postings []contract.PostingView `json:"postings"`
-			HasNext  bool                   `json:"hasNext"`
+			HasNext  bool                   `json:"has_next"`
 			Cursor   string                 `json:"cursor"`
 		} `json:"data"`
 	}{Data: struct {
-		StoreID  string                 `json:"storeId"`
+		StoreID  string                 `json:"store_id"`
 		Postings []contract.PostingView `json:"postings"`
-		HasNext  bool                   `json:"hasNext"`
+		HasNext  bool                   `json:"has_next"`
 		Cursor   string                 `json:"cursor"`
 	}{StoreID: store, Postings: rows, HasNext: hasNext, Cursor: next}})
 }
 
 func (d Deps) postingStates(w http.ResponseWriter, r *http.Request, actor service.Actor) {
 	q := r.URL.Query()
-	if !q.Has("storeId") {
-		writeQuery(w, "storeId")
+	if !q.Has("store_id") {
+		writeQuery(w, "store_id")
 		return
 	}
-	if !q.Has("postingNumbers") {
-		writeQuery(w, "postingNumbers")
+	if !q.Has("posting_numbers") {
+		writeQuery(w, "posting_numbers")
 		return
 	}
-	store, rows, err := d.Seller.PostingStates(r.Context(), actor, q.Get("storeId"), q.Get("postingNumbers"))
+	store, rows, err := d.Seller.PostingStates(r.Context(), actor, q.Get("store_id"), q.Get("posting_numbers"))
 	if err != nil {
 		writeAPI(w, err, false)
 		return
@@ -602,13 +603,13 @@ func (d Deps) postingStates(w http.ResponseWriter, r *http.Request, actor servic
 	if rows == nil {
 		rows = []contract.PostingStateView{}
 	}
-	writeJSON(w, http.StatusOK, struct {
+	jsonwire.Write(w, http.StatusOK, struct {
 		Data struct {
-			StoreID string                      `json:"storeId"`
+			StoreID string                      `json:"store_id"`
 			States  []contract.PostingStateView `json:"states"`
 		} `json:"data"`
 	}{Data: struct {
-		StoreID string                      `json:"storeId"`
+		StoreID string                      `json:"store_id"`
 		States  []contract.PostingStateView `json:"states"`
 	}{StoreID: store, States: rows}})
 }
@@ -688,22 +689,6 @@ func writeErr(w http.ResponseWriter, status int, message, code string) {
 	if err := enc.Encode(apiError{Error: message, Code: code}); err != nil {
 		slog.Error("json encode", "err", err)
 		http.Error(w, contract.MsgUnavailable, http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(status)
-	if _, err := w.Write(bytes.TrimRight(buf.Bytes(), "\n")); err != nil {
-		slog.Error("json write", "err", err)
-	}
-}
-
-func writeJSON(w http.ResponseWriter, status int, body any) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(body); err != nil {
-		writeErr(w, http.StatusInternalServerError, contract.MsgUnavailable, "internal")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

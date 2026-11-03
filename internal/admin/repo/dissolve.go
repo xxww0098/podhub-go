@@ -57,26 +57,10 @@ SELECT dissolved_at IS NOT NULL FROM organizations WHERE id = $1 FOR NO KEY UPDA
 		if current != name {
 			return contract.Validation("请输入当前工作空间名称以确认解散")
 		}
-		if _, err := tx.Exec(ctx, `SELECT set_config('app.current_org_id', $1, true)`, fmt.Sprint(orgID)); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO workspace_wallets (org_id) VALUES ($1) ON CONFLICT (org_id) DO NOTHING`, orgID); err != nil {
 			return err
 		}
-		var owner int64
-		if err := tx.QueryRow(ctx, `SELECT owner_user_id FROM organizations WHERE id = $1`, orgID).Scan(&owner); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return errors.New("workspace wallet owner missing")
-			}
-			return err
-		}
-		if _, err := tx.Exec(ctx, `SELECT set_config('app.current_wallet_user_id', $1, true)`, fmt.Sprint(owner)); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `INSERT INTO user_wallets (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`, owner); err != nil {
-			return err
-		}
-		if err := tx.QueryRow(ctx, `
-SELECT user_id FROM user_wallets
-WHERE user_id = (SELECT owner_user_id FROM organizations WHERE id = $1)
-FOR UPDATE`, orgID).Scan(&owner); err != nil {
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM workspace_wallets WHERE org_id = $1 FOR UPDATE`, orgID); err != nil {
 			return err
 		}
 		var held int64
@@ -98,7 +82,7 @@ SELECT COALESCE(SUM(held_delta_microfen), 0)::bigint FROM wallet_ledger WHERE or
 				pay.Close()
 				return err
 			}
-			if provider != "manual" {
+			if provider != "manual" && provider != "unselected" {
 				pay.Close()
 				return contract.Validation("有线上支付订单尚未结清，请确认付款或渠道关单后再解散")
 			}

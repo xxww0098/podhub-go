@@ -4,7 +4,6 @@ import "testing"
 
 func TestNamedEdgesAndIllegalEdges(t *testing.T) {
 	allowed := []struct{ from, to string }{
-		{StateGranted, StateAccepted},
 		{StateGranted, StateRejected},
 		{StateGranted, StateUnknown},
 	}
@@ -14,6 +13,7 @@ func TestNamedEdgesAndIllegalEdges(t *testing.T) {
 		}
 	}
 	illegal := []struct{ from, to string }{
+		{StateGranted, StateAccepted},
 		{StateAccepted, StateGranted},
 		{StateAccepted, StateRejected},
 		{StateAccepted, StateUnknown},
@@ -48,7 +48,7 @@ func TestClassifyReport(t *testing.T) {
 	}{
 		{"no status", nil, "op", StateUnknown, CodeInterrupted},
 		{"zero", status(0), "op", StateUnknown, CodeInterrupted},
-		{"200 with operation", status(200), "op-1", StateAccepted, ""},
+		{"200 with operation", status(200), "op-1", StateUnknown, ""},
 		{"201 without operation", status(201), "", StateUnknown, CodeInterrupted},
 		{"400", status(400), "", StateRejected, CodeRejected},
 		{"422", status(422), "x", StateRejected, CodeRejected},

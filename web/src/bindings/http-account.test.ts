@@ -26,12 +26,8 @@ function orderView(overrides: Partial<PaymentOrderView> = {}): PaymentOrderView 
   return {
     public_id: "order-1",
     plan: "pro",
-    member_seats: 2,
     months: 12,
-    unit_month_cents: 8000,
-    duration_days: 365,
     amount_cents: 192000,
-    credit_cents: 0,
     currency: "CNY",
     provider: "alipay",
     status: "pending",
@@ -44,11 +40,6 @@ function orderView(overrides: Partial<PaymentOrderView> = {}): PaymentOrderView 
     canceled_at: null,
     ...overrides,
   }
-}
-
-/** Cloud wraps every order read/write as `{"data":{"order":{…}}}` — never flat. */
-function orderEnvelope(order: PaymentOrderView) {
-  return { data: { order } }
 }
 
 function rechargeView(overrides: Record<string, unknown> = {}) {
@@ -69,34 +60,31 @@ function rechargeView(overrides: Record<string, unknown> = {}) {
   }
 }
 
-test("accountCreatePaymentIntent unwraps data.order", async (t) => {
-  const order = orderView()
-  const calls: string[] = []
-  const restore = stubFetch(async (input) => {
-    calls.push(String(input))
-    return jsonResponse(orderEnvelope(order))
+test("checkout payment methods preserve the raw enabled channel list", async (t) => {
+  const methods = { providers: ["alipay", "stripe"], manual: true }
+  const restore = stubFetch(async (input, init) => {
+    assert.equal(String(input), route("paymentMethods"))
+    assert.equal(init?.credentials, "include")
+    return jsonResponse(methods)
   })
   t.after(restore)
+  assert.deepEqual(await accountHttp.accountGetPaymentMethods(), methods)
+})
 
-  const created = await accountHttp.accountCreatePaymentIntent({
-    seats: 2,
-    term: "year",
-    tier: "pro",
-    provider: "alipay",
-    expected_workspace_uuid: "8f0a3f5e-6c1d-4a5f-9a3e-6d2c8b7f4a11",
+test("checkout order pagination preserves raw rows and cursor", async (t) => {
+  const page = { orders: [orderView()], next_cursor: "page-2" }
+  const restore = stubFetch(async (input) => {
+    assert.equal(String(input), `${route("orders")}?status=pending&limit=10&cursor=page-1`)
+    return jsonResponse(page)
   })
-  assert.equal(calls.length, 1)
-  assert.match(calls[0], /\/api\/payment-intent$/)
-  assert.equal(created.public_id, "order-1")
-  assert.equal(created.status, "pending")
-  assert.equal(created.qr_code, "qr://payload")
-  assert.equal(created.pay_url, "https://pay.invalid/checkout/order-1")
+  t.after(restore)
+  assert.deepEqual(await accountHttp.accountListPaymentOrderPage({ status: "pending", limit: 10, cursor: "page-1" }), page)
 })
 
 /**
- * All three paid writes carry `expected_workspace_uuid` — the Workspace
- * the dialog was opened on — so Cloud can refuse a write whose session has
- * since resolved elsewhere.
+ * Both paid writes carry `expected_workspace_uuid` — the Workspace the dialog
+ * was opened on — so Cloud can refuse a write whose session has since
+ * resolved elsewhere.
  */
 test("paid writes post the Workspace the dialog confirmed", async (t) => {
   const workspaceUuid = "8f0a3f5e-6c1d-4a5f-9a3e-6d2c8b7f4a11"
@@ -104,28 +92,13 @@ test("paid writes post the Workspace the dialog confirmed", async (t) => {
   const restore = stubFetch(async (input, init) => {
     bodies.push(JSON.parse(String(init?.body)))
     if (String(input).endsWith(route("redeem"))) {
-      return jsonResponse({
-        data: {
-          ok: true,
-          plan: { key: "pro", name: "专业版" },
-          member_seats: 2,
-          ocr_credits: 0,
-          wallet_cents: 0,
-        },
-      })
+      return jsonResponse({ data: { ok: true, wallet_cents: 500 } })
     }
-    return jsonResponse(orderEnvelope(orderView()))
+    return jsonResponse({ order: rechargeView() })
   })
   t.after(restore)
 
-  await accountHttp.accountCreatePaymentIntent({
-    seats: 2,
-    term: "year",
-    tier: "pro",
-    provider: "alipay",
-    expected_workspace_uuid: workspaceUuid,
-  })
-  await accountHttp.accountRedeemCode({ code: "ABC-123", expected_workspace_uuid: workspaceUuid })
+  const redeemed = await accountHttp.accountRedeemCode({ code: "ABC-123", expected_workspace_uuid: workspaceUuid })
   await accountHttp.accountCreateRechargeOrder({
     operation_id: "recharge-op",
     amount_cents: 500,
@@ -133,14 +106,8 @@ test("paid writes post the Workspace the dialog confirmed", async (t) => {
     expected_workspace_uuid: workspaceUuid,
   })
 
+  assert.deepEqual(redeemed, { ok: true, wallet_cents: 500 })
   assert.deepEqual(bodies, [
-    {
-      seats: 2,
-      term: "year",
-      tier: "pro",
-      provider: "alipay",
-      expected_workspace_uuid: workspaceUuid,
-    },
     { code: "ABC-123", expected_workspace_uuid: workspaceUuid },
     { operation_id: "recharge-op", amount_cents: 500, provider: "manual", expected_workspace_uuid: workspaceUuid },
   ])
@@ -151,17 +118,17 @@ test("wallet detail keeps a pending online recharge available for recovery", asy
   let call = 0
   const restore = stubFetch(async () =>
     jsonResponse({
-      data: {
-        wallet: { balance_microfen: 0, held_microfen: 0, available_microfen: 0 },
+        balance_microfen: 0, held_microfen: 0, available_microfen: 0,
+        spent_microfen: 0, updated_at: "2026-10-27T00:00:00Z",
         ledger: [],
         recharges: [rechargeView({ entry_state: states[call++] })],
-      },
     }),
   )
   t.after(restore)
 
   for (const state of states) {
     const detail = await accountHttp.accountGetWalletDetail()
+    assert.equal(detail.wallet.available_microfen, 0)
     assert.equal(detail.recharges[0].public_id, "recharge-1")
     assert.equal(detail.recharges[0].status, "pending")
     assert.equal(detail.recharges[0].pay_url, "https://pay.invalid/recharge-1")
@@ -173,7 +140,7 @@ test("recharge recovery uses the same order identity after an idempotent retry",
   const bodies: unknown[] = []
   const restore = stubFetch(async (_input, init) => {
     bodies.push(JSON.parse(String(init?.body)))
-    return jsonResponse({ data: { order: rechargeView() } })
+    return jsonResponse({ order: rechargeView() })
   })
   t.after(restore)
 
@@ -194,7 +161,7 @@ test("accountRecoverRechargeOrder returns the recovered pending online order", a
   const restore = stubFetch(async (input) => {
     calls.push(String(input))
     return jsonResponse({
-      data: { order: rechargeView({ entry_state: "entry_confirming" }) },
+      order: rechargeView({ entry_state: "entry_confirming" }),
     })
   })
   t.after(restore)
@@ -205,55 +172,12 @@ test("accountRecoverRechargeOrder returns the recovered pending online order", a
   assert.equal(recovered.status, "pending")
 })
 
-test("payment intents carry the attempt operation_id through", async (t) => {
-  const bodies: unknown[] = []
-  const restore = stubFetch(async (_input, init) => {
-    bodies.push(JSON.parse(String(init?.body)))
-    return jsonResponse(orderEnvelope(orderView()))
-  })
-  t.after(restore)
-
-  await accountHttp.accountCreatePaymentIntent({
-    seats: 2,
-    term: "year",
-    tier: "pro",
-    provider: "alipay",
-    expected_workspace_uuid: "8f0a3f5e-6c1d-4a5f-9a3e-6d2c8b7f4a11",
-    operation_id: "attempt-1",
-  })
-  await accountHttp.accountCreateRenewalIntent({
-    renews_lot_id: 7,
-    term: "month",
-    provider: "wechat",
-    expected_workspace_uuid: "8f0a3f5e-6c1d-4a5f-9a3e-6d2c8b7f4a11",
-    operation_id: "attempt-2",
-  })
-
-  assert.deepEqual(bodies, [
-    {
-      seats: 2,
-      term: "year",
-      tier: "pro",
-      provider: "alipay",
-      expected_workspace_uuid: "8f0a3f5e-6c1d-4a5f-9a3e-6d2c8b7f4a11",
-      operation_id: "attempt-1",
-    },
-    {
-      renews_lot_id: 7,
-      term: "month",
-      provider: "wechat",
-      expected_workspace_uuid: "8f0a3f5e-6c1d-4a5f-9a3e-6d2c8b7f4a11",
-      operation_id: "attempt-2",
-    },
-  ])
-})
-
 test("accountRecoverPaymentOrder unwraps the recovered order", async (t) => {
   const order = orderView({ entry_state: "entry_confirming" })
   const calls: string[] = []
   const restore = stubFetch(async (input) => {
     calls.push(String(input))
-    return jsonResponse(orderEnvelope(order))
+    return jsonResponse({ order })
   })
   t.after(restore)
 
@@ -264,12 +188,12 @@ test("accountRecoverPaymentOrder unwraps the recovered order", async (t) => {
   assert.equal(recovered.entry_state, "entry_confirming")
 })
 
-test("accountGetPaymentOrder unwraps data.order", async (t) => {
+test("accountGetPaymentOrder reads the raw checkout order DTO", async (t) => {
   const order = orderView({ status: "paid", paid_at: "2026-09-17T01:00:00Z" })
   const calls: string[] = []
   const restore = stubFetch(async (input) => {
     calls.push(String(input))
-    return jsonResponse(orderEnvelope(order))
+    return jsonResponse({ order })
   })
   t.after(restore)
 
@@ -277,15 +201,15 @@ test("accountGetPaymentOrder unwraps data.order", async (t) => {
   assert.equal(calls.length, 1)
   assert.match(calls[0], /\/api\/orders\/order-1$/)
   assert.equal(fetched.status, "paid")
-  assert.equal(fetched.member_seats, 2)
+  assert.equal(fetched.months, 12)
 })
 
-test("accountCancelPaymentOrder unwraps data.order", async (t) => {
+test("accountCancelPaymentOrder reads the raw checkout order DTO", async (t) => {
   const order = orderView({ status: "canceled", canceled_at: "2026-09-17T02:00:00Z" })
   const calls: string[] = []
   const restore = stubFetch(async (input) => {
     calls.push(String(input))
-    return jsonResponse(orderEnvelope(order))
+    return jsonResponse({ order })
   })
   t.after(restore)
 
@@ -294,10 +218,10 @@ test("accountCancelPaymentOrder unwraps data.order", async (t) => {
   assert.equal(canceled.status, "canceled")
 })
 
-test("accountOpenPaymentOrder opens the pay_url from inside data.order", async (t) => {
+test("accountOpenPaymentOrder opens the stored checkout pay_url", async (t) => {
   const order = orderView()
   const opened: string[] = []
-  const restore = stubFetch(async () => jsonResponse(orderEnvelope(order)))
+  const restore = stubFetch(async () => jsonResponse({ order }))
   const previousWindow = (globalThis as { window?: unknown }).window
   ;(globalThis as { window?: unknown }).window = {
     open: (url: string) => {
@@ -317,7 +241,7 @@ test("accountOpenPaymentOrder opens the pay_url from inside data.order", async (
 test("accountOpenPaymentOrder without pay_url opens nothing", async (t) => {
   const order = orderView({ pay_url: undefined })
   let opened = 0
-  const restore = stubFetch(async () => jsonResponse(orderEnvelope(order)))
+  const restore = stubFetch(async () => jsonResponse({ order }))
   const previousWindow = (globalThis as { window?: unknown }).window
   ;(globalThis as { window?: unknown }).window = {
     open: () => {
@@ -332,4 +256,36 @@ test("accountOpenPaymentOrder without pay_url opens nothing", async (t) => {
 
   await accountHttp.accountOpenPaymentOrder("order-1")
   assert.equal(opened, 0)
+})
+
+test("accountListAiLogs pages the AI consume log with p and page_size", async (t) => {
+  const urls: string[] = []
+  const restore = stubFetch(async (input) => {
+    urls.push(String(input))
+    return jsonResponse({ page: 2, page_size: 20, total: 21, items: [] })
+  })
+  t.after(restore)
+
+  const page = await accountHttp.accountListAiLogs(2, 20)
+  assert.equal(urls[0], `${route("aiLogs")}?p=2&page_size=20`)
+  assert.equal(page.total, 21)
+})
+
+test("accountExportAiLogs downloads the CSV bytes from the export route", async (t) => {
+  const urls: string[] = []
+  const restore = stubFetch(async (input) => {
+    urls.push(String(input))
+    return new Response("id,model\n1,gpt-5\n", { status: 200, headers: { "Content-Type": "text/csv" } })
+  })
+  t.after(restore)
+
+  const bytes = await accountHttp.accountExportAiLogs()
+  assert.equal(urls[0], route("aiLogsExport"))
+  assert.equal(new TextDecoder().decode(bytes), "id,model\n1,gpt-5\n")
+})
+
+test("a failed AI log read surfaces as a rejection", async (t) => {
+  const restore = stubFetch(async () => jsonResponse({ code: "INTERNAL", message: "服务暂不可用" }, 500))
+  t.after(restore)
+  await assert.rejects(() => accountHttp.accountListAiLogs(1, 20))
 })

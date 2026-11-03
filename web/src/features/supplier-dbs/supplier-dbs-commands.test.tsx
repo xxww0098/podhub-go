@@ -1,10 +1,9 @@
 /** Database/row commands normalize payloads, retain CAS and reconcile counts. */
 import assert from "node:assert/strict"
 import test from "node:test"
-import { renderToStaticMarkup } from "react-dom/server"
 import type { SupplierDbDetail } from "@/bindings/http-supplier-dbs"
-import { SupplierDbsScreen } from "./supplier-dbs-screen"
-import { db, row, readyStore } from "./supplier-dbs-screen-fixtures"
+import { db, row, memoryClient, readyStore } from "./supplier-dbs-screen-fixtures"
+import { createSupplierDbsStore } from "./supplier-dbs-store"
 
 test("建库 through the store reaches the client and lands in the list", async () => {
   const { store, calls } = await readyStore()
@@ -16,14 +15,14 @@ test("建库 through the store reaches the client and lands in the list", async 
     listed: true,
     icon: "🏭",
     template: "factory",
-    accountEmail: " Factory@Example.com ",
+    factoryId: " fac-1 ",
   })
   assert.equal(created.ok, true)
   assert.equal(calls.createDb.length, 1)
   assert.equal(calls.createDb[0].name, "德国厂")
   assert.equal(calls.createDb[0].country, "DE")
   assert.equal(calls.createDb[0].template, "factory")
-  assert.equal(calls.createDb[0].accountEmail, "factory@example.com")
+  assert.equal(calls.createDb[0].factoryId, "fac-1")
   assert.equal(store.getState().dbs.length, 1)
   assert.equal(store.getState().dbs[0].name, "德国厂")
 
@@ -33,41 +32,49 @@ test("建库 through the store reaches the client and lands in the list", async 
 
   // 改库也走同一条规范化：国家码大写、名称裁剪。
   const sourceId = store.getState().dbs[0].sourceId
-  const saved = await store.updateDb(sourceId, { country: "ru", contact: "  x@y.invalid " })
+  const draftWithStaleEmail = { country: "ru", contact: "  x@y.invalid ", accountEmail: "next@example.com" }
+  const saved = await store.updateDb(sourceId, draftWithStaleEmail)
   assert.equal(saved.ok, true)
   assert.equal(calls.updateDb[0].country, "RU")
   assert.equal(calls.updateDb[0].contact, "x@y.invalid")
   assert.equal(calls.updateDb[0].name, "德国厂", "untrained fields ride along")
-  assert.equal(calls.updateDb[0].accountEmail, undefined, "unchanged email is not a rebind")
+  assert.equal("accountEmail" in calls.updateDb[0], false, "editing factory details must never rebind members")
 
-  const rebound = await store.updateDb(sourceId, { accountEmail: " Next@Example.com " })
-  assert.equal(rebound.ok, true)
-  assert.equal(calls.updateDb[1].accountEmail, "next@example.com")
-  const same = await store.updateDb(sourceId, { accountEmail: "next@example.com" })
-  assert.equal(same.ok, true)
-  assert.equal(calls.updateDb[2].accountEmail, undefined)
-
-  const html = renderToStaticMarkup(
-    <SupplierDbsScreen role="admin" store={store} />,
-  )
-  assert.match(html, /德国厂/)
 })
 
 
-test("删库: RESTRICT refusal names the way out; empty db deletes", async () => {
+test("建库必须选择已有工厂", async () => {
+  const { store, calls } = await readyStore()
+  const draft = { name: "商品库", country: "", contact: "", internalNote: "", listed: false, icon: "" }
+  assert.equal((await store.createDb(draft)).ok, false)
+  assert.equal((await store.createDb({ ...draft, factoryId: "fac-1" })).ok, true)
+  assert.equal(calls.createDb[0].factoryId, "fac-1")
+  assert.equal(calls.createDb.length, 1)
+})
+
+test("删库: 库内有商品也可以删除", async () => {
   const { store, calls } = await readyStore([
     { db: db("src-1", "有行库", { rowCount: 1 }), propDefs: [], rows: [row("p1", "src-1")] },
     { db: db("src-2", "空库"), propDefs: [], rows: [] },
   ])
-  const refused = await store.deleteDb("src-1")
-  assert.equal(refused.ok, false)
-  assert.deepEqual(
-    refused.ok ? [] : refused.issues.map((issue) => issue.message),
-    ["库里还有行，先清空或下架后再删"],
-  )
+  await store.loadDetail("src-1")
+  assert.equal((await store.deleteDb("src-1")).ok, true)
+  assert.ok(!store.getState().dbs.some((item) => item.sourceId === "src-1"))
+  assert.equal(store.getState().details["src-1"], undefined)
   assert.equal((await store.deleteDb("src-2")).ok, true)
   assert.deepEqual(calls.deleteDb, ["src-1", "src-2"])
   assert.ok(!store.getState().dbs.some((item) => item.sourceId === "src-2"))
+})
+
+test("删库: 关联记录阻止删除时保留库和后端提示", async () => {
+  const { client } = memoryClient([{ db: db("src-1", "有关联的库"), propDefs: [], rows: [] }])
+  client.supplierDbDelete = async () => { throw { code: "cloud_conflict", message: "该库关联了订单，无法删除" } }
+  const store = createSupplierDbsStore(client)
+  await store.loadList()
+  const result = await store.deleteDb("src-1")
+  assert.equal(result.ok, false)
+  if (!result.ok) assert.equal(result.issues[0].message, "该库关联了订单，无法删除")
+  assert.equal(store.getState().dbs[0].sourceId, "src-1")
 })
 
 

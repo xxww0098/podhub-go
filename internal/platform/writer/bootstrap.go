@@ -57,7 +57,24 @@ func Bootstrap(ctx context.Context, begin func(context.Context) (pgx.Tx, error),
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return 0, err
 	}
-	err = tx.QueryRow(ctx, `
+	id, err = grantLease(ctx, tx, domain, instance, reason, nowMS)
+	if err != nil {
+		return 0, err
+	}
+	if err := writeGrantEvent(ctx, tx, id, domain, instance, reason, nowMS); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// grantLease inserts one live row and returns its id. The caller must hold the
+// domain's transaction and commit it.
+func grantLease(ctx context.Context, tx pgx.Tx, domain, instance, reason string, nowMS int64) (int64, error) {
+	var id int64
+	err := tx.QueryRow(ctx, `
 		INSERT INTO writer_leases
 		       (domain, holder, holder_instance, fence_token, granted_at_ms,
 		        expires_at_ms, heartbeat_at_ms, revoked_at_ms, grant_reason)
@@ -65,20 +82,17 @@ func Bootstrap(ctx context.Context, begin func(context.Context) (pgx.Tx, error),
 		        $4::bigint + $5::bigint, $4::bigint, NULL, $6)
 		RETURNING id`,
 		domain, HolderAxum, instance, nowMS, LeaseTTLMS, reason).Scan(&id)
-	if err != nil {
-		return 0, err
-	}
-	if _, err := tx.Exec(ctx, `
+	return id, err
+}
+
+// writeGrantEvent records the one grant audit row for a new lease.
+func writeGrantEvent(ctx context.Context, tx pgx.Tx, id int64, domain, instance, reason string, nowMS int64) error {
+	_, err := tx.Exec(ctx, `
 		INSERT INTO writer_lease_events
 		       (lease_id, domain, action, holder, holder_instance, fence_token,
 		        expected_fence, reason, created_at_ms)
 		VALUES ($1, $2, 'grant', $3, $4, (SELECT fence_token FROM writer_leases WHERE id = $1),
 		        NULL, $5, $6)`,
-		id, domain, HolderAxum, instance, reason, nowMS); err != nil {
-		return 0, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return 0, err
-	}
-	return id, nil
+		id, domain, HolderAxum, instance, reason, nowMS)
+	return err
 }

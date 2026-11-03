@@ -13,7 +13,7 @@ const results = document.querySelector<HTMLElement>("#results")!
 const run = document.querySelector<HTMLButtonElement>("#run")!
 
 const catalog: SellerSupplierDbCatalogData = {
-  dbs: [{ sourceId: "src_1", name: "数字油画厂家", country: "CN", icon: "🏭" }],
+  dbs: [{ source_id: "src_1", name: "数字油画厂家", country: "CN", icon: "🏭" }],
   propDefs: [],
   rows: [
     {
@@ -154,7 +154,6 @@ function App() {
         overview={overview}
         onOverviewChange={() => {}}
         onSignedOut={() => {}}
-        onAddAccount={() => {}}
       />
     </StrictMode>
   )
@@ -179,27 +178,19 @@ run.onclick = async () => {
   const stop = installAddressSync()
   const root = createRoot(fixture)
   try {
-    // Start on 列表管理 (supplier-dbs) with a db open — the second trail publisher.
-    window.history.replaceState(null, "", "/?screen=supplier-dbs&open=src_1")
+    // The supplier library now uses a persistent split view rather than a
+    // breadcrumb detail. Exercise the catalog's real drill-down publisher.
+    window.history.replaceState(null, "", "/?screen=catalog")
     flushSync(() => root.render(<App />))
     await waitFor(
-      () => breadcrumb().includes("数字油画厂家"),
-      "supplier-dbs trail never published",
-    )
-    log(lines, "on supplier-dbs with db open")
-
-    // Switch to the seller gallery and open the product detail.
-    await clickNav("工作台")
-    await clickNav("平台货源")
-    await waitFor(
-      () => !!fixture.querySelector('[data-gallery-card="prd_paint"]'),
+      () => !!fixture.querySelector('[data-gallery-product="prd_paint"]'),
       "card never painted",
     )
     log(lines, "on catalog wall")
-    const cardBtn = fixture.querySelector<HTMLButtonElement>(
-      '[data-gallery-card="prd_paint"] h3 button',
+    const cardBtn = () => fixture.querySelector<HTMLButtonElement>(
+      '[data-gallery-product="prd_paint"] h3 button',
     )!
-    flushSync(() => cardBtn.click())
+    flushSync(() => cardBtn().click())
     await settle()
     await settle()
     log(lines, "opened detail")
@@ -222,14 +213,14 @@ run.onclick = async () => {
     await settle()
     log(lines, "clicked module segment")
     check(
-      !!fixture.querySelector('[data-gallery-card="prd_paint"]'),
+      !!fixture.querySelector('[data-gallery-product="prd_paint"]'),
       "module segment click did not return to the wall",
     )
     check(!breadcrumb().includes("数字油画"), "trail did not clear after exit")
 
-    // Re-open the detail, leave via the sidebar, then come back: 平台货源
+    // Re-open the detail, leave via the sidebar, then come back: 平台商品库
     // must land on the gallery, not the last product page.
-    flushSync(() => cardBtn.click())
+    flushSync(() => cardBtn().click())
     await settle()
     await settle()
     check(breadcrumb().includes("数字油画"), "re-opened detail missing trail")
@@ -237,18 +228,18 @@ run.onclick = async () => {
       new URLSearchParams(window.location.search).get("product") === "prd_paint",
       "detail did not write product=",
     )
-    await clickNav("数据大屏")
+    await clickNav("工作台")
     await waitFor(
-      () => new URLSearchParams(window.location.search).get("screen") === "console",
+      () => new URLSearchParams(window.location.search).get("screen") === "home",
       "did not leave catalog",
     )
     check(
       !new URLSearchParams(window.location.search).has("product"),
       "product= leaked onto the other screen",
     )
-    await clickNav("平台货源")
+    await clickNav("平台商品库")
     await waitFor(
-      () => !!fixture.querySelector('[data-gallery-card="prd_paint"]'),
+      () => !!fixture.querySelector('[data-gallery-product="prd_paint"]'),
       "returning to catalog did not show the gallery",
     )
     check(

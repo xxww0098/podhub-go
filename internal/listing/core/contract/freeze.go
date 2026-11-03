@@ -19,6 +19,10 @@ const (
 	OpFreezeListing      uint32 = 11
 	OpProjectSubmitDraft uint32 = 12
 	OpIssueManifest      uint32 = 13
+	OpParseOCRAnswer     uint32 = 17
+	OpSeedAssociatedRow  uint32 = 19
+	OpBannedTags         uint32 = 20
+	OpSupplierConfig     uint32 = 21
 )
 
 // Module is the freeze host. Call runs one browser op. Snapshot runs the

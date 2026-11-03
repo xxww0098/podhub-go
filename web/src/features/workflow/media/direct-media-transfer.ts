@@ -66,12 +66,17 @@ function requireTarget(value: unknown, workspace: string, digest: string, extens
     || typeof wire.account_id !== "string" || !wire.account_id
     || typeof wire.object_key !== "string" || !wire.object_key
     || typeof wire.public_url !== "string" || !wire.public_url
-    || typeof wire.workspace_uuid !== "string" || wire.workspace_uuid !== workspace
-    || !wire.object_key.includes(`/teams/${workspace}/`)) {
+    || typeof wire.workspace_uuid !== "string" || wire.workspace_uuid !== workspace) {
+    throw invalidPresign("云端返回的媒体对象身份无效")
+  }
+  const uploadTail = wire.object_key.startsWith("uploads/") ? wire.object_key.slice(8) : wire.object_key.split("/uploads/")[1]
+  if ((["jpg", "png"].includes(extension) && (!uploadTail || uploadTail.split("/").length !== 3))
+    || (!["jpg", "png"].includes(extension) && !wire.object_key.includes(`/teams/${workspace}/`))
+    || (wire.object_key.startsWith("podhub-slices/") && !wire.object_key.startsWith(`podhub-slices/${wire.account_id}/uploads/`))) {
     throw invalidPresign("云端返回的媒体对象身份无效")
   }
   const suffix = `${digest}.${extension}`
-  if (!wire.object_key.endsWith(suffix)) throw invalidPresign("云端返回的媒体对象键与摘要不一致")
+  if (wire.object_key.split("/").at(-1) !== suffix) throw invalidPresign("云端返回的媒体对象键与摘要不一致")
   return { accountId: wire.account_id, objectKey: wire.object_key, publicUrl: wire.public_url,
     workspaceUuid: wire.workspace_uuid, storageRevision } as MediaObjectTarget
 }
@@ -90,7 +95,8 @@ export function requirePresign(value: unknown, request: DeliverMediaObjectReques
   const workspace = request.workspaceUuid
   if (!workspace) throw workspaceMissingError()
   const target = requireTarget(data, workspace, digest, extension)
-  if (["jpg", "png"].includes(extension) && request.uploadBatch && !matchesUploadBatch(request.uploadBatch, target.objectKey)) {
+  if (data.transport === "direct" && ["jpg", "png"].includes(extension) && request.uploadBatch
+    && !matchesUploadBatch(typeof data.upload_batch === "string" ? data.upload_batch : request.uploadBatch, target.objectKey)) {
     throw invalidPresign("云端上传目录与当前批次不一致", "media_upload_batch_mismatch")
   }
   if (data.transport === "direct") {
@@ -119,7 +125,7 @@ async function presign(request: DeliverMediaObjectRequest, digest: string, exten
       ...(request.uploadBatch ? { upload_batch: request.uploadBatch } : {}),
       store_checksum: "sha256",
       objects: [{ digest, extension, byte_length: byteLength }],
-    }, {}, CONTROL_TIMEOUT_MS)
+    }, {}, CONTROL_TIMEOUT_MS, undefined, { responseBody: "json" })
   }, scopedRetry(request))
   assertDeliveryCurrent(request)
   if (!page || !Array.isArray(page.objects) || page.objects.length !== 1)  throw invalidPresign("云端未返回媒体上传准备")
@@ -135,6 +141,7 @@ function remember(request: DeliverMediaObjectRequest, target: MediaObjectTarget,
 }
 async function complete(request: DeliverMediaObjectRequest, target: MediaObjectPresignData,
   byteLength: number): Promise<DeliveredMediaObject> {
+  const batch = target.uploadBatch ?? (request.uploadBatch && matchesUploadBatch(request.uploadBatch, target.objectKey) ? request.uploadBatch : undefined)
   try {
     const result = await retryWhenBusy(async () => {
       const release = await acquireComplete(scopedRetry(request).cancelled)
@@ -145,8 +152,8 @@ async function complete(request: DeliverMediaObjectRequest, target: MediaObjectP
         }), {
           workspace_uuid: target.workspaceUuid, account_id: target.accountId, object_key: target.objectKey,
           storage_revision: target.storageRevision, byte_length: byteLength, upload_ticket: target.uploadTicket,
-          ...(request.uploadBatch ? { upload_batch: request.uploadBatch } : {}),
-        }, {}, COMPLETE_TIMEOUT_MS)
+          ...(batch ? { upload_batch: batch } : {}),
+        }, {}, COMPLETE_TIMEOUT_MS, undefined, { responseBody: "json" })
       } finally { release() }
     }, { ...scopedRetry(request), attempts: BUSY_RETRY_DEFAULTS.attempts, maxWaitMs: BUSY_RETRY_DEFAULTS.maxWaitMs, paceShortHints: true })
     assertDeliveryCurrent(request)

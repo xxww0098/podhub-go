@@ -12,15 +12,13 @@ import (
 	catcontract "github.com/xxww0098/podhub-go/internal/admin/catalog/contract"
 	corecontract "github.com/xxww0098/podhub-go/internal/admin/core/contract"
 	corerepo "github.com/xxww0098/podhub-go/internal/admin/core/repo"
-	platformseal "github.com/xxww0098/podhub-go/internal/platform/seal"
 	"github.com/xxww0098/podhub-go/internal/platform/writer"
 )
 
-// CatalogRepo stores platform products and SKUs. These tables have no RLS.
+// CatalogRepo stores platform products and SKUs through staff-scoped transactions.
 type CatalogRepo struct {
-	Pool *pgxpool.Pool
-	// Key is CLOUD_INTEGRATION_CONFIG_KEY. It is checked only after a config row exists.
-	Key string
+	Pool        *pgxpool.Pool
+	PublicBases []string
 }
 
 const productCols = `product_id, title, description, media, specs, published, revision, created_at_ms, updated_at_ms`
@@ -75,55 +73,9 @@ func (r CatalogRepo) write(ctx context.Context, fn func(pgx.Tx) error) error {
 	return corerepo.MapAdmin(tx.Commit(ctx), "INTERNAL")
 }
 
-// Bases is mediaAccounts[].publicBaseUrl. Empty strings are dropped.
-// Supplier storage, delegate storage, AI, and payment are not bases.
-// A missing row is an empty list and does not consult the key.
-func (r CatalogRepo) Bases(ctx context.Context) ([]string, error) {
-	if r.Pool == nil {
-		return nil, corecontract.Fail(503, "MEDIA_UNAVAILABLE", "服务暂不可用")
-	}
-	var nonce, ciphertext []byte
-	err := r.Pool.QueryRow(ctx, `
-		SELECT nonce, ciphertext
-		FROM public.platform_integration_config
-		WHERE singleton = true`).Scan(&nonce, &ciphertext)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return []string{}, nil
-	}
-	if err != nil {
-		return nil, mediaReadErr(err)
-	}
-	key, err := platformseal.IntegrationKEK(r.Key)
-	if err != nil {
-		var keyErr *platformseal.KeyError
-		if errors.As(err, &keyErr) {
-			return nil, corecontract.Fail(503, "MEDIA_UNAVAILABLE", keyErr.Message)
-		}
-		return nil, corecontract.Fail(503, "MEDIA_UNAVAILABLE", "服务暂不可用")
-	}
-	plain, err := platformseal.OpenIntegration(key, nonce, ciphertext)
-	if err != nil {
-		return nil, corecontract.Fail(503, "MEDIA_UNAVAILABLE", "服务暂不可用")
-	}
-	snap, _, err := corecontract.ParseStored(plain)
-	if err != nil {
-		return nil, corecontract.Fail(503, "MEDIA_UNAVAILABLE", "服务暂不可用")
-	}
-	out := make([]string, 0, len(snap.Buckets))
-	for _, account := range snap.Buckets {
-		if account.PublicBase != "" {
-			out = append(out, account.PublicBase)
-		}
-	}
-	return out, nil
-}
-
-func mediaReadErr(err error) error {
-	var pg *pgconn.PgError
-	if errors.As(err, &pg) && pg.Code == "55P03" {
-		return &corecontract.APIError{Status: 503, Code: "MEDIA_UNAVAILABLE", Message: "资源正在更新，请稍后重试", RetryAfter: "1"}
-	}
-	return corecontract.Fail(503, "MEDIA_UNAVAILABLE", "服务暂不可用")
+// Bases is the public URL allow-list injected from server storage configuration.
+func (r CatalogRepo) Bases(context.Context) ([]string, error) {
+	return append([]string{}, r.PublicBases...), nil
 }
 
 func (r CatalogRepo) List(ctx context.Context) ([]catcontract.Product, []catcontract.SKU, error) {
@@ -169,6 +121,16 @@ func (r CatalogRepo) CreateProduct(ctx context.Context, actor corecontract.Actor
 		media, specs, err := jsonPair(in.Media, in.Specs)
 		if err != nil {
 			return err
+		}
+		// The default source may have been deleted with its products.
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO public.sc_sources (source_id, name, created_at_ms, updated_at_ms, created_by_account_uuid)
+			VALUES ('src_unassigned',
+			        CASE WHEN EXISTS (SELECT 1 FROM public.sc_sources WHERE name = '未分配' AND source_id <> 'src_unassigned')
+			             THEN '未分配-' || gen_random_uuid()::text ELSE '未分配' END,
+			        $1, $1, 'system:migration')
+			ON CONFLICT (source_id) DO NOTHING`, now); err != nil {
+			return corerepo.MapAdmin(err, "INTERNAL")
 		}
 		rows, err := tx.Query(ctx, `INSERT INTO public.sc_products
 			(product_id, title, description, media, specs, published, revision, created_at_ms, updated_at_ms, created_by_account_uuid)
@@ -491,7 +453,7 @@ func requireUnmanagedProduct(ctx context.Context, tx pgx.Tx, id string) error {
 		return corerepo.MapAdmin(err, "INTERNAL")
 	}
 	if n > 0 {
-		return corecontract.Fail(409, "CONFLICT", "该行由平台货源管理，请在平台货源中操作")
+		return corecontract.Fail(409, "CONFLICT", "该行由供应商商品库管理，请在供应商商品库中操作")
 	}
 	return nil
 }

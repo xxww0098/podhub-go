@@ -50,16 +50,9 @@ function controller(
 const overview = {
   session: {
     authenticated: true,
+    uuid: "5f0a3f5e-6c1d-4a5f-9a3e-6d2c8b7f4a22",
     email: "invitee@example.invalid",
   },
-  accounts: [
-    {
-      uuid: "5f0a3f5e-6c1d-4a5f-9a3e-6d2c8b7f4a22",
-      email: "invitee@example.invalid",
-      name: "受邀者",
-      active: true,
-    },
-  ],
 } as unknown as AccountOverview
 
 function render(
@@ -110,7 +103,7 @@ test("the gate offers both creating a Workspace and waiting for an invitation", 
 })
 
 test("the gate always offers sign-out", () => {
-  // Without a Workspace there is no account menu and no sidebar; losing sign-out
-  // here would strand the account with no way to switch identities.
-  assert.match(render(controller()), /退出登录/)
+  // Without a Workspace there is no sidebar and no account menu; losing sign-out
+  // here would strand the account with no way out.
+  assert.match(render(controller()), /aria-label="退出登录"/)
 })

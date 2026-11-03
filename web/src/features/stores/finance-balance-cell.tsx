@@ -1,5 +1,7 @@
 import type { OzonStoreView } from "@/bindings/commands"
-import { Button } from "@/components/ui/button"
+import { RotateCcw } from "lucide-react"
+
+import { IconButton } from "@/components/ui/icon-button"
 import { cn } from "@/lib/utils"
 
 import { financeBalanceDisplay } from "./finance-balance"
@@ -26,17 +28,16 @@ export function FinanceBalanceCell({
         {shown.text}
       </span>
       {shown.retry ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="xs"
+        <IconButton
+          icon={RotateCcw}
+          label="重试读取期末余额"
+          tip="重试"
+          size="icon-xs"
           onClick={(event) => {
             event.stopPropagation()
             onRetry()
           }}
-        >
-          重试
-        </Button>
+        />
       ) : null}
     </div>
   )

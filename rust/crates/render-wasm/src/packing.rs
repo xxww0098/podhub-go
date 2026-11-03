@@ -1,4 +1,4 @@
-//! Compact JSON + LF + JPEG payload shared by both WASM adapters.
+//! Compact JSON + LF + JPEG payload returned by the threaded WASM adapter.
 #![forbid(unsafe_code)]
 use render::RenderSlice;
 use serde::Serialize;
@@ -74,7 +74,7 @@ fn packed_size(header: usize, payload: usize) -> Result<u32, String> {
         .checked_add(1)
         .and_then(|len| len.checked_add(payload))
         .ok_or("packed result size overflow")?;
-    u32::try_from(len).map_err(|_| "packed result exceeds ABI length".into())
+    u32::try_from(len).map_err(|_| "packed result exceeds the 32-bit length limit".into())
 }
 
 #[cfg(test)]
@@ -118,7 +118,7 @@ mod tests {
         assert_eq!(&bytes[end + 1..], &[0, 10, 255, 8, 9]);
     }
     #[test]
-    fn rejects_invalid_json_and_checks_abi_length_without_large_allocations() {
+    fn rejects_invalid_json_and_checks_32_bit_length_without_large_allocations() {
         assert!(pack(b"not JSON", &[]).is_err());
         assert_eq!(packed_size(0, u32::MAX as usize - 1).unwrap(), u32::MAX);
         assert!(packed_size(0, u32::MAX as usize).is_err());

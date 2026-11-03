@@ -33,13 +33,13 @@ const (
 	sessWorker
 	sessStaff
 	sessObserver
-	sessWallet
 	sessSupplier
 	sessSupplierOnly
 	sessGrant
 	sessCatalog
 	sessAppRole
 	sessCatalogManager
+	sessMaintenance
 )
 
 // App enters the app role for one org. orgID <= 0 is rejected by InTx
@@ -54,11 +54,6 @@ func Staff() Session { return Session{kind: sessStaff} }
 
 // Observer enters the app role for one platform observer user id.
 func Observer(userID int64) Session { return Session{kind: sessObserver, userID: userID} }
-
-// WalletUser enters the app role for one org and that org's wallet user.
-func WalletUser(orgID, userID int64) Session {
-	return Session{kind: sessWallet, orgID: orgID, userID: userID}
-}
 
 // SupplierUser enters the app role for one org and one supplier user.
 func SupplierUser(orgID, userID int64) Session {
@@ -88,6 +83,12 @@ func AppRole() Session { return Session{kind: sessAppRole} }
 func CatalogManager(userID int64) Session {
 	return Session{kind: sessCatalogManager, userID: userID}
 }
+
+// Maintenance enters the cross-tenant sweep role and sets no org. It is the
+// only session allowed to read every org's ai_requests and billing_operations
+// rows; 00368 gives it no money write. It does not set app.current_org_id, so
+// it cannot be used for a tenant statement.
+func Maintenance() Session { return Session{kind: sessMaintenance} }
 
 var (
 	errEmptySession = errors.New("db: empty session")
@@ -138,13 +139,13 @@ func (s Session) ready() error {
 		if s.orgID <= 0 {
 			return tenantx.ErrOrgUnset
 		}
-	case sessWorker, sessStaff, sessCatalog, sessAppRole:
+	case sessWorker, sessStaff, sessCatalog, sessAppRole, sessMaintenance:
 		return nil
 	case sessObserver, sessSupplierOnly, sessCatalogManager:
 		if s.userID <= 0 {
 			return tenantx.ErrUserUnset
 		}
-	case sessWallet, sessSupplier:
+	case sessSupplier:
 		if s.orgID <= 0 {
 			return tenantx.ErrOrgUnset
 		}
@@ -171,8 +172,6 @@ func (s Session) enter(ctx context.Context, tx pgx.Tx) error {
 		return tenantx.EnterStaff(ctx, tx)
 	case sessObserver:
 		return tenantx.EnterObserver(ctx, tx, s.userID)
-	case sessWallet:
-		return tenantx.EnterWalletUser(ctx, tx, s.orgID, s.userID)
 	case sessSupplier:
 		return tenantx.EnterSupplierUser(ctx, tx, s.orgID, s.userID)
 	case sessSupplierOnly:
@@ -185,6 +184,8 @@ func (s Session) enter(ctx context.Context, tx pgx.Tx) error {
 		return tenantx.EnterAppRole(ctx, tx)
 	case sessCatalogManager:
 		return tenantx.EnterCatalogManager(ctx, tx, s.userID)
+	case sessMaintenance:
+		return tenantx.EnterMaintenance(ctx, tx)
 	default:
 		return errEmptySession
 	}

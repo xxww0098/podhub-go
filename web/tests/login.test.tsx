@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 import {
   LoginScreen,
   emptyAccessCheck,
+  initialAccessMode,
   registrationPasswordIssue,
 } from "../src/features/account/login-screen"
 import {
@@ -21,6 +22,16 @@ const anonymousOverview = {
   owned_count: 0,
   owned_limit: 3,
 }
+
+test("access entry honors registration paths and invitations", () => {
+  assert.equal(initialAccessMode("/register", ""), "register")
+  assert.equal(initialAccessMode("/register/", ""), "register")
+  assert.equal(initialAccessMode("/login", ""), "login")
+  assert.equal(initialAccessMode("/login/", ""), "login")
+  assert.equal(initialAccessMode("/login", "INVITE"), "register")
+  assert.equal(initialAccessMode("/register", "INVITE"), "register")
+  assert.equal(initialAccessMode("/register-extra", ""), "login")
+})
 
 test("login screen is a standalone sign-in surface without workspace chrome", () => {
   const html = renderToStaticMarkup(
@@ -41,6 +52,7 @@ test("login screen is a standalone sign-in surface without workspace chrome", ()
   assert.match(html, /for="access-password"/)
   assert.match(html, /创建账户/)
   assert.match(html, /还没有账户/)
+  assert.match(html, /忘记密码/)
   assert.match(html, /lg:grid-cols-\[minmax\(0,1\.05fr\)_minmax\(0,0\.95fr\)\]/)
   assert.doesNotMatch(html, /使用本机工作区/)
   assert.doesNotMatch(html, /不登录云端/)
@@ -55,7 +67,7 @@ test("the anonymous entry graph never pulls AppShell or production screens", () 
   assert.match(source, /PublicSite/)
   assert.doesNotMatch(source, /from ["']@\/app\/app-shell["']/)
   assert.doesNotMatch(source, /from ["']@\/features\/workflow\/workflow-screen["']/)
-  assert.doesNotMatch(source, /from ["']@\/features\/console\/console-screen["']/)
+  assert.doesNotMatch(source, /from ["']@\/features\/home\/home-screen["']/)
 })
 
 test("a locked account reaches the forced password change instead of the retry wall", async () => {
@@ -110,11 +122,11 @@ test("session startup failures stay out of Login and remain retryable", async ()
   const html = renderToStaticMarkup(
     <SessionCheckFailed message={failed.message} reason={failed.reason} onRetry={() => undefined} />,
   )
-  // Failure copy rides the persistent live toast, never the page DOM; the
-  // screen keeps only the retry affordance.
+  // Failure details stay in the live toast; the page retains the context of retry.
   assert.doesNotMatch(html, /role="alert"/)
   assert.doesNotMatch(html, /云端服务暂时不可用/)
   assert.match(html, />重试<\/button>/)
+  assert.match(html, /暂时无法进入工作台/)
   assert.doesNotMatch(html, /邮箱|密码|创建账户/)
 
   const app = readFileSync(new URL("../src/app/App.tsx", import.meta.url), "utf8")
@@ -190,7 +202,7 @@ test("product version label is vX.Y.Z from root VERSION", () => {
   assert.doesNotMatch(identity, /v0\.0\.\d+/)
 })
 
-test("a locked login hands over before the credential toast, after TOTP", () => {
+test("a locked login hands over before the credential toast", () => {
   // The login write itself succeeds and writes the Cookie; only the follow-up
   // overview read is refused with 403 PASSWORD_CHANGE_REQUIRED. Telling the
   // operator to check the password would be false, and no retry on this card can
@@ -199,13 +211,11 @@ test("a locked login hands over before the credential toast, after TOTP", () => 
     new URL("../src/features/account/login-screen.tsx", import.meta.url),
     "utf8",
   )
-  const totpAt = login.indexOf('commandErrorCode(reason) === "cloud_totp_required"')
   const lockedAt = login.indexOf(
     'commandErrorCode(reason) === "cloud_password_change_required"',
   )
   const toastAt = login.indexOf("notifyCommandError(reason, message)")
-  assert.ok(totpAt > 0, "the TOTP branch must still exist")
-  assert.ok(lockedAt > totpAt, "the lock check must not steal TOTP priority")
+  assert.ok(lockedAt > 0, "the lock check must stay in the catch branch")
   assert.ok(lockedAt < toastAt, "the lock check must run before the credential toast")
   // Busy must be cleared before the callback: otherwise the locked screen is
   // painted from a tree whose submit button is still spinning.
@@ -217,28 +227,14 @@ test("a locked login hands over before the credential toast, after TOTP", () => 
   assert.doesNotMatch(login, /onPasswordChangeRequired\?\.\(\)\s*\n\s*notify/)
 
   const app = readFileSync(new URL("../src/app/App.tsx", import.meta.url), "utf8")
-  assert.match(app, /const lockAccount = \(\) => \{\s*setAddingAccount\(false\)\s*setAuth\(\{ phase: "locked" \}\)/)
-  // Every LoginScreen mount hands over, including the add-account card — the
-  // added account can be locked too, and its login already swapped `sid`.
+  assert.match(app, /const lockAccount = \(\) => \{\s*setAuth\(\{ phase: "locked" \}\)/)
+  // Every LoginScreen mount hands over: the session already points at the
+  // locked account, so leaving the card armed would paint a shell it cannot use.
   const mounts = app.match(/<LoginScreen[\s\S]*?\/>/g) ?? []
-  assert.ok(mounts.length >= 3, `expected every mount to be checked, got ${mounts.length}`)
+  assert.ok(mounts.length >= 2, `expected every mount to be checked, got ${mounts.length}`)
   for (const mount of mounts) {
-    assert.match(mount, /onPasswordChangeRequired=\{lockAccount\}|onPasswordChangeRequired=\{lockAccount\}/)
+    assert.match(mount, /onPasswordChangeRequired=\{lockAccount\}/)
   }
-})
-
-test("the authenticator field stays hidden until the server asks for a code", () => {
-  const html = renderToStaticMarkup(
-    <LoginScreen onSignedIn={() => undefined} />,
-  )
-  assert.doesNotMatch(html, /验证器验证码/)
-  const source = readFileSync(
-    new URL("../src/features/account/login-screen.tsx", import.meta.url),
-    "utf8",
-  )
-  assert.match(source, /commandErrorCode\(reason\) === "cloud_totp_required"/)
-  assert.match(source, /htmlFor="access-totp"/)
-  assert.match(source, /autoComplete="one-time-code"/)
 })
 
 test("login form keeps failures in the toast host and labelled fields", () => {

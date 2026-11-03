@@ -24,13 +24,13 @@ test("supplier_not_listable refusal pauses the queue and toasts the classified c
     runnerOpenRefused(refusal)
     assert.equal(peekListingWorkbench().queuePaused, true, "进入上架失败仍暂停队列")
     assert.equal(lines.length, 1)
-    assert.match(String(lines[0]?.[0]), /^\[notify\] error code=cloud_supplier_not_listable errorId=[0-9]{20} message=平台正在复核该商品的 Ozon 配置，暂不可上架$/)
+    assert.match(String(lines[0]?.[0]), /^\[notify\] error code=cloud_supplier_not_listable errorId=[0-9A-F][0-9A-HJKMNP-TV-Z]{12} message=平台正在复核该商品的 Ozon 配置，暂不可上架$/)
 
     // 停售归停售句；后端写了话就照旧用原文——前端只是兜底。
     lines.length = 0
     runnerOpenRefused({ code: "cloud_supplier_not_listable", message: "", denial: "product_archived" })
     assert.equal(lines.length, 1)
-    assert.match(String(lines[0]?.[0]), /^\[notify\] error code=cloud_supplier_not_listable errorId=[0-9]{20} message=该商品已停售，不可上架$/)
+    assert.match(String(lines[0]?.[0]), /^\[notify\] error code=cloud_supplier_not_listable errorId=[0-9A-F][0-9A-HJKMNP-TV-Z]{12} message=该商品已停售，不可上架$/)
     lines.length = 0
     runnerOpenRefused({
       code: "cloud_supplier_not_listable",
@@ -38,13 +38,13 @@ test("supplier_not_listable refusal pauses the queue and toasts the classified c
       denial: "catalog_expired",
     })
     assert.equal(lines.length, 1)
-    assert.match(String(lines[0]?.[0]), /^\[notify\] error code=cloud_supplier_not_listable errorId=[0-9]{20} message=Ozon 配置已过期，等待平台复核$/)
+    assert.match(String(lines[0]?.[0]), /^\[notify\] error code=cloud_supplier_not_listable errorId=[0-9A-F][0-9A-HJKMNP-TV-Z]{12} message=Ozon 配置已过期，等待平台复核$/)
 
     // 别的拒绝码不吃这条规则——通用 fallback 不变。
     lines.length = 0
     runnerOpenRefused({ code: "cloud_unavailable", message: "" })
     assert.equal(lines.length, 1)
-    assert.match(String(lines[0]?.[0]), /^\[notify\] error code=cloud_unavailable errorId=[0-9]{20} message=无法进入上架执行，请稍后重试。$/)
+    assert.match(String(lines[0]?.[0]), /^\[notify\] error code=cloud_unavailable errorId=[0-9A-F][0-9A-HJKMNP-TV-Z]{12} message=无法进入上架执行，请稍后重试。$/)
   } finally {
     console.log = original
     toast.add = originalAdd

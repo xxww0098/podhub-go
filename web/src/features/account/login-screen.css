@@ -1,0 +1,101 @@
+.login-screen .c-login-aside {
+  overflow: hidden;
+  background: var(--card);
+}
+
+.login-screen .login-masthead {
+  z-index: 1;
+}
+
+.login-screen .login-mark-name {
+  font-size: 1.15rem;
+  font-weight: 750;
+}
+
+.login-screen .c-login-story {
+  position: relative;
+  align-items: flex-start;
+  justify-content: flex-start;
+  min-height: 650px;
+  padding: 70px 0 0;
+}
+
+.login-screen .c-login-story h1 {
+  position: relative;
+  z-index: 1;
+  font-size: clamp(2.3rem, 4vw, 4.1rem);
+  font-weight: 800;
+  letter-spacing: -0.06em;
+  text-align: left;
+}
+
+.login-screen .c-login-story > p {
+  position: relative;
+  z-index: 1;
+  margin-top: 12px;
+  font-size: 1.15rem;
+  text-align: left;
+}
+
+.login-screen .c-login-steps {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  gap: 26px;
+  margin: 26px 0 0;
+  padding: 0;
+  color: var(--muted-foreground);
+  font-size: 0.85rem;
+  list-style: none;
+}
+
+.login-screen .c-login-steps li + li::before {
+  margin-right: 26px;
+  color: var(--brand);
+  content: "→";
+}
+
+.login-screen .c-login-photo {
+  position: absolute;
+  right: -8%;
+  bottom: -30px;
+  width: 115%;
+  height: 58%;
+  object-fit: cover;
+  object-position: right center;
+}
+
+.login-screen main > [data-slot="card"] {
+  max-width: 410px;
+  box-shadow: none;
+}
+
+@media (max-width: 900px) {
+  .login-screen .c-login-story {
+    min-height: 350px;
+    padding-block: 45px;
+  }
+
+  .login-screen .c-login-photo {
+    right: -10%;
+    bottom: 0;
+    width: 75%;
+    height: 95%;
+    opacity: 0.65;
+  }
+}
+
+@media (max-width: 700px) {
+  .login-screen .c-login-story {
+    min-height: 210px;
+    padding: 38px 0 0;
+  }
+
+  .login-screen .c-login-story h1 {
+    font-size: 2rem;
+  }
+
+  .login-screen .c-login-photo {
+    display: none;
+  }
+}

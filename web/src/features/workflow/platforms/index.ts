@@ -1,5 +1,5 @@
 /** Assembly root: local preview adapters and the separate final S16 send capabilities. */
-import { createOzonAdapter, createOzonSendCapability, type OzonFreezeCore } from "./ozon"
+import { createOzonAdapter, createOzonSendCapability, type OzonFreezeCore } from "./ozon/adapter"
 import { createPlatformRegistry } from "./publish"
 import { createWbAdapter, type WbPreviewCore, type WbIssuePresenter } from "./wb/adapter"
 

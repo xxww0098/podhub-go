@@ -1,8 +1,8 @@
 /**
  * Paste-format parser for batch credential import: one Store per line,
  * `店铺名,Client ID,API Key` — e.g. `test,4995868,763954c3-…-fa5dcbcd77e9`.
- * Roster tags ride at the end of the line as ` #标签` tokens:
- * `test,4995868,763954c3-… #华东 #VIP`.
+ * The Store's single group rides at the end of the line as one ` #分组` token:
+ * `test,4995868,763954c3-… #华东`.
  *
  * ASCII and full-width commas both separate fields. Because the Client ID and
  * API Key are taken from the right edge, a 店铺名 that itself contains a comma
@@ -16,11 +16,11 @@ export type StoreImportRow = {
   clientId: string
   apiKey: string
   /**
-   * Tag names from the `#…` fragments after the API Key. `undefined` when the
-   * line carries no `#` marker at all — the Store's tags stay untouched —
-   * while an empty list (a bare trailing `#`) clears them.
+   * The group name after the `#` marker. `undefined` when the line carries no
+   * `#` at all — the Store's group stays untouched — while an empty string (a
+   * bare trailing `#`) clears it.
    */
-  tags?: string[]
+  group?: string
   /** The trimmed raw line, for repopulating the textarea on retry. */
   source: string
 }
@@ -34,17 +34,18 @@ export type StoreImportIssue = {
 const FIELD_SEPARATOR = /[,，]/
 
 /**
- * A tag token starts with `#` (full-width ＃ accepted). Separator glyphs —
+ * A group token starts with `#` (full-width ＃ accepted). Separator glyphs —
  * the markers, the commas and any line break — can never be written into a
- * tag name on the line, so export filters names carrying them.
+ * group name on the line, so export skips a name carrying them.
  */
-const TAG_MARKER = /[#＃]/
-const TAG_NAME_UNWRITABLE = /[#＃,，\r\n]/
-const MAX_TAG_NAME_CHARS = 64
+const GROUP_MARKER = /[#＃]/
+const GROUP_NAME_UNWRITABLE = /[#＃,，\r\n]/
+const MAX_GROUP_NAME_CHARS = 64
 
-/** The subset of tag names the text format can carry back losslessly. */
-export function writableTagNames(tags: readonly string[] | undefined): string[] {
-  return (tags ?? []).filter((name) => !TAG_NAME_UNWRITABLE.test(name))
+/** The group name when the text format can carry it back losslessly. */
+export function writableGroupName(name: string | null | undefined): string | undefined {
+  const trimmed = name?.trim()
+  return trimmed && !GROUP_NAME_UNWRITABLE.test(trimmed) ? trimmed : undefined
 }
 
 export function parseStoreImportText(text: string): {
@@ -63,21 +64,12 @@ export function parseStoreImportText(text: string): {
       return
     }
     const tail = parts[parts.length - 1] ?? ""
-    const markerAt = tail.search(TAG_MARKER)
+    const markerAt = tail.search(GROUP_MARKER)
     const apiKey = (markerAt < 0 ? tail : tail.slice(0, markerAt)).trim()
     const clientId = (parts[parts.length - 2] ?? "").trim()
     const name = parts.slice(0, -2).join(",").trim()
-    const tagNames: string[] = []
-    if (markerAt >= 0) {
-      const seen = new Set<string>()
-      for (const fragment of tail.slice(markerAt + 1).split(TAG_MARKER)) {
-        const tag = fragment.trim()
-        const key = tag.toLowerCase()
-        if (!tag || seen.has(key)) continue
-        seen.add(key)
-        tagNames.push(tag)
-      }
-    }
+    const groupTokens = markerAt < 0 ? [] : tail.slice(markerAt + 1).split(GROUP_MARKER)
+    const group = groupTokens[0]?.trim() ?? ""
     const reason = !name
       ? "缺少店铺名"
       : !clientId
@@ -88,9 +80,11 @@ export function parseStoreImportText(text: string): {
             ? "缺少 API Key"
             : apiKey.length > 512
               ? "API Key 过长"
-              : tagNames.some((tag) => [...tag].length > MAX_TAG_NAME_CHARS)
-                ? "标签名过长"
-                : undefined
+              : groupTokens.length > 1
+                ? "分组只能填一个"
+                : [...group].length > MAX_GROUP_NAME_CHARS
+                  ? "分组名过长"
+                  : undefined
     if (reason) {
       issues.push({ line, source, reason })
       return
@@ -100,7 +94,7 @@ export function parseStoreImportText(text: string): {
       name,
       clientId,
       apiKey,
-      ...(markerAt < 0 ? {} : { tags: tagNames }),
+      ...(markerAt < 0 ? {} : { group }),
       source,
     })
   })
@@ -110,16 +104,17 @@ export function parseStoreImportText(text: string): {
 /**
  * The export half of the same line format. A 店铺名 containing commas still
  * round-trips: the parser reads Client ID and API Key from the right edge.
- * Tags follow the API Key as ` #标签` tokens; a Store with no tags carries no
- * marker, so re-importing leaves any existing tags on the target alone.
+ * The group follows the API Key as one ` #分组` token; a Store without a group
+ * carries no marker, so re-importing leaves any existing group on the target
+ * alone.
  */
 export function formatStoreImportText(
-  items: Array<{ name: string; client_id: string; api_key: string; tags?: string[] }>,
+  items: Array<{ name: string; client_id: string; api_key: string; group?: string | null }>,
 ): string {
   return items
     .map((item) => {
-      const tags = writableTagNames(item.tags)
-      return `${item.name},${item.client_id},${item.api_key}${tags.length ? ` #${tags.join(" #")}` : ""}`
+      const group = writableGroupName(item.group)
+      return `${item.name},${item.client_id},${item.api_key}${group ? ` #${group}` : ""}`
     })
     .join("\n")
 }

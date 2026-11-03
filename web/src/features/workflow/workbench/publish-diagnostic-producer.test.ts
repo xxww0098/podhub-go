@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { formatErrorId } from "@/lib/error-id"
 import test from "node:test"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
@@ -34,13 +35,13 @@ test("two distinct failed native actions sharing a trace own separate IDs; real 
     const state = peekListingWorkbench(), row = state.rows[0]!
     assert.equal(currentWorkbenchDiagnostic(row)?.diagnosticId, b.diagnosticId)
     const receipt = currentWorkbenchDiagnostic(row)?.errorFeedback
-    assert.match(receipt!.errorId, /^[0-9]{20}$/)
+    assert.match(receipt!.errorId, /^[0-9A-F][0-9A-HJKMNP-TV-Z]{12}$/)
     assert.notEqual(receipt!.errorId, firstReceipt)
     const html = renderToStaticMarkup(createElement(PublishStateCell, { row, inView: true, lifecycle: state.productBases.row!.lifecycle,
       onCancelIntent() { actions++ }, onReviewCandidates() { actions++ }, onRetryStage() { actions++ } }))
     assert.match(html, /技术详情.*诊断编号.*请求追踪编号/s)
     assert.ok(html.includes(b.diagnosticId))
-    assert.ok(html.includes(receipt!.errorId))
+    assert.ok(html.includes(formatErrorId(receipt!.errorId)))
     assert.doesNotMatch(html, /重新发送|释放未知|一键修复|上报诊断信息|role="alert"/)
     assert.equal(state.productBases.row!.lifecycle.stage, "ready_to_publish")
     assert.equal(row.publishUnconfirmed, undefined)

@@ -14,7 +14,7 @@
 - `internal/admin/http/catalog_blob.go` 在没有注入 Client 时（5s）
 - `internal/app/delegate_edge.go` 的卖家回环 POST（30s，最多 3 次且仍在回环内的重定向）
 
-`internal/seller/egress.go` 的 Client 槽位和 30s 超时没有动。
+`internal/seller/ozon/egress.go` 的 Client 槽位和 30s 超时没有动。
 
 进程级 Transport 按两档分开，再加探测自己的一档：
 
@@ -65,7 +65,7 @@ BenchmarkFitImageConc8-4        1552    215855 ns/op    245520 B/op      21 allo
 
 8 路并发的 allocs/op 仍是 21。旧的逐像素 `color.Color` 是 24597 allocs/op。
 
-## 3. listing-core 与禁词 wasm 实例池
+## 3. listing-core 实例池（含禁词 op 20）
 
 `internal/listing/core/host.go` 的 `Call` / `snapshotWasm`，以及 `internal/listing/core/service/engine/engine.go` 的 `Call`，以前用一把 `sync.Mutex` 守一个实例（一个结果槽）。现在每个调用从有界池借一个 Guest，用完归还。池大小是常量 `guestPoolSize = 4`。池空时阻塞排队，不丢调用，不改错误文案，不改 op 编号。trap 只关闭当前这一个实例，下次借到该槽再实例化。schema 与 body 仍按原字节写入。返回值仍是结果槽的拷贝。`schema_drop` 在归还槽位之前、在持有该实例的同一次调用里执行。
 
@@ -76,12 +76,12 @@ BenchmarkFitImageConc8-4        1552    215855 ns/op    245520 B/op      21 allo
 测试：
 
 - `TestWazeroFreezeMatchesNativeOracle`、`TestConcurrentPoolMatchesFreezeOracle`、`TestTrapDropsOnlyThatGuest`
-- `TestWasmMatchesNativeOracle`、`TestBannedOutcomeOrderUnderPool`、`TestTrapDropsOnlyThatTagsGuest`
+- `TestWasmMatchesNativeOracle`、`TestBannedOutcomeOrderUnderSharedPool`（禁词调用与冻结共用同一个池，所以池的 trap 与取消语义由上一组测试覆盖）
 - `TestBannedTagCacheServesTheSameRulesUntilTheTTL`
 
-这些测试加载的是提交进仓库的 wasm，不依赖 `LISTING_CORE_WASM`。`TestRebuiltListingCoreWasmMatchesNativeOracle` 只在该变量未设置时跳过。CI 始终把它指到 `wasm/dist/server/listing-core.wasm`，`LISTING_TAGS_WASM` 指到 `wasm/dist/server/listing-tags.wasm`，然后运行 `go test ./...`。WASM 只在本地重建并提交，CI 校验清单与结果 golden，不安装 Rust 或临时构建 WASM。
+这些测试加载的是提交进仓库的 wasm，CI 直接运行 `go test ./...`。WASM 在本地重建并提交，Go/Web CI 校验清单与结果 golden，不临时构建 WASM；独立 Rust job 运行原生 render、psdx 和 render-wasm 测试。
 
-基准（`go test -bench 'BenchmarkListingCorePool|BenchmarkListingTagsPool' -benchtime=300ms -count=1`）。本机 `GOMAXPROCS` 为 4，所以「2 与 GOMAXPROCS」就是 pool2 与 pool4。夹具是 freeze oracle 的第一条，以及禁词 `partition`（`#роза` / `#сигареты`）。
+基准（`go test -bench 'BenchmarkListingCorePool' -benchtime=300ms -count=1`）。本机 `GOMAXPROCS` 为 4，所以「2 与 GOMAXPROCS」就是 pool2 与 pool4。夹具是 freeze oracle 的第一条，以及禁词 `partition`（`#роза` / `#сигареты`）。
 
 listing-core：
 
@@ -92,16 +92,7 @@ BenchmarkListingCorePool/pool4/conc1-4     915    369903 ns/op     2703 ops/s   
 BenchmarkListingCorePool/pool4/conc8-4    3501    101993 ns/op     9805 ops/s    2076 p99-us
 ```
 
-禁词 wasm：
-
-```
-BenchmarkListingTagsPool/pool2/conc1-4    15415    24492 ns/op    40829 ops/s    168 p99-us
-BenchmarkListingTagsPool/pool2/conc8-4    19118    18639 ns/op    53651 ops/s    546 p99-us
-BenchmarkListingTagsPool/pool4/conc1-4    15762    21433 ns/op    46657 ops/s    121 p99-us
-BenchmarkListingTagsPool/pool4/conc8-4    27438    11305 ns/op    88453 ops/s    477 p99-us
-```
-
-8 路并发时，池大小 4 的吞吐高于池大小 2。生产常量取 4。
+禁词调用合并进 listing-core 后共用池大小 4 的实例池。同机、同夹具、单路与 8 路并发各跑 3 次，合并前（独立池，大小 4）对合并后：单路 3.8–4.4 µs/op 对 4.0–4.1 µs/op，8 路 1.4–1.9 µs/op 对 1.4–1.5 µs/op，p99 约 31–43 µs 对 29–35 µs，没有退化。
 
 ## 需要用户决定
 

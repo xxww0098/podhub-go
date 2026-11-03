@@ -454,7 +454,14 @@ func TestOzonErrorCatalog(t *testing.T) {
 		if denied.Code != http.StatusForbidden {
 			t.Fatalf("reviewer %d %s", denied.Code, denied.Body.String())
 		}
-		seen := reviewer.post(t, http.MethodGet, "/api/listing/ozon-errors?code=E2"+run+"UK", "")
+		deniedRead := reviewer.post(t, http.MethodGet, "/api/listing/ozon-errors?code=E2"+run+"UK", "")
+		if deniedRead.Code != http.StatusForbidden {
+			t.Fatalf("invalid role read catalog: %d %s", deniedRead.Code, deniedRead.Body.String())
+		}
+		reader := newOzonShop(t, ctx, pool, orgA, userA, ring, false, svc)
+		reader.role = "member"
+		reader.h = reader.handler()
+		seen := reader.post(t, http.MethodGet, "/api/listing/ozon-errors?code=E2"+run+"UK", "")
 		if seen.Code != http.StatusOK || !strings.Contains(seen.Body.String(), "E2"+run+"UK") || strings.Contains(seen.Body.String(), fixtureAPIKey) {
 			t.Fatalf("get %d %s", seen.Code, seen.Body.String())
 		}
@@ -621,8 +628,7 @@ func (s *ozonShop) handler() http.Handler {
 	opens := s.opens
 	kek := seal.DeriveKEK("browser-direct-fixture-kek")
 	ring := seal.Ring{Primary: kek}
-	srv := &httpapi.Server{
-		Pool: s.pool,
+	srv := &httpapi.Server{Pool: s.pool,
 		Access: access.FixedResolver{Principal: &access.Principal{
 			UserID: s.user, OrgID: s.org, WorkspaceRole: s.role,
 		}},

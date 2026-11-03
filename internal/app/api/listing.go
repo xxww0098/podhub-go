@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	listengine "github.com/xxww0098/podhub-go/internal/listing/core/service/engine"
 	listing "github.com/xxww0098/podhub-go/internal/listing/read/http"
 	platform "github.com/xxww0098/podhub-go/internal/listing/rules"
 	"github.com/xxww0098/podhub-go/internal/listing/submit"
@@ -87,7 +88,7 @@ func (s *Server) PostListingValidate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	verdict, err := listing.Validate(r.Context(), s.Engine, listing.Input{
+	verdict, err := s.Engine.Validate(r.Context(), listing.Input{
 		RulesVersion:   in.RulesVersion,
 		CurrentVersion: version,
 		Tags:           in.Tags,
@@ -149,7 +150,7 @@ func (s *Server) PostListingSubmit(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	verdict, err := listing.Validate(r.Context(), s.Engine, listing.Input{
+	verdict, err := s.Engine.Validate(r.Context(), listing.Input{
 		RulesVersion:   in.RulesVersion,
 		CurrentVersion: version,
 		Tags:           in.Tags,
@@ -191,7 +192,7 @@ func (s *Server) currentRules(w http.ResponseWriter, r *http.Request) ([]listing
 	if rules == nil {
 		rules = []listing.Rule{}
 	}
-	version, err := listing.RulesVersion(rules)
+	version, err := listengine.RulesVersion(rules)
 	if err != nil {
 		slog.Error("banned tags version", "err", err)
 		writeListingJSON(w, http.StatusServiceUnavailable, listingError{

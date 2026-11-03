@@ -29,9 +29,14 @@ SELECT p.product_id, p.source_id, p.title, p.description, p.variant_group,
        s.suggested_retail_cents, s.suggested_old_price_cents,
        o.cost_cents, o.shipping_cost_cents, v.price_cents,
        COALESCE(p.prompt_name, ''), COALESCE(p.prompt_file_name, ''),
-       (SELECT COUNT(*) FROM public.prompt_revisions r WHERE r.product_id = p.product_id) > 0,
+       EXISTS (SELECT 1 FROM public.supplier_ozon_configs r WHERE r.product_id = p.product_id AND r.prompt_text <> '' AND jsonb_array_length(r.fixed_tags) > 0),
        EXISTS (SELECT 1 FROM public.supplier_ozon_configs c
-                WHERE c.product_id = p.product_id),
+                JOIN public.ozon_category_current cat ON cat.description_category_id=c.description_category_id
+                  AND cat.type_id=c.type_id AND cat.language=c.language
+                WHERE c.product_id = p.product_id AND c.state='valid'
+                  AND c.description_category_id=p.description_category_id AND c.type_id=p.type_id
+                  AND c.validated_catalog_digest=cat.content_digest AND cat.content_digest<>''
+                  AND cat.fetched_at_ms >= (extract(epoch FROM clock_timestamp())*1000)::bigint - 259200000),
        EXISTS (SELECT 1 FROM public.supplier_ozon_configs c2
                 WHERE c2.product_id = p.product_id AND c2.description_category_id IS NOT NULL
                   AND c2.type_id IS NOT NULL)

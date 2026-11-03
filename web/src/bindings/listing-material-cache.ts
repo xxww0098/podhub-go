@@ -14,7 +14,7 @@
  * were in flight, so a reply born before a switch never repopulates it.
  * Local material is never authoritative — Cloud rebuilds its own on send.
  */
-import { api } from "@/api/client"
+import { request } from "@/api/client"
 import { retryWhenBusy } from "@/api/busy-retry"
 import { route } from "@/api/routes"
 import type { components } from "@/api/schema"
@@ -39,10 +39,7 @@ export type NativeSchemaMaterial = {
 
 export type CategorySchemaEntry = { view: CategorySchemaView, material?: NativeSchemaMaterial }
 
-// ponytail: local read of the additive field until the parent regenerates `schema.d.ts`.
-type ServedSchemaData = components["schemas"]["CatalogSchemaData"] & {
-  nativeMaterial?: { snapshot: CategorySchemaSnapshot, searchMaterials: SearchMaterialEntry[] }
-}
+type ServedSchemaData = NonNullable<components["schemas"]["CatalogSchemaResponse"]>
 
 /** A live fill may run up to the router's 30 s timeout; outwait it, not more. */
 export const CATALOG_FILL_RETRY = { attempts: 15, maxWaitMs: 45_000 }
@@ -79,24 +76,31 @@ async function nativeMaterial(
 
 /** Untrusted reply: a material for another coordinate or without a revision is absent, not empty. */
 function servedMaterial(key: string, data: ServedSchemaData): Promise<NativeSchemaMaterial> | undefined {
-  const native = data.nativeMaterial
+  const native = data.native_material
   const snapshot = native?.snapshot
   if (
     !snapshot ||
-    !Array.isArray(native.searchMaterials) ||
+    !Array.isArray(native.search_materials) ||
     typeof snapshot.schema_revision !== "string" ||
     snapshot.schema_revision === "" ||
     `${snapshot.description_category_id}:${snapshot.type_id}` !== key.split(":").slice(0, 2).join(":")
   ) {
     return undefined
   }
-  return nativeMaterial(snapshot, native.searchMaterials)
+  return nativeMaterial(snapshot, native.search_materials.map((entry) => ({
+    descriptionCategoryId: entry.description_category_id,
+    attributeId: entry.attribute_id,
+    dictionaryId: entry.dictionary_id,
+    valueId: entry.value_id,
+    label: entry.label,
+  })))
 }
 
 async function fetchEntry(key: string): Promise<CategorySchemaEntry> {
   const [category, type, language] = key.split(":")
-  const data = await retryWhenBusy(() => api.get<ServedSchemaData | null>(
-    `${route("catalogSchema")}?descriptionCategoryId=${category}&typeId=${type}&language=${language}`,
+  const data = await retryWhenBusy(() => request<ServedSchemaData | null>("GET",
+    `${route("catalogSchema")}?description_category_id=${category}&type_id=${type}&language=${language}`,
+    undefined, {}, undefined, undefined, { responseBody: "json" },
   ), CATALOG_FILL_RETRY)
   if (!data) throw refuse("workflow_category_schema_missing", "该类目尚未同步，请检查平台类目密钥后重试")
   return { view: catalogSchemaView(data), material: await servedMaterial(key, data) }

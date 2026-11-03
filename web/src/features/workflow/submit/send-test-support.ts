@@ -1,11 +1,12 @@
 /**
  * Real native inputs for the send rail's tests: the compiled
- * `listing-core-wasm` (rebuild with `scripts/build-wasm.sh core --copy`)
+ * `listing-core-wasm` (rebuild with `scripts/build-wasm.sh core`)
  * and the frozen-ABI golden row / card / schema its native tests pin
  * (`rust/crates/listing-core-wasm/tests/fixtures/ambient`). Nothing here is a
  * hand-made Seller body; the core freezes, Cloud is stubbed at `fetch`.
  */
 import { readFileSync } from "node:fs"
+import { route } from "@/api/routes"
 
 import { primeCardSession, resetCardSessions } from "../card/card-session"
 import { rememberListingRows, rowCacheScope } from "@/bindings/listing-row-cache"
@@ -73,13 +74,13 @@ export function openCard(id = CARD, typeId = TYPE, storeIds = "store-1"): void {
 export function schemaData(typeId = TYPE, withMaterial = true) {
   return {
     description_category_id: CATEGORY, type_id: typeId, language: "default", fetched_at_ms: 1, fields: [],
-    ...(withMaterial ? { nativeMaterial: { snapshot: { ...goldenSchema, type_id: typeId }, searchMaterials: [] } } : {}),
+    ...(withMaterial ? { native_material: { snapshot: { ...goldenSchema, type_id: typeId }, search_materials: [] } } : {}),
   }
 }
 
 export type SendCall = { url: string, method: string, body: any }
 
-/** `answer` plays Cloud; a plain value is enveloped as `{data}`. */
+/** `answer` plays Cloud; only catalog Schema is returned without a `{data}` envelope. */
 export function serve(answer: (call: SendCall) => unknown | Promise<unknown>): { calls: SendCall[], restore: () => void } {
   const previous = globalThis.fetch
   const previousLog = console.log
@@ -90,7 +91,7 @@ export function serve(answer: (call: SendCall) => unknown | Promise<unknown>): {
     calls.push(call)
     const data = await answer(call)
     if (data instanceof Response) return data
-    return new Response(JSON.stringify({ data }), { headers: { "Content-Type": "application/json" } })
+    return new Response(JSON.stringify(call.method === "GET" && call.url.startsWith(`${route("catalogSchema")}?`) ? data : { data }), { headers: { "Content-Type": "application/json" } })
   }) as typeof fetch
   return { calls, restore: () => { globalThis.fetch = previous; console.log = previousLog } }
 }

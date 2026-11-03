@@ -19,8 +19,8 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 
-	adminbillingrepo "github.com/xxww0098/podhub-go/internal/admin/billing/repo"
 	admindomain "github.com/xxww0098/podhub-go/internal/admin/domain"
+	"github.com/xxww0098/podhub-go/internal/ai/jobs/reaper"
 	billingdomain "github.com/xxww0098/podhub-go/internal/billing/domain"
 	billinghttp "github.com/xxww0098/podhub-go/internal/billing/http"
 	billingrepo "github.com/xxww0098/podhub-go/internal/billing/repo"
@@ -30,6 +30,9 @@ import (
 	"github.com/xxww0098/podhub-go/internal/platform/writer"
 	supplydomain "github.com/xxww0098/podhub-go/internal/supply/domain"
 	supplyrepo "github.com/xxww0098/podhub-go/internal/supply/repo"
+	"github.com/xxww0098/podhub-go/internal/telemetry"
+	telemetrydomain "github.com/xxww0098/podhub-go/internal/telemetry/domain"
+	telemetryrepo "github.com/xxww0098/podhub-go/internal/telemetry/repo"
 	"github.com/xxww0098/podhub-go/tests/testkit"
 )
 
@@ -86,7 +89,7 @@ func TestSecurityCutover(t *testing.T) {
 	}
 
 	for _, table := range []string{
-		"payment_orders", "member_seat_lots", "member_seat_lot_credits",
+		"payment_orders", "workspace_wallets", "wallet_ledger",
 		"redeem_codes", "ai_requests", "sc_orders", "sc_order_lines",
 	} {
 		var enabled, forced bool
@@ -110,24 +113,13 @@ func TestSecurityCutover(t *testing.T) {
 	payB := "sec-pay-b-" + uuid.NewString()
 	securityPay(t, ctx, super, payA, orgA, userA)
 	securityPay(t, ctx, super, payB, orgB, userB)
-	var orderA, orderB int64
-	if err := super.QueryRow(ctx, `SELECT id FROM payment_orders WHERE public_id = $1`, payA).Scan(&orderA); err != nil {
-		t.Fatal(err)
-	}
-	if err := super.QueryRow(ctx, `SELECT id FROM payment_orders WHERE public_id = $1`, payB).Scan(&orderB); err != nil {
-		t.Fatal(err)
-	}
-	if securityLot(t, ctx, super, orgA, orderA) == 0 || securityLot(t, ctx, super, orgB, orderB) == 0 {
-		t.Fatal("seat lot id")
-	}
 	securityAI(t, ctx, super, orgA, userA, "sec-ai-a")
 	securityAI(t, ctx, super, orgB, userB, "sec-ai-b")
 	code := "SEC" + strings.ToUpper(strings.ReplaceAll(uuid.NewString(), "-", ""))[:20]
 	if _, err := super.Exec(ctx, `
 		INSERT INTO redeem_codes
-		    (code, plan, duration_days, used, created_at, updated_at, product, member_seats, ocr_credits, wallet_cents, tier)
-		VALUES ($1, 'pro', 30, false, clock_timestamp(), clock_timestamp(),
-		        'wallet_credits', 0, 0, 100, NULL)`, code); err != nil {
+		    (code, used, created_at, updated_at, wallet_cents)
+		VALUES ($1, false, clock_timestamp(), clock_timestamp(), 100)`, code); err != nil {
 		t.Fatal(err)
 	}
 
@@ -161,7 +153,7 @@ func TestSecurityCutover(t *testing.T) {
 	})
 
 	orderPublic := securitySellerConfirm(t, ctx, super, login, orgA, userA)
-	admin := adminbillingrepo.NewEntitlement(login)
+	admin := entitlementWithBilling(login)
 	body, err := admin.ConfirmOrder(ctx, admindomain.Actor{UserID: userA}, orderPublic)
 	if err != nil || !strings.Contains(string(body), `"status":"paid"`) {
 		t.Fatalf("platform confirm %s %v", body, err)
@@ -181,7 +173,7 @@ func TestSecurityCutover(t *testing.T) {
 	if err := super.QueryRow(ctx, `SELECT status FROM payment_orders WHERE public_id = $1`, payB).Scan(&paid); err != nil || paid != "paid" {
 		t.Fatalf("webhook status %s %v", paid, err)
 	}
-	if err := super.QueryRow(ctx, `SELECT balance_microfen FROM user_wallets WHERE user_id = $1`, userB).Scan(&balance); err != nil || balance != 1_000_000 {
+	if err := super.QueryRow(ctx, `SELECT balance_microfen FROM workspace_wallets WHERE org_id = $1`, orgB).Scan(&balance); err != nil || balance != 1_000_000 {
 		t.Fatalf("webhook balance %d %v", balance, err)
 	}
 	if err := super.QueryRow(ctx, `SELECT status FROM payment_orders WHERE public_id = $1`, payA).Scan(&paid); err != nil || paid != "pending" {
@@ -189,7 +181,7 @@ func TestSecurityCutover(t *testing.T) {
 	}
 
 	redeemed, err := billingrepo.Redeem(ctx, login, orgA, userA, code, uuidA)
-	if err != nil || redeemed.WalletCents != 100 || redeemed.PlanKey == "" || redeemed.PlanName == "" {
+	if err != nil || redeemed.WalletCents != 100 {
 		t.Fatalf("redeem %+v %v", redeemed, err)
 	}
 	var used bool
@@ -197,7 +189,7 @@ func TestSecurityCutover(t *testing.T) {
 	if err := super.QueryRow(ctx, `SELECT used, used_by_org_id FROM redeem_codes WHERE code = $1`, code).Scan(&used, &usedOrg); err != nil || !used || usedOrg != orgA {
 		t.Fatalf("used %v org %d %v", used, usedOrg, err)
 	}
-	if err := super.QueryRow(ctx, `SELECT balance_microfen FROM user_wallets WHERE user_id = $1`, userA).Scan(&balance); err != nil || balance != 100_000_000 {
+	if err := super.QueryRow(ctx, `SELECT balance_microfen FROM workspace_wallets WHERE org_id = $1`, orgA).Scan(&balance); err != nil || balance != 100_000_000 {
 		t.Fatalf("redeem balance %d %v", balance, err)
 	}
 
@@ -234,6 +226,193 @@ func TestSecurityCutover(t *testing.T) {
 	if err != nil || !strings.Contains(string(body), `"status":"paid"`) {
 		t.Fatalf("same instance confirm %s %v", body, err)
 	}
+
+	securityMaintenanceSweeps(t, ctx, dsn, super, login, orgA, userA)
+}
+
+// securityMaintenanceSweeps is the 00368 contrast: every background sweep that
+// crosses tenants must run on podhub_login_api, which is neither superuser nor
+// BYPASSRLS. Before 00368 each of them was "permission denied" and the error
+// was logged once per tick, so a held row was never released.
+func securityMaintenanceSweeps(t *testing.T, ctx context.Context, dsn string, super, login *pgxpool.Pool, orgID, userID int64) {
+	t.Helper()
+	seedMatchingLease(t, ctx, super, "billing", "maintenance sweep")
+	if _, err := super.Exec(ctx, `
+		INSERT INTO workspace_wallets (org_id, balance_microfen, held_microfen)
+		VALUES ($1, 1000, 0)
+		ON CONFLICT (org_id) DO UPDATE SET balance_microfen = 1000, held_microfen = 0`, orgID); err != nil {
+		t.Fatal(err)
+	}
+
+	// A stranded held row with its hold already recorded, aged past the
+	// 900 second window. Closing it releases the wallet and marks the row.
+	stranded := "sec-stranded-" + uuid.NewString()
+	if _, err := super.Exec(ctx, `
+		INSERT INTO ai_requests
+		    (public_id, org_id, user_id, idempotency_key, operation, model,
+		     upstream_account_id, status, billing_mode, held_microfen, updated_at)
+		VALUES ($1, $2, $3, $1, 'ai_token', 'sec-model', 'loopback', 'held',
+		        'per_request', 100, clock_timestamp() - interval '1 hour')`,
+		stranded, orgID, userID); err != nil {
+		t.Fatal(err)
+	}
+	var strandedID int64
+	if err := super.QueryRow(ctx, `
+		SELECT id FROM ai_requests WHERE public_id = $1`, stranded).Scan(&strandedID); err != nil {
+		t.Fatal(err)
+	}
+	if err := securityHold(ctx, login, orgID, stranded, &strandedID); err != nil {
+		t.Fatal(err)
+	}
+	closed, err := reaper.SweepStranded(ctx, login, billingrepo.ReleaseTx)
+	if err != nil {
+		t.Fatalf("SweepStranded: %v", err)
+	}
+	if closed != 1 {
+		t.Fatalf("SweepStranded closed %d", closed)
+	}
+	var status, class string
+	if err := super.QueryRow(ctx, `
+		SELECT status, error_class FROM ai_requests WHERE public_id = $1`, stranded).Scan(&status, &class); err != nil {
+		t.Fatal(err)
+	}
+	if status != "unbilled_unknown" || class != "stranded_request" {
+		t.Fatalf("stranded row %s %s", status, class)
+	}
+	var held int64
+	if err := super.QueryRow(ctx, `
+		SELECT held_microfen FROM workspace_wallets WHERE org_id = $1`, orgID).Scan(&held); err != nil {
+		t.Fatal(err)
+	}
+	if held != 0 {
+		t.Fatalf("wallet still holds %d", held)
+	}
+
+	// PruneBodies may blank only a settled body, and only that column.
+	settled := "sec-settled-" + uuid.NewString()
+	if _, err := super.Exec(ctx, `
+		INSERT INTO ai_requests
+		    (public_id, org_id, user_id, idempotency_key, operation, model,
+		     upstream_account_id, status, billing_mode, held_microfen,
+		     response_body, settled_at, updated_at)
+		VALUES ($1, $2, $3, $1, 'ai_token', 'sec-model', 'loopback', 'settled',
+		        'per_request', 100, '{"kept":true}'::jsonb,
+		        clock_timestamp() - interval '9 days',
+		        clock_timestamp() - interval '9 days')`,
+		settled, orgID, userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reaper.PruneBodies(ctx, login); err != nil {
+		t.Fatalf("PruneBodies: %v", err)
+	}
+	var body *string
+	if err := super.QueryRow(ctx, `
+		SELECT response_body::text FROM ai_requests WHERE public_id = $1`, settled).Scan(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body != nil {
+		t.Fatalf("settled body kept %s", *body)
+	}
+	var unsettled *string
+	if err := super.QueryRow(ctx, `
+		SELECT response_body::text FROM ai_requests WHERE public_id = $1`, stranded).Scan(&unsettled); err != nil {
+		t.Fatal(err)
+	}
+
+	// The reservation reaper reads and locks a cross-tenant row, then releases
+	// it under the org's app session.
+	reserved := "sec-reserved-" + uuid.NewString()
+	if _, err := super.Exec(ctx, `
+		INSERT INTO billing_operations
+		    (org_id, idempotency_key, price_snapshot_version,
+		     expected_upper_bound_microfen, state, updated_at)
+		VALUES ($1, $2, 1, 100, 'reserved', clock_timestamp() - interval '2 hours')`,
+		orgID, reserved); err != nil {
+		t.Fatal(err)
+	}
+	if err := securityHold(ctx, login, orgID, reserved, nil); err != nil {
+		t.Fatal(err)
+	}
+	released, err := billingrepo.ReapReservations(ctx, login, time.Hour, 10)
+	if err != nil {
+		t.Fatalf("ReapReservations: %v", err)
+	}
+	if released < 1 {
+		t.Fatalf("ReapReservations released %d", released)
+	}
+	var state string
+	if err := super.QueryRow(ctx, `
+		SELECT state FROM billing_operations WHERE idempotency_key = $1`, reserved).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "released" {
+		t.Fatalf("reservation state %s", state)
+	}
+
+	// The aged client log delete scans through a SELECT arm and deletes.
+	aged := time.Now().AddDate(0, 0, -90)
+	if _, err := super.Exec(ctx, `
+		INSERT INTO client_listing_logs
+		    (org_id, user_id, client_id, session_id, version, logged_at,
+		     level, module, event, received_at)
+		VALUES ($1, $2, 'c', 's', 'v', $3, 'info', 'm', 'e', $3)`,
+		orgID, userID, aged); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := telemetry.PruneErrorLogs(ctx, login, 30*24*time.Hour); err != nil {
+		t.Fatalf("PruneErrorLogs: %v", err)
+	}
+	var logs int64
+	if err := super.QueryRow(ctx, `
+		SELECT count(*) FROM client_listing_logs WHERE org_id = $1`, orgID).Scan(&logs); err != nil {
+		t.Fatal(err)
+	}
+	if logs != 0 {
+		t.Fatalf("client logs left %d", logs)
+	}
+
+	// The digest reads the inbox as a queue worker login, which is where the
+	// podhub.error_digest job runs. It is not the API login.
+	if _, err := super.Exec(ctx, `ALTER ROLE podhub_login_reconciler PASSWORD 'podhub-reconciler-test'`); err != nil {
+		t.Fatal(err)
+	}
+	worker, err := db.Connect(ctx, config.Config{DatabaseURL: swapUser(dsn, "podhub_login_reconciler", "podhub-reconciler-test")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(worker.Close)
+	if _, err := telemetryrepo.New(worker).ErrorWindow(ctx, time.Now().Add(-time.Hour), time.Now()); err != nil {
+		t.Fatalf("ErrorWindow: %v", err)
+	}
+	if err := telemetryrepo.New(worker).SaveDigest(ctx, []telemetrydomain.DigestRow{{
+		Platform:      true,
+		Fingerprint:   strings.Repeat("ab", 32),
+		RouteTemplate: "/sec",
+		StatusCode:    500,
+		Count:         1,
+		FirstAt:       time.Now().Add(-time.Hour),
+		LastAt:        time.Now(),
+		Summary:       "sec",
+		WindowStart:   time.Now().Truncate(time.Hour).Add(-time.Hour),
+	}}); err != nil {
+		t.Fatalf("SaveDigest: %v", err)
+	}
+}
+
+// securityHold records one wallet reservation for a key the reaper will see.
+func securityHold(ctx context.Context, pool *pgxpool.Pool, orgID int64, key string, aiID *int64) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := tenantx.EnterApp(ctx, tx, orgID); err != nil {
+		return err
+	}
+	if _, err := billingrepo.HoldTx(ctx, tx, orgID, key, aiID, 100); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // securityDSN starts a private cluster. The test changes podhub_login_api's
@@ -303,32 +482,12 @@ func securityPay(t *testing.T, ctx context.Context, pool *pgxpool.Pool, publicID
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO payment_orders
 		       (public_id, org_id, plan, months, amount_cents, currency, provider, status,
-		        created_by_user_id, created_at, updated_at, product, topup_microfen, credit_cents)
+		        created_by_user_id, created_at, updated_at, product, topup_microfen)
 		VALUES ($1, $2, 'free', 1, 100, 'CNY', 'easypay', 'pending',
-		        $3, clock_timestamp(), clock_timestamp(), 'wallet_topup', 1000000, 0)`,
+		        $3, clock_timestamp(), clock_timestamp(), 'wallet_topup', 1000000)`,
 		publicID, orgID, userID); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func securityLot(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, orderID int64) int64 {
-	t.Helper()
-	var lotID int64
-	if err := pool.QueryRow(ctx, `
-		INSERT INTO member_seat_lots (org_id, tier, seats, starts_at, expires_at, payment_order_id, created_at)
-		VALUES ($1, 'pro', 1, clock_timestamp(), clock_timestamp() + interval '30 days', $2, clock_timestamp())
-		RETURNING id`, orgID, orderID).Scan(&lotID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO member_seat_lot_credits (
-		    order_id, lot_id, org_id, tier, seats, starts_at, expires_at,
-		    total_days, used_days, remaining_days, lot_value_cents, consumed_value_cents, created_at)
-		VALUES ($1, $2, $3, 'pro', 1, clock_timestamp(), clock_timestamp() + interval '30 days',
-		        30, 0, 30, 100, 0, clock_timestamp())`, orderID, lotID, orgID); err != nil {
-		t.Fatal(err)
-	}
-	return lotID
 }
 
 func securityAI(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, userID int64, publicID string) {
@@ -368,20 +527,6 @@ func securityRLS(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgA, or
 	tag, err := appExec(ctx, pool, orgA, `UPDATE payment_orders SET amount_cents = amount_cents WHERE public_id = $1`, payB)
 	if err != nil || tag != 0 {
 		t.Fatalf("cross payment update %d %v", tag, err)
-	}
-	if err := appCount(ctx, pool, orgA, `SELECT count(*) FROM member_seat_lots WHERE org_id IN ($1, $2)`, orgA, orgB).Scan(&n); err != nil || n != 1 {
-		t.Fatalf("lots %d %v", n, err)
-	}
-	tag, err = appExec(ctx, pool, orgA, `UPDATE member_seat_lots SET seats = seats WHERE org_id = $1`, orgB)
-	if err != nil || tag != 0 {
-		t.Fatalf("cross lot %d %v", tag, err)
-	}
-	if err := appCount(ctx, pool, orgA, `SELECT count(*) FROM member_seat_lot_credits WHERE org_id IN ($1, $2)`, orgA, orgB).Scan(&n); err != nil || n != 1 {
-		t.Fatalf("credits %d %v", n, err)
-	}
-	tag, err = appExec(ctx, pool, orgA, `UPDATE member_seat_lot_credits SET seats = seats WHERE org_id = $1`, orgB)
-	if err != nil || tag != 0 {
-		t.Fatalf("cross credit %d %v", tag, err)
 	}
 	if err := appCount(ctx, pool, orgA, `SELECT count(*) FROM ai_requests WHERE public_id IN ($1, $2)`, aiA, aiB).Scan(&n); err != nil || n != 1 {
 		t.Fatalf("ai %d %v", n, err)
@@ -508,6 +653,7 @@ func securityWebhook(t *testing.T, ctx context.Context, pool *pgxpool.Pool, publ
 	}
 	router := chi.NewRouter()
 	billinghttp.Register(router, billinghttp.Deps{
+		Billing:  billingHTTPPort(),
 		Pool:     pool,
 		Payments: billinghttp.Payments{EasyPayPID: "1000", EasyPayKey: "secret"},
 	})
@@ -567,17 +713,15 @@ func appExec(ctx context.Context, pool *pgxpool.Pool, org int64, sql string, arg
 
 func securityCleanup(pool *pgxpool.Pool, orgA, orgB, userA, userB int64) {
 	ctx := context.Background()
-	_, _ = pool.Exec(ctx, `DELETE FROM wallet_ledger WHERE user_id IN ($1, $2)`, userA, userB)
-	_, _ = pool.Exec(ctx, `DELETE FROM user_wallets WHERE user_id IN ($1, $2)`, userA, userB)
+	_, _ = pool.Exec(ctx, `DELETE FROM wallet_ledger WHERE org_id IN ($1, $2)`, orgA, orgB)
+	_, _ = pool.Exec(ctx, `DELETE FROM workspace_wallets WHERE org_id IN ($1, $2)`, orgA, orgB)
 	for _, org := range []int64{orgA, orgB} {
-		_, _ = pool.Exec(ctx, `DELETE FROM member_seat_lot_credits WHERE org_id = $1`, org)
 		_, _ = pool.Exec(ctx, `DELETE FROM sc_order_lines WHERE org_id = $1`, org)
 		_, _ = pool.Exec(ctx, `DELETE FROM sc_orders WHERE org_id = $1`, org)
 		_, _ = pool.Exec(ctx, `DELETE FROM sc_order_quotes WHERE org_id = $1`, org)
 		_, _ = pool.Exec(ctx, `DELETE FROM sc_listing_bindings WHERE org_id = $1`, org)
 		_, _ = pool.Exec(ctx, `DELETE FROM ai_requests WHERE org_id = $1`, org)
 		_, _ = pool.Exec(ctx, `DELETE FROM audit_logs WHERE org_id = $1`, org)
-		_, _ = pool.Exec(ctx, `DELETE FROM member_seat_lots WHERE org_id = $1`, org)
 		_, _ = pool.Exec(ctx, `DELETE FROM payment_orders WHERE org_id = $1`, org)
 		_, _ = pool.Exec(ctx, `DELETE FROM listing_rows WHERE org_id = $1`, org)
 		_, _ = pool.Exec(ctx, `DELETE FROM organization_stores WHERE org_id = $1`, org)

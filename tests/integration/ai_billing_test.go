@@ -20,16 +20,17 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/xxww0098/podhub-go/internal/ai"
-	_ "github.com/xxww0098/podhub-go/internal/billing"
 	billingcontract "github.com/xxww0098/podhub-go/internal/billing/contract"
 	billingdomain "github.com/xxww0098/podhub-go/internal/billing/domain"
 	billinghttp "github.com/xxww0098/podhub-go/internal/billing/http"
 	billingrepo "github.com/xxww0098/podhub-go/internal/billing/repo"
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
-	"github.com/xxww0098/podhub-go/internal/platform/llm"
+	"github.com/xxww0098/podhub-go/internal/platform/aiclient"
+	"github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
 )
 
 func TestAIBillingParity(t *testing.T) {
@@ -94,7 +95,7 @@ func TestAIBillingParity(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, row := range mismatches {
-			if row.UserID == user {
+			if row.OrgID == org {
 				t.Fatalf("invariant %+v", row)
 			}
 		}
@@ -104,31 +105,104 @@ func TestAIBillingParity(t *testing.T) {
 		}
 	})
 
-	t.Run("missing guc hides the wallet", func(t *testing.T) {
-		tx, err := pool.Begin(ctx)
-		if err != nil {
+	t.Run("org guc scopes the wallet and ledger", func(t *testing.T) {
+		orgB, _ := seedAITenant(t, ctx, pool, 96026)
+		if _, err := billingrepo.Adjust(ctx, pool, orgB, "seed:96026", 1_000, "seed"); err != nil {
 			t.Fatal(err)
 		}
-		defer tx.Rollback(ctx)
-		if _, err := tx.Exec(ctx, `SELECT set_config('role', 'podhub_app', true)`); err != nil {
-			t.Fatal(err)
+		// asApp runs fn as podhub_app; orgGUC "" leaves app.current_org_id unset.
+		asApp := func(t *testing.T, orgGUC string, fn func(tx pgx.Tx)) {
+			t.Helper()
+			tx, err := pool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback(ctx)
+			if _, err := tx.Exec(ctx, `SELECT set_config('role', 'podhub_app', true)`); err != nil {
+				t.Fatal(err)
+			}
+			if orgGUC != "" {
+				if _, err := tx.Exec(ctx, `SELECT set_config($1, $2, true)`, tenantx.GUCCurrentOrgID, orgGUC); err != nil {
+					t.Fatal(err)
+				}
+			}
+			fn(tx)
 		}
-		var n int
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM user_wallets WHERE user_id = $1`, user).Scan(&n); err != nil {
-			t.Fatal(err)
+		count := func(t *testing.T, tx pgx.Tx, table string, id int64) int {
+			t.Helper()
+			var n int
+			if err := tx.QueryRow(ctx, `SELECT count(*) FROM `+table+` WHERE org_id = $1`, id).Scan(&n); err != nil {
+				t.Fatal(err)
+			}
+			return n
 		}
-		if n != 0 {
-			t.Fatalf("missing guc saw %d", n)
+		insertWallet := func(tx pgx.Tx, id int64) error {
+			_, err := tx.Exec(ctx, `INSERT INTO workspace_wallets (org_id) VALUES ($1)`, id)
+			return err
 		}
-		if _, err := tx.Exec(ctx, `SELECT set_config('app.current_wallet_user_id', $1, true)`, fmt.Sprintf("%d", user+1)); err != nil {
-			t.Fatal(err)
+		insertLedger := func(tx pgx.Tx, id int64) error {
+			_, err := tx.Exec(ctx, `
+				INSERT INTO wallet_ledger
+				    (org_id, entry_type, idempotency_key, amount_microfen, held_delta_microfen,
+				     balance_before_microfen, balance_after_microfen, held_before_microfen, held_after_microfen)
+				VALUES ($1, 'adjustment', 'rls-probe', 0, 0, 0, 0, 0, 0)`, id)
+			return err
 		}
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM user_wallets WHERE user_id = $1`, user).Scan(&n); err != nil {
-			t.Fatal(err)
-		}
-		if n != 0 {
-			t.Fatalf("cross tenant saw %d", n)
-		}
+
+		t.Run("missing guc sees nothing and cannot insert", func(t *testing.T) {
+			asApp(t, "", func(tx pgx.Tx) {
+				for _, table := range []string{"workspace_wallets", "wallet_ledger"} {
+					if n := count(t, tx, table, org); n != 0 {
+						t.Fatalf("missing guc saw %d %s rows", n, table)
+					}
+				}
+			})
+			asApp(t, "", func(tx pgx.Tx) {
+				if err := insertWallet(tx, orgB); err == nil {
+					t.Fatal("wallet insert without guc succeeded")
+				}
+			})
+			asApp(t, "", func(tx pgx.Tx) {
+				if err := insertLedger(tx, orgB); err == nil {
+					t.Fatal("ledger insert without guc succeeded")
+				}
+			})
+		})
+
+		t.Run("org guc sees only its own rows", func(t *testing.T) {
+			asApp(t, fmt.Sprintf("%d", org), func(tx pgx.Tx) {
+				if n := count(t, tx, "workspace_wallets", org); n != 1 {
+					t.Fatalf("own wallet rows %d", n)
+				}
+				if n := count(t, tx, "wallet_ledger", org); n == 0 {
+					t.Fatal("own ledger rows hidden")
+				}
+				if n := count(t, tx, "workspace_wallets", orgB); n != 0 {
+					t.Fatalf("cross org wallet rows %d", n)
+				}
+				if n := count(t, tx, "wallet_ledger", orgB); n != 0 {
+					t.Fatalf("cross org ledger rows %d", n)
+				}
+			})
+		})
+
+		t.Run("org guc cannot insert for another org", func(t *testing.T) {
+			asApp(t, fmt.Sprintf("%d", org), func(tx pgx.Tx) {
+				if err := insertLedger(tx, org); err != nil {
+					t.Fatalf("own ledger insert: %v", err)
+				}
+			})
+			asApp(t, fmt.Sprintf("%d", org), func(tx pgx.Tx) {
+				if err := insertWallet(tx, orgB); err == nil {
+					t.Fatal("wallet insert for another org succeeded")
+				}
+			})
+			asApp(t, fmt.Sprintf("%d", org), func(tx pgx.Tx) {
+				if err := insertLedger(tx, orgB); err == nil {
+					t.Fatal("ledger insert for another org succeeded")
+				}
+			})
+		})
 	})
 
 	t.Run("concurrent holds", func(t *testing.T) {
@@ -189,12 +263,10 @@ func TestAIBillingParity(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id":"cmpl_1","model":"parity-model","choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":1000,"completion_tokens":0}}`))
 	}))
 	defer upstream.Close()
-	limits := ai.Limits{}
 	router := chi.NewRouter()
 	ai.Register(router, ai.HTTPDeps{
 		Deps: ai.Deps{
-			Pool: pool, BaseURL: upstream.URL, Limits: &limits, Converter: llm.Default(),
-			Upstream: ai.HTTPUpstream{Client: upstream.Client()},
+			Pool: pool, Wallet: aiWalletPort(), Text: serverText(upstream),
 		},
 		Access: access.FixedResolver{Principal: &access.Principal{UserID: user, OrgID: org, WorkspaceRole: "owner", PlatformRole: "user"}},
 	})
@@ -218,10 +290,11 @@ func TestAIBillingParity(t *testing.T) {
 		if err := json.Unmarshal(raw, &payload); err != nil {
 			t.Fatal(err)
 		}
-		// "hi" estimates 1 token, so the hold is 1. Upstream reports 1000.
-		// The copied formula bills 1000; the wallet charges the hold and absorbs the rest.
+		// Every token request holds the published per-request ceiling. The
+		// upstream reports 1000 microfen, so the wallet charges 1000 and the
+		// request's price snapshot reports the same 50,000,000 ceiling.
 		bill := payload.Billing
-		if bill.Total != 1000 || bill.Charged != 1 || bill.Absorbed != 999 || bill.Status != "settled" || bill.Price.Max != 1 {
+		if bill.Total != 1000 || bill.Charged != 1000 || bill.Absorbed != 0 || bill.Status != "settled" || bill.Price.Max != 50_000_000 {
 			t.Fatalf("%s", raw)
 		}
 		var quota, logs int
@@ -234,7 +307,7 @@ func TestAIBillingParity(t *testing.T) {
 			org).Scan(&logs, &quota, &deducted, &absorbed, &group, &source); err != nil {
 			t.Fatal(err)
 		}
-		if logs != 1 || quota != 1000 || deducted != "1" || absorbed != "999" || group != "default" || source != "wallet" {
+		if logs != 1 || quota != 1000 || deducted != "1000" || absorbed != "0" || group != "default" || source != "wallet" {
 			t.Fatalf("log rows %d quota %d deducted %s absorbed %s group %s source %s", logs, quota, deducted, absorbed, group, source)
 		}
 		status, _ = postAI(t, router, "/api/ai/chat/completions", "chat-1", `{"model":"parity-model","messages":[{"role":"user","content":"hi"}]}`)
@@ -256,7 +329,7 @@ func TestAIBillingParity(t *testing.T) {
 		defer sse.Close()
 		local := chi.NewRouter()
 		ai.Register(local, ai.HTTPDeps{
-			Deps:   ai.Deps{Pool: pool, BaseURL: sse.URL, Limits: &limits, Converter: llm.Default(), Upstream: ai.HTTPUpstream{Client: sse.Client()}},
+			Deps:   ai.Deps{Pool: pool, Wallet: aiWalletPort(), Text: serverText(sse)},
 			Access: access.FixedResolver{Principal: &access.Principal{UserID: user, OrgID: org, WorkspaceRole: "owner"}},
 		})
 		status, raw := postAI(t, local, "/api/ai/chat/completions", "chat-sse", `{"model":"parity-model","messages":[{"role":"user","content":"hi"}]}`)
@@ -265,21 +338,17 @@ func TestAIBillingParity(t *testing.T) {
 		}
 	})
 
-	t.Run("stream true releases the hold", func(t *testing.T) {
+	t.Run("stream true is refused before hold", func(t *testing.T) {
 		status, raw := postAI(t, router, "/api/ai/chat/completions", "chat-stream", `{"model":"parity-model","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
-		if status != 502 || !bytes.Contains(raw, []byte(`UPSTREAM_FAILED`)) {
+		if status != 400 || !bytes.Contains(raw, []byte(`VALIDATION`)) {
 			t.Fatalf("%d %s", status, raw)
 		}
-		var state, class string
-		var held int64
-		if err := pool.QueryRow(ctx, `SELECT status, error_class, held_microfen FROM ai_requests WHERE org_id = $1 AND idempotency_key = 'chat-stream'`, org).Scan(&state, &class, &held); err != nil {
-			t.Fatal(err)
-		}
-		if state != "failed" || class != "invalid_request" {
-			t.Fatalf("%s %s held %d", state, class, held)
+		var rows int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM ai_requests WHERE org_id = $1 AND idempotency_key = 'chat-stream'`, org).Scan(&rows); err != nil || rows != 0 {
+			t.Fatalf("rows %d %v", rows, err)
 		}
 		var walletHeld int64
-		if err := pool.QueryRow(ctx, `SELECT held_microfen FROM user_wallets WHERE user_id = $1`, user).Scan(&walletHeld); err != nil || walletHeld != 0 {
+		if err := pool.QueryRow(ctx, `SELECT held_microfen FROM workspace_wallets WHERE org_id = $1`, org).Scan(&walletHeld); err != nil || walletHeld != 0 {
 			t.Fatalf("held %d %v", walletHeld, err)
 		}
 	})
@@ -288,12 +357,12 @@ func TestAIBillingParity(t *testing.T) {
 		org3, user3 := seedAITenant(t, ctx, pool, 96023)
 		local := chi.NewRouter()
 		ai.Register(local, ai.HTTPDeps{
-			Deps:   ai.Deps{Pool: pool, BaseURL: upstream.URL, Limits: &limits, Converter: llm.Default()},
+			Deps:   ai.Deps{Pool: pool, Wallet: aiWalletPort(), Text: serverText(upstream)},
 			Access: access.FixedResolver{Principal: &access.Principal{UserID: user3, OrgID: org3, WorkspaceRole: "owner"}},
 		})
 		before := calls
 		status, raw := postAI(t, local, "/api/ai/chat/completions", "chat-poor", `{"model":"parity-model","messages":[{"role":"user","content":"hi"}]}`)
-		if status != 402 || calls != before || !bytes.Contains(raw, []byte("available 0, required 1")) {
+		if status != 402 || calls != before || !bytes.Contains(raw, []byte("工作空间钱包余额不足：可用 ¥0.00，需要 ¥0.50")) {
 			t.Fatalf("%d calls %d %s", status, calls, raw)
 		}
 		var n int
@@ -302,11 +371,14 @@ func TestAIBillingParity(t *testing.T) {
 		}
 	})
 
-	t.Run("empty estimate absorbs the whole charge", func(t *testing.T) {
+	t.Run("empty prompt still holds and settles the ceiling", func(t *testing.T) {
 		org4, user4 := seedAITenant(t, ctx, pool, 96024)
+		if _, err := billingrepo.Adjust(ctx, pool, org4, "seed:96024", 50_000_000, "seed"); err != nil {
+			t.Fatal(err)
+		}
 		local := chi.NewRouter()
 		ai.Register(local, ai.HTTPDeps{
-			Deps:   ai.Deps{Pool: pool, BaseURL: upstream.URL, Limits: &limits, Converter: llm.Default()},
+			Deps:   ai.Deps{Pool: pool, Wallet: aiWalletPort(), Text: serverText(upstream)},
 			Access: access.FixedResolver{Principal: &access.Principal{UserID: user4, OrgID: org4, WorkspaceRole: "owner"}},
 		})
 		before := calls
@@ -324,32 +396,35 @@ func TestAIBillingParity(t *testing.T) {
 		if err := json.Unmarshal(raw, &payload); err != nil {
 			t.Fatal(err)
 		}
-		if payload.Billing.Charged != 0 || payload.Billing.Absorbed != 1000 || payload.Billing.Total != 1000 {
+		if payload.Billing.Charged != 1000 || payload.Billing.Absorbed != 0 || payload.Billing.Total != 1000 {
 			t.Fatalf("%s", raw)
 		}
-		var balance int
-		if err := pool.QueryRow(ctx, `SELECT count(*) FROM user_wallets WHERE user_id = $1 AND (balance_microfen <> 0 OR held_microfen <> 0)`, user4).Scan(&balance); err != nil || balance != 0 {
-			t.Fatalf("wallet rows %d %v", balance, err)
+		var balance, held int64
+		if err := pool.QueryRow(ctx, `SELECT balance_microfen, held_microfen FROM workspace_wallets WHERE org_id = $1`, org4).Scan(&balance, &held); err != nil || balance != 49_999_000 || held != 0 {
+			t.Fatalf("wallet %d/%d %v", balance, held, err)
 		}
 	})
 
 	t.Run("ocr post does not hold", func(t *testing.T) {
-		status, raw := postAI(t, router, "/api/ai/ocr/completions", "ocr-1", `{"uploadTicket":"t"}`)
-		if status != 400 || !bytes.Contains(raw, []byte("请求格式无效")) {
+		status, raw := postAI(t, router, "/api/ai/ocr/completions", "ocr-1", `{"upload_ticket":"t"}`)
+		if status != 400 || !bytes.Contains(raw, []byte("识别任务租约无效")) {
 			t.Fatalf("%d %s", status, raw)
 		}
 	})
 
-	t.Run("non loopback is refused before hold", func(t *testing.T) {
-		var hit bool
+	t.Run("unavailable provider is refused before hold", func(t *testing.T) {
 		local := chi.NewRouter()
 		ai.Register(local, ai.HTTPDeps{
-			Deps:   ai.Deps{Pool: pool, BaseURL: "https://api.openai.com/v1", Limits: &limits, Upstream: hitUpstream{hit: &hit}},
+			Deps:   ai.Deps{Pool: pool, Wallet: aiWalletPort(), Text: testText{}},
 			Access: access.FixedResolver{Principal: &access.Principal{UserID: user, OrgID: org, WorkspaceRole: "owner"}},
 		})
 		status, _ := postAI(t, local, "/api/ai/chat/completions", "chat-remote", `{"model":"parity-model","messages":[]}`)
-		if status != 503 || hit {
-			t.Fatalf("status %d hit %v", status, hit)
+		if status != 503 {
+			t.Fatalf("status %d", status)
+		}
+		var rows int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM ai_requests WHERE org_id = $1 AND idempotency_key = 'chat-remote'`, org).Scan(&rows); err != nil || rows != 0 {
+			t.Fatalf("rows %d %v", rows, err)
 		}
 	})
 
@@ -382,7 +457,7 @@ func TestAIBillingParity(t *testing.T) {
 		if err := tx.Commit(ctx); err != nil {
 			t.Fatal(err)
 		}
-		n, err := ai.SweepStranded(ctx, pool)
+		n, err := ai.SweepStranded(ctx, pool, billingrepo.ReleaseTx)
 		if err != nil || n < 1 {
 			t.Fatalf("swept %d %v", n, err)
 		}
@@ -409,7 +484,7 @@ func TestAIBillingParity(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		billinghttp.Register(pay, billinghttp.Deps{Pool: pool, Payments: billinghttp.Payments{Alipay: &billingdomain.AlipayKey{AppID: "2021000000000000", Public: &key.PublicKey}}})
+		billinghttp.Register(pay, billinghttp.Deps{Billing: billingHTTPPort(), Pool: pool, Payments: billinghttp.Payments{Alipay: &billingdomain.AlipayKey{AppID: "2021000000000000", Public: &key.PublicKey}}})
 		body := signedAlipay(t, key, "po_ai_96021", "1.00")
 		status, raw := postForm(t, pay, "/api/billing/callback", body)
 		if status != 200 || string(raw) != "success" {
@@ -421,7 +496,7 @@ func TestAIBillingParity(t *testing.T) {
 		}
 		var balance int64
 		var orders int
-		if err := pool.QueryRow(ctx, `SELECT balance_microfen FROM user_wallets WHERE user_id = $1`, user).Scan(&balance); err != nil {
+		if err := pool.QueryRow(ctx, `SELECT balance_microfen FROM workspace_wallets WHERE org_id = $1`, org).Scan(&balance); err != nil {
 			t.Fatal(err)
 		}
 		if err := pool.QueryRow(ctx, `SELECT count(*) FROM payment_orders WHERE public_id = 'po_ai_96021' AND status = 'paid'`).Scan(&orders); err != nil || orders != 1 {
@@ -443,19 +518,18 @@ func TestAIBillingParity(t *testing.T) {
 		}
 		if _, err := pool.Exec(ctx, `
 			INSERT INTO redeem_codes
-			    (code, plan, duration_days, used, created_at, updated_at, product, member_seats, ocr_credits, wallet_cents, tier)
-			VALUES ('WALLET96021', 'pro', 30, false, clock_timestamp(), clock_timestamp(),
-			        'wallet_credits', 0, 0, 100, NULL)`); err != nil {
+			    (code, used, created_at, updated_at, wallet_cents)
+			VALUES ('WALLET96021', false, clock_timestamp(), clock_timestamp(), 100)`); err != nil {
 			t.Fatal(err)
 		}
 		pay := chi.NewRouter()
-		billinghttp.Register(pay, billinghttp.Deps{Pool: pool, Access: access.FixedResolver{Principal: &access.Principal{UserID: user, OrgID: org, WorkspaceRole: "owner"}}})
-		before := walletBalance(t, ctx, pool, user)
+		billinghttp.Register(pay, billinghttp.Deps{Billing: billingHTTPPort(), Pool: pool, Access: access.FixedResolver{Principal: &access.Principal{UserID: user, OrgID: org, WorkspaceRole: "owner"}}})
+		before := walletBalance(t, ctx, pool, org)
 		status, raw := postAIJSON(t, pay, "/api/redeem", fmt.Sprintf(`{"code":"wallet96021","expected_workspace_uuid":%q}`, workspace))
-		if status != 200 || !bytes.Contains(raw, []byte(`"wallet_cents":100`)) || !bytes.Contains(raw, []byte(`"ocr_credits":0`)) {
+		if status != 200 || !bytes.Contains(raw, []byte(`"wallet_cents":100`)) || bytes.Contains(raw, []byte(`"ocr_credits"`)) || bytes.Contains(raw, []byte(`"plan"`)) {
 			t.Fatalf("%d %s", status, raw)
 		}
-		if got := walletBalance(t, ctx, pool, user); got != before+100_000_000 {
+		if got := walletBalance(t, ctx, pool, org); got != before+100_000_000 {
 			t.Fatalf("balance %d before %d", got, before)
 		}
 	})
@@ -482,11 +556,11 @@ func TestAIBillingParity(t *testing.T) {
 	})
 
 	t.Run("entitlement sweep", func(t *testing.T) {
-		if _, err := pool.Exec(ctx, `INSERT INTO subscriptions(org_id,status,plan_key,term_start,term_end,billing_anchor,extra_members,updated_at)
- VALUES($1,'active','pro',clock_timestamp()-interval '1 month',clock_timestamp()-interval '1 day',clock_timestamp()-interval '1 month',2,clock_timestamp())`, org); err != nil {
+		if _, err := pool.Exec(ctx, `INSERT INTO subscriptions(org_id,status,plan_key,term_start,term_end,billing_anchor,updated_at)
+ VALUES($1,'active','pro',clock_timestamp()-interval '1 month',clock_timestamp()-interval '1 day',clock_timestamp()-interval '1 month',clock_timestamp())`, org); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := pool.Exec(ctx, `UPDATE organizations SET plan = 'pro', seat_limit = 3 WHERE id = $1`, org); err != nil {
+		if _, err := pool.Exec(ctx, `UPDATE organizations SET plan = 'pro', member_seat_limit_override = 3 WHERE id = $1`, org); err != nil {
 			t.Fatal(err)
 		}
 		n, err := billingrepo.SweepEntitlements(ctx, pool)
@@ -495,11 +569,11 @@ func TestAIBillingParity(t *testing.T) {
 		}
 		var plan string
 		var seats int64
-		if err := pool.QueryRow(ctx, `SELECT plan, seat_limit FROM organizations WHERE id = $1`, org).Scan(&plan, &seats); err != nil {
+		if err := pool.QueryRow(ctx, `SELECT o.plan, c.members FROM organizations o, public.subscription_capacity(o.id, clock_timestamp()) c WHERE o.id = $1`, org).Scan(&plan, &seats); err != nil {
 			t.Fatal(err)
 		}
-		if plan != "free" || seats != 1 {
-			t.Fatalf("plan %s seats %d", plan, seats)
+		if plan != "free" || seats != 3 {
+			t.Fatalf("plan %s seats %d, want free with the explicit override 3", plan, seats)
 		}
 	})
 }
@@ -522,9 +596,8 @@ func purgeAIFixtures(ctx context.Context, pool *pgxpool.Pool) error {
 			SELECT 'rate:user:' || id::text FROM account_users WHERE id BETWEEN 96000 AND 96999
 		);
 		DELETE FROM payment_orders WHERE org_id IN (SELECT id FROM organizations WHERE owner_user_id BETWEEN 96000 AND 96999);
-		DELETE FROM member_seat_lots WHERE org_id IN (SELECT id FROM organizations WHERE owner_user_id BETWEEN 96000 AND 96999);
 		DELETE FROM redeem_codes WHERE code IN ('WALLET96021');
-		DELETE FROM user_wallets WHERE user_id BETWEEN 96000 AND 96999;
+		DELETE FROM workspace_wallets WHERE org_id IN (SELECT id FROM organizations WHERE owner_user_id BETWEEN 96000 AND 96999);
 		DELETE FROM organization_members WHERE user_id BETWEEN 96000 AND 96999;
 		DELETE FROM organizations WHERE owner_user_id BETWEEN 96000 AND 96999;
 		DELETE FROM account_users WHERE id BETWEEN 96000 AND 96999;
@@ -603,20 +676,46 @@ func postForm(t *testing.T, handler http.Handler, path string, body []byte) (int
 	return rec.Code, raw
 }
 
-func walletBalance(t *testing.T, ctx context.Context, pool *pgxpool.Pool, user int64) int64 {
+func walletBalance(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID int64) int64 {
 	t.Helper()
 	var n int64
-	if err := pool.QueryRow(ctx, `SELECT balance_microfen FROM user_wallets WHERE user_id = $1`, user).Scan(&n); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT balance_microfen FROM workspace_wallets WHERE org_id = $1`, orgID).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	return n
 }
 
-type hitUpstream struct{ hit *bool }
+// testText is a fixed text provider for route tests. The callback decides the
+// native response shape; the resolver error path refuses before a hold.
+type testText struct {
+	complete func(context.Context, aiclient.Format, []byte) (int, []byte, error)
+}
 
-func (h hitUpstream) Complete(context.Context, string, []byte) (int, []byte, error) {
-	*h.hit = true
-	return 200, []byte(`{}`), nil
+func (t testText) Resolve(_ context.Context, model string, format aiclient.Format) (ai.TextProvider, error) {
+	if t.complete == nil {
+		return ai.TextProvider{}, errors.New("text unavailable")
+	}
+	return ai.TextProvider{
+		AccountID: "test-text", Model: model, Format: format,
+		Complete: func(ctx context.Context, body []byte) (int, []byte, error) {
+			return t.complete(ctx, format, body)
+		},
+	}, nil
+}
+
+func serverText(server *httptest.Server) ai.TextResolver {
+	return testText{complete: func(ctx context.Context, format aiclient.Format, body []byte) (int, []byte, error) {
+		return (aiclient.Client{HTTP: server.Client()}).Complete(ctx, aiclient.Account{
+			ID: "test-text", BaseURL: server.URL, Model: "parity-model", Format: format,
+		}, body)
+	}}
+}
+
+func hitText(hit *bool) ai.TextResolver {
+	return testText{complete: func(_ context.Context, _ aiclient.Format, _ []byte) (int, []byte, error) {
+		*hit = true
+		return 200, []byte(`{"id":"cmpl_hit","usage":{"prompt_tokens":1,"completion_tokens":0}}`), nil
+	}}
 }
 
 func errorsAs(err error, target **billingcontract.Error) bool {

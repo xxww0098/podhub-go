@@ -4,9 +4,10 @@
  * 改绑走 `expectedRevision` CAS，409 = 绑定已被别处更新（提示刷新，不重试
  * 覆盖）；被在途单引用的绑定服务端拒删（409 原样提示）；绑定到无活跃成员
  * 的厂家按后端 `warning` 文案展示但不拦。原图上传走三步管线（见
- * delegate-upload.ts），≤500MB、jpg/png/webp/psd，前端预检省一次注定失败的
+ * delegate-upload.ts），≤500MB、jpg/png/webp，前端预检省一次注定失败的
  * 往返。
  */
+import type { ReactNode } from "react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Ban, Paperclip, Pencil, Plus, RefreshCw, Trash2, UploadCloud } from "lucide-react"
 
@@ -25,8 +26,10 @@ import {
   normalizedOfferId,
 } from "./delegate-model"
 import { uploadDelegateAsset } from "./delegate-upload"
+import { PageToolbar } from "@/components/page-toolbar"
 import { StateChip } from "@/components/state-chip"
 import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import {
   Dialog,
@@ -70,6 +73,8 @@ import {
 import { notifyCommandError, notifyError, notifySuccess } from "@/lib/notify"
 
 export type DelegateBindingsViewProps = {
+  scopeControls?: ReactNode
+  viewTabs?: ReactNode
   storeId: string
   sources: DelegateSource[]
   /** 绑定变化信号（素材晋升会让 posting 行转 ready），屏级转发给列表。 */
@@ -77,6 +82,8 @@ export type DelegateBindingsViewProps = {
 }
 
 export function DelegateBindingsView({
+  scopeControls,
+  viewTabs,
   storeId,
   sources,
   onChanged,
@@ -144,27 +151,31 @@ export function DelegateBindingsView({
   if (!storeId) return null
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-compact text-muted-foreground">
-          绑定是商品级预绑：出单后按行的绑定厂家派发；原图核验通过才算就绪。
-        </span>
-        <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={loading}
-            onClick={() => void reload()}
-          >
-            <RefreshCw className={loading ? "animate-spin" : undefined} />
-            刷新
-          </Button>
-          <Button size="sm" onClick={() => setEditor({ mode: "create" })}>
-            <Plus />
-            新建绑定
-          </Button>
-        </div>
-      </div>
+    <div className="flex min-h-0 flex-1 flex-col gap-2">
+      <PageToolbar
+        secondary={
+          <>
+            {scopeControls}
+            <IconButton
+              icon={RefreshCw}
+              label="刷新"
+              size="icon-sm"
+              variant="outline"
+              disabled={loading}
+              className={loading ? "[&_svg]:animate-spin" : undefined}
+              onClick={() => void reload()}
+            />
+            <IconButton
+              icon={Plus}
+              label="新建绑定"
+              size="icon-sm"
+              variant="default"
+              onClick={() => setEditor({ mode: "create" })}
+            />
+          </>
+        }
+      />
+      {viewTabs}
       {bindings.length === 0 && !loading ? (
         <Empty className="min-h-40">
           <EmptyHeader>
@@ -180,8 +191,8 @@ export function DelegateBindingsView({
           </EmptyContent>
         </Empty>
       ) : (
-        <div className="overflow-hidden rounded-xl border border-border bg-card">
-          <Table containerClassName="max-w-full">
+        <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-border bg-card">
+          <Table containerClassName="max-w-full overflow-visible">
             <DelegateBindingsTable
               bindings={bindings}
               loading={loading}
@@ -247,7 +258,7 @@ export function DelegateBindingsTable({
 }) {
   return (
     <>
-      <TableHeader>
+      <TableHeader className="sticky top-0 z-10 bg-card">
         <TableRow>
           <TableHead className="w-44">商品 offer_id</TableHead>
           <TableHead className="w-48">厂家</TableHead>
@@ -307,15 +318,13 @@ export function DelegateBindingsTable({
                     <Paperclip />
                     素材
                   </Button>
-                  <Button
-                    size="xs"
+                  <IconButton
+                    icon={Pencil}
+                    label={`改绑 ${binding.offer_id}`}
+                    size="icon-xs"
                     variant="outline"
-                    aria-label={`改绑 ${binding.offer_id}`}
                     onClick={() => onEdit(binding)}
-                  >
-                    <Pencil />
-                    改绑
-                  </Button>
+                  />
                   <Button
                     size="xs"
                     variant="outline"
@@ -325,15 +334,13 @@ export function DelegateBindingsTable({
                     <Ban />
                     {binding.active ? "停用" : "启用"}
                   </Button>
-                  <Button
-                    size="xs"
+                  <IconButton
+                    icon={Trash2}
+                    label={`删除 ${binding.offer_id}`}
+                    size="icon-xs"
                     variant="ghost"
-                    aria-label={`删除 ${binding.offer_id}`}
                     onClick={() => onDelete(binding)}
-                  >
-                    <Trash2 />
-                    删除
-                  </Button>
+                  />
                 </div>
               </TableCell>
             </TableRow>
@@ -633,15 +640,14 @@ export function DelegateAssetsDialog({
                         tone={asset.verified ? "good" : "attest"}
                         label={asset.verified ? "已核验" : "未核验"}
                       />
-                      <Button
+                      <IconButton
+                        icon={Trash2}
+                        label={`删除 ${asset.file_name}`}
                         size="icon-sm"
                         variant="ghost"
-                        aria-label={`删除 ${asset.file_name}`}
                         disabled={busy}
                         onClick={() => setDeleting(asset.asset_id)}
-                      >
-                        <Trash2 />
-                      </Button>
+                      />
                     </div>
                   </div>
                 ))

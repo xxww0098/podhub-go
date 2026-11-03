@@ -17,16 +17,13 @@ import (
 )
 
 const (
-	// baselineMax is the highest goose version already merged when this guard
-	// was added. 00330–00332 and 00335–00337 are lower and are already listed;
-	// allow-missing replays those gaps from the embedded files. A file that
-	// is not in db/migrations.sha256 is new and must use a greater version.
-	// Do not raise this constant to admit a gap.
-	baselineMax int64 = 341
-	// baselineCount is how many migration files use a version at or below
-	// baselineMax. Another file in that range fails even if its hash is
-	// appended to the manifest.
-	baselineCount = 313
+	// baselineMax is the highest version of the squashed baseline. Those three
+	// files are the schema and seed every database already has, so they are
+	// frozen; a new file must use a greater version.
+	baselineMax int64 = 3
+	// baselineCount is how many files use a version at or below baselineMax.
+	// Another file in that range fails even if its hash is in the manifest.
+	baselineCount = 3
 )
 
 // TestMigrationGuard freezes the bytes of merged goose files and refuses a
@@ -140,4 +137,83 @@ func readMigrationManifest(t *testing.T) map[string]string {
 		t.Fatal("migration manifest is empty")
 	}
 	return out
+}
+
+// TestBaselineMaxMatchesFiles keeps squashedMax equal to the shipped baseline
+// so the skip guard cannot drift from the directory it describes.
+func TestBaselineMaxMatchesFiles(t *testing.T) {
+	entries, err := fs.ReadDir(dbschema.Migrations, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var baseline int64
+	for _, entry := range entries {
+		version, err := goose.NumericComponent(entry.Name())
+		if err != nil {
+			t.Fatalf("%s: %v", entry.Name(), err)
+		}
+		if version <= baselineMax && version > baseline {
+			baseline = version
+		}
+	}
+	if baseline != squashedMax {
+		t.Fatalf("squashedMax is %d but the baseline ends at %d", squashedMax, baseline)
+	}
+	shipped, err := shippedVersions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var highest int64
+	for _, version := range shipped {
+		if version > highest {
+			highest = version
+		}
+	}
+	if highest < squashedMax {
+		t.Fatalf("the shipped directory ends at %d, below the baseline %d", highest, squashedMax)
+	}
+}
+
+// TestSquashedHistoryGuard pins the cases that matter. A database from the
+// 329-file chain (version 368) keeps working while nothing new is shipped, a
+// squashed database that has applied a later file is not refused on the next
+// run, and an old-chain database is refused once a migration is added.
+func TestSquashedHistoryGuard(t *testing.T) {
+	shipped, err := shippedVersions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// With only the baseline shipped, an old-chain database is at head.
+	baseline := []int64{1, 2, 3}
+	oldChain := map[int64]bool{368: true}
+	for _, version := range baseline {
+		oldChain[version] = true
+	}
+	if version, refused := foreignApplied(oldChain, baseline); refused {
+		t.Fatalf("an old-chain database at head must still start, refused on %d", version)
+	}
+
+	// A database that applied this build's files is never refused.
+	squashed := map[int64]bool{}
+	for _, version := range shipped {
+		squashed[version] = true
+	}
+	if version, refused := foreignApplied(squashed, shipped); refused {
+		t.Fatalf("a squashed database must not be refused, refused on %d", version)
+	}
+
+	// Once a file is added, the old chain would silently skip it.
+	withNew := append(append([]int64{}, baseline...), squashedMax+1)
+	version, refused := foreignApplied(oldChain, withNew)
+	if !refused {
+		t.Fatal("an old-chain database must be refused once a migration is added")
+	}
+	if version != 368 {
+		t.Fatalf("refusal must name the old chain's highest version, got %d", version)
+	}
+
+	// A fresh database is never refused, whatever is shipped.
+	if version, refused := foreignApplied(map[int64]bool{}, withNew); refused {
+		t.Fatalf("a fresh database must not be refused, refused on %d", version)
+	}
 }

@@ -1,92 +1,44 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-
+import { readFileSync } from "node:fs"
 import { sharedListingCore } from "./client"
 import { ListingCoreError } from "./wasm"
+import type { OcrAnswerInput } from "./types"
 
-const FIVE = "#горы #озеро #закат #сосны #отражение"
-
-function completion(content: string) {
-  return { choices: [{ message: { role: "assistant", content } }] }
-}
-
-test("parseOcrAnswer keeps Latin in a Russian title and refuses a Latin tag", async () => {
-  const core = sharedListingCore()
-  const kept = await core.parseOcrAnswer(completion(JSON.stringify({
-    ru: "Чехол iPhone 17 Pro Max",
-    tags: FIVE,
-    desc: "Сюжет.",
-  })))
-  assert.equal(kept.ru, "Чехол iPhone 17 Pro Max")
-  assert.equal(kept.description, "Сюжет.")
-  assert.deepEqual(kept.tags, FIVE.split(" "))
-
-  await assert.rejects(
-    () => core.parseOcrAnswer(completion(JSON.stringify({
-      ru: "Чехол",
-      tags: FIVE.replace("#горы", "#iPhone"),
-      desc: "Сюжет.",
-    }))),
-    (error: unknown) => {
-      assert.ok(error instanceof ListingCoreError)
-      assert.equal(error.code, "CORE_REFUSED")
-      assert.equal(error.reasonCode, "configured_tags")
-      assert.equal(error.retryClass, "corrective")
-      assert.match(error.message, /俄语词或下划线标签/)
-      return true
-    },
-  )
-})
-
-test("parseOcrAnswer canonicalizes search tags before it accepts them", async () => {
-  const parsed = await sharedListingCore().parseOcrAnswer(completion(JSON.stringify({
-    ru: "Чехол",
-    tags: "#горы, #чёрно-белый. \"сосны\" #закат #отражение",
-    desc: "Сюжет.",
-  })))
-  assert.deepEqual(parsed.tags, ["#горы", "#чёрно_белый", "#сосны", "#закат", "#отражение"])
-})
-
-test("parseOcrAnswer folds the completed lookalike map before validation", async () => {
-  const ru = `Чехол r${"\u043e\u0440\u044b"} iPh\u043ene`
-  const parsed = await sharedListingCore().parseOcrAnswer(completion(JSON.stringify({
-    ru,
-    tags: FIVE,
-    desc: "Сюжет.",
-  })))
-  assert.equal(parsed.ru, "Чехол горы iPhone")
-})
-
-test("parseOcrAnswer folds lookalikes in every field before validation", async () => {
-  const parsed = await sharedListingCore().parseOcrAnswer(completion(JSON.stringify({
-    ru: "Чехол кипaрис для iPhone",
-    tags: FIVE.replace("#озеро", "#озерo"),
-    desc: "Сюжет кипaрис.",
-  })))
-  assert.equal(parsed.ru, "Чехол кипарис для iPhone")
-  assert.equal(parsed.description, "Сюжет кипарис.")
-  assert.deepEqual(parsed.tags, FIVE.split(" "))
-})
-
-test("parseOcrAnswer exposes the shared refusal reason and retry class", async () => {
-  const valid = { ru: "Чехол", tags: FIVE, desc: "Сюжет." }
-  const cases = [
-    [{ choices: [] }, "no_text", "blind"],
-    [completion("not json"), "not_json", "blind"],
-    [completion(JSON.stringify({ ...valid, ru: "" })), "empty", "blind"],
-    [completion(JSON.stringify({ ...valid, ru: "Ж".repeat(201) })), "title_too_long", "blind"],
-    [completion(JSON.stringify({ ...valid, ru: "Чехол 山" })), "han", "corrective"],
-    [completion(JSON.stringify({ ...valid, ru: "Чехол кипiрис" })), "mixed_script", "corrective"],
-    [completion(JSON.stringify({ ...valid, desc: "Сюжет кипiрис." })), "mixed_script", "corrective"],
-    [completion(JSON.stringify({ ...valid, tags: FIVE.replace("#горы", "#cipресс") })), "mixed_script", "corrective"],
-  ] as const
-  for (const [input, reasonCode, retryClass] of cases) {
-    await assert.rejects(() => sharedListingCore().parseOcrAnswer(input), (error: unknown) => {
-      assert.ok(error instanceof ListingCoreError)
-      assert.equal(error.code, "CORE_REFUSED")
-      assert.equal(error.reasonCode, reasonCode)
-      assert.equal(error.retryClass, retryClass)
+test("browser WASM rejects 51 retired theme-only replies instead of inventing five tags", async () => {
+  const cases = JSON.parse(readFileSync(new URL("../../../rust/crates/listing-core/tests/fixtures/ocr-qwen-live-20261030.json",import.meta.url),"utf8")) as (OcrAnswerInput & {expected_reason:string|null;expected_title:string|null})[]
+  assert.equal(cases.length,51)
+  for (const c of cases) {
+    const input = { profile:c.profile,fixed_tags:c.fixed_tags,completion:c.completion }
+    await assert.rejects(() => sharedListingCore().parseOcrAnswer(input),(err:unknown) => {
+      assert.ok(err instanceof ListingCoreError)
+      assert.equal(err.reasonCode,"invalid_theme_json")
+      assert.equal(err.retryClass,"permanent")
       return true
     })
+  }
+})
+
+test("free formula preview validates a title without fabricating model descriptions or tags", async () => {
+  const profile = { product_type_ru: "Кружка", facts_ru: "330 мл" }
+  const answer = await sharedListingCore().parseOcrAnswer({ profile, fixed_tags: ["#кружка"], preview_theme: "Кот с чашкой" })
+  assert.equal(answer.ru, 'Кружка 330 мл "Кот с чашкой"')
+  assert.deepEqual(answer.tags, [])
+  assert.equal(answer.description, "Кружка 330 мл")
+  await assert.rejects(() => sharedListingCore().parseOcrAnswer({ profile, fixed_tags: ["#кружка"], preview_theme: "Кот 山" }))
+})
+
+test("browser WASM replays real descriptions and five image tags with the server's assembly rules", async () => {
+  const cases = JSON.parse(readFileSync(new URL("../../../rust/crates/listing-core/tests/fixtures/ocr-qwen-live-20261103.json",import.meta.url),"utf8")) as (OcrAnswerInput & {
+    expected_title: string; expected_description: string; expected_tags: string[]; expected_combined_tags: string[]
+  })[]
+  assert.equal(cases.length, 3)
+  for (const c of cases) {
+    const answer = await sharedListingCore().parseOcrAnswer({ profile: c.profile, fixed_tags: c.fixed_tags, completion: c.completion })
+    assert.equal(answer.ru, c.expected_title)
+    assert.equal(answer.description, c.expected_description)
+    assert.deepEqual(answer.tags, c.expected_tags)
+    assert.equal(answer.tags.length, 5)
+    assert.deepEqual([...c.fixed_tags, ...answer.tags], c.expected_combined_tags)
   }
 })

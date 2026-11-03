@@ -10,7 +10,6 @@ import { ObservationScopeProvider, useObservationScope } from "@/features/platfo
 import { useOpenSettings } from "@/app/settings-page"
 import { SCREEN_LOADERS } from "@/app/screen-loaders"
 import { listingHttp } from "@/bindings/http-listing"
-import { listingCardSavePsd, listingCardSaveStore } from "@/features/workflow/card/card-writes"
 import { invalidateListingCardList } from "@/features/workflow/listing-card-list-cache"
 import { notifyCommandError, notifyInfo, notifySuccess } from "@/lib/notify"
 import { replaceAddress } from "@/lib/address"
@@ -19,13 +18,12 @@ import {
   listabilityOf,
   type CatalogListingIdentity,
 } from "@/features/supply-chain/gallery/gallery-model"
-import {
-  queueEntryById,
-  removeQueued,
-  type ListingQueueEntry,
-} from "@/features/supply-chain/gallery/listing-queue"
-import { writeWorkflowCardId, withCatalogPick } from "@/features/workflow/workflow-navigation"
+import { removeQueued } from "@/features/supply-chain/gallery/listing-queue"
+import { writeWorkflowCardId, withCatalogPick, withWorkflowCardId } from "@/features/workflow/workflow-navigation"
 
+const HomeScreen = lazy(async () => ({
+  default: (await SCREEN_LOADERS.home()).HomeScreen,
+}))
 const ConsoleScreen = lazy(async () => ({
   default: (await SCREEN_LOADERS.console()).ConsoleScreen,
 }))
@@ -41,8 +39,17 @@ const WorkflowScreen = lazy(async () => ({
 const CatalogScreen = lazy(async () => ({
   default: (await SCREEN_LOADERS.catalog()).CatalogScreen,
 }))
+const ProductsScreen = lazy(async () => ({
+  default: (await SCREEN_LOADERS.products()).ProductsScreen,
+}))
+const TaskRecordsScreen = lazy(async () => ({
+  default: (await SCREEN_LOADERS["task-records"]()).TaskRecordsScreen,
+}))
 const SupplierDbsScreen = lazy(async () => ({
   default: (await SCREEN_LOADERS["supplier-dbs"]()).SupplierDbsScreen,
+}))
+const CatalogManagerScreen = lazy(async () => ({
+  default: (await SCREEN_LOADERS["supplier-catalog"]()).CatalogManagerScreen,
 }))
 const SupplierAccountsScreen = lazy(async () => ({
   default: (await SCREEN_LOADERS["supplier-accounts"]()).SupplierAccountsScreen,
@@ -53,9 +60,6 @@ const AdminDelegateOrdersScreen = lazy(async () => ({
 }))
 const MessageCenterScreen = lazy(async () => ({
   default: (await SCREEN_LOADERS["message-center"]()).MessageCenterScreen,
-}))
-const ProductsScreen = lazy(async () => ({
-  default: (await SCREEN_LOADERS.products()).ProductsScreen,
 }))
 const ShippingScreen = lazy(async () => ({
   default: (await SCREEN_LOADERS["ops-shipping"]()).ShippingScreen,
@@ -85,14 +89,7 @@ const AgentCenterScreen = lazy(async () => ({
   default: (await SCREEN_LOADERS.agent()).AgentCenterScreen,
 }))
 
-/**
- * 商库 → 上架方案的导入：逐件创建卡片，并把清单里为这件商品攒下的店铺/PSD
- * 绑定落到新卡上。
- *
- * 单件失败只提示一次、不打断其余商品；绑定的两笔写是「尽力而为」——卡已经
- * 建好，绑定失败不该把整件商品判成没导入。返回成功创建的 cardId，调用方据此
- * 决定要不要导航。
- */
+/** 逐件创建或复用上架方案；失败商品留在清单，成功后才清理。 */
 export async function importCatalogProducts(
   products: readonly CatalogListingIdentity[],
   options: {
@@ -100,11 +97,8 @@ export async function importCatalogProducts(
     isActive: () => boolean
     /** 创建成功后的本地清理（把这一件弹出清单）。 */
     onCreated?: (productId: string) => void
-    /** 绑定查询缝（测试注入）；缺省读模块清单。 */
-    entryById?: (productId: string) => ListingQueueEntry | undefined
   },
 ): Promise<string[]> {
-  const entryById = options.entryById ?? queueEntryById
   // 兜底：身份上带着点击那刻的行事实——清单结算到逐件建卡之间行可能转为
   // 不可上架，入口按同一谓词再过滤一次；跳过的报数，服务端 409 仍是最终门。
   const listable = products.filter((product) => listabilityOf(product).listable)
@@ -123,39 +117,10 @@ export async function importCatalogProducts(
     }
     if (!options.isActive()) break
     created.push(cardId)
-    // 绑定先查下来再清理：onCreated 会把这一件弹出清单（removeQueued），
-    // 弹完就查不到刚攒下的店铺/PSD 了。
-    const entry = entryById(product.productId)
     options.onCreated?.(product.productId)
-    await applyQueuedCardBindings(cardId, entry)
   }
   if (created.length > 0) invalidateListingCardList()
   return created
-}
-
-/**
- * 刚建好的卡按清单条目落绑定：先店铺、后 PSD。两笔都是读改写同一份 payload
- * （各自取卡片 revision 做 CAS），所以必须串行——并行会让后一笔踩前一笔的版本。
- */
-async function applyQueuedCardBindings(
-  cardId: string,
-  entry: ListingQueueEntry | undefined,
-): Promise<void> {
-  if (!entry) return
-  if (entry.storeId) {
-    try {
-      await listingCardSaveStore(cardId, entry.storeId)
-    } catch (reason) {
-      notifyCommandError(reason, "已加入上架列表，但目标店铺没有绑上，请在上架列表重新绑定。")
-    }
-  }
-  if (entry.psd) {
-    try {
-      await listingCardSavePsd(cardId, entry.psd.sha256, entry.psd.fileName)
-    } catch (reason) {
-      notifyCommandError(reason, "已加入上架列表，但 PSD 模板没有绑上，请在上架列表重新绑定。")
-    }
-  }
 }
 
 function ScreenFallback() {
@@ -230,21 +195,30 @@ function ScreenEntry({
   }
   let content: ReactNode = null
   switch (id) {
-    case "console":
-      content = (
-        <ConsoleScreen
-          key={workspaceKey}
-          workspaceId={overview.active_workspace?.id}
-          onNavigate={onNavigate}
-        />
-      )
+    case "home":
+      content = <HomeScreen key={workspaceKey} overview={overview} onNavigate={onNavigate} onOpenListingCard={(cardId) => {
+        replaceAddress({ search: withWorkflowCardId(window.location.search, cardId) })
+        onNavigate("listing")
+      }} />
       break
-
+    case "console":
+      content = <ConsoleScreen key={workspaceKey} workspaceId={overview.active_workspace?.id} onNavigate={onNavigate} />
+      break
     case "admin-console":
       content = <AdminConsoleScreen key={scopeKey} onOpenProducts={() => onNavigate("admin-products")} />
       break
     case "admin-products":
       content = <AdminProductsScreen key={scopeKey} />
+      break
+    case "products":
+      content = <ProductsScreen key={workspaceKey} workspaceId={overview.active_workspace?.id} onOpenStores={() => onNavigate("stores")} />
+      break
+    case "task-records":
+      content = <TaskRecordsScreen key={workspaceKey} workspaceId={overview.active_workspace?.id}
+        onOpenListingCard={(cardId) => {
+          replaceAddress({ search: withWorkflowCardId(window.location.search, cardId) })
+          onNavigate("listing")
+        }} onOpenProducts={() => onNavigate("products")} />
       break
     case "listing":
       content = (
@@ -270,33 +244,32 @@ function ScreenEntry({
           onOpenStores={() => onNavigate("stores")}
           /* 选品模式的回程：回列表。壳层顺手收掉 `?pick=1`。 */
           onExitPick={() => onNavigate("listing")}
-          onOpenListing={(products) => {
+          onOpenListing={async (products) => {
             if (catalogImporting.current || !products.length) return
             catalogImporting.current = true
             const importContext = catalogContext.current
             const stillHere = () =>
               catalogContext.current === importContext && catalogContext.current.active
-            void (async () => {
-              try {
-                const created = await importCatalogProducts(products, {
-                  isActive: stillHere,
-                  onCreated: removeQueued,
-                })
-                if (!stillHere()) return
-                // 新引用默认不绑店铺；清单里绑过的店铺/PSD 已在上一步落到卡上。
-                // 重复加入由服务端复用，不复制商品配置。
-                if (created.length) {
-                  replaceAddress(writeWorkflowCardId(window.location.href))
-                  onNavigate("listing")
-                  notifySuccess(`已加入上架列表，已有商品自动复用（${created.length} 件）`)
-                }
-              } finally {
-                catalogImporting.current = false
+            try {
+              const created = await importCatalogProducts(products, {
+                isActive: stillHere,
+                onCreated: removeQueued,
+              })
+              if (!stillHere()) return
+              if (created.length) {
+                replaceAddress(writeWorkflowCardId(window.location.href))
+                onNavigate("listing")
+                notifySuccess(`已加入上架列表，已有商品自动复用（${created.length} 件）`)
               }
-            })()
+            } finally {
+              catalogImporting.current = false
+            }
           }}
         />
       )
+      break
+    case "supplier-catalog":
+      content = <CatalogManagerScreen key={overview.session.uuid ?? workspaceKey} />
       break
     case "supplier-dbs":
       content = <SupplierDbsScreen key={workspaceKey} />
@@ -310,15 +283,6 @@ function ScreenEntry({
     case "message-center":
       content = (
         <MessageCenterScreen
-          key={workspaceKey}
-          workspaceId={overview.active_workspace?.id}
-          onOpenStores={() => onNavigate("stores")}
-        />
-      )
-      break
-    case "products":
-      content = (
-        <ProductsScreen
           key={workspaceKey}
           workspaceId={overview.active_workspace?.id}
           onOpenStores={() => onNavigate("stores")}

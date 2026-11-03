@@ -1,6 +1,6 @@
 # 管理端账单与观察对拍
 
-范围：`/api/admin` 下的套餐、订单、兑换码、支付配置、工作区钱包，以及平台观察和错误日志。路由表的方法与路径数量没有变。未列入本文件的管理路由写在 `admin-parity.md`、`adminb-misc-parity.md` 和 `admin-users-ai-auth-parity.md`。那些生产成功路径已经不是整段 501。
+范围：`/api/admin` 下的套餐、订单、兑换码、支付配置、工作区钱包，以及平台观察和错误日志。当前订单详情 GET、兑换码详情 GET 和 `/redeem-codes/{id}/revoke` 未在路由表注册；兑换码删除使用 `DELETE /api/admin/redeem-codes/{id}`，不能从残留 dispatch 分支推断入口仍可用。未列入本文件的管理路由写在 `admin-parity.md`、`adminb-misc-parity.md` 和 `admin-users-ai-auth-parity.md`。那些生产成功路径已经不是整段 501。
 
 规格来源是任务附带的 Rust v0.0.112 摘录（HEAD `7df856a`），不是私有 Rust 仓库。没有读到的句子保持 501 `not_ported`，或写在文末「需要用户决定」。
 
@@ -10,7 +10,7 @@
 
 | 规格 | 测试 |
 | --- | --- |
-| 账单 0.5 超管门、TOTP、step-up | `TestAdminBAuthFamilies` `TestAdminBStepUp` |
+| 账单 0.5 超管门（只按 `super_admin` 角色，无验证器与 step-up） | `TestAdminBAuthFamilies` |
 | 账单 0.3 CSRF | `TestAdminBCSRFAndValidation` `TestCrossOriginWrite` |
 | 账单 1 套餐列表 | `TestAdminBillingOps`（`GET /api/admin/plans` 与 `plans_listed`） |
 | 账单 4 确认钱包充值、第二次 409 | `TestAdminBillingOps` |
@@ -41,11 +41,12 @@ PODHUB_PARITY_DSN='postgres://postgres:postgres@127.0.0.1:5432/podhub?sslmode=di
 
 2026-10-17 在本机 PostgreSQL 16 上，`TestAdminBillingOps` 与 `TestOrderConfirmCredit` 覆盖：`credit_cents>0` 且 `credit_lots` 为空时确认成功并写入一条新批次，实付低于 `min_order_cents` 不写佣金；手算抵扣行（lot 替换为真实 id，`starter` / consumed 2000）写入 `member_seat_lot_credits`；同一订单再次确认为 409；同一 `lot_id` 再次入账为 503 且订单回到 `pending`，入账行仍为一行；并发确认只有一个 200。成功响应没有 `credit_lots`。非法兑换码路径是 400 纯文本，空段是 API JSON 404。这些路径不再返回 501 `not_ported`。
 
-## 改了哪个流程、结果为什么不变
+## 当前变化与保留的历史结算
 
-- 这些路由原来在守卫之后直接 501。现在按规格返回业务 JSON 或规格中的错误体。路由注册行数不变。
-- 钱包入账自己写 `user_wallets` / `wallet_ledger`，不调用 `billing/repo.TopupTx`。后者对相同幂等键会重放成功；本确认路径要让唯一约束失败并回滚整笔结算。重复确认先被 `pending` 的 CAS 挡成 409。
-- `credit_cents==0` 的席位确认仍走原来的 `settleSeats`：`seat_limit` 取本单名额，不入账、不返利、不 reconcile。`credit_cents>0` 才走规格里的入账、投影、reconcile 和佣金。见文末。
+- 当前兑换码支持钱包额度和套餐；`member_seats` 与识图额度不再发放。`ParseRedeemBody` / `ValidateRedeemCreate` 是 HTTP 与 MCP 共用的验证入口，MCP 工具仍只暴露钱包额度生成，见 [MCP 对拍](mcp-parity.md)。
+- 当前 `ConfirmOrder` 在 pending → paid 的 CAS 后调用首单佣金结算；`product=subscription` 经 `FulfillSubscriptionOrder` 履约并记录 `subscription_payment_settled`。旧席位订单的两套结算分支仍存在，用于已有订单，不能据此宣称仍可新购席位批次。实现位于 `internal/admin/billing/repo/plans_orders.go`。
+- 钱包入账自己写 `workspace_wallets` / `wallet_ledger`，不调用 `billing/repo.TopupTx`。后者对相同幂等键会重放成功；本确认路径要让唯一约束失败并回滚整笔结算。重复确认先被 `pending` 的 CAS 挡成 409。
+- 旧席位订单中，`credit_cents==0` 的 `settleSeats` 局部分支仍以本单名额设置 `seat_limit`，不额外入账或 reconcile；首单佣金已由外层 `ConfirmOrder` 统一处理，不能解读为零抵扣订单完全无佣金。`credit_cents>0` 的 `settleCredit` 保留抵扣入账、投影与 reconcile。见文末。
 - 缩略图生产接线只访问回环地址。规格里的 Rust 会请求公网 CDN。这是有意收窄，见文末。
 - 观察路由的 `Cache-Control: private, no-store` 与 `Vary` 由处理器写出。现有边缘没有 UserAdmission，本处理器不再加第二套限流。
 
@@ -67,7 +68,7 @@ PODHUB_PARITY_DSN='postgres://postgres:postgres@127.0.0.1:5432/podhub?sslmode=di
 8. 规格散文写 `" "` 能过 `validate_config` 再在 `https_url` 失败。导出的 Rust 用 `trim().is_empty()`，空白会先报「缺少配置字段」。实现跟导出的 Rust。直接 `try_new` 仍不 trim。
 9. Go 的 `try_new` / `from_parts` 不构造 HTTP 客户端。`reqwest` 失败原文不是封闭集合。
 10. 佣金审计的 `entity_id` 规格没有写明，这里用佣金行 id 的十进制文本。账本 `note` 用佣金那句「代理佣金 · 订单 …」。
-11. 确认沿用连接所有者，不调用 `tenantx.BeginApp`。这些表对 `podhub_app` 已有 DML 授权；`user_wallets` 的 RLS 看的是 `app.current_wallet_user_id`，不是组织 GUC。缺 GUC 时 `RequireOrg` 失败，且 `podhub_app` 既看不到也插不进 `user_wallets`。两个组织的名额互不影响由确认测试覆盖。
+11. 管理端确认先经 `billing_payment_order_org` 查询组织；该 lookup 不锁订单。随后 `tenantx.EnterApp` 切换 `podhub_app` 与组织 GUC，通过写门、锁定有效组织，再用 `pending → paid` CAS 更新订单。这一点已由 [S1](security-hardening.md) 改变，不再沿用连接所有者完成订单写入。`workspace_wallets` 与 `wallet_ledger` 的 RLS 看组织 GUC（迁移 `00013` 起不再有钱包用户 GUC）。缺 GUC 时 `RequireOrg` 失败，且 `podhub_app` 既看不到也插不进 `workspace_wallets`。两个组织的名额互不影响由确认测试覆盖。
 12. 通知列是 jsonb，读回的文本不一定等于插入前的紧凑 JSON。插入前的字节由 `TestCommissionDecisionAndPayload` 对拍夹具。
 13. 缩略图生产环境拒绝非回环主机并返回 502 `商品图片暂时无法读取`。Rust 会请求公网 Ozon CDN。
 14. v3 错误日志的私有维度拒绝没有规格中的 codec，投影只去掉 `rawPayload` 与 `payloadSha256`。
@@ -75,4 +76,4 @@ PODHUB_PARITY_DSN='postgres://postgres:postgres@127.0.0.1:5432/podhub?sslmode=di
 16. 准入 429/503 不在本处理器实现。Go 边缘目前没有对应的 UserAdmission。
 17. 套餐列表、订单列表对未知 query 忽略。规格未确认 axum 是否忽略。
 18. 观察名册的 `permissions` 序列化为空对象。规格夹具只要求每个值都是 false。
-19. 查询写在 `internal/admin/repo` 的 SQL 里，没有新增 sqlc 文件。`credit_cents==0` 的 `seat_limit` 仍取本单名额。
+19. 账单查询现位于 `internal/admin/billing/repo`，共享写门和审计在 `internal/admin/core/repo`，没有为这些手写 SQL 新增 sqlc 文件。`credit_cents==0` 的 `seat_limit` 仍取本单名额。

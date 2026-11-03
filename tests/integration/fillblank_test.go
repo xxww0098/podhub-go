@@ -40,31 +40,31 @@ func TestFillBlankPatch(t *testing.T) {
 	insertStoreN(t, ctx, pool, org, storeB, 2)
 
 	const (
-		kernel    = "a4a00000-0000-4000-8000-000000000010"
-		brand     = "a4a00000-0000-4000-8000-000000000011"
-		category  = "a4a00000-0000-4000-8000-000000000012"
-		keepSrc   = "a4a00000-0000-4000-8000-000000000013"
-		decode    = "a4a00000-0000-4000-8000-000000000014"
-		source    = "a4a00000-0000-4000-8000-000000000015"
-		edited    = "a4a00000-0000-4000-8000-000000000016"
-		noEditor  = "a4a00000-0000-4000-8000-000000000017"
-		protect   = "a4a00000-0000-4000-8000-000000000018"
-		draftKey  = "a4a00000-0000-4000-8000-000000000019"
-		media     = "a4a00000-0000-4000-8000-00000000001a"
-		empty     = "a4a00000-0000-4000-8000-00000000001b"
-		withDraft = "a4a00000-0000-4000-8000-00000000001c"
-		opRow     = "a4a00000-0000-4000-8000-00000000001d"
-		revRow    = "a4a00000-0000-4000-8000-00000000001e"
-		cross     = "a4a00000-0000-4000-8000-00000000001f"
-		csrfRow   = "a4a00000-0000-4000-8000-000000000020"
-		sameRow   = "a4a00000-0000-4000-8000-000000000021"
-		moveRow   = "a4a00000-0000-4000-8000-000000000022"
-		unbind    = "a4a00000-0000-4000-8000-000000000023"
-		opStore   = "a4a00000-0000-4000-8000-000000000024"
-		noMember  = "a4a00000-0000-4000-8000-000000000025"
-		badStore  = "a4a00000-0000-4000-8000-000000000026"
-		missStore = "a4a00000-0000-4000-8000-000000000027"
-		mixRow    = "a4a00000-0000-4000-8000-000000000028"
+		kernel     = "a4a00000-0000-4000-8000-000000000010"
+		brand      = "a4a00000-0000-4000-8000-000000000011"
+		category   = "a4a00000-0000-4000-8000-000000000012"
+		keepSrc    = "a4a00000-0000-4000-8000-000000000013"
+		decode     = "a4a00000-0000-4000-8000-000000000014"
+		source     = "a4a00000-0000-4000-8000-000000000015"
+		edited     = "a4a00000-0000-4000-8000-000000000016"
+		noEditor   = "a4a00000-0000-4000-8000-000000000017"
+		protect    = "a4a00000-0000-4000-8000-000000000018"
+		draftKey   = "a4a00000-0000-4000-8000-000000000019"
+		media      = "a4a00000-0000-4000-8000-00000000001a"
+		empty      = "a4a00000-0000-4000-8000-00000000001b"
+		withDraft  = "a4a00000-0000-4000-8000-00000000001c"
+		opRow      = "a4a00000-0000-4000-8000-00000000001d"
+		managerRow = "a4a00000-0000-4000-8000-00000000001e"
+		cross      = "a4a00000-0000-4000-8000-00000000001f"
+		csrfRow    = "a4a00000-0000-4000-8000-000000000020"
+		sameRow    = "a4a00000-0000-4000-8000-000000000021"
+		moveRow    = "a4a00000-0000-4000-8000-000000000022"
+		unbind     = "a4a00000-0000-4000-8000-000000000023"
+		opStore    = "a4a00000-0000-4000-8000-000000000024"
+		noMember   = "a4a00000-0000-4000-8000-000000000025"
+		badStore   = "a4a00000-0000-4000-8000-000000000026"
+		missStore  = "a4a00000-0000-4000-8000-000000000027"
+		mixRow     = "a4a00000-0000-4000-8000-000000000028"
 	)
 	insertFillRow(t, ctx, pool, kernel, org, `{"title":"keep","description":"","gap":" ","n":0,"f":false,"a":[],"o":{},"z":null}`, "draft", "pending", "stale", "none", "built", 0, "")
 	insertFillRow(t, ctx, pool, brand, org, `{"brand":"kept"}`, "ready", "ready", "passed", "queued", "built", 0, "")
@@ -80,7 +80,7 @@ func TestFillBlankPatch(t *testing.T) {
 	insertFillRow(t, ctx, pool, empty, org, `{"title":"keep"}`, "ready", "ready", "passed", "queued", "built", 0, "")
 	insertFillRow(t, ctx, pool, withDraft, org, `{"title":"x"}`, "draft", "pending", "stale", "none", "built", 0, "")
 	insertFillRow(t, ctx, pool, opRow, org, `{"title":"op"}`, "draft", "pending", "stale", "none", "built", 0, "")
-	insertFillRow(t, ctx, pool, revRow, org, `{"title":"rev"}`, "draft", "pending", "stale", "none", "built", 0, "")
+	insertFillRow(t, ctx, pool, managerRow, org, `{"title":"rev"}`, "draft", "pending", "stale", "none", "built", 0, "")
 	insertFillRow(t, ctx, pool, cross, org, `{"title":"cross"}`, "draft", "pending", "stale", "none", "built", 0, "")
 	insertFillRow(t, ctx, pool, csrfRow, org, `{"title":"csrf"}`, "draft", "pending", "stale", "none", "built", 0, "")
 	insertFillRow(t, ctx, pool, sameRow, org, `{"title":"same"}`, "ready", "ready", "passed", "queued", "built", 0, storeA)
@@ -95,7 +95,7 @@ func TestFillBlankPatch(t *testing.T) {
 	now := time.Now
 	ownerH := surfaceHandler(pool, nil, fillPrincipal(owner, org, "owner"), now)
 	opH := surfaceHandler(pool, nil, fillPrincipal(other, org, "member"), now)
-	revH := surfaceHandler(pool, nil, fillPrincipal(owner, org, "reviewer"), now)
+	managerH := surfaceHandler(pool, nil, fillPrincipal(owner, org, "manager"), now)
 	viewH := surfaceHandler(pool, nil, fillPrincipal(owner, org, "viewer"), now)
 	noneH := surfaceHandler(pool, nil, fillPrincipal(owner, 0, ""), now)
 	badH := surfaceHandler(pool, nil, fillPrincipal(owner, org, "nope"), now)
@@ -177,7 +177,7 @@ func TestFillBlankPatch(t *testing.T) {
 	assertSQL(t, ctx, pool, `SELECT revision = 1 FROM listing_rows WHERE id = $1::uuid`, edited)
 
 	rec = callJSON(ownerH, http.MethodPatch, "/api/listing/rows/"+noEditor, `{"baseRevision":9,"fillBlank":true,"changes":{"brand":"q"}}`)
-	if rec.Code != http.StatusConflict || strings.Contains(rec.Body.String(), "lastEditorId") || !strings.HasPrefix(rec.Body.String(), `{"error":"商品行已被他人更新，请刷新后重试","code":"conflict","conflict":`) {
+	if rec.Code != http.StatusConflict || strings.Contains(rec.Body.String(), "last_editor_id") || !strings.HasPrefix(rec.Body.String(), `{"error":"商品行已被他人更新，请刷新后重试","code":"conflict","conflict":`) {
 		t.Fatalf("null editor %d %s", rec.Code, rec.Body.String())
 	}
 	assertSQL(t, ctx, pool, `SELECT revision = 1 AND updated_by IS NULL FROM listing_rows WHERE id = $1::uuid`, noEditor)
@@ -215,14 +215,14 @@ func TestFillBlankPatch(t *testing.T) {
 	wantBody(t, rec, http.StatusBadRequest, "{\"error\":\"商品行载荷不是可校验的上架文档：missing field `categoryKey`\",\"code\":\"validation\"}")
 	assertSQL(t, ctx, pool, `SELECT revision = 1 AND build_state = 'built' FROM listing_rows WHERE id = $1::uuid`, withDraft)
 
-	wantBody(t, callJSON(viewH, http.MethodPatch, "/api/listing/rows/"+kernel, `{"baseRevision":2,"fillBlank":true}`), http.StatusForbidden, `{"error":"当前角色无权执行此操作","code":"forbidden"}`)
+	wantBody(t, callJSON(viewH, http.MethodPatch, "/api/listing/rows/"+kernel, `{"baseRevision":2,"fillBlank":true}`), http.StatusForbidden, `{"error":"工作空间角色无效","code":"forbidden"}`)
 	wantBody(t, callJSON(noneH, http.MethodPatch, "/api/listing/rows/"+kernel, `{"baseRevision":2,"fillBlank":true}`), http.StatusForbidden, `{"error":"当前账号尚未加入任何工作空间，请先创建工作空间，或等待他人邀请后在通知中接受","code":"forbidden"}`)
 	wantBody(t, callJSON(badH, http.MethodPatch, "/api/listing/rows/"+kernel, `{"baseRevision":2,"fillBlank":true}`), http.StatusForbidden, `{"error":"工作空间角色无效","code":"forbidden"}`)
 	wantBody(t, callJSON(outH, http.MethodPatch, "/api/listing/rows/"+kernel, `{"baseRevision":2,"fillBlank":true}`), http.StatusUnauthorized, `{"error":"未登录","code":"auth_invalid"}`)
 
 	rec = callJSON(opH, http.MethodPatch, "/api/listing/rows/"+opRow, `{"baseRevision":1,"fillBlank":true}`)
 	assertFillOK(t, rec, 2, 2)
-	rec = callJSON(revH, http.MethodPatch, "/api/listing/rows/"+revRow, `{"baseRevision":1,"fillBlank":true}`)
+	rec = callJSON(managerH, http.MethodPatch, "/api/listing/rows/"+managerRow, `{"baseRevision":1,"fillBlank":true}`)
 	assertFillOK(t, rec, 2, 2)
 
 	wantBody(t, callJSON(crossH, http.MethodPatch, "/api/listing/rows/"+cross, `{"baseRevision":1,"fillBlank":true}`), http.StatusNotFound, `{"error":"商品行不存在","code":"not_found"}`)
@@ -366,9 +366,9 @@ func assertFillOK(t *testing.T, rec *httptest.ResponseRecorder, revision, view i
 	}
 	var data struct {
 		Revision         int64           `json:"revision"`
-		ViewRevision     int64           `json:"viewRevision"`
-		UpdatedAtMs      int64           `json:"updatedAtMs"`
-		ValidationIssues json.RawMessage `json:"validationIssues"`
+		ViewRevision     int64           `json:"view_revision"`
+		UpdatedAtMs      int64           `json:"updated_at_ms"`
+		ValidationIssues json.RawMessage `json:"validation_issues"`
 		Build            struct {
 			State string `json:"state"`
 		} `json:"build"`
@@ -391,11 +391,11 @@ func assertConflict(t *testing.T, rec *httptest.ResponseRecorder, serverRev, bas
 	}
 	var body struct {
 		Conflict struct {
-			ServerRevision     int64           `json:"serverRevision"`
-			ServerPayload      json.RawMessage `json:"serverPayload"`
-			ClientBaseRevision int64           `json:"clientBaseRevision"`
-			ClientChanges      json.RawMessage `json:"clientChanges"`
-			LastEditorID       *int64          `json:"lastEditorId"`
+			ServerRevision     int64           `json:"server_revision"`
+			ServerPayload      json.RawMessage `json:"server_payload"`
+			ClientBaseRevision int64           `json:"client_base_revision"`
+			ClientChanges      json.RawMessage `json:"client_changes"`
+			LastEditorID       *int64          `json:"last_editor_id"`
 		} `json:"conflict"`
 	}
 	if json.Unmarshal(rec.Body.Bytes(), &body) != nil {

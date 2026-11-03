@@ -342,8 +342,7 @@ func hasRole(t *testing.T, ctx context.Context, pool *pgxpool.Pool, member, role
 
 func reportAs(pool *pgxpool.Pool, ozon httpapi.OzonRecorder, org, user int64, body string) *httptest.ResponseRecorder {
 	router := chi.NewRouter()
-	srv := &httpapi.Server{
-		Pool: pool,
+	srv := &httpapi.Server{Pool: pool,
 		Access: access.FixedResolver{Principal: &access.Principal{
 			UserID: user, OrgID: org, WorkspaceRole: "owner",
 		}},

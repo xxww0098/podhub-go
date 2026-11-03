@@ -106,7 +106,7 @@ func (h Host) stillListing(r *http.Request) bool {
 	if err != nil || refusal != nil || p == nil {
 		return false
 	}
-	_, _, ok := access.ListingPrepare(*p)
+	_, _, ok := access.OrgMember(*p)
 	return ok
 }
 

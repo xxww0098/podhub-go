@@ -4,6 +4,7 @@ import { diagLog } from "./diag-log"
 import { reportErrorFeedback } from "./error-feedback-reporting"
 import { collectErrorEnvironment, type ErrorReportContext } from "./error-report-environment"
 import { refusalPair } from "./listing-refusal"
+import { newErrorId } from "./error-id"
 
 export type ErrorFeedback = {
   errorId: string
@@ -20,25 +21,24 @@ function identifier(reason: unknown, key: string, pattern: RegExp): string | und
   return typeof value === "string" && pattern.test(value) ? value : undefined
 }
 
-/** A random 64-bit receipt, kept as text to avoid JS/JSON integer rounding. */
-function errorNumber(): string {
-  const words = crypto.getRandomValues(new Uint32Array(2))
-  return ((BigInt(words[0]!) << 32n) | BigInt(words[1]!)).toString().padStart(20, "0")
-}
-
 export function createErrorFeedback(reason: unknown, fallback: string): ErrorFeedback {
-  const code = refusalPair(reason)?.code ?? "operation_failed"
+  const refusal = refusalPair(reason)
+  const code = refusal?.code ?? "operation_failed"
   const traceId = identifier(reason, "traceId", /^[A-Za-z0-9_.:-]{1,128}$/)
   const status = diagnosticProperty(reason, "status")
   const message = diagnosticProperty(reason, "message")
-  const remediation = diagnosticProperty(reason, "remediation")
+  const remediation = diagnosticProperty(reason, "remediation") ?? (refusal?.refusal === "missing_model"
+    ? "系统默认识图模型暂不可用，请联系管理员配置。随后重试识别或一键准备，已完成图片保留。"
+    : refusal?.refusal === "missing_media_account"
+      ? "请工作空间所有者在「设置 → 存储桶」完成创建，再重试上传。"
+      : undefined)
   // Copy only validated own properties: exception getters and raw bodies never become UI.
   const summary = errorMessage({ message, code, name: diagnosticProperty(reason, "name") },
     typeof reason === "string" ? errorMessage(reason, fallback) : fallback)
   const unconfirmed = /(?:result|outcome)_unknown|bad_response/.test(code)
     || [message, remediation].some(value => typeof value === "string" && /未.*确认|不要重复提交/.test(value))
   return {
-    errorId: errorNumber(), code, traceId,
+    errorId: newErrorId(), code, traceId,
     outcome: unconfirmed ? "unknown" : "failed",
     ...(typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599 ? { status } : {}),
     summary: unconfirmed ? "云端结果待确认" : summary,

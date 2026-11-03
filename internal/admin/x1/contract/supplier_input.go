@@ -132,7 +132,7 @@ func DecodeRow(body []byte, update bool) (RowInput, error) {
 	}
 	content := strings.TrimSpace(wire.PromptContent)
 	if content != "" {
-		content, err = CanonicalBrief(wire.PromptContent)
+		content, err = CanonicalProfile(wire.PromptContent)
 		if err != nil {
 			return RowInput{}, fail(contract.KindValidation, err.Error())
 		}
@@ -247,61 +247,4 @@ func DecodePreview(body []byte) (PreviewInput, error) {
 		return PreviewInput{}, invalid()
 	}
 	return PreviewInput{Brief: brief, Tags: tags}, nil
-}
-
-// PromptPatchInput is the supplier prompt PATCH body.
-type PromptPatchInput struct {
-	Name     string
-	FileName string
-	Content  string
-	Tags     []string
-	Expected int64
-}
-
-// DecodePromptPatch canonicalizes the brief and tags.
-func DecodePromptPatch(body []byte) (PromptPatchInput, error) {
-	raw, err := strictObject(body)
-	if err != nil || !hasOnly(raw, []string{"promptName", "promptFileName", "promptContent", "fixedTags", "expectedRevision"}) ||
-		!requireKeys(raw, []string{"promptName", "promptFileName", "promptContent", "fixedTags", "expectedRevision"}) {
-		return PromptPatchInput{}, invalid()
-	}
-	var in PromptPatchInput
-	if !unmarshal(raw["promptName"], &in.Name) || !unmarshal(raw["promptFileName"], &in.FileName) ||
-		!unmarshal(raw["promptContent"], &in.Content) || !unmarshal(raw["fixedTags"], &in.Tags) ||
-		!unmarshal(raw["expectedRevision"], &in.Expected) {
-		return PromptPatchInput{}, invalid()
-	}
-	name, err := PromptName(in.Name)
-	if err != nil {
-		return PromptPatchInput{}, fail(contract.KindValidation, err.Error())
-	}
-	file, err := PromptFile(in.FileName)
-	if err != nil {
-		return PromptPatchInput{}, fail(contract.KindValidation, err.Error())
-	}
-	content, err := CanonicalBrief(in.Content)
-	if err != nil {
-		return PromptPatchInput{}, fail(contract.KindValidation, err.Error())
-	}
-	tags, err := NormalizeTags(in.Tags, true)
-	if err != nil {
-		return PromptPatchInput{}, err
-	}
-	return PromptPatchInput{Name: name, FileName: file, Content: content, Tags: tags, Expected: in.Expected}, nil
-}
-
-// DecodeRevision reads {"revision": n} and rejects n <= 0.
-func DecodeRevision(body []byte) (int32, error) {
-	raw, err := strictObject(body)
-	if err != nil || !hasOnly(raw, []string{"revision"}) || !requireKeys(raw, []string{"revision"}) {
-		return 0, invalid()
-	}
-	var n int32
-	if !unmarshal(raw["revision"], &n) {
-		return 0, invalid()
-	}
-	if n <= 0 {
-		return 0, fail(contract.KindValidation, "版本号必须为正整数")
-	}
-	return n, nil
 }

@@ -1,132 +1,89 @@
-# 私有数据桶（private）
+# 委托图片桶（private）
 
-日期：2026-10-18。公共规则见 [存储设计](storage-common.md)。
+2026-11-02 更新。公共规则见 [存储设计](storage-common.md)。用户自配 R2 只承载切片；平台静态桶承载商品库素材，私有桶承载委托图片及现有识图暂存。用户 PSD 只在本机使用，不上传、备份或从私有桶恢复。
 
-组织私有的长期数据：委托原图、PSD 模板，以及工作空间内的其他用户文件。本桶是唯一私有桶，按**高速上传与下载**设计。
-
-## 桶
+## 桶与当前委托原图
 
 | 项 | 值 |
 | --- | --- |
 | 物理桶 | `podhub-private` |
-| 公开域名 | 无；关闭 `r2.dev` |
+| 公开域名 | 无；部署要求关闭 `r2.dev` |
 | 角色 | `private` |
-| 保留策略 | 长期；引用存在期间保留 |
-| 去重范围 | 原图 `binding:{binding_id}`；模板 `org:{org_id}:template`；其他用户文件 `org:{org_id}:file` |
-| 上传方式 | 客户端直传（内容寻址） |
+| 委托图片 | 仅 jpg/png/webp，单文件 500 MiB；PSD 不接受，见 `internal/delegate/domain/seller.go` |
+| 当前原图 key | `{prefix}{org_id}/{sha256}.{ext}` |
+| 当前资产身份 | `delegate_assets.asset_id`、`object_key`；派单冻结载荷保留 `asset_id` 与 `object_key` |
 
-私有性由桶保证。会话 cookie 不设 `Domain`，避免发往公开桶域。
+私有性依赖桶的实际访问策略，路径前缀本身不提供访问控制。会话 cookie 保持 host-only，不发往对象桶。
 
-## 高速路径
+`Seller.Presign` 先验证当前组织内的绑定与店铺，再用 `AssetKey` 生成按组织内容寻址的 key，返回签名 PUT 与 `upload_ticket`。委托接口的请求、响应字段与查询参数统一使用 OpenAPI 声明的 snake_case，成功响应保留 `data` 信封。**当前 key 不含 binding_id**；`CommitAsset` 以 `(org_id, object_key)` 查重，`ReplayAsset` 拒绝把已属于另一绑定的同一对象重新指派。因此同组织同内容用于第二个绑定仍会冲突，不能宣称已做到按绑定独立存储。
 
-本桶承载大文件与高频上下行，因此：
+确认凭据绑定操作者、组织与绑定/店铺用途；`confirmDelegate` 在强制 checksum 分支优先检查 HEAD，无法取得完整 SHA256 时按授权长度有界 GET，检查 MIME、长度与 SHA256。确认后还重查会话、绑定店铺和存储 revision。该链路使用签名票据和 `delegate_assets`，未接入 `storage_uploads` 或 `storage_objects`。
 
-1. **直传，不经应用进程。** 客户端拿到签名 URL 后直接写对象存储；服务端只在签发与确认时处理元数据，不转发字节。
-2. **无中转桶、无服务端复制。** 内容寻址 + 强制 `x-amz-checksum-sha256` 让正式 key 可直接写。
-3. **读写都在桶边缘。** 下载使用短时签名 GET（60–300 秒）或应用代理流式转发；本桶不接公共 CDN。
-4. **确认是 O(1)。** 确认只做 HEAD 与一次注册写入，不读取对象内容。
-5. **大文件只走分片。** 每个分片签 checksum，Complete 由服务端在 key 级排他锁内执行；分片 URL 一次签发完成，客户端并发直传。
+浏览器通过 `x-podhub-store-checksum: sha256` 申请签名校验头，按授权的 `headers.checksum_sha256` 发送 PUT；当前入口仍传递 `checksum` 参数，无可信完整 HEAD 证明时必须走完整 GET。不能因为注册表签名器强制 checksum，就认定委托入口使用相同契约。CRC64NVME、分片 ETag 或正确长度均不能替代完整 SHA256 证明。
 
-三个桶统一使用 Cloudflare R2，客户端直连，不设中继、不设国内存储副本。R2 接受签名校验和，所以服务端从不读取对象内容，也没有降级路径。
+## 当前供应商下载
 
-## 路径
+`internal/supplier/repo/media.go` 先按履约授权和固定派单归属读冻结载荷，再从匹配 `asset_id` 的载荷项取 `object_key`，不是通过注册表查 `object_id`。撤权后的本人历史包仍可读，具体权限见 [账号与权限模型](account-permission-model.md)。
+
+| 分支 | 当前实现 |
+| --- | --- |
+| 请求 JSON | 返回 120 秒签名 GET、文件元数据；响应设置 `private, no-store` 与 `Referrer-Policy: no-referrer` |
+| 请求文件 | 返回 `307` 到短期签名 GET；浏览器保留 `Range` / `If-Range`，对象存储直接传输，Go 不读正文 |
+| 存储配置 | 授权后使用与委托上传共用的 `R2_PRIVATE_*` 进程配置；默认 `podhub-private`，测试可明确指定 `podhub-test-delegate`，均不得配置公开域名；不回退到数据库或假桶 |
+
+授权、跳转和错误响应统一设置 `private, no-store`、`no-referrer` 与 `nosniff`。签名覆盖最终对象响应的 `response-cache-control=private, no-store`、可信内容类型和文件名；安全图片预览使用 inline，JSON 下载和其他类型使用 attachment，未知类型降为 `application/octet-stream`。链接有效期为 120 秒，返回过期时间与 SigV4 的秒精度一致；环境配置中的凭据轮换或停用须重启 API 生效，已经签发的链接仍受其到期时间和云端凭据状态约束。
+
+原图读取已移除 Go 代理的 20 MiB 上限；500 MiB 稀疏文件的跨 64 MiB 边界、尾部和开放范围请求、`If-Range` 版本变化及 `416` 已在本地 HTTP 实测。真实 PostgreSQL、正常登录 cookie 与 `podhub_login_api` 下验证了冻结载荷授权、签名生成、错误响应、停用与轮换，未使用 superuser 执行业务读取。该验证不代表真实 R2 500 MiB 下载或浏览器断点恢复已经通过。
+
+2026-10-25 只读检查发现，旧生产快照仍使用旧字段，委托桶为停用的 `podhub-delegate`，不能作为当前 `podhub-private` 能力的外部证据。本次没有更改生产配置、桶策略或部署；外部下载与撤权行为仍须使用有效配置和真实对象验收。
+
+## 当前删除
+
+`DeleteAsset` 删除资产业务行后检查 `delegate_dispatch_assets`，无派单引用时标记 `Reclaimed` 并尝试调用存储删除。外部删除受开关与适配器限制；服务层忽略删除调用返回值，不能把 `Reclaimed=true` 解释为源站已确认删除。该流程没有使用 `storage_object_refs` 或注册表墓碑回收器。
+
+## 用户 PSD 仅保存在本机
+
+批量上架绑定 PSD 时，浏览器校验文件并写入本机 OPFS，再保存方案的摘要与文件名。服务端不接收 PSD 字节；原有模板注册、确认、分片、续传和下载接口均已删除。本机文件丢失时需重新选择原文件。平台商品库提供的模板仍可从商品库下载，不会把用户模板上传回去。
+
+迁移 `00028_drop_user_psd_backups.sql` 删除 `workspace_psd_templates` 和相关备份引用、上传会话。已有对象清单保留，迁移不删除远端对象或委托图片；旧备份不再有产品读取入口。
+
+## 当前识别图暂存
+
+浏览器识别任务使用私有 key `ocr/{org_id}/{job_id}/{lease_epoch}/{image_sha256}`。上传票据绑定正常会话、组织、任务和租约，以及当前存储身份、图像 SHA256、长度和 MIME；服务端完整读取并验证对象后，才用服务端保存的 AI 账号调用模型。浏览器不接收服务商密钥。
+
+这条链不写 `storage_uploads`，不能按通用上传注册表推算其对象，也不能将识别暂存当作长期 PSD 或履约原图。真实单识别和完整组合各上传一个 65,469 字节的 1024×1024 JPEG；私有完整 GET、模型结果、业务回执和账本已交叉回读。验收清理只处理这两个精确任务的暂存 key，不代表运行时已具备自动回收能力。
+
+## 统一注册表模型
+
+下面的路径由 `internal/media/contract/key.go` 定义。私有用途拒绝 PSD；当前委托上传、冻结载荷和供应商下载尚未切换到注册表：
 
 ```text
 podhub-private
 └── {prefix}
-    ├── orgs/{org-id}/originals/{binding-id}/{sha256}.{ext}
-    ├── orgs/{org-id}/templates/{sha256}.psd
-    └── orgs/{org-id}/files/{sha256}.{ext}
+    ├── orgs/{org_id}/originals/{binding_id}/{sha256}.{ext}
+    └── orgs/{org_id}/files/{sha256}.{ext}
 ```
 
-- `org-id` 是组织数值 ID；中转桶用的是组织 UUID，两者不混用。
-- 原图 `ext` 为 `jpg`、`png`、`webp`、`psd`；其他用户文件按其真实类型，遵循公共扩展名白名单。
-- 没有暂存前缀：对象直接写正式 key，未确认状态由 `storage_uploads` 记录。
-
-### 绑定进 key
-
-数据库模型是“一条素材属于一个绑定”。按组织去重会让同一张图用于第二个绑定必然冲突；按绑定隔离后：
-
-- 同绑定同内容 → 同 key，幂等；
-- 不同绑定同内容 → 不同 key，各自归属；
-- 删除一个绑定不影响另一个。
-
-代价是同一内容按绑定份数存储。单文件上限 500 MiB；不引入跨绑定共享文件表。上线后用注册表按 `sha256` 统计实际重复度。
-
-模板与普通用户文件是组织级资产，同组织内按哈希复用；同一对象可被多条记录引用。
-
-## 数据
-
-| 类别 | `dedupe_scope` |
-| --- | --- |
-| 原图 | `binding:{binding_id}` |
-| 模板 | `org:{org_id}:template` |
-| 其他用户文件 | `org:{org_id}:file` |
-
-scope 必须能唯一决定路径段，否则同一组织内同内容的模板与用户文件会命中同一条去重记录却指向不同 key。
-
-| 表 | 字段 | `owner_kind` |
+| 用途 | `dedupe_scope` | 目标引用 |
 | --- | --- | --- |
-| `delegate_assets` | `object_id` | `delegate_asset` |
-| `delegate_dispatches` | `payload.lines[].assets[].object_id` | `dispatch` |
-| `workspace_psd_templates` | `object_id` | `psd_template` |
+| 委托原图 | `binding:{binding_id}` | `delegate_assets.object_id` 与派单载荷中的 `object_id` |
+| 其他组织文件 | `org:{org_id}:file` | 接入时定义业务所有者 |
 
-**派单载荷必须带 `object_id`。** 供应商下载读取的是派单载荷；只改表不改载荷会出现“表正确、下载 404”。
+按绑定生成 key 后，同绑定同内容可幂等复用，不同绑定各有对象；代价是相同内容按绑定份数存储。当前委托代码尚未实现这一迁移。用户 PSD 云存储已移除；普通组织文件仍不能仅凭用途枚举视作已有产品能力。
 
-绑定删除时，同一事务删除该绑定的引用；对象在无派单引用后由回收器处理。
+接入要求：
 
-## 上传与下载
+1. 客户端直传正式 key；服务端从可信会话与业务记录决定用途、组织、绑定和 scope。
+2. `storage_uploads` 记录 pending 会话；确认重查业务授权并取得完整对象 SHA256 证明，再写入或复用 live 注册对象。
+3. 业务行和派单冻结载荷一并改成 `object_id`，引用在同一事务维护。通用触发器目前不解析派单嵌套 JSON，需明确实现引用提取；只改资产表会破坏下载与保留边界。
+4. 引用解除后才能回收对象，并保留 deleted 墓碑；当前只有注册表状态模型，尚无完整运行时回收接线。
+5. 分片与单次 PUT 应使用同一 key，并发上传与 Complete 必须取得完整对象证明。注册表的 `multipart_id` 字段不代表发起、Complete、Abort 已形成可用链路。
 
-```text
-Presign(binding_id | org_id, purpose_kind, sha256, bytes, extension)
-  ├─ 从会话与业务记录解析组织、绑定、scope 与 key（客户端不传路径）
-  ├─ 查 storage_objects：命中 live 且 key 一致 → 返回 object_id 与下载 URL
-  └─ 未命中：插入 storage_uploads(pending, multipart_id) → 返回直传 URL
+## 验收条件
 
-客户端直传正式 key
-Confirm(upload_id)
-  ├─ 原子 UPDATE ... WHERE state='pending' AND expires_at > now()
-  ├─ 重新校验会话、组织、绑定仍存在且归属未变
-  ├─ HEAD：长度、类型、full-object checksum 回显（分片必须）
-  ├─ 写入或复用 storage_objects（只命中 live），回填 object_id
-  └─ storage_uploads → confirmed
-```
-
-- 确认阶段必须重新校验绑定：签发到确认之间绑定可能已被删除或改绑。
-- `if-none-match: *` 保证正式对象不可覆盖；并发同内容上传由唯一约束收口，冲突后必须校验既有对象的 key 与本次一致。
-- 客户端只持有 `upload_id`，它是 `storage_uploads` 行的标识，与会话共同授权。
-- 过期上传行先 `AbortMultipartUpload` 再清理；被回收对象进入墓碑，不复活原 key。
-- 已确认但尚未被业务引用的对象有宽限期，超期后回收；宽限期覆盖确认到业务落库的最大时延。
-
-| 场景 | 方式 |
-| --- | --- |
-| 供应商门户下载 | 校验会话与派单归属后，签名 GET 或代理流式转发 |
-| 工作空间内下载 | 同上，按组织权限判定 |
-| 外部链接 | 短时签名 GET，绑定对象与签发者，不绑定 key 形状 |
-| 管理入口 | 不得直接读取未确认对象 |
-
-## 模板
-
-`workspace_psd_templates` 当前没有运行时写入。路径、去重范围与引用类型先定好，模板上传接入时直接使用，不提前增加接口。同一对象被多条记录引用时，删完最后一条才回收。
-
-## 管理界面
-
-| 层级 | 内容 |
-| --- | --- |
-| 组织 → 绑定 → 原图 | 绑定信息、原文件名 |
-| 组织 → PSD 模板 | 模板名称、类目、类型 |
-| 组织 → 文件 | 原文件名、大小 |
-
-整页被隐藏也要保留下一页游标。已注册对象不可移动或删除。
-
-## 验收
-
-- 相同原图在同一绑定内重复确认返回同一 `object_id`；不同绑定产生不同对象，删除一个绑定不影响另一个。
-- 签发后绑定被删除或改绑时，确认被拒绝。
-- 跨组织、跨绑定、越权派单下载全部拒绝。
-- 已删除绑定的对象在无派单引用后可回收，中断可续跑。
-- 派单载荷更新后，供应商门户下载仍读到同一对象。
-- 未确认对象不能通过任何入口读取；上传会话过期后即使对象仍存在也拒绝。
-- 单次 PUT 与分片上传得到同一 key；目标已存在时拒绝覆盖。
-- 分片上传的每个分片 URL 可一次签发，客户端并发直传；确认不读取对象内容。
-- 同一模板对象被多条记录引用时，删除部分记录不回收；删完最后一条才回收。
+- 绑定删除或改绑后确认拒绝；跨组织、跨绑定及越权派单下载拒绝。
+- 迁移后的同绑定重复上传返回同一对象，不同绑定互不冲突；旧冻结载荷仍能下载同一内容。
+- 下载覆盖实际最大文件、Range、内存占用、签名过期与撤权后的历史读取；代理缓存头符合私有数据要求。
+- 未确认对象不进入业务读取；原始桶管理入口也按授权限制，不能只靠 `uploadTicket` 隐藏对象。
+- 对象存在时拒绝覆盖；分片缺少完整证明时拒绝确认，过期分片先 Abort 再回收。
+- 最后引用删除后的实际源站删除需要回读证据；数据库标记与尝试删除不等于回收成功。

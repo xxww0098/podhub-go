@@ -62,6 +62,61 @@ pub(crate) fn seed_row(schema: &SchemaMaterial, bytes: &[u8]) -> Result<Vec<u8>,
     serde_json::to_vec(&row).map_err(CoreError::decode)
 }
 
+/// Op 19, `seedAssociatedRow`: [`seed_row`] for one member of a same-design
+/// association. The identity is derived here from the Workspace, supplier
+/// database, variant group and source digest, so the host never carries a
+/// second copy of the formula. The answer is the seeded row plus the
+/// `associationId` and `modelValue` the host stores beside it. Server build
+/// only: the browser never creates association rows, and the artifact is size-gated.
+#[cfg(not(feature = "browser"))]
+pub(crate) fn seed_associated_row(
+    schema: &SchemaMaterial,
+    bytes: &[u8],
+) -> Result<Vec<u8>, CoreError> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        card: CardPayload,
+        source: RowSource,
+        #[serde(default)]
+        supplied_draft: Option<WorkflowCategoryDraft>,
+        now_ms: u64,
+        row_id: String,
+        org_id: i64,
+        supplier_source_id: String,
+        variant_group: String,
+    }
+    let input: Input = serde_json::from_slice(bytes).map_err(CoreError::decode)?;
+    let identity = ops::association_identity(
+        input.org_id,
+        &input.supplier_source_id,
+        &input.variant_group,
+        &input.source.sha256,
+    )
+    .map_err(|refusal| CoreError::refused(refusal.to_string()))?;
+    let mut ids = new_id_source();
+    let ctx = ops::Ctx {
+        schema,
+        card: Some(&input.card),
+        now_ms: input.now_ms,
+        ids: &mut ids,
+    };
+    let row = ops::seed_associated_row(
+        &ctx,
+        input.source,
+        input.supplied_draft,
+        &input.row_id,
+        &identity,
+    )
+    .map_err(|refusal| CoreError::refused(refusal.to_string()))?;
+    let out = serde_json::json!({
+        "row": &row,
+        "associationId": &identity.association_id,
+        "modelValue": &identity.model_value,
+    });
+    serde_json::to_vec(&out).map_err(CoreError::decode)
+}
+
 /// `RowEdit` has no `Deserialize` of its own (it is a plain Rust enum built
 /// from a typed `DraftEdit` in `listing_core`); this is the wire shape the
 /// browser's `client.ts` sends instead, translated 1:1 into the real enum

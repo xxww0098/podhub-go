@@ -12,7 +12,7 @@ import (
 )
 
 func TestAdminRouteCounts(t *testing.T) {
-	if len(SupplierRoutes()) != 46 || len(CatalogRoutes()) != 3 || len(PlatformRoutes()) != 76 {
+	if len(SupplierRoutes()) != 46 || len(CatalogRoutes()) != 3 || len(PlatformRoutes()) != 72 {
 		t.Fatalf("supplier %d catalog %d platform %d", len(SupplierRoutes()), len(CatalogRoutes()), len(PlatformRoutes()))
 	}
 	for _, rt := range Routes() {
@@ -34,7 +34,7 @@ func TestAdminGuards(t *testing.T) {
 		t.Fatalf("pay %d %s", rec.Code, rec.Body.String())
 	}
 	rec = call(r, http.MethodGet, "/api/admin/supplier-db-storage/objects", "")
-	if rec.Code != http.StatusServiceUnavailable || rec.Body.String() != `{"error":"先配置平台货源存储桶","code":"STORAGE_NOT_CONFIGURED"}` {
+	if rec.Code != http.StatusServiceUnavailable || rec.Body.String() != `{"error":"先配置供应商商品库存储桶","code":"STORAGE_NOT_CONFIGURED"}` {
 		t.Fatalf("storage %d %s", rec.Code, rec.Body.String())
 	}
 	rec = call(router(staff), http.MethodGet, "/api/admin/supplier-accounts", "")
@@ -58,7 +58,7 @@ func TestAdminGuards(t *testing.T) {
 		t.Fatalf("workspace %d %s", rec.Code, rec.Body.String())
 	}
 	rec = call(router(user), http.MethodDelete, "/api/admin/videos/vid", "")
-	if rec.Code != http.StatusNotImplemented {
+	if rec.Code != http.StatusForbidden {
 		t.Fatalf("login delete %d %s", rec.Code, rec.Body.String())
 	}
 	anon := chi.NewRouter()
@@ -77,20 +77,56 @@ func TestAdminGuards(t *testing.T) {
 	}
 }
 
-func TestPortedSkipsInventoryGuard(t *testing.T) {
-	user := access.FixedResolver{Principal: &access.Principal{UserID: 1, PlatformRole: "user", WorkspaceRole: "member"}}
-	r := chi.NewRouter()
-	Mount(r, Deps{
-		Resolve: fixed(user),
-		Ported: map[string]http.HandlerFunc{
-			"DELETE /api/admin/videos/{video_id}": func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(299)
-			},
-		},
-	})
-	rec := call(r, http.MethodDelete, "/api/admin/videos/vid", "")
-	if rec.Code != 299 {
-		t.Fatalf("ported %d %s", rec.Code, rec.Body.String())
+func TestPortedUsesInventoryGuard(t *testing.T) {
+	for _, role := range []string{"", "user", "owner", "manager", "admin", "super_admin"} {
+		t.Run(role, func(t *testing.T) {
+			var p *access.Principal
+			if role != "" {
+				p = &access.Principal{UserID: 1, OrgID: 1, PlatformRole: role, WorkspaceRole: "owner"}
+			}
+			r := chi.NewRouter()
+			Mount(r, Deps{
+				Resolve: fixed(access.FixedResolver{Principal: p}),
+				Ported: map[string]http.HandlerFunc{
+					"DELETE /api/admin/videos/{video_id}": func(w http.ResponseWriter, r *http.Request) {
+						w.WriteHeader(299)
+					},
+					"GET /api/admin/supplier-dbs": func(w http.ResponseWriter, r *http.Request) {
+						w.WriteHeader(299)
+					},
+				},
+			})
+			want := http.StatusForbidden
+			if role == "" {
+				want = http.StatusUnauthorized
+			} else if role == "super_admin" {
+				want = 299
+			}
+			rec := call(r, http.MethodDelete, "/api/admin/videos/vid", "")
+			if rec.Code != want {
+				t.Fatalf("ported %d %s; want %d", rec.Code, rec.Body.String(), want)
+			}
+			if role == "admin" {
+				want = 299
+			}
+			rec = call(r, http.MethodGet, "/api/admin/supplier-dbs", "")
+			if rec.Code != want {
+				t.Fatalf("staff operation %d %s; want %d", rec.Code, rec.Body.String(), want)
+			}
+		})
+	}
+}
+
+func TestAdminRouteInventoryRequiresPlatformRole(t *testing.T) {
+	for _, rt := range Routes() {
+		if !strings.HasPrefix(rt.Path, "/api/admin/") {
+			continue
+		}
+		switch rt.Guard {
+		case GuardStaff, GuardSuper, GuardPrice, GuardInferred:
+		default:
+			t.Errorf("%s %s accepts %s instead of a platform role", rt.Method, rt.Path, rt.Guard)
+		}
 	}
 }
 

@@ -16,10 +16,11 @@ type Store struct {
 	Pool     *pgxpool.Pool
 	Ring     seal.Ring
 	KeyReady bool
+	KeyID    string
 }
 
-func New(pool *pgxpool.Pool, ring seal.Ring, keyReady bool) *Store {
-	return &Store{Pool: pool, Ring: ring, KeyReady: keyReady}
+func New(pool *pgxpool.Pool, ring seal.Ring, keyReady bool, keyID string) *Store {
+	return &Store{Pool: pool, Ring: ring, KeyReady: keyReady, KeyID: keyID}
 }
 
 func mapDB(err error, admission bool) error {

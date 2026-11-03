@@ -12,6 +12,12 @@ const PLAIN: RouteAudience = {
   hasWorkspace: true,
 }
 const AGENT: RouteAudience = { ...PLAIN, isAgent: true }
+
+test("catalogue grants address maintenance independently of workspace and staff roles", () => {
+  const manager = routeAudienceFor({ authenticated: true, role: "user", accountMode: "unaffiliated", isCatalogManager: true })
+  assert.deepEqual(resolveRoute({ pathname: "/", search: "?screen=supplier-catalog" }, manager), { kind: "workbench", screen: "supplier-catalog" })
+  assert.deepEqual(resolveRoute({ pathname: "/admin", search: "?screen=supplier-catalog" }, manager), { kind: "admin-denied" })
+})
 const STAFF: RouteAudience = { ...PLAIN, isStaff: true }
 const ANONYMOUS: RouteAudience = {
   authenticated: false,
@@ -23,8 +29,7 @@ const ANONYMOUS: RouteAudience = {
 const at = (pathname: string, search = "") => ({ pathname, search })
 
 test("an anonymous caller gets a public page or the login screen", () => {
-  assert.deepEqual(resolveRoute(at("/"), ANONYMOUS), { kind: "public", page: "product" })
-  assert.deepEqual(resolveRoute(at("/pricing/"), ANONYMOUS), { kind: "public", page: "pricing" })
+  assert.deepEqual(resolveRoute(at("/"), ANONYMOUS), { kind: "public" })
   assert.deepEqual(resolveRoute(at("/login"), ANONYMOUS), { kind: "login" })
   assert.deepEqual(resolveRoute(at("/register"), ANONYMOUS), { kind: "login" })
   // A staff address survives sign-in instead of falling through to the site.
@@ -34,12 +39,11 @@ test("an anonymous caller gets a public page or the login screen", () => {
   // The unmatched catch-all is the homepage, never a refusal.
   assert.deepEqual(resolveRoute(at("/download"), ANONYMOUS), {
     kind: "public",
-    page: "product",
   })
 })
 
 test("the workbench addresses only the screens this account may reach", () => {
-  assert.deepEqual(resolveRoute(at("/"), PLAIN), { kind: "workbench", screen: "console" })
+  assert.deepEqual(resolveRoute(at("/"), PLAIN), { kind: "workbench", screen: "home" })
   for (const screen of addressableScreens("workbench", PLAIN)) {
     assert.deepEqual(
       resolveRoute(at("/", "?screen=" + screen), PLAIN),
@@ -52,7 +56,7 @@ test("the workbench addresses only the screens this account may reach", () => {
   for (const screen of ["supplier-dbs", "agent", "bogus", ""]) {
     assert.deepEqual(
       resolveRoute(at("/", "?screen=" + screen), PLAIN),
-      { kind: "workbench", screen: "console" },
+      { kind: "workbench", screen: "home" },
       screen,
     )
   }
@@ -65,7 +69,7 @@ test("an Agent account addresses 代理中心; a plain account does not", () => 
   })
   assert.deepEqual(resolveRoute(at("/", "?screen=supplier-dbs"), AGENT), {
     kind: "workbench",
-    screen: "console",
+    screen: "home",
   })
 })
 
@@ -80,28 +84,27 @@ test("the admin surface addresses admin screens only", () => {
     screen: defaultAdminScreen(),
     settings: null,
   })
-  assert.deepEqual(resolveRoute(at("/admin", "?screen=supplier-dbs&settings=media"), STAFF), {
+  assert.deepEqual(resolveRoute(at("/admin", "?screen=supplier-dbs&settings=payment"), STAFF), {
     kind: "admin",
     screen: "supplier-dbs",
-    settings: "media",
+    settings: "payment",
   })
   // A known pane this rank may not open still reaches the sheet, which refuses
   // it by name; an unknown id opens nothing.
-  assert.deepEqual(resolveRoute(at("/admin", "?settings=media"), STAFF), {
+  assert.deepEqual(resolveRoute(at("/admin", "?settings=payment"), STAFF), {
     kind: "admin",
     screen: defaultAdminScreen(),
-    settings: "media",
+    settings: "payment",
   })
   assert.deepEqual(resolveRoute(at("/admin", "?settings=unknown"), STAFF), {
     kind: "admin",
     screen: defaultAdminScreen(),
     settings: null,
   })
-  // "/" addresses the staff-only module for staff: 平台 is a tab of the
-  // unified main nav, so its 货源管理 screen is a normal in-place destination.
+  // Every platform destination requires its /admin address, including for staff.
   assert.deepEqual(resolveRoute(at("/", "?screen=supplier-dbs"), STAFF), {
     kind: "workbench",
-    screen: "supplier-dbs",
+    screen: "home",
   })
   assert.deepEqual(resolveRoute(at("/admin", "?screen=console"), STAFF), {
     kind: "admin",
@@ -110,13 +113,37 @@ test("the admin surface addresses admin screens only", () => {
   })
 })
 
+test("platform delegate orders require the staff surface and keep seller orders separate", () => {
+  assert.deepEqual(resolveRoute(at("/admin", "?screen=admin-delegate-orders"), STAFF), {
+    kind: "admin", screen: "admin-delegate-orders", settings: null,
+  })
+  assert.deepEqual(resolveRoute(at("/", "?screen=admin-delegate-orders"), STAFF), {
+    kind: "workbench", screen: "home",
+  })
+  assert.deepEqual(resolveRoute(at("/admin", "?screen=admin-delegate-orders"), PLAIN), { kind: "admin-denied" })
+  assert.deepEqual(resolveRoute(at("/", "?screen=delegate-orders"), STAFF), {
+    kind: "workbench", screen: "delegate-orders",
+  })
+})
+
+test("the seller dashboard and products are addressable on the workbench", () => {
+  for (const audience of [PLAIN, STAFF]) {
+    assert.deepEqual(resolveRoute(at("/", "?screen=console"), audience), {
+      kind: "workbench", screen: "console",
+    })
+    assert.deepEqual(resolveRoute(at("/", "?screen=products"), audience), {
+      kind: "workbench", screen: "products",
+    })
+  }
+})
+
 test("平台管理员 runs the main-menu platform surface; only super_admin configures it", () => {
   const platformAdmin = routeAudienceFor({
     authenticated: true,
     role: "admin",
     accountMode: "owner",
   })
-  // The main-menu 平台 mode is staff-wide: 平台管理员 reaches 货源管理.
+  // The main-menu 平台 mode is staff-wide: 平台管理员 reaches 平台商品库管理.
   assert.equal(platformAdmin.isStaff, true)
   assert.deepEqual(resolveRoute(at("/admin"), platformAdmin), {
     kind: "admin",
@@ -132,10 +159,10 @@ test("平台管理员 runs the main-menu platform surface; only super_admin conf
     accountMode: "owner",
   })
   for (const audience of [platformAdmin, operator]) {
-    assert.deepEqual(resolveRoute(at("/admin", "?settings=media"), audience), {
+    assert.deepEqual(resolveRoute(at("/admin", "?settings=payment"), audience), {
       kind: "admin",
       screen: defaultAdminScreen(),
-      settings: "media",
+      settings: "payment",
     })
   }
   // A plain account never sees the surface at all.
@@ -151,22 +178,23 @@ test("a non-staff caller is refused the admin surface instead of painted a shell
   }
 })
 
-test("public pages stay readable while signed in", () => {
+test("removed public pages use the same catch-all as other unknown addresses", () => {
   for (const page of ["catalog", "pricing", "help", "privacy", "terms"] as const) {
-    assert.deepEqual(resolveRoute(at("/" + page + "/"), PLAIN), { kind: "public", page })
-    assert.deepEqual(resolveRoute(at("/" + page + "/"), STAFF), { kind: "public", page })
+    assert.deepEqual(resolveRoute(at("/" + page + "/"), ANONYMOUS), { kind: "public" })
+    for (const audience of [PLAIN, STAFF]) {
+      assert.deepEqual(resolveRoute(at("/" + page + "/"), audience), {
+        kind: "workbench",
+        screen: "home",
+      })
+    }
   }
 })
 
-test("the workbench front door needs Workspace standing; the public pages do not", () => {
+test("the workbench front door and catch-all need Workspace standing", () => {
   const unaffiliated: RouteAudience = { ...PLAIN, hasWorkspace: false }
-  for (const path of ["/", "/login", "/download"]) {
+  for (const path of ["/", "/login", "/download", "/catalog/", "/pricing/", "/help/", "/privacy/", "/terms/"]) {
     assert.deepEqual(resolveRoute(at(path), unaffiliated), { kind: "workspace-required" }, path)
   }
-  assert.deepEqual(resolveRoute(at("/pricing/"), unaffiliated), {
-    kind: "public",
-    page: "pricing",
-  })
   assert.deepEqual(resolveRoute(at("/admin"), unaffiliated), { kind: "admin-denied" })
 })
 
@@ -237,4 +265,12 @@ test("the admin screen list carries everything the staff nav paints", () => {
   }
   assert.ok(adminScreens().includes("supplier-dbs"))
   assert.ok(spaceScreens().includes("stores"))
+})
+
+test("removed R2 settings cannot open a frontend pane", () => {
+  assert.deepEqual(resolveRoute(at("/admin", "?settings=media"), STAFF), {
+    kind: "admin",
+    screen: defaultAdminScreen(),
+    settings: null,
+  })
 })

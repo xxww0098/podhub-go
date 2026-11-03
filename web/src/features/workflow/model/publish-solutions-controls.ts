@@ -52,7 +52,6 @@ export const requestSolutions = {
   forbidden: manual("当前成员没有此操作权限", "请工作空间管理员核对该店铺和操作权限"),
   validation: manual("方案或商品未通过保存校验", "修正校验指出的字段或组并重新保存，再明确发送"),
   not_found: legacySkipSolutions.not_found,
-  template_object_missing: manual("PSD 云端备份尚未完成", "本机原文件仍在时可继续工作；后台确认对象缺失后有限重试，仍失败时在原设备重新绑定以备份"),
   conflict: manual("当前输入与已保存版本冲突", "刷新当前版本，核对原 Intent 与字段；确认前不要重发"),
   gone: manual("此旧操作入口已退役", "使用当前商品编辑或确切 Intent 管理入口；本页未接入时按人工步骤处理"),
   schema_sync_required: draftSkipSolutions.schema_stale,

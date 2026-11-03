@@ -121,7 +121,6 @@ export default defineConfig({
     "import.meta.env.PODHUB_VERSION": JSON.stringify(productVersionFromRoot(import.meta.dirname)),
     "import.meta.env.PODHUB_CHANGELOG": JSON.stringify(changelogJsonFromRoot(import.meta.dirname)),
   },
-  // The render worker loads the committed `wasm/dist/browser/render/render_wasm.wasm` via `import.meta.url`.
   worker: { format: "es" },
   clearScreen: false,
   preview: { headers: isolationHeaders },

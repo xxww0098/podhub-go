@@ -296,22 +296,33 @@ func TestListPageDone(t *testing.T) {
 		return out
 	}
 	cases := []struct {
-		name   string
-		page   SyncListPage
-		prior  string
-		count  int64
-		expect bool
+		name      string
+		page      SyncListPage
+		prior     string
+		pagesSeen int
+		expect    bool
+		fail      bool
 	}{
-		{"a short page ends the pass", page("c-2", 3), "c-1", 3, true},
-		{"a full page continues", page("c-2", 3), "c-1", ListPageLimit, false},
-		{"an empty page ends the pass", page("", 0), "c-1", 0, true},
-		{"an empty cursor ends the pass", page("  ", 3), "c-1", ListPageLimit, true},
-		{"an unchanged cursor ends the pass", page("c-1", 3), "c-1", ListPageLimit, true},
+		{"short page with cursor continues", page("c-2", 3), "c-1", 1, false, false},
+		{"empty page with cursor continues", page("c-2", 0), "c-1", 1, false, false},
+		{"full page with cursor continues", page("c-2", int(ListPageLimit)), "c-1", 1, false, false},
+		{"empty page and cursor ends", page("", 0), "c-1", 1, true, false},
+		{"empty cursor ends", page("", 3), "c-1", 1, true, false},
+		{"repeated cursor fails", page("c-1", 3), "c-1", 1, false, true},
+		{"empty page with repeated cursor fails", page("c-1", 0), "c-1", 1, false, true},
+		{"too many pages fail", page("c-2", 0), "c-1", MaxListPages, false, true},
+		{"limit with more pages fails", page("c-2", 0), "c-1", MaxListPages - 1, false, true},
+		{"limit with terminal cursor succeeds", page("", 0), "c-1", MaxListPages - 1, true, false},
+		{"whitespace is not an empty cursor", page(" ", 0), "c-1", 1, false, true},
+		{"oversized page fails", page("", int(ListPageLimit)+1), "c-1", 1, false, true},
 	}
 	for _, tc := range cases {
-		if got := ListPageDone(tc.page, tc.prior, tc.count); got != tc.expect {
-			t.Fatalf("%s: got %v", tc.name, got)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ListPageDone(tc.page, tc.prior, tc.pagesSeen)
+			if got != tc.expect || (err != nil) != tc.fail {
+				t.Fatalf("done = %v, error = %v", got, err)
+			}
+		})
 	}
 }
 

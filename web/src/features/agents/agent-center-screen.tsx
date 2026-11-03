@@ -9,6 +9,7 @@ import type {
 import { accountHttp } from "@/bindings/http-account"
 import { useScreenActive } from "@/components/screen-pane"
 import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import { Spinner } from "@/components/ui/spinner"
 import { AgentCard, rebateLabel } from "@/features/agents/agent-card"
 import { AgentWalletCard } from "@/features/agents/agent-wallet-card"
@@ -94,20 +95,17 @@ export function AgentCenterScreen() {
   ].join(" · ")
 
   return (
-    <div className="flex w-full flex-col gap-4">
+    <div className="flex w-full flex-col gap-2">
       <h1 className="sr-only">代理中心</h1>
       <div className="flex flex-wrap items-center gap-2">
         <p className="text-compact text-muted-foreground">{policy}</p>
-        <Button
-          type="button"
-          size="icon-sm"
-          variant="ghost"
-          aria-label="刷新"
+        <IconButton
+          icon={RefreshCw}
+          label="刷新"
           disabled={refreshing}
+          className={refreshing ? "[&_svg]:animate-spin" : undefined}
           onClick={() => void load(true)}
-        >
-          <RefreshCw aria-hidden className={refreshing ? "animate-spin" : undefined} />
-        </Button>
+        />
       </div>
 
       <dl className="grid grid-cols-1 sm:grid-cols-3 gap-px overflow-hidden rounded-xl border border-border bg-border text-sm">
@@ -136,7 +134,7 @@ export function AgentCenterScreen() {
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex flex-col gap-0.5 bg-card px-4 py-3">
+    <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5 bg-card px-3 py-2">
       <dt className="text-xs text-muted-foreground">{label}</dt>
       <dd className="font-mono text-sm tabular-nums">{value}</dd>
     </div>

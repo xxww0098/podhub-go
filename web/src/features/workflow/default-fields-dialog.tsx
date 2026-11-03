@@ -1,17 +1,16 @@
 import { useCallback, useEffect, useRef, useMemo, useState } from "react"
-import { BookmarkCheck, Loader2, ShieldCheck, Sparkles } from "lucide-react"
+import { BookmarkCheck, Loader2, ShieldCheck, Sparkles, Trash2 } from "lucide-react"
 import { packsHttp } from "@/bindings/http-packs"
 import type {
   CategorySchemaView,
   FieldPackView,
   FieldValueOrigin,
-  SkuImportCandidate,
-  SkuImportPreview,
   WorkflowCategoryDraft,
   WorkflowDraftValue,
   WorkflowValidationIssue,
 } from "@/bindings/commands"
 import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import {
   Dialog,
@@ -26,26 +25,12 @@ import { Switch } from "@/components/ui/switch"
 import { notifyCommandError, notifySuccess } from "@/lib/notify"
 import { cn } from "@/lib/utils"
 import { CategoryFieldsForm } from "./category-fields-form"
-import { SkuImportPanel } from "./sku-import-panel"
 import { tableOwnedFields } from "./workbench/workbench-columns"
-import {
-  isCategoryDraftBlank,
-  type WorkflowValueLocation,
-} from "./workflow-draft"
+import { RICH_CONTENT_ATTRIBUTE_ID } from "./workflow-shared"
+import type { WorkflowValueLocation } from "./workflow-draft"
 
 const NOOP = () => undefined
 const EMPTY_KEYS: string[] = []
-const EMPTY_SKU_PREVIEW = async (): Promise<SkuImportPreview> => ({
-  source_sku: 0,
-  source_product_id: 0,
-  source_offer_id: "",
-  source_name: "",
-  source_description_category_id: 0,
-  source_type_id: 0,
-  category_matches: false,
-  candidates: [],
-  skipped_fields: 0,
-})
 
 export type DefaultFieldsDialogProps = {
   open: boolean
@@ -65,8 +50,6 @@ export type DefaultFieldsDialogProps = {
   onRemoveComplexItem?: (complexId: number, itemIndex: number) => void
   aiAllowedFieldKeys?: string[]
   aiProtectedFieldKeys?: string[]
-  onPreviewSkuImport?: (sku: string) => Promise<SkuImportPreview>
-  onApplySkuImport?: (candidates: SkuImportCandidate[], sourceSku: number) => void
   busy?: boolean
   queueLocked?: boolean
 }
@@ -86,8 +69,6 @@ export function DefaultFieldsDialog({
   onRemoveComplexItem = NOOP,
   aiAllowedFieldKeys = EMPTY_KEYS,
   aiProtectedFieldKeys = EMPTY_KEYS,
-  onPreviewSkuImport = EMPTY_SKU_PREVIEW,
-  onApplySkuImport = NOOP,
   busy = false,
   queueLocked = false,
 }: DefaultFieldsDialogProps) {
@@ -101,6 +82,20 @@ export function DefaultFieldsDialog({
   onFetchSchemaRef.current = onFetchSchema
   const packsGeneration = useRef(0)
   const tableOwned = useMemo(() => tableOwnedFields(schema), [schema])
+  const editableSchema = useMemo(() => ({
+    ...schema,
+    fields: schema.fields
+      .filter((field) =>
+        field.attribute_id !== RICH_CONTENT_ATTRIBUTE_ID &&
+        field.key !== `attribute_${RICH_CONTENT_ATTRIBUTE_ID}` &&
+        field.key !== "rich_content",
+      )
+      // The destination Store's contract owns this value; showing the
+      // projected currency is useful, editing it is not.
+      .map((field) => field.key === "currency_code"
+        ? { ...field, read_only: true, constraints: { ...field.constraints, required: false } }
+        : field),
+  }), [schema])
   const coordinate = useMemo(
     () => ({
       description_category_id: schema.description_category_id,
@@ -187,20 +182,12 @@ export function DefaultFieldsDialog({
                 当前方案默认字段
               </DialogTitle>
               <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 font-mono text-meta text-muted-foreground">
-                {schema.fields.length} 个字段
+                {editableSchema.fields.length} 个字段
               </span>
             </div>
             <DialogDescription className="mt-1 text-compact leading-5 text-muted-foreground">
               编辑这张上架方案的默认字段，只用于之后新建的商品；不改已有商品。表格逐行生成的字段保持锁定。
             </DialogDescription>
-          </div>
-          <div className="shrink-0 w-full rounded-lg border border-border/80 bg-muted/25 p-2 shadow-2xs lg:w-96">
-            <SkuImportPanel
-              blank={isCategoryDraftBlank(schema, draft)}
-              disabled={busy || queueLocked}
-              onPreview={onPreviewSkuImport}
-              onApply={onApplySkuImport}
-            />
           </div>
         </DialogHeader>
 
@@ -231,7 +218,7 @@ export function DefaultFieldsDialog({
           </div>
           {open ? (
             <CategoryFieldsForm
-              schema={schema}
+              schema={editableSchema}
               targetStoreId={targetStoreId}
               draft={draft}
               issues={issues}
@@ -333,17 +320,14 @@ export function DefaultFieldsDialog({
                       />
                     </label>
                     <div className="h-3 w-px bg-border/60" aria-hidden="true" />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                    <IconButton
+                      icon={Trash2}
+                      label={`删除 ${pack.name}`}
+                      size="icon-sm"
+                      className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
                       disabled={busy || queueLocked || deleting}
-                      aria-label={`删除 ${pack.name}`}
                       onClick={() => setPendingDelete(pack)}
-                    >
-                      删除
-                    </Button>
+                    />
                   </div>
                 </li>
               ))}

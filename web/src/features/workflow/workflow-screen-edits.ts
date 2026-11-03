@@ -1,8 +1,8 @@
 import type { RefObject } from "react"
-import type { FieldValueOriginKind, WorkflowDraftValue, SkuImportPreview, SkuImportCandidate, WorkflowClearGeneratedContentItemResult } from "@/bindings/commands"
+import type { FieldValueOriginKind, WorkflowDraftValue, WorkflowClearGeneratedContentItemResult } from "@/bindings/commands"
 import { listingHttp } from "@/bindings/http-listing"
 import { workflowActions } from "./workflow-actions"
-import { writeWorkflowValue, isCategoryDraftBlank, applySkuImportCandidates, type WorkflowValueLocation } from "./workflow-draft"
+import { writeWorkflowValue, type WorkflowValueLocation } from "./workflow-draft"
 import { notifyError, notifySuccess } from "@/lib/notify"
 import { preparationRunning, rowPreparing } from "./prepare/preparation-tracks"
 import { listingWorkbenchScope, listingScopeCurrent, peekListingWorkbench } from "./workbench/listing-workbench-store"
@@ -54,30 +54,6 @@ export function useWorkflowScreenEdits({ state, pendingValueOriginRef, flushAuto
       target_store_id: targetStoreId.split(",")[0]?.trim() || undefined,
     })
     if (generation === runnerGeneration.current) setSchema(next)
-  }
-
-  async function previewSkuImport(sku: string): Promise<SkuImportPreview> {
-    if (!schema || !draft || !draftId) throw new Error("当前上架方案草稿尚未就绪")
-    if (!isCategoryDraftBlank(schema, draft)) {
-      throw new Error("只有类目字段全部空白的草稿才能从 SKU 导入")
-    }
-    if (!(await flushAutosave())) {
-      throw new Error("请先完成当前草稿的保存")
-    }
-    return listingHttp.listingCardPreviewSkuImport({ draft_id: draftId, sku })
-  }
-
-  function applySkuImport(candidates: SkuImportCandidate[], sourceSku: number) {
-    if (!schema || !draft || !isCategoryDraftBlank(schema, draft)) {
-      notifyError("草稿已不再是空白状态，已取消 SKU 导入。")
-      return
-    }
-    pendingValueOriginRef.current = {
-      kind: "seller_sku",
-      sourceRef: `sku:${sourceSku}`,
-    }
-    setDraft(applySkuImportCandidates(draft, candidates))
-    setIssues([])
   }
 
   async function clearGeneratedRows(ids: string[]) {
@@ -143,5 +119,5 @@ export function useWorkflowScreenEdits({ state, pendingValueOriginRef, flushAuto
     }
   }
 
-  return { updateValue, refreshCategorySchema, previewSkuImport, applySkuImport, clearGeneratedRows }
+  return { updateValue, refreshCategorySchema, clearGeneratedRows }
 }

@@ -1,64 +1,55 @@
+import type { ReactNode } from "react"
 import { useState } from "react"
 import { ChevronDown, CircleAlert, Images, LoaderCircle } from "lucide-react"
-import type { WorkflowProductLifecycle } from "@/bindings/commands"
+import type { WorkflowCategoryDraft, WorkflowProductLifecycle } from "@/bindings/commands"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { TONE_INK } from "@/lib/receipt-state"
 import { cn } from "@/lib/utils"
+import { ImageSetPreview } from "../image-sets/image-set-preview"
 import { SliceZoom, stepSlice } from "../media/rendered-image"
 import {
   MEDIA_ROLE_LABEL,
-  mediaCellState,
   type MediaRoleKey,
 } from "../media/workflow-media-roles"
 import { FieldSourceMarker, type FieldLayerView } from "./field-source-marker"
 import { MediaDeliveryInspector } from "./media-delivery-inspector"
 import { RetryGlyphButton } from "./preparation-step-glyph"
+import { selectedMediaState, type SelectableMediaRole } from "./media-selection"
+import { MediaSelectionPicker } from "./media-selection-picker"
 
 export function MediaRoleCell({
   draftId,
   role,
   lifecycle,
+  draft,
+  selectionDisabled = true,
+  onSelect,
   sourceLayer,
   onRetryMedia,
+  extraAction,
+  aiImageURLs = [],
 }: {
   draftId: string
   role: MediaRoleKey
   lifecycle?: WorkflowProductLifecycle
+  draft?: WorkflowCategoryDraft
+  selectionDisabled?: boolean
+  onSelect?: (role: SelectableMediaRole, urls: string[]) => void
   sourceLayer?: FieldLayerView
+  aiImageURLs?: string[]
+  extraAction?: ReactNode
   onRetryMedia: () => void
 }) {
-  const state = mediaCellState(lifecycle, role)
+  const selectable = role === "images" || role === "primary_image"
+  const state = selectedMediaState(lifecycle, draft, role)
+  const picker = selectable && onSelect ? <MediaSelectionPicker {...{ draftId, role, lifecycle, draft }} disabled={selectionDisabled} onSelect={(urls) => onSelect(role, urls)} /> : null
   // ← / → walk the zoom across this cell's strip, so the open slice lives here
   // rather than in each chip.
   const [zoomAt, setZoomAt] = useState<number | null>(null)
-  if (!state.slices.length) {
-    return (
-      <span
-        className={cn(
-          "flex min-w-0 items-center gap-1 text-compact",
-          state.tone === "idle" ? "text-muted-foreground/60" : TONE_INK[state.tone],
-        )}
-      >
-        {sourceLayer ? <FieldSourceMarker layer={sourceLayer} /> : null}
-        <span className="truncate">{state.label}</span>
-        {state.tone === "bad" ? (
-          // The failure glyph itself is the retry, so the cell keeps its state
-          // line and stops growing a second Chinese button beside it.
-          <RetryGlyphButton
-            label={`重试切片 ${MEDIA_ROLE_LABEL[role]}`}
-            tooltip={`${state.label}，点击重试`}
-            onRetry={onRetryMedia}
-          >
-            <CircleAlert aria-hidden />
-          </RetryGlyphButton>
-        ) : null}
-      </span>
-    )
-  }
-
   const isUploaded = state.urls.length > 0
   const isUploading = state.tone === "flight"
   const isFailed = state.tone === "bad"
+  const selectedAI = lifecycle?.media === "ready" && state.urls.length > 0 && state.urls.every((url) => aiImageURLs.includes(url))
   const total = state.slices.length
   const zoomSlice = zoomAt === null ? undefined : state.slices[zoomAt]
 
@@ -68,7 +59,8 @@ export function MediaRoleCell({
           for a full-resolution decode; eight per row across the mounted rows
           made scrolling stutter. The cell states the count and
           opens the zoom, which reads one slice on demand. */}
-      <button
+      <div className="flex flex-wrap items-center gap-1">
+      {selectedAI ? <ImageSetPreview urls={state.urls} primary={role === "primary_image"} /> : total ? <button
         type="button"
         onClick={(event) => {
           event.stopPropagation()
@@ -80,7 +72,14 @@ export function MediaRoleCell({
         {sourceLayer ? <FieldSourceMarker layer={sourceLayer} /> : null}
         <Images className="size-3 shrink-0 opacity-60" aria-hidden />
         <span className="font-medium tabular-nums">{total} 张</span>
-      </button>
+      </button> : <span className={cn("flex min-w-0 items-center gap-1 text-compact", state.tone === "idle" ? "text-muted-foreground/60" : TONE_INK[state.tone])}>
+        {sourceLayer ? <FieldSourceMarker layer={sourceLayer} /> : null}
+        <span className="truncate">{state.label}</span>
+        {state.tone === "bad" ? <RetryGlyphButton label={`重试切片 ${MEDIA_ROLE_LABEL[role]}`} tooltip={`${state.label}，点击重试`} onRetry={onRetryMedia}><CircleAlert aria-hidden /></RetryGlyphButton> : null}
+      </span>}
+      {picker}
+      {extraAction}
+      </div>
       {zoomSlice ? (
         <SliceZoom
           draftId={draftId}
@@ -97,7 +96,7 @@ export function MediaRoleCell({
           }
         />
       ) : null}
-      {isUploading ? (
+      {!total || selectedAI ? null : isUploading ? (
         // Flight wins over the delivered popover: a partial batch has URLs, and
         // painting it with the green「N 张已就绪」dot made a row stuck at
         // "7/8 上传中" read as finished. The delivered links are one 上传 away.

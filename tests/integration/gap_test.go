@@ -15,11 +15,16 @@ import (
 	"github.com/xxww0098/podhub-go/internal/app/scans"
 	billingrepo "github.com/xxww0098/podhub-go/internal/billing/repo"
 	"github.com/xxww0098/podhub-go/internal/catalog"
+	catalogservice "github.com/xxww0098/podhub-go/internal/catalog/service"
+	delegatecontract "github.com/xxww0098/podhub-go/internal/delegate/contract"
+	delegaterepo "github.com/xxww0098/podhub-go/internal/delegate/repo"
+	delegatesvc "github.com/xxww0098/podhub-go/internal/delegate/service"
 	"github.com/xxww0098/podhub-go/internal/platform/config"
+	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
 	"github.com/xxww0098/podhub-go/internal/platform/seal"
 	queuerepo "github.com/xxww0098/podhub-go/internal/queue/repo"
 	queueservice "github.com/xxww0098/podhub-go/internal/queue/service"
-	"github.com/xxww0098/podhub-go/internal/seller"
+	seller "github.com/xxww0098/podhub-go/internal/seller/ozon"
 	storerepo "github.com/xxww0098/podhub-go/internal/store/repo"
 	"github.com/xxww0098/podhub-go/internal/telemetry"
 )
@@ -32,7 +37,7 @@ func TestReconcileGaps(t *testing.T) {
 	t.Cleanup(func() { cleanupGap(t, pool, user) })
 
 	t.Run("grants and billing rls", func(t *testing.T) { testGrants(t, ctx, pool, org, user) })
-	t.Run("listing charge and refund", func(t *testing.T) { testListingLedger(t, ctx, pool, org, user, storeUUID) })
+	t.Run("listing charge and refund", func(t *testing.T) { testListingLedger(t, ctx, pool, pool, org, user, storeUUID) })
 	t.Run("stores", func(t *testing.T) { testStoreQuota(t, ctx, pool, org, storePK) })
 	t.Run("payments", func(t *testing.T) { testPaymentReplay(t, ctx, pool, org, user) })
 	t.Run("scans", func(t *testing.T) { testScans(t, ctx, pool, org, user, storePK, storeUUID) })
@@ -65,7 +70,7 @@ func seedGapTenant(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO user_wallets (user_id, balance_microfen) VALUES ($1, 10000)`, userID); err != nil {
+		INSERT INTO workspace_wallets (org_id, balance_microfen) VALUES ($1, 10000)`, org); err != nil {
 		t.Fatal(err)
 	}
 	return org, storePK, storeUUID, user
@@ -105,6 +110,7 @@ func cleanupGap(t *testing.T, pool *pgxpool.Pool, user int64) {
 		`DELETE FROM delegate_orders WHERE org_id = $1`,
 		`DELETE FROM execution_permits WHERE org_id = $1`,
 		`DELETE FROM wallet_ledger WHERE org_id = $1`,
+		`DELETE FROM workspace_wallets WHERE org_id = $1`,
 		`DELETE FROM ai_requests WHERE org_id = $1`,
 		`DELETE FROM billing_operations WHERE org_id = $1`,
 		`DELETE FROM payment_callback_ledger WHERE org_id = $1`,
@@ -129,7 +135,6 @@ func cleanupGap(t *testing.T, pool *pgxpool.Pool, user int64) {
 		`DELETE FROM execution_quota WHERE user_id = $1`,
 		`DELETE FROM execution_fairness WHERE user_id = $1`,
 		`DELETE FROM account_queue_head WHERE user_id = $1`,
-		`DELETE FROM user_wallets WHERE user_id = $1`,
 		`DELETE FROM account_credentials WHERE user_id = $1`,
 		`DELETE FROM account_profiles WHERE user_id = $1`,
 		`DELETE FROM organization_members WHERE user_id = $1`,
@@ -139,14 +144,14 @@ func cleanupGap(t *testing.T, pool *pgxpool.Pool, user int64) {
 			t.Errorf("cleanup: %v", err)
 		}
 	}
-	if _, err := pool.Exec(ctx, `DELETE FROM platform_catalog_fetch_config WHERE last_error = 'fetch_not_ported'`); err != nil {
+	if _, err := pool.Exec(ctx, `DELETE FROM platform_catalog_fetch_config WHERE last_error = 'no_available_key'`); err != nil {
 		t.Errorf("cleanup: %v", err)
 	}
 }
 
 func testGrants(t *testing.T, ctx context.Context, pool *pgxpool.Pool, org, user int64) {
 	t.Helper()
-	for _, table := range []string{"ai_requests", "payment_orders", "redeem_codes", "member_seat_lots"} {
+	for _, table := range []string{"ai_requests", "payment_orders", "redeem_codes"} {
 		var ok bool
 		if err := pool.QueryRow(ctx, `SELECT has_table_privilege('podhub_app', $1, 'INSERT, UPDATE')`, "public."+table).Scan(&ok); err != nil {
 			t.Fatal(err)
@@ -222,7 +227,7 @@ func testGrants(t *testing.T, ctx context.Context, pool *pgxpool.Pool, org, user
 	}
 }
 
-func testListingLedger(t *testing.T, ctx context.Context, pool *pgxpool.Pool, org, user int64, store uuid.UUID) {
+func testListingLedger(t *testing.T, ctx context.Context, pool, worker *pgxpool.Pool, org, user int64, store uuid.UUID) {
 	t.Helper()
 	t.Setenv("CLOUD_LISTING_SUBMIT_PRICE_MICROFEN", "100")
 	intent := uuid.New()
@@ -241,10 +246,10 @@ func testListingLedger(t *testing.T, ctx context.Context, pool *pgxpool.Pool, or
 		job, org, "charge-"+job.String(), intent.String(), user); err != nil {
 		t.Fatal(err)
 	}
-	if err := billingrepo.SettleListingJob(ctx, pool, org, job.String()); err != nil {
+	if err := billingrepo.SettleListingJob(ctx, worker, org, job.String()); err != nil {
 		t.Fatal(err)
 	}
-	if err := billingrepo.SettleListingJob(ctx, pool, org, job.String()); err != nil {
+	if err := billingrepo.SettleListingJob(ctx, worker, org, job.String()); err != nil {
 		t.Fatal(err)
 	}
 	var task string
@@ -293,7 +298,10 @@ func testListingLedger(t *testing.T, ctx context.Context, pool *pgxpool.Pool, or
 		refundJob, org, "refund-"+refundJob.String(), user); err != nil {
 		t.Fatal(err)
 	}
-	if err := billingrepo.SettleListingJob(ctx, pool, org, refundJob.String()); err != nil {
+	if err := billingrepo.SettleListingJob(ctx, worker, org, refundJob.String()); err != nil {
+		t.Fatal(err)
+	}
+	if err := billingrepo.SettleListingJob(ctx, worker, org, refundJob.String()); err != nil {
 		t.Fatal(err)
 	}
 	var state string
@@ -304,11 +312,15 @@ func testListingLedger(t *testing.T, ctx context.Context, pool *pgxpool.Pool, or
 	if state != "released" {
 		t.Fatalf("operation %s", state)
 	}
-	if err := pool.QueryRow(ctx, `SELECT held_microfen FROM user_wallets WHERE user_id = $1`, user).Scan(&held); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT held_microfen FROM workspace_wallets WHERE org_id = $1`, org).Scan(&held); err != nil {
 		t.Fatal(err)
 	}
 	if held != 0 {
 		t.Fatalf("held %d", held)
+	}
+	var releases int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM wallet_ledger WHERE org_id=$1 AND idempotency_key=$2 AND entry_type='release'`, org, refundJob.String()).Scan(&releases); err != nil || releases != 1 {
+		t.Fatalf("refund replay: releases=%d err=%v", releases, err)
 	}
 }
 
@@ -373,7 +385,7 @@ func testPaymentReplay(t *testing.T, ctx context.Context, pool *pgxpool.Pool, or
 		t.Fatal(err)
 	}
 	var before int64
-	if err := pool.QueryRow(ctx, `SELECT balance_microfen FROM user_wallets WHERE user_id = $1`, user).Scan(&before); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT balance_microfen FROM workspace_wallets WHERE org_id = $1`, org).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
 	n, err := billingrepo.ReconcilePayments(ctx, pool, 0)
@@ -391,7 +403,7 @@ func testPaymentReplay(t *testing.T, ctx context.Context, pool *pgxpool.Pool, or
 	if topup != "paid" {
 		t.Fatalf("topup %s", topup)
 	}
-	if err := pool.QueryRow(ctx, `SELECT balance_microfen FROM user_wallets WHERE user_id = $1`, user).Scan(&balance); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT balance_microfen FROM workspace_wallets WHERE org_id = $1`, org).Scan(&balance); err != nil {
 		t.Fatal(err)
 	}
 	if balance != before+5000 {
@@ -428,7 +440,7 @@ func testScans(t *testing.T, ctx context.Context, pool *pgxpool.Pool, org, user,
 		t.Fatal(err)
 	}
 	kek := seal.DeriveKEK("gap-test-key")
-	sealed, err := seal.SealV1(kek, "k1", "client-97021", "api-97021")
+	nonce, ciphertext, err := seal.SealBlob(kek, seal.StoreAAD(org, storePK, 1), []byte("api-97021"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -437,15 +449,18 @@ func testScans(t *testing.T, ctx context.Context, pool *pgxpool.Pool, org, user,
 		    (store_id, org_id, credential_revision, client_id, key_id, nonce, ciphertext,
 		     key_fingerprint, registered_by_user_id, registered_at_ms, envelope_version)
 		VALUES ($1, $2, 1, $3, $4, $5, $6, $7, $8, $9, 1)`,
-		storePK, org, sealed.ClientID, sealed.KeyID, sealed.Nonce, sealed.Ciphertext,
-		sealed.Fingerprint, user, time.Now().UnixMilli()); err != nil {
+		storePK, org, "client-97021", "k1", nonce, ciphertext,
+		seal.Fingerprint(kek, "client-97021", "api-97021"), user, time.Now().UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE organization_stores SET credential_revision=1,client_id='client-97021' WHERE id=$1`, storePK); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO submission_intents
 		    (id, org_id, store_id, listing_row_id, row_revision, client_operation_id, request_hash,
-		     state, offer_id, reconcile_after)
-		VALUES ($1, $2, $3, gen_random_uuid(), 1, 'accepted-probe', 'hash', 'accepted', 'OFFER1',
+		     state, offer_id, external_task_id, reconcile_after)
+		VALUES ($1, $2, $3, gen_random_uuid(), 1, 'accepted-probe', 'hash', 'accepted', 'OFFER1', '71',
 		        clock_timestamp() - interval '1 minute')`, uuid.New(), org, store); err != nil {
 		t.Fatal(err)
 	}
@@ -455,14 +470,23 @@ func testScans(t *testing.T, ctx context.Context, pool *pgxpool.Pool, org, user,
 		headerClient = r.Header.Get("Client-Id")
 		headerKey = r.Header.Get("Api-Key")
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"items":[{"id":7,"offer_id":"OFFER1","sources":[{"sku":8}]}]}`)
+		switch r.URL.Path {
+		case "/v1/product/import/info":
+			_, _ = io.WriteString(w, `{"result":{"items":[{"offer_id":"OFFER1","product_id":7,"status":"imported","errors":[]}]}}`)
+		case "/v3/product/info/list":
+			_, _ = io.WriteString(w, `{"items":[{"id":7,"offer_id":"OFFER1","sources":[{"sku":8}]}]}`)
+		case "/v3/posting/fbs/get":
+			_, _ = io.WriteString(w, `{"result":{"posting_number":"P1","status":"delivered"}}`)
+		default:
+			http.NotFound(w, r)
+		}
 	}))
 	defer srv.Close()
 	t.Setenv("CLOUD_SELLER_BASE_URL", srv.URL+"/")
 
 	list := queueservice.Schedules(config.Load())
 	eg := seller.New(config.Load()).WithPool(pool)
-	scans.Attach(list, pool, eg, seal.Ring{Primary: kek}, config.Load().ProductSyncDisabled())
+	scans.Attach(list, pool, eg, seal.Ring{Primary: kek}, config.Load().ProductSyncDisabled(), seal.DefaultSellerKeyID)
 	for _, scan := range list {
 		if scan.Name == "UnknownImportsScan" || scan.Name == "ProductSyncScan" {
 			continue
@@ -503,7 +527,7 @@ func testScans(t *testing.T, ctx context.Context, pool *pgxpool.Pool, org, user,
 	if syncJobs != 0 {
 		t.Fatal("product sync must not enqueue while the locked batch is 0")
 	}
-	if n, err := storerepo.SweepDueProductSync(ctx, pool, 2, false); err != nil || n != 1 {
+	if n, err := storerepo.SweepDueProductSync(ctx, pool, 2, false, storerepo.Queue{EnqueueOn: queuerepo.EnqueueOn}); err != nil || n != 1 {
 		t.Fatalf("explicit product sync enqueue %d %v", n, err)
 	}
 	var delegateState, orderState string
@@ -515,7 +539,19 @@ func testScans(t *testing.T, ctx context.Context, pool *pgxpool.Pool, org, user,
 	if err != nil || len(claimed) != 1 {
 		t.Fatalf("claim %+v %v", claimed, err)
 	}
-	if err := scans.CancelDelegate(ctx, pool, claimed[0]); err != nil {
+	seedMatchingLease(t, ctx, pool, "entitlement", "delegate sync")
+	repo := delegaterepo.New(pool, tenant.BeginApp)
+	api := delegatesvc.Seller{DB: repo, Edge: delegatesvc.Edge{
+		Open: func(cred delegatecontract.SealedCredential) (string, string, error) {
+			key, err := seal.OpenBlob(kek, seal.StoreAAD(cred.OrgID, cred.StorePK, cred.CredentialRevision), cred.Nonce, cred.Ciphertext)
+			return *cred.ClientID, string(key), err
+		},
+		Seller: func(ctx context.Context, client, key, path string, body []byte) (int, []byte, string, error) {
+			reply, err := eg.SellerReadCall(ctx, http.MethodPost, path, body, false, true, client, key)
+			return reply.Status, []byte(reply.Body), "", err
+		},
+	}}
+	if err := scans.RunDelegate(ctx, pool, claimed[0], repo, api); err != nil {
 		t.Fatal(err)
 	}
 	if err := pool.QueryRow(ctx, `SELECT state FROM jobs WHERE id = $1`, claimed[0].ID).Scan(&delegateState); err != nil {
@@ -524,7 +560,7 @@ func testScans(t *testing.T, ctx context.Context, pool *pgxpool.Pool, org, user,
 	if err := pool.QueryRow(ctx, `SELECT state FROM delegate_orders WHERE org_id = $1`, org).Scan(&orderState); err != nil {
 		t.Fatal(err)
 	}
-	if delegateState != "cancelled" || orderState != "ready" {
+	if delegateState != "succeeded" || orderState != "ready" {
 		t.Fatalf("job %s order %s", delegateState, orderState)
 	}
 	var again int
@@ -581,10 +617,18 @@ func testTimers(t *testing.T, ctx context.Context, pool *pgxpool.Pool, org, user
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 10, 16, 4, 0, 0, 0, time.FixedZone("catalog", 8*3600))
-	ok, err := catalog.TickFetch(ctx, pool, now)
+	seedMatchingLease(t, ctx, pool, "admin", "catalog schedule test")
+	if _, err := pool.Exec(ctx, `UPDATE platform_catalog_fetch_config SET next_run_at_ms=$1`, now.Add(-time.Minute).UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	fetcher := &catalog.Fetcher{Pool: pool, Context: ctx, Now: func() time.Time { return now }, Execute: func(context.Context, catalog.FetchClaim) (catalog.FetchResult, error) {
+		return catalog.FetchResult{}, catalogservice.ErrNoFetchKey
+	}}
+	ok, err := fetcher.Start(ctx, false)
 	if err != nil || !ok {
 		t.Fatalf("tick %v %v", ok, err)
 	}
+	fetcher.Wait()
 	var lastErr string
 	var status *string
 	var streak int
@@ -592,7 +636,7 @@ func testTimers(t *testing.T, ctx context.Context, pool *pgxpool.Pool, org, user
 		SELECT last_error, last_status, failure_streak FROM platform_catalog_fetch_config`).Scan(&lastErr, &status, &streak); err != nil {
 		t.Fatal(err)
 	}
-	if lastErr != "fetch_not_ported" || status != nil || streak != 0 {
+	if lastErr != "no_available_key" || status == nil || *status != "failed" || streak != 1 {
 		t.Fatalf("catalog error %q status %v streak %d", lastErr, status, streak)
 	}
 }

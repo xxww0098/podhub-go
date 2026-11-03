@@ -1,4 +1,4 @@
-// Package scans is the six reconciler ticks that seller.Attach leaves idle.
+// Package scans is the six reconciler ticks that worker.Attach leaves idle.
 // UnknownImportsScan is not replaced.
 //
 // SQL that changes a business state was not copied from Rust (无法对照).
@@ -7,21 +7,21 @@ package scans
 
 import (
 	"context"
+	queuerepo "github.com/xxww0098/podhub-go/internal/queue/repo"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
 	"github.com/xxww0098/podhub-go/internal/platform/seal"
-	_ "github.com/xxww0098/podhub-go/internal/queue"
 	queueservice "github.com/xxww0098/podhub-go/internal/queue/service"
-	"github.com/xxww0098/podhub-go/internal/seller"
+	seller "github.com/xxww0098/podhub-go/internal/seller/ozon"
 	storerepo "github.com/xxww0098/podhub-go/internal/store/repo"
 )
 
-// Attach overwrites the six idle ticks. seller.Attach has already wired
+// Attach overwrites the six idle ticks. worker.Attach has already wired
 // UnknownImportsScan. Call this after that.
-func Attach(list []queueservice.DueScan, pool *pgxpool.Pool, eg *seller.Egress, ring seal.Ring, syncDisabled bool) {
+func Attach(list []queueservice.DueScan, pool *pgxpool.Pool, eg *seller.Egress, ring seal.Ring, syncDisabled bool, keyID string) {
 	for i := range list {
 		batch := list[i].Batch
 		switch list[i].Name {
@@ -31,7 +31,7 @@ func Attach(list []queueservice.DueScan, pool *pgxpool.Pool, eg *seller.Egress, 
 			}
 		case "ProductSyncScan":
 			list[i].Tick = func(ctx context.Context) (bool, error) {
-				n, err := storerepo.SweepDueProductSync(ctx, pool, batchOr(batch, 32), syncDisabled)
+				n, err := storerepo.SweepDueProductSync(ctx, pool, batchOr(batch, 32), syncDisabled, storerepo.Queue{EnqueueOn: queuerepo.EnqueueOn})
 				return n > 0, err
 			}
 		case "ProductSyncCleanupScan":
@@ -50,7 +50,7 @@ func Attach(list []queueservice.DueScan, pool *pgxpool.Pool, eg *seller.Egress, 
 			}
 		case "AcceptedImportsScan":
 			list[i].Tick = func(ctx context.Context) (bool, error) {
-				return probeAccepted(ctx, pool, eg, ring, batchOr(batch, 16))
+				return probeAccepted(ctx, pool, eg, ring, keyID, batchOr(batch, 16))
 			}
 		}
 	}

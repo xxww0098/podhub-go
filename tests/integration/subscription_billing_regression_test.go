@@ -14,7 +14,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	admincontract "github.com/xxww0098/podhub-go/internal/admin/core/contract"
-	userscontract "github.com/xxww0098/podhub-go/internal/admin/users/contract"
 	usersrepo "github.com/xxww0098/podhub-go/internal/admin/users/repo"
 	"github.com/xxww0098/podhub-go/internal/billing/contract"
 	"github.com/xxww0098/podhub-go/internal/billing/domain"
@@ -24,7 +23,7 @@ import (
 	"github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
 	"github.com/xxww0098/podhub-go/internal/platform/seal"
 	sellercontract "github.com/xxww0098/podhub-go/internal/seller/contract"
-	sellerrepo "github.com/xxww0098/podhub-go/internal/seller/repo"
+	sellerrepo "github.com/xxww0098/podhub-go/internal/seller/ozon/repo"
 	storedomain "github.com/xxww0098/podhub-go/internal/store/domain"
 	storerepo "github.com/xxww0098/podhub-go/internal/store/repo"
 )
@@ -32,7 +31,7 @@ import (
 func TestSubscriptionAdminCapacityOverrides(t *testing.T) {
 	ctx, pool, org, user := subscriptionTenant(t)
 	now := time.Now().Truncate(time.Second)
-	q := subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "subscribe", Target: contract.Target{PlanKey: "lite"}}, now)
+	q := subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "subscribe", Target: contract.Target{PlanKey: "lite", Stores: 5}}, now)
 	subscriptionPay(t, ctx, pool, org, user, q, now)
 	stores := make([]string, 7)
 	for i := range stores {
@@ -48,19 +47,25 @@ func TestSubscriptionAdminCapacityOverrides(t *testing.T) {
 	seedMatchingLease(t, ctx, pool, "admin", "synthetic capacity regression")
 	admin := usersrepo.NewUsers(pool, func() time.Time { return now })
 	actor := admincontract.Actor{ID: user, OrgID: org, Role: "super_admin"}
-	apply := func(intent userscontract.SeatIntent, expectedStores int64) {
+	// Members go through the admin endpoint's repo; the store override has no
+	// admin surface, so the fixture writes it and re-projects the subscription.
+	apply := func(members, storeOverride *int64) {
 		t.Helper()
-		_, load, fault := admin.PreviewSeats(ctx, "a96171", &org)
-		if fault != nil {
-			t.Fatalf("preview: %+v", fault)
+		if _, fault := admin.SetSeats(ctx, actor, "a96171", "/synthetic/seats", members); fault != nil {
+			t.Fatalf("set seats: %+v", fault)
 		}
-		_, _, _, _, fault = admin.ApplySeats(ctx, actor, "a96171", "/synthetic/seats", &org, intent, load.State.Revision, expectedStores)
-		if fault != nil {
-			t.Fatalf("apply: %+v", fault)
+		if _, err := pool.Exec(ctx, `UPDATE organizations SET store_limit_override=$2 WHERE id=$1`, org, storeOverride); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.InTx(ctx, pool, db.App(org), func(tx pgx.Tx) error {
+			_, err := billingrepo.ProjectSubscription(ctx, tx, org, now)
+			return err
+		}); err != nil {
+			t.Fatalf("project: %v", err)
 		}
 	}
 	memberLimit, storeLimit := int64(3), int64(8)
-	apply(userscontract.SeatIntent{MemberOverride: &memberLimit, StoreOverride: &storeLimit}, storeLimit)
+	apply(&memberLimit, &storeLimit)
 	t.Run("persisted", func(t *testing.T) {
 		var seats, stores int64
 		if err := pool.QueryRow(ctx, `SELECT member_seat_limit_override,store_limit_override FROM organizations WHERE id=$1`, org).Scan(&seats, &stores); err != nil || seats != 3 || stores != 8 {
@@ -72,7 +77,7 @@ func TestSubscriptionAdminCapacityOverrides(t *testing.T) {
 		if v.Members.Limit != 3 || v.Stores.Limit != 8 {
 			t.Fatalf("effective read limits: members=%d stores=%d", v.Members.Limit, v.Stores.Limit)
 		}
-		q := subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "change", Target: contract.Target{PlanKey: "pro"}}, now)
+		q := subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "change", Target: contract.Target{PlanKey: "pro", Stores: 8}}, now)
 		if q.Current.Stores != 8 || q.Current.Members != 3 {
 			t.Errorf("quote current capacity ignores overrides: %+v", q.Current)
 		}
@@ -108,16 +113,12 @@ func TestSubscriptionAdminCapacityOverrides(t *testing.T) {
 		}
 		var seats, stores int64
 		var suspended bool
-		if err := pool.QueryRow(ctx, `SELECT seat_limit,store_limit,(SELECT quota_suspended FROM organization_members WHERE id=$2) FROM organizations WHERE id=$1`, org, member).Scan(&seats, &stores, &suspended); err != nil || seats != 3 || stores != 8 || suspended {
+		if err := pool.QueryRow(ctx, `SELECT member_seat_limit_override,store_limit,(SELECT quota_suspended FROM organization_members WHERE id=$2) FROM organizations WHERE id=$1`, org, member).Scan(&seats, &stores, &suspended); err != nil || seats != 3 || stores != 8 || suspended {
 			t.Fatalf("cached capacity: %d/%d suspended=%v err=%v", seats, stores, suspended, err)
 		}
 	})
 	t.Run("retention and manual exclusions", func(t *testing.T) {
-		var owner int64
-		if err := pool.QueryRow(ctx, `SELECT id FROM organization_members WHERE org_id=$1 AND user_id=$2`, org, user).Scan(&owner); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := pool.Exec(ctx, `UPDATE subscription_periods SET keep_store_ids=$2,keep_member_ids=$3 WHERE org_id=$1`, org, stores[1:6], []int64{owner}); err != nil {
+		if _, err := pool.Exec(ctx, `UPDATE subscription_periods SET keep_store_ids=$2 WHERE org_id=$1`, org, stores[1:6]); err != nil {
 			t.Fatal(err)
 		}
 		if !subscriptionAllowed(t, ctx, pool, org, stores[6], now) {
@@ -139,7 +140,7 @@ func TestSubscriptionAdminCapacityOverrides(t *testing.T) {
 	})
 	t.Run("lower and expired overrides", func(t *testing.T) {
 		memberLimit, storeLimit = 1, 2
-		apply(userscontract.SeatIntent{MemberOverride: &memberLimit, StoreOverride: &storeLimit}, 2)
+		apply(&memberLimit, &storeLimit)
 		if subscriptionAllowed(t, ctx, pool, org, stores[2], now) {
 			t.Error("lower override ignored")
 		}
@@ -153,9 +154,9 @@ func TestSubscriptionAdminCapacityOverrides(t *testing.T) {
 		}
 	})
 	t.Run("follow purchased", func(t *testing.T) {
-		apply(userscontract.SeatIntent{FollowMembers: true, FollowStores: true}, 5)
+		apply(nil, nil)
 		v := subscriptionRead(t, ctx, pool, org, now)
-		if v.Members.Limit != 1 || v.Stores.Limit != 5 {
+		if v.Members.Limit != domain.MemberCap || v.Stores.Limit != 5 {
 			t.Fatalf("cleared overrides: %+v", v)
 		}
 		var mismatch int
@@ -192,12 +193,12 @@ func TestSubscriptionChangeQuotedPeriods(t *testing.T) {
 		t.Run(fmt.Sprintf("delayed=%v", delayed), func(t *testing.T) {
 			ctx, pool, org, user := subscriptionTenant(t)
 			now := subscriptionTime(10, 21)
-			q := subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "subscribe", Target: contract.Target{PlanKey: "lite"}}, now)
+			q := subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "subscribe", Target: contract.Target{PlanKey: "lite", Stores: 5}}, now)
 			subscriptionPay(t, ctx, pool, org, user, q, now)
 			q = subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "renew"}, now)
 			subscriptionPay(t, ctx, pool, org, user, q, now)
 			now = subscriptionTime(10, 30)
-			q = subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "change", Target: contract.Target{PlanKey: "pro"}}, now)
+			q = subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "change", Target: contract.Target{PlanKey: "pro", Stores: 5}}, now)
 			agreement := []byte(fmt.Sprintf(`{"version":"test","title":"test","effective_at":"test","content":"test","accepted_at":"test","accepted_by":"%d"}`, user))
 			pending, err := billingrepo.CreateSubscriptionOrder(ctx, pool, org, user, "po_"+uuid.NewString(), "easypay", "CNY", q.ID, agreement, now)
 			if err != nil {
@@ -212,7 +213,7 @@ func TestSubscriptionChangeQuotedPeriods(t *testing.T) {
 				now = subscriptionTime(10, 31)
 			}
 			router := chi.NewRouter()
-			billinghttp.Register(router, billinghttp.Deps{Pool: pool, Now: func() time.Time { return now }, Payments: billinghttp.Payments{EasyPayPID: "1000", EasyPayKey: "synthetic-secret"}})
+			billinghttp.Register(router, billinghttp.Deps{Billing: billingHTTPPort(), Pool: pool, Now: func() time.Time { return now }, Payments: billinghttp.Payments{EasyPayPID: "1000", EasyPayKey: "synthetic-secret"}})
 			for i := 0; i < 2; i++ {
 				subscriptionTestCallback(t, router, pending.PublicID, q.AmountCents)
 			}
@@ -237,28 +238,31 @@ func TestSubscriptionChangeQuotedPeriods(t *testing.T) {
 
 func TestSubscriptionWalletCallbackBoundary(t *testing.T) {
 	ctx, pool, org, user := subscriptionTenant(t)
-	if _, err := pool.Exec(ctx, `INSERT INTO user_wallets(user_id,balance_microfen,held_microfen) VALUES($1,0,0)`, user); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO workspace_wallets(org_id,balance_microfen,held_microfen) VALUES($1,0,0)`, org); err != nil {
 		t.Fatal(err)
 	}
 	for _, status := range []string{"pending", "canceled"} {
 		t.Run(status, func(t *testing.T) {
 			publicID := "po_" + uuid.NewString()
-			if _, err := pool.Exec(ctx, `INSERT INTO payment_orders(public_id,org_id,product,plan,months,amount_cents,currency,provider,status,created_by_user_id,topup_microfen,created_at,updated_at)
- VALUES($1,$2,'wallet_topup','lite',1,100,'CNY','easypay',$3,$4,100000000,clock_timestamp(),clock_timestamp())`, publicID, org, status, user); err != nil {
+			if _, err := pool.Exec(ctx, `INSERT INTO payment_orders(public_id,org_id,product,plan,months,amount_cents,currency,provider,status,created_by_user_id,topup_microfen,created_at,updated_at,canceled_at)
+ VALUES($1,$2,'wallet_topup','lite',1,100,'CNY','easypay',$3::text,$4,100000000,clock_timestamp(),clock_timestamp(),CASE WHEN $3::text='canceled' THEN clock_timestamp() END)`, publicID, org, status, user); err != nil {
 				t.Fatal(err)
 			}
-			before := walletBalance(t, ctx, pool, user)
+			before := walletBalance(t, ctx, pool, org)
 			router := chi.NewRouter()
-			billinghttp.Register(router, billinghttp.Deps{Pool: pool, Payments: billinghttp.Payments{EasyPayPID: "1000", EasyPayKey: "synthetic-secret"}})
+			billinghttp.Register(router, billinghttp.Deps{Billing: billingHTTPPort(), Pool: pool, Payments: billinghttp.Payments{EasyPayPID: "1000", EasyPayKey: "synthetic-secret"}})
 			for i := 0; i < 2; i++ {
 				subscriptionTestCallback(t, router, publicID, 100)
 			}
-			want := before
-			if status == "pending" {
-				want += 100000000
-			}
-			if got := walletBalance(t, ctx, pool, user); got != want {
+			want := before + 100000000
+			if got := walletBalance(t, ctx, pool, org); got != want {
 				t.Errorf("%s wallet callback: balance=%d want=%d", status, got, want)
+			}
+			var ledger int
+			var paid, reason string
+			var cancellationRetained bool
+			if err := pool.QueryRow(ctx, `SELECT status,COALESCE(reconciliation_reason,''),canceled_at IS NOT NULL,(SELECT count(*) FROM wallet_ledger l WHERE l.payment_order_id=p.id) FROM payment_orders p WHERE public_id=$1`, publicID).Scan(&paid, &reason, &cancellationRetained, &ledger); err != nil || paid != "paid" || ledger != 1 || (status == "canceled" && (reason != "fulfilled_after_cancel" || !cancellationRetained)) {
+				t.Fatalf("receipt paid=%s reason=%s ledger=%d retained=%v err=%v", paid, reason, ledger, cancellationRetained, err)
 			}
 		})
 	}
@@ -269,10 +273,10 @@ func TestSubscriptionChangeReconciliation(t *testing.T) {
 		t.Run(mutation, func(t *testing.T) {
 			ctx, pool, org, user := subscriptionTenant(t)
 			now := subscriptionTime(10, 21)
-			q := subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "subscribe", Target: contract.Target{PlanKey: "lite"}}, now)
+			q := subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "subscribe", Target: contract.Target{PlanKey: "lite", Stores: 5}}, now)
 			subscriptionPay(t, ctx, pool, org, user, q, now)
 			now = subscriptionTime(10, 30)
-			q = subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "change", Target: contract.Target{PlanKey: "pro"}}, now)
+			q = subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "change", Target: contract.Target{PlanKey: "pro", Stores: 5}}, now)
 			agreement := []byte(fmt.Sprintf(`{"version":"test","title":"test","effective_at":"test","content":"test","accepted_at":"test","accepted_by":"%d"}`, user))
 			pending, err := billingrepo.CreateSubscriptionOrder(ctx, pool, org, user, "po_"+uuid.NewString(), "easypay", "CNY", q.ID, agreement, now)
 			if err != nil {
@@ -289,7 +293,7 @@ func TestSubscriptionChangeReconciliation(t *testing.T) {
  SELECT $1,org_id,product,plan,months,amount_cents,currency,provider,'pending',created_by_user_id,
  subscription_snapshot-'change_periods',purchase_agreement,created_at,updated_at FROM payment_orders WHERE id=$2 RETURNING id`, pending.PublicID, pending.ID).Scan(&pending.ID)
 			} else if mutation == "changed price" {
-				_, err = pool.Exec(ctx, `UPDATE subscription_periods SET plan_monthly_cents=plan_monthly_cents+1 WHERE org_id=$1`, org)
+				_, err = pool.Exec(ctx, `UPDATE subscription_periods SET store_monthly_cents=store_monthly_cents+1 WHERE org_id=$1`, org)
 			} else {
 				now = subscriptionTime(11, 21)
 			}
@@ -297,7 +301,7 @@ func TestSubscriptionChangeReconciliation(t *testing.T) {
 				t.Fatal(err)
 			}
 			router := chi.NewRouter()
-			billinghttp.Register(router, billinghttp.Deps{Pool: pool, Now: func() time.Time { return now }, Payments: billinghttp.Payments{EasyPayPID: "1000", EasyPayKey: "synthetic-secret"}})
+			billinghttp.Register(router, billinghttp.Deps{Billing: billingHTTPPort(), Pool: pool, Now: func() time.Time { return now }, Payments: billinghttp.Payments{EasyPayPID: "1000", EasyPayKey: "synthetic-secret"}})
 			for i := 0; i < 2; i++ {
 				subscriptionTestCallback(t, router, pending.PublicID, q.AmountCents)
 			}
@@ -317,9 +321,9 @@ func TestSubscriptionChangeReconciliation(t *testing.T) {
 func TestSubscriptionChangeQuoteStaleAfterPurchase(t *testing.T) {
 	ctx, pool, org, user := subscriptionTenant(t)
 	now := subscriptionTime(10, 21)
-	q := subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "subscribe", Target: contract.Target{PlanKey: "lite"}}, now)
+	q := subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "subscribe", Target: contract.Target{PlanKey: "lite", Stores: 5}}, now)
 	subscriptionPay(t, ctx, pool, org, user, q, now)
-	change := subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "change", Target: contract.Target{PlanKey: "pro"}}, now)
+	change := subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "change", Target: contract.Target{PlanKey: "pro", Stores: 5}}, now)
 	q = subscriptionPreview(t, ctx, pool, org, contract.QuoteRequest{Action: "renew"}, now)
 	subscriptionPay(t, ctx, pool, org, user, q, now)
 	_, err := billingrepo.CreateSubscriptionOrder(ctx, pool, org, user, "po_"+uuid.NewString(), "manual", "CNY", change.ID, nil, now)

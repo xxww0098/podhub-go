@@ -30,7 +30,7 @@ for (const boundary of ["invalidate", "session-sweep", "anonymous-overview"] as 
     const held = deferred<Response>()
     const calls: Array<{ signal: AbortSignal; ids: string[] }> = []
     const leaveRoute = enterDiagnosticWorkflowRoute()
-    const feedback = { errorId: "00000000000000000001", code: "cloud_unavailable" }
+    const feedback = { errorId: "0000000000001", code: "cloud_unavailable" }
     globalThis.fetch = (async (input, init) => {
       assert.equal(String(input), route("eventsInbox"))
       const ids = JSON.parse(String(init?.body)).events.map((event: { id: string }) => event.id)
@@ -62,7 +62,7 @@ for (const boundary of ["invalidate", "session-sweep", "anonymous-overview"] as 
       assert.equal(await captureDiagnostic(normalizedProblem()), null)
       assert.equal(createDiagnosticPublishAction("after-" + boundary), null)
       assert.equal(openDiagnosticPublishWindow(action, new AbortController().signal), null)
-      reportErrorFeedback({ ...feedback, errorId: "00000000000000000002" })
+      reportErrorFeedback({ ...feedback, errorId: "0000000000002" })
       held.resolve(Response.json({ data: { accepted: [], rejected: [] } }))
       await new Promise(resolve => setTimeout(resolve, 10))
       assert.equal(calls.length, 1, "late acknowledgements and new errors cannot revive the revoked session")

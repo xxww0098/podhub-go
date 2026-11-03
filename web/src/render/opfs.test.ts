@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import test, { afterEach } from "node:test"
 import { readFileSync } from "node:fs"
+import { createHash } from "node:crypto"
 import { renderOpfs } from "../bindings/render-opfs"
 import { stubOpfs, restoreOpfsTestGlobals } from "./opfs-test-support"
 
@@ -14,8 +15,10 @@ import {
   putSource,
   putTemplate,
   renderProfile,
+  staticSliceFileName,
   writeStaticSlices,
 } from "./opfs"
+import { DEFAULT_RENDER_INTENT } from "./wasm"
 import { opfsUnavailableReason } from "./opfs-io"
 import {
   clearCache,
@@ -528,4 +531,19 @@ test("image digests cover the byte view, including shared backing storage", asyn
   const shared = new Uint8Array(new SharedArrayBuffer(4))
   shared.set([9, 1, 2, 8])
   assert.equal(await sha256Hex(shared.subarray(1, 3)), expected)
+})
+
+test("the static-slice cache key is the Desktop one", async () => {
+  assert.equal(renderProfile(DEFAULT_RENDER_INTENT), "v3:trim:3ff0000000000000:82")
+  assert.equal(renderProfile(), "v3:trim:3ff0000000000000:82")
+  assert.equal(
+    renderProfile({ ...DEFAULT_RENDER_INTENT, exportBounds: "canvas", exportScale: 2, presentationQuality: 82 }),
+    "v3:canvas:4000000000000000:82",
+  )
+  assert.equal(staticSliceFileName(0), "slice-1.jpg")
+  assert.equal(staticSliceFileName(3), "slice-4.jpg")
+  assert.equal(
+    await sha256Hex("v3:trim:3ff0000000000000:82"),
+    createHash("sha256").update("v3:trim:3ff0000000000000:82").digest("hex"),
+  )
 })

@@ -54,6 +54,7 @@ func TestOrgUnsetOpensNoTransaction(t *testing.T) {
 			_, err := r.PrepareGrant(ctx, contract.GrantWrite{OrgID: org})
 			return err
 		},
+		"RejectUnsentGrant": func(org int64) error { return r.RejectUnsentGrant(ctx, org, "intent") },
 		"ApplyReport": func(org int64) error {
 			_, err := r.ApplyReport(ctx, contract.ReportWrite{OrgID: org})
 			return err

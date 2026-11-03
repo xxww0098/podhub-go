@@ -13,6 +13,7 @@ import (
 	corerepo "github.com/xxww0098/podhub-go/internal/admin/core/repo"
 	observecontract "github.com/xxww0098/podhub-go/internal/admin/observe/contract"
 	"github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
+	"github.com/xxww0098/podhub-go/internal/platform/uuidx"
 )
 
 // Observe is the platform observation SQL. Fetch loads product thumbnails.
@@ -37,18 +38,18 @@ func (r *Observe) now() time.Time {
 type obsWorkspace struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
-	OwnerUUID string `json:"ownerUuid"`
-	OwnerName string `json:"ownerName"`
+	OwnerUUID string `json:"owner_uuid"`
+	OwnerName string `json:"owner_name"`
 	orgID     int64
 }
 
 type obsStore struct {
-	StoreID       string  `json:"storeId"`
-	StoreName     string  `json:"storeName"`
-	WorkspaceID   string  `json:"workspaceId"`
-	WorkspaceName string  `json:"workspaceName"`
-	OwnerUUID     string  `json:"ownerUuid"`
-	OwnerName     string  `json:"ownerName"`
+	StoreID       string  `json:"store_id"`
+	StoreName     string  `json:"store_name"`
+	WorkspaceID   string  `json:"workspace_id"`
+	WorkspaceName string  `json:"workspace_name"`
+	OwnerUUID     string  `json:"owner_uuid"`
+	OwnerName     string  `json:"owner_name"`
 	Manual        bool    `json:"-"`
 	Quota         bool    `json:"-"`
 	Assignee      *string `json:"-"`
@@ -104,11 +105,11 @@ func (r *Observe) auditObserve(ctx context.Context, actor corecontract.Actor, or
 		storeID = &scope.StoreID
 	}
 	message, _ := json.Marshal(struct {
-		WorkspaceID    *string `json:"workspaceId"`
-		StoreID        *string `json:"storeId"`
-		WorkspaceCount int     `json:"workspaceCount"`
-		StoreCount     int     `json:"storeCount"`
-		RowCount       int     `json:"rowCount"`
+		WorkspaceID    *string `json:"workspace_id"`
+		StoreID        *string `json:"store_id"`
+		WorkspaceCount int     `json:"workspace_count"`
+		StoreCount     int     `json:"store_count"`
+		RowCount       int     `json:"row_count"`
 	}{workspaceID, storeID, workspaces, stores, rows})
 	if err := corerepo.AuditBill(ctx, tx, orgID, actor.UserID, "platform_observation", "observation_scope", entityID, "GET", path, action, string(message), corerepo.Lease{}); err != nil {
 		return err
@@ -118,14 +119,14 @@ func (r *Observe) auditObserve(ctx context.Context, actor corecontract.Actor, or
 
 func normalizeScope(scope observecontract.Scope) (observecontract.Scope, error) {
 	if scope.WorkspaceID != "" {
-		id, ok := corecontract.NormalizeUUID(scope.WorkspaceID)
+		id, ok := uuidx.StrictUUID(scope.WorkspaceID)
 		if !ok {
 			return observecontract.Scope{}, corecontract.Validation("validation", "范围 UUID 无效")
 		}
 		scope.WorkspaceID = id
 	}
 	if scope.StoreID != "" {
-		id, ok := corecontract.NormalizeUUID(scope.StoreID)
+		id, ok := uuidx.StrictUUID(scope.StoreID)
 		if !ok {
 			return observecontract.Scope{}, corecontract.Validation("validation", "范围 UUID 无效")
 		}

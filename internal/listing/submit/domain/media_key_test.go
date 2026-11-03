@@ -6,18 +6,17 @@ import (
 	"time"
 )
 
-func TestParseUploadKeyTranscribesTheBatchShape(t *testing.T) {
+func TestParseUploadKeyChecksBatchShape(t *testing.T) {
 	const (
-		ms        = int64(1700000000000)
-		workspace = "11111111-1111-4111-8111-111111111111"
-		batch     = "22222222-2222-4222-8222-222222222222"
+		ms    = int64(1700000000000)
+		batch = "22222222-2222-4222-8222-222222222222"
 	)
 	date := time.UnixMilli(ms).UTC().Format("2006-01-02")
 	digest := strings.Repeat("a", 64)
 	key := "https://cdn.example/uploads/" + date + "/" + "1700000000000-" + batch +
-		"/images/teams/" + workspace + "/sha256/" + digest + ".jpg"
+		"/" + digest + ".jpg"
 	got, ok := ParseUploadKey(key)
-	if !ok || got.WorkspaceUUID != workspace || got.BatchMS != ms {
+	if !ok || got.BatchMS != ms || got.Digest != digest {
 		t.Fatalf("%+v %v", got, ok)
 	}
 	if _, ok := ParseUploadKey(strings.Replace(key, "/uploads/", "/uploads/../", 1)); ok {
@@ -26,16 +25,16 @@ func TestParseUploadKeyTranscribesTheBatchShape(t *testing.T) {
 	if _, ok := ParseUploadKey("https://media.example.invalid/hero.jpg"); ok {
 		t.Fatal("foreign")
 	}
-	if skip, hit := ImageIssue([]string{key}, strings.ToUpper(workspace), ms+1000); hit {
+	if skip, hit := ImageIssue([]string{key}, ms+1000); hit {
 		t.Fatal(skip)
 	}
-	if skip, hit := ImageIssue([]string{key}, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", ms); !hit || skip != MediaForeign {
+	if skip, hit := ImageIssue([]string{"https://other.invalid/hero.jpg"}, ms); !hit || skip != MediaForeign {
 		t.Fatal(skip, hit)
 	}
-	if skip, hit := ImageIssue([]string{key}, workspace, ms+int64(SubmitMaxAgeDays)*24*60*60*1000+1); !hit || skip != MediaExpired {
+	if skip, hit := ImageIssue([]string{key}, ms+int64(SubmitMaxAgeDays)*24*60*60*1000+1); !hit || skip != MediaExpired {
 		t.Fatal(skip, hit)
 	}
-	if _, hit := ImageIssue([]string{"", "  "}, workspace, ms); hit {
+	if _, hit := ImageIssue([]string{"", "  "}, ms); hit {
 		t.Fatal("blank urls are not foreign")
 	}
 }

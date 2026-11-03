@@ -172,7 +172,7 @@ func (r Repo) SaveCompany(ctx context.Context, orgID int64, storeUUID string, pa
 			UPDATE public.organization_stores s
 			   SET company_short_name = CASE WHEN $3 THEN $4 ELSE s.company_short_name END,
 			       company_legal_name = CASE WHEN $5 THEN $6 ELSE s.company_legal_name END,
-			       name = CASE WHEN $7 THEN $8 ELSE s.name END,
+			       name = CASE WHEN $7 AND s.name_source <> 'manual' THEN $8 ELSE s.name END,
 			       company_currency = CASE WHEN $9 THEN $10 ELSE s.company_currency END,
 			       company_country = CASE WHEN $11 THEN $12 ELSE s.company_country END,
 			       subscription_is_premium = CASE WHEN $13 THEN $14 ELSE s.subscription_is_premium END,

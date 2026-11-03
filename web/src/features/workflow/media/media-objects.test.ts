@@ -4,7 +4,7 @@ import { route } from "@/api/routes"
 import { invalidateAccountOverview, rememberAccountOverview } from "@/features/account/account-overview-cache"
 import { hashUploadBody } from "@/bindings/direct-upload"
 import { deliverMediaObject, createMediaUploadBatch, lookupMediaObject } from "./media-objects"
-import { fresh, directHarness, image, answer, activeWorkspace, DIGEST, OTHER, WORKSPACE, json } from "./direct-media-test-fixtures"
+import { fresh, directHarness, image, answer, activeWorkspace, DIGEST, OTHER, PUBLIC, WORKSPACE, json } from "./direct-media-test-fixtures"
 
 function phases(calls: Array<{ method: string; url: string }>): string[] {
   return calls.map(call => call.method === "PUT" ? "PUT" : call.url.split("/").at(-1)!)
@@ -28,7 +28,8 @@ for (const extension of ["jpg", "png", "mp4", "mov"]) {
       assert.equal(body.upload_ticket, "ticket-1")
       assert.equal(body.byte_length, 2)
       assert.equal(body.workspace_uuid, WORKSPACE)
-      assert.equal((await deliverMediaObject({ ...image(DIGEST, 2), extension, contentType })).via, "local")
+      const next = await deliverMediaObject({ ...image(DIGEST, 2), extension, contentType })
+      assert.equal(next.via, ["jpg", "png"].includes(extension) ? "put" : "local")
     } finally { h.restore() }
   })
 }
@@ -38,6 +39,29 @@ test("ready preserves laziness and cannot send bytes", async () => {
   try {
     const result = await deliverMediaObject({ ...image(DIGEST, 2), bytes: () => { throw new Error("must not read") } })
     assert.equal(result.via, "ready"); assert.deepEqual(phases(h.calls), ["presign-batch"])
+  } finally { h.restore() }
+})
+
+test("pending reuse signs and confirms the server-selected physical batch", async () => {
+  fresh()
+  const actualBatch = `${Date.now() - 1000}.22222222-2222-4222-8222-222222222222`
+  const key = `uploads/2026-11-03/${actualBatch.replace(".", "-")}/${DIGEST}.jpg`
+  const target = { ...answer(), objectKey: key, publicUrl: `${PUBLIC}/${key}` }
+  const h = directHarness({ intercept(call) {
+    if (!call.url.endsWith("/presign-batch")) return undefined
+    return json({ objects: [{ account_id: target.accountId, workspace_uuid: WORKSPACE, storage_revision: target.storageRevision,
+      object_key: key, public_url: target.publicUrl, transport: "direct", upload_batch: actualBatch, upload_ticket: "joined-ticket",
+      upload: { url: `https://s3.example.com/${key}?X-Amz-Signature=joined`, expires_at_ms: Date.now() + 600_000,
+        headers: { content_type: "image/jpeg", if_none_match: "*" } } }] })
+  } })
+  try {
+    const batch = await createMediaUploadBatch(WORKSPACE)
+    const delivered = await deliverMediaObject({ ...image(DIGEST, 2), uploadBatch: batch.uploadBatch })
+    assert.equal(delivered.objectKey, key)
+    const complete = h.calls.find(call => call.url.endsWith("/complete"))!
+    assert.equal(JSON.parse(String(complete.body)).upload_batch, actualBatch)
+    assert.notEqual(actualBatch, batch.uploadBatch)
+    assert.equal((await deliverMediaObject({ ...image(DIGEST, 2), uploadBatch: batch.uploadBatch })).via, "local")
   } finally { h.restore() }
 })
 
@@ -220,22 +244,42 @@ test("storage Retry-After waits only after authoritative missing and with native
   } finally { h.restore() }
 })
 
-test("even Ready grants must belong to the requested four-hour image directory", async () => {
+for (const transport of ["ready", "direct"] as const) test(`${transport} grants preserve server-authorized slice reuse across batches`, async () => {
   fresh(); let reads = 0
   const h = directHarness({ intercept(call) {
     if (call.url.endsWith("/presign-batch")) {
-      const found = answer()
+      const key = `uploads/2026-10-15/1792094400000-22222222-2222-4222-8222-222222222222/${DIGEST}.jpg`
+      const found = { ...answer(), objectKey: key, publicUrl: `${PUBLIC}/${key}` }
       return json({ objects: [{ account_id: found.accountId, workspace_uuid: found.workspaceUuid, storage_revision: found.storageRevision,
-        object_key: found.objectKey, public_url: found.publicUrl, transport: "ready" }] })
+        object_key: found.objectKey, public_url: found.publicUrl, transport }] })
     }
     return undefined
   } })
   try {
     const batch = await createMediaUploadBatch(WORKSPACE)
-    await assert.rejects(deliverMediaObject({ ...image(DIGEST, 2), uploadBatch: batch.uploadBatch,
+    const request = { ...image(DIGEST, 2), uploadBatch: batch.uploadBatch,
       bytes: () => { reads++; return new Uint8Array([1, 2]) },
-    }), { code: "media_upload_batch_mismatch" })
+    }
+    if (transport === "direct") await assert.rejects(deliverMediaObject(request), { code: "media_upload_batch_mismatch" })
+    else {
+      assert.equal((await deliverMediaObject(request)).via, "ready")
+      assert.equal((await deliverMediaObject(request)).via, "local")
+    }
     assert.equal(reads, 0)
     assert.equal(h.calls.some(c => c.method === "PUT"), false)
+  } finally { h.restore() }
+})
+
+test("a slice grant cannot name a different storage configuration", async () => {
+  fresh()
+  const key = `podhub-slices/other/uploads/2026-10-15/1792094400000-22222222-2222-4222-8222-222222222222/${DIGEST}.jpg`
+  const h = directHarness({ intercept(call) {
+    if (!call.url.endsWith("/presign-batch")) return undefined
+    return json({ objects: [{ account_id: "current", workspace_uuid: WORKSPACE, storage_revision: 1,
+      object_key: key, public_url: `${PUBLIC}/${key}`, transport: "ready" }] })
+  } })
+  try {
+    await assert.rejects(deliverMediaObject(image(DIGEST, 2)), { code: "media_presign_invalid" })
+    assert.equal(h.calls.some((call) => call.method === "PUT"), false)
   } finally { h.restore() }
 })

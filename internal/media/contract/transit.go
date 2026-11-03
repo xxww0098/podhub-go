@@ -10,11 +10,7 @@ import (
 // by the daily clear. They never enter storage_objects. Key composition lives
 // in the service layer, which may reach the objectkey domain.
 
-// TransitObjectLifetime is the maximum time any transit object can exist.
-const TransitObjectLifetime = 24 * time.Hour
-
-// ClearTime is the fixed Asia/Shanghai wall clock at which the transit bucket
-// is emptied. There is no closing window before it.
+// The default clear time is 04:00 Asia/Shanghai for a new workspace bucket.
 const (
 	ClearHour   = 4
 	ClearMinute = 0

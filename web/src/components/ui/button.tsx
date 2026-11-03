@@ -8,12 +8,14 @@ import { cn } from "@/lib/utils"
  * screen that begins an external effect. Nothing else on the surface is filled.
  */
 const buttonVariants = cva(
-  "group/button inline-flex shrink-0 cursor-pointer items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-[background-color,border-color,color] duration-150 outline-none select-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-45 aria-disabled:cursor-not-allowed aria-disabled:opacity-45 aria-invalid:border-destructive [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "group/button inline-flex shrink-0 cursor-pointer max-md:min-h-11 max-md:min-w-11 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-[background-color,border-color,color] duration-150 outline-none select-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-45 aria-disabled:cursor-not-allowed aria-disabled:opacity-45 aria-invalid:border-destructive [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {
         default: "bg-primary text-primary-foreground hover:bg-primary/88",
         brand: "bg-brand text-brand-foreground hover:bg-brand/90",
+        overlay:
+          "rounded-full border-border bg-card text-card-foreground shadow-sm hover:bg-muted aria-pressed:border-brand/30 aria-pressed:bg-brand-soft aria-pressed:text-brand-ink aria-pressed:[&_svg]:fill-current",
         outline:
           "border-border bg-card text-foreground hover:border-border-strong hover:bg-muted aria-expanded:bg-muted",
         secondary:
@@ -28,11 +30,11 @@ const buttonVariants = cva(
         default:
           "h-9 gap-2 px-3.5 has-data-[icon=inline-end]:pr-3 has-data-[icon=inline-start]:pl-3",
         xs: "h-6 gap-1 rounded-md px-2 text-xs has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3",
-        sm: "h-8 gap-1.5 rounded-md px-2.5 text-compact has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 [&_svg:not([class*='size-'])]:size-3.5",
+        sm: "h-9 gap-1.5 rounded-md px-2.5 text-compact has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 [&_svg:not([class*='size-'])]:size-3.5",
         lg: "h-10 gap-2 px-4 text-md has-data-[icon=inline-end]:pr-3.5 has-data-[icon=inline-start]:pl-3.5",
         icon: "size-9",
         "icon-xs": "size-6 rounded-md [&_svg:not([class*='size-'])]:size-3",
-        "icon-sm": "size-8 rounded-md [&_svg:not([class*='size-'])]:size-3.5",
+        "icon-sm": "size-9 rounded-md [&_svg:not([class*='size-'])]:size-3.5",
         "icon-lg": "size-10",
       },
     },

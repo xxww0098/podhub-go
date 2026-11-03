@@ -8,8 +8,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-
-	"github.com/xxww0098/podhub-go/internal/platform/config"
 )
 
 const (
@@ -24,19 +22,6 @@ type Limits struct {
 	Account   uint32
 	PerMinute uint32
 	LeaseTTL  time.Duration
-}
-
-// LimitsFromEnv reads the CLOUD_AI_* ceilings. Zero, blank, and invalid values
-// use the default. The lease TTL default is 90s even when the env is 0.
-func LimitsFromEnv() Limits {
-	l := config.AILimitsFromEnv()
-	return Limits{
-		Global:    l.Global,
-		User:      l.User,
-		Account:   l.Account,
-		PerMinute: l.PerMinute,
-		LeaseTTL:  time.Duration(l.LeaseTTLSeconds) * time.Second,
-	}
 }
 
 type slot struct {

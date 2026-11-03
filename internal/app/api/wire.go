@@ -102,15 +102,15 @@ type usageStatsResponse struct {
 type listingRunWire struct {
 	ID             string          `json:"id"`
 	Kind           string          `json:"kind"`
-	AggregateType  string          `json:"aggregateType"`
-	AggregateID    string          `json:"aggregateId"`
-	InputRevision  int64           `json:"inputRevision"`
+	AggregateType  string          `json:"aggregate_type"`
+	AggregateID    string          `json:"aggregate_id"`
+	InputRevision  int64           `json:"input_revision"`
 	State          string          `json:"state"`
 	Attempt        int32           `json:"attempt"`
-	LastErrorCode  *string         `json:"lastErrorCode,omitempty"`
-	IdempotencyKey string          `json:"idempotencyKey"`
+	LastErrorCode  *string         `json:"last_error_code,omitempty"`
+	IdempotencyKey string          `json:"idempotency_key"`
 	Payload        json.RawMessage `json:"payload"`
-	UpdatedAtMs    int64           `json:"updatedAtMs"`
+	UpdatedAtMs    int64           `json:"updated_at_ms"`
 }
 
 type listingRunResponse struct {

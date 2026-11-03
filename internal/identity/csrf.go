@@ -5,13 +5,10 @@ import (
 	"strings"
 )
 
-const (
-	SessionCookie = "sid"
-	StackCookie   = "sids"
-)
+const SessionCookie = "sid"
 
 // CrossOriginWrite reports a cookie-authenticated write that is not same-origin.
-// Reads, and writes with no sid or sids cookie, are allowed. A missing
+// Reads, and writes with no sid cookie, are allowed. A missing
 // Sec-Fetch-Site and Origin is a non-browser client and is allowed.
 func CrossOriginWrite(r *http.Request) bool {
 	switch r.Method {
@@ -66,7 +63,7 @@ func carriesSessionCookie(cookies string) bool {
 			continue
 		}
 		name = strings.TrimSpace(name)
-		if (name == SessionCookie || name == StackCookie) && value != "" {
+		if name == SessionCookie && value != "" {
 			return true
 		}
 	}

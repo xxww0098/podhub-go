@@ -187,6 +187,24 @@ func TestIntentView(t *testing.T) {
 	}
 }
 
+func TestAcceptedTaskFailureExposesItsCurrentIssueWithoutResume(t *testing.T) {
+	src := IntentSource{State: "accepted", LastErrorCode: strPtr("OZON_ROW_REJECTED"), SubmissionIssues: json.RawMessage(`[{"code":"OZON_ROW_REJECTED","summary":"异步导入失败","resolvedAtMs":null,"allowedActions":["edit","resume"]}]`), ReconciliationOutcome: json.RawMessage(`{"importTask":{"status":"failed"}}`)}
+	view := ProjectIntent(src)
+	if view.State != "accepted" || view.CurrentIssueStatus != IssuePresent || view.CurrentIssue == nil || view.CanResume {
+		t.Fatalf("failed task projection %+v", view)
+	}
+	src.ReconciliationOutcome = json.RawMessage(`{"importTask":{"status":"imported","errors":[{"level":"error","code":"SPU_ALREADY_EXISTS_IN_ANOTHER_ACCOUNT"}]}}`)
+	view = ProjectIntent(src)
+	if view.State != "accepted" || view.CurrentIssueStatus != IssuePresent || view.CurrentIssue == nil || view.CanResume {
+		t.Fatalf("imported moderation failure lost its issue: %+v", view)
+	}
+	src.ReconciliationOutcome = json.RawMessage(`{"importTask":{"status":"imported","errors":[{"level":"warning"}]}}`)
+	view = ProjectIntent(src)
+	if view.CurrentIssueStatus != IssueAbsent || view.CurrentIssue != nil || view.CanResume {
+		t.Fatal("non-failed task acquired failure authority")
+	}
+}
+
 func strPtr(s string) *string { return &s }
 
 func contains(s, part string) bool { return strings.Contains(s, part) }

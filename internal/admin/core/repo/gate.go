@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/xxww0098/podhub-go/internal/admin/core/contract/apifault"
+	"github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
 	"github.com/xxww0098/podhub-go/internal/platform/writer"
 )
 
@@ -67,6 +68,9 @@ func AuditAfter(ctx context.Context, pool *pgxpool.Pool, row AuditRow) error {
 	}
 	defer tx.Rollback(ctx)
 	defer EndLease(tx)
+	if err := tenantx.EnterAppRole(ctx, tx); err != nil {
+		return err
+	}
 	if err := InsertAudit(ctx, tx, row); err != nil {
 		return err
 	}
@@ -83,6 +87,9 @@ func WithGate(ctx context.Context, pool *pgxpool.Pool, now func() time.Time, dom
 	defer tx.Rollback(ctx)
 	defer EndLease(tx)
 	defer writer.Forget(tx)
+	if err := tenantx.EnterStaff(ctx, tx); err != nil {
+		return DBFault(err)
+	}
 	if fault := AssertAuthority(ctx, tx, now, domain, disabled); fault != nil {
 		return fault
 	}

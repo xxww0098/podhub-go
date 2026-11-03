@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"strconv"
 )
 
@@ -318,38 +317,6 @@ type SearchHit struct {
 	DictionaryID          int64  `json:"dictionary_id"`
 	ValueID               int64  `json:"value_id"`
 	Label                 string `json:"label"`
-}
-
-// MaterialFromFields builds nativeMaterial. search is appended as given.
-func MaterialFromFields(category, typeID int64, fields []ListingField, search []SearchHit) SnapshotMaterial {
-	if search == nil {
-		search = []SearchHit{}
-	}
-	rev := SemanticRevision(category, typeID, fields)
-	wire := make([]wireField, len(fields))
-	for i, field := range fields {
-		options := field.Options
-		if options == nil {
-			options = []FieldOption{}
-		}
-		wire[i] = wireField{
-			Key: field.Key, Label: field.Label, Group: field.Group, Editor: field.Editor, Required: field.Required,
-			Constraints: wireLimits{Collection: field.Collection, Max: field.MaxValueCount, Dictionary: field.DictionaryID},
-			AttributeID: field.AttributeID, ComplexID: field.ComplexID, Description: field.Description,
-			RawType: field.RawType, ReadOnly: field.ReadOnly, ComplexGroup: field.ComplexGroupCollection,
-			Options: options, Truncated: field.OptionsTruncated, Aspect: field.Aspect,
-		}
-	}
-	return SnapshotMaterial{
-		Snapshot: snapshotWire{
-			CategoryKey: fmt.Sprintf("workflow:%d:%d", category, typeID),
-			Label:       fmt.Sprintf("Ozon %d / %d", category, typeID),
-			Category:    category, TypeID: typeID,
-			SchemaRevision: "workflow:" + rev,
-			Fields:         wire,
-		},
-		SearchMaterials: search,
-	}
 }
 
 // FieldsFromCache decodes a cached CatalogSchemaField array into listing fields.

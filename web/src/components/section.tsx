@@ -25,14 +25,14 @@ export function Section({
   children,
 }: SectionProps) {
   return (
-    <section className={cn("flex flex-col gap-3", className)}>
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        <div className="flex min-w-0 flex-col gap-1">
-          <h2 className="text-xs font-bold tracking-[0.09em] text-foreground uppercase">
+    <section className={cn("flex flex-col gap-2", className)}>
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
+          <h2 className="text-sm font-medium text-foreground">
             {title}
           </h2>
           {description ? (
-            <p className="text-sm text-muted-foreground">{description}</p>
+            <p className="text-meta text-muted-foreground">{description}</p>
           ) : null}
         </div>
         {action ? <div className="flex items-center gap-2">{action}</div> : null}
@@ -57,7 +57,7 @@ type KeyValueProps = {
 export function KeyValue({ label, value, mono = false, className }: KeyValueProps) {
   return (
     <div className={cn("flex min-w-0 flex-col gap-1", className)}>
-      <dt className="text-xs tracking-[0.09em] text-faint-foreground uppercase">
+      <dt className="text-xs text-muted-foreground">
         {label}
       </dt>
       <dd
@@ -80,7 +80,7 @@ export function KeyValueGrid({
   children: ReactNode
 }) {
   return (
-    <dl className={cn("grid gap-x-6 gap-y-5 sm:grid-cols-2 lg:grid-cols-3", className)}>
+    <dl className={cn("grid gap-x-4 gap-y-2 sm:grid-cols-2 lg:grid-cols-3", className)}>
       {children}
     </dl>
   )

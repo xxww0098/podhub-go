@@ -1,312 +1,140 @@
 /**
- * 画廊卡片 — the seller compares listings, not rows. 4:3 cover (lazy, fixed
- * ratio so the wall never shifts) with an always-on 收藏 heart chip; 名称,
- * 平台货源/类目 badges, 平台价 + 交期发货, and the card's two actions:
- * 查看详情 opens the read-only page, 加入清单 stashes the local pick
- * （多规格行先进详情页选规格——规格即提示词绑定）.
- * 零售价/划线价（平台）/固定 tags/上架入口都在详情页里，卡面只留比较用的
- * 最少事实（参考图 1）。
+ * 货盘卡片：海报在上、事实在下。
  *
- * Hover is decorative only (lift + cover zoom, 150ms, off under
- * prefers-reduced-motion): every action is reachable without hover, so touch
- * loses nothing.
+ * 卡片是被 1px 边线圈住的一个商品对象，海报通栏贴到圆角里；暂不可上架
+ * 不给海报加蒙版或降透明——状态只由徽标说，画作保持原色，选品时还看得清。
+ * 加入清单用品牌色边线 + 1px 外描边表示；悬停只加深边线，不抬升卡片。
+ * 海报上不压任何角标：清单动作在卡里（价格同一行），收藏是底行右端的一枚
+ * 静音图标——选品时看清画，比在画上摆两个白片按钮重要。
+ * 正文五行：价格与清单动作、名称、类目·规格（单行截断）、状态徽标、运费·交期+收藏。
  */
-import { Check, Heart, Image, ListPlus } from "lucide-react"
+import { Check, Heart, Image, Plus } from "lucide-react"
 
 import type { SellerSupplierDbRowData } from "@/bindings/http-supplier-dbs-catalog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import { cn } from "@/lib/utils"
 
 import { LISTABILITY_BADGE } from "../listability-copy"
-import {
-  formatCny,
-  leadTimeLabel,
-  listabilityOf,
-  type GalleryDensity,
-} from "./gallery-model"
-import { marketImageSrc } from "./market-image"
+import { formatCny, leadTimeLabel, listabilityOf } from "./gallery-model"
 import { useGalleryCollection } from "./listing-queue"
-
-/** 密度档的卡面尺度：列宽之外，留白/字级/信息量也一起变，否则三档看起来一个样。 */
-const DENSITY_CARD: Record<
-  GalleryDensity,
-  {
-    /** 正文容器：留白与行距随密度收紧或放松。 */
-    body: string
-    title: string
-    /** 大图档多一行标题，宽卡才不显空。 */
-    titleClamp: string
-    price: string
-    meta: string
-    /** 紧凑档只留比较骨架（封面/名称/价/动作），徽标让位给密度。 */
-    showMeta: boolean
-    actionSize: "xs" | "sm"
-  }
-> = {
-  compact: {
-    body: "gap-1.5 p-2.5",
-    title: "text-xs font-semibold leading-snug",
-    titleClamp: "line-clamp-2",
-    price: "text-[15px]",
-    meta: "text-meta",
-    showMeta: false,
-    actionSize: "xs",
-  },
-  standard: {
-    body: "gap-2 p-3",
-    title: "text-sm font-semibold leading-snug",
-    titleClamp: "line-clamp-2",
-    price: "text-lg",
-    meta: "text-xs",
-    showMeta: true,
-    actionSize: "sm",
-  },
-  large: {
-    body: "gap-2.5 p-3.5",
-    title: "text-base font-semibold leading-snug",
-    titleClamp: "line-clamp-3",
-    price: "text-xl",
-    meta: "text-sm",
-    showMeta: true,
-    actionSize: "sm",
-  },
-}
+import { marketImageSrc } from "./market-image"
 
 export function GalleryCard({
   row,
-  density,
-  dbLabel,
   categoryLabel,
   onOpen,
   variantCount = 1,
 }: {
   row: SellerSupplierDbRowData
-  density: GalleryDensity
-  /** 平台货源徽标（按行 sourceId 解出的库名）。 */
-  dbLabel: string
-  /** 类目徽标——类目树未到场时为空，不渲染。 */
   categoryLabel: string
   onOpen: (row: SellerSupplierDbRowData) => void
   variantCount?: number
 }) {
   const cover = row.gallery[0]
-  const scale = DENSITY_CARD[density]
-  const {
-    queueIds,
-    favoriteIds,
-    toggleQueued,
-    toggleFavorite,
-  } = useGalleryCollection()
+  const coverUrl = cover?.url || row.productVideos.find((video) => video.coverUrl)?.coverUrl
+  const { queue, queueIds, favoriteIds, toggleQueued, toggleFavorite } = useGalleryCollection()
   const queued = queueIds.has(row.productId)
+  const variantGroup = row.variantGroup?.trim()
+  const groupQueued = queued || (variantCount > 1 && Boolean(variantGroup) && queue.some((entry) =>
+    entry.sourceId === row.sourceId && entry.variantGroup === variantGroup,
+  ))
   const favorited = favoriteIds.has(row.productId)
-  // 前置门：暂不可上架的行整卡置灰 + 状态徽标；收藏与清单草稿不受影响
-  // （清单是本机挑货草稿，行恢复可上架后下一次批量导入照常带上）。
   const listability = listabilityOf(row)
-  const blocked = !listability.listable
+  const shipping = row.shippingCostCents === undefined ? "运费待定" : `运费 ${formatCny(row.shippingCostCents ?? 0)}`
+  const specification = variantCount > 1 ? `${variantCount} 个规格` : row.size
+  const subtitle = [categoryLabel || "未分类", specification].filter(Boolean).join(" · ")
 
   return (
-    <li
-      data-gallery-card={row.productId}
+    <article
+      data-gallery-product={row.productId}
       className={cn(
-        // relative anchors the title button's stretched hit area, so the whole
-        // card opens the peek without nesting interactive children in <button>.
-        "group relative flex min-w-0 flex-col overflow-hidden rounded-xl border border-border/80 bg-card",
-        "transition-all duration-200 ease-settle",
-        "hover:-translate-y-1 hover:border-border-strong hover:shadow-overlay",
-        "motion-reduce:transition-none motion-reduce:hover:translate-y-0",
-        blocked && "opacity-60",
+        "group/gallery-card flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card transition-colors hover:border-border-strong",
+        groupQueued && "border-brand shadow-[0_0_0_1px_var(--brand)]",
       )}
     >
-      <div className="relative aspect-[4/3] w-full overflow-hidden border-b border-border/40 bg-muted/60">
-        {blocked ? (
-          <Badge
-            variant="secondary"
-            className="absolute bottom-1.5 left-1.5 z-10"
-            data-gallery-card-listability=""
-          >
-            {LISTABILITY_BADGE[listability.class]}
-          </Badge>
-        ) : null}
-        {/* 收藏白片钮常驻封面右上——挑货时不用先把鼠标探进卡里找它。 */}
+      <div className="relative aspect-[4/5] overflow-hidden bg-muted/40">
         <button
           type="button"
-          aria-label={favorited ? `取消收藏 ${row.title}` : `收藏 ${row.title}`}
-          aria-pressed={favorited}
-          data-gallery-card-favorite=""
-          className={cn(
-            "absolute top-2 right-2 z-10 grid size-7 cursor-pointer place-items-center rounded-full border border-border/50 bg-card/95 shadow-overlay transition-all duration-150 active:scale-90 hover:scale-110",
-            favorited
-              ? "text-st-attest-ink"
-              : "text-foreground/60 hover:text-st-attest-ink",
-          )}
-          onClick={(event) => {
-            event.stopPropagation()
-            toggleFavorite(row.productId)
-          }}
+          aria-label={`查看 ${row.title} 的商品详情`}
+          className="block size-full cursor-pointer outline-none focus-visible:outline-2 focus-visible:-outline-offset-4 focus-visible:outline-ring"
+          onClick={() => onOpen(row)}
         >
-          <Heart
-            className={cn("size-4", favorited && "fill-current")}
-            aria-hidden
-          />
+          {coverUrl ? (
+            <img
+              src={marketImageSrc(coverUrl, 640)}
+              alt=""
+              width={cover?.w || undefined}
+              height={cover?.h || undefined}
+              loading="lazy"
+              decoding="async"
+              className="size-full object-contain"
+            />
+          ) : (
+            <span className="flex size-full flex-col items-center justify-center gap-2 text-muted-foreground" data-gallery-cover="none">
+              <Image className="size-10" aria-hidden />
+              <span className="text-sm">暂无图片</span>
+            </span>
+          )}
         </button>
-        {cover ? (
-          <img
-            src={marketImageSrc(cover.url, 640)}
-            alt=""
-            width={cover.w || undefined}
-            height={cover.h || undefined}
-            loading="lazy"
-            decoding="async"
-            className={cn(
-              "size-full bg-muted object-cover",
-              "transition-transform duration-300 ease-settle group-hover:scale-[1.04]",
-              "motion-reduce:transition-none motion-reduce:group-hover:scale-100",
-            )}
-          />
-        ) : (
-          <div
-            className="flex size-full flex-col items-center justify-center gap-1.5 bg-muted/30 text-muted-foreground/60"
-            data-gallery-cover="none"
-            aria-label="暂无图片"
-          >
-            <Image className="size-6 stroke-[1.5]" aria-hidden />
-          </div>
-        )}
       </div>
-
-      <div className={cn("flex min-w-0 flex-1 flex-col", scale.body)}>
-        <h3 className={cn("min-w-0 tracking-tight text-foreground", scale.title)}>
-          <button
-            type="button"
-            className={cn(
-              "cursor-pointer text-left after:absolute after:inset-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring transition-colors group-hover:text-brand-ink",
-              scale.titleClamp,
-            )}
-            onClick={() => onOpen(row)}
-          >
-            {row.title}
-          </button>
-        </h3>
-
-        {scale.showMeta ? (
-          <div className="flex min-w-0 items-center gap-1">
-            <Badge variant="brand" className="max-w-3/5">
-              <span className="min-w-0 truncate">{dbLabel}</span>
-            </Badge>
-            {categoryLabel ? (
-              <Badge variant="secondary" className="max-w-2/5">
-                <span className="min-w-0 truncate">{categoryLabel}</span>
-              </Badge>
-            ) : null}
-            {variantCount > 1 ? (
-              <Badge variant="outline">{variantCount} 个规格</Badge>
-            ) : null}
-          </div>
-        ) : null}
-
-        <div className="mt-auto flex min-w-0 items-baseline justify-between gap-x-2">
-          <span
-            className={cn(
-              "font-mono font-bold tabular-nums text-destructive tracking-tight",
-              scale.price,
-            )}
-          >
+      <div className="flex flex-1 flex-col gap-1 px-2.5 pt-2 pb-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-x-1 gap-y-1.5">
+          <span className="text-xl leading-none font-semibold tracking-tight text-card-foreground tabular-nums" aria-label={`平台价 ${formatCny(row.platformPriceCents)}`}>
             {formatCny(row.platformPriceCents)}
           </span>
-          <span
-            className={cn(
-              "min-w-0 truncate text-muted-foreground/85",
-              scale.meta,
-            )}
-          >
-            {leadTimeLabel(row.leadTime)}
-          </span>
-        </div>
-
-        {/* 主动作带盖在 stretched-link 之上：查看详情同整卡点击，清单钮单/多规格分流。 */}
-        <div className="relative z-10 grid grid-cols-2 gap-2 pt-1">
           <Button
             type="button"
-            variant="outline"
-            size={scale.actionSize}
-            className="min-w-0"
-            onClick={() => onOpen(row)}
-          >
-            查看详情
-          </Button>
-          <Button
-            type="button"
-            variant={queued ? "secondary" : "brand"}
-            size={scale.actionSize}
-            className="min-w-0"
-            aria-label={
-              variantCount > 1
-                ? `选择规格后加入上架清单 ${row.title}`
-                : queued
-                  ? `移出上架清单 ${row.title}`
-                  : `加入上架清单 ${row.title}`
-            }
-            aria-pressed={queued}
-            data-gallery-card-queue=""
+            variant={groupQueued ? "ghost" : "link"}
+            size="xs"
+            aria-label={variantCount > 1
+              ? groupQueued ? `查看已选规格 ${row.title}` : `选择规格后加入上架清单 ${row.title}`
+              : queued ? `移出上架清单 ${row.title}` : `加入上架清单 ${row.title}`}
+            aria-pressed={variantCount > 1 ? undefined : queued}
+            data-gallery-queue=""
             onClick={() => {
               if (variantCount > 1) onOpen(row)
               else toggleQueued(row)
             }}
           >
-            {queued ? (
-              <Check aria-hidden className="stroke-[2.5]" />
-            ) : (
-              <ListPlus aria-hidden />
-            )}
-            {queued ? "移出清单" : "加入清单"}
+            {groupQueued ? <Check aria-hidden /> : <Plus aria-hidden />}
+            {variantCount > 1 ? groupQueued ? "已选规格" : "选规格" : queued ? "已加入" : "加入清单"}
           </Button>
         </div>
+        <h3 className="line-clamp-2 min-w-0 text-lg leading-snug font-semibold text-balance text-card-foreground" title={row.title}>
+          {row.title}
+        </h3>
+        <p className="truncate text-compact leading-snug text-muted-foreground" title={subtitle}>
+          {subtitle}
+        </p>
+        <div className="mt-auto flex min-w-0 flex-col items-start gap-1.5 pt-1">
+          {!listability.listable ? (
+            <Badge variant="secondary" data-gallery-listability="">
+              {LISTABILITY_BADGE[listability.class]}
+            </Badge>
+          ) : null}
+          <div className="flex min-w-0 w-full items-center justify-between gap-2">
+            <p className="text-compact leading-relaxed text-muted-foreground">
+              <span aria-label={shipping}>{shipping}</span>
+              <span className="px-1.5" aria-hidden>·</span>
+              <span>{leadTimeLabel(row.leadTime)}</span>
+            </p>
+            <IconButton
+              icon={Heart}
+              iconClassName={cn(favorited && "fill-current")}
+              label={favorited ? `取消收藏 ${row.title}` : `收藏 ${row.title}`}
+              tip={favorited ? "取消收藏" : "收藏"}
+              size="icon"
+              tooltipSide="top"
+              aria-pressed={favorited}
+              data-gallery-favorite=""
+              className={cn("-mr-1.5", favorited && "text-foreground")}
+              onClick={() => toggleFavorite(row.productId)}
+            />
+          </div>
+        </div>
       </div>
-    </li>
-  )
-}
-
-export function GalleryCardWall({
-  rows,
-  density,
-  dbLabel,
-  categoryLabel,
-  onOpen,
-  variantCount,
-}: {
-  rows: SellerSupplierDbRowData[]
-  density: GalleryDensity
-  /** 平台货源徽标文案（按行的库解析名称）。 */
-  dbLabel: (row: SellerSupplierDbRowData) => string
-  /** 类目徽标文案（按行的类目坐标经类目树解析；空串不渲染）。 */
-  categoryLabel: (row: SellerSupplierDbRowData) => string
-  onOpen: (row: SellerSupplierDbRowData) => void
-  variantCount?: (row: SellerSupplierDbRowData) => number
-}) {
-  let gridClass = "grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
-  if (density === "compact") gridClass = "grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6"
-  if (density === "large") gridClass = "grid-cols-1 gap-4 sm:grid-cols-2 2xl:grid-cols-3"
-  return (
-    <ul
-      data-gallery-wall=""
-      data-gallery-density={density}
-      className={cn(
-        "grid min-w-0",
-        gridClass,
-      )}
-    >
-      {rows.map((row) => (
-        <GalleryCard
-          key={row.productId}
-          row={row}
-          density={density}
-          dbLabel={dbLabel(row)}
-          categoryLabel={categoryLabel(row)}
-          onOpen={onOpen}
-          variantCount={variantCount?.(row)}
-        />
-      ))}
-    </ul>
+    </article>
   )
 }
