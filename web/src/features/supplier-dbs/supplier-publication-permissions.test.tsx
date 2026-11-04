@@ -19,6 +19,7 @@ test("bulk publication actions require the super administrator flag", () => {
     const actions: ReturnType<typeof useSupplierDbActions> = { selectedIds: new Set(["p"]), setSelectedIds: () => {}, bulkBusy: null, bulkConfirm: null, setBulkConfirm: () => {}, runBulk: async () => {}, canPublish }
     const bulk = renderToStaticMarkup(<TooltipProvider><SupplierDbBulkBar actions={actions} /></TooltipProvider>)
     assert.equal(bulk.includes('aria-label="发布所选"'), canPublish)
+    assert.equal(bulk.includes('发布所选</button>'), canPublish)
     assert.equal(bulk.includes('aria-label="停用所选"'), canPublish)
   }
 })

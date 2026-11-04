@@ -96,7 +96,7 @@ export function SupplierDbBulkBar({ actions }: { actions: Actions }) {
   return (
     <div className="mx-4 mb-3 flex flex-wrap items-center gap-2 border-y border-border py-2" role="region" aria-label="批量操作" data-bulk-bar="" aria-busy={bulkBusy !== null}>
       <span className="text-compact font-medium">已选择 {selectedIds.size} 个规格</span>
-      {canPublish ? <><IconButton icon={CheckCircle2} label="发布所选" variant="outline" size="icon-sm" disabled={bulkBusy !== null} data-bulk-action="publish" onClick={() => void runBulk("publish")} />
+      {canPublish ? <><Button type="button" aria-label="发布所选" variant="default" size="sm" disabled={bulkBusy !== null} data-bulk-action="publish" onClick={() => void runBulk("publish")}><CheckCircle2 aria-hidden />发布所选</Button>
       <IconButton icon={CirclePause} label="停用所选" variant="outline" size="icon-sm" disabled={bulkBusy !== null} data-bulk-action="unpublish" onClick={() => void runBulk("unpublish")} /></> : null}
       <DropdownMenu>
         <Tooltip>
