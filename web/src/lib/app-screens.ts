@@ -7,7 +7,7 @@ type ScreenMeta = {
 
 export const SCREEN_META = {
   home: { label: "工作台" },
-  console: { label: "数据大屏" },
+  console: { label: "经营数据" },
   listing: { label: "批量上架" },
   catalog: { label: "平台商品库" },
   products: { label: "我的商品" },

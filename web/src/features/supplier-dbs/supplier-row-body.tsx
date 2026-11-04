@@ -35,11 +35,11 @@ export function SupplierRowBody({ row, rows = [], sharedRow = row, mode = "produ
   initialTab?: SupplierRowTab
   onDirtyChange?: (dirty: boolean) => void
   onSharedConfigSaved?: () => void
-  onSyncShared?: () => Promise<boolean>
+  onSyncShared?: (validate?: boolean) => Promise<boolean>
   onExit?: () => void
   pending?: boolean
   canAdjustPrice?: boolean
-  platformFlushRef?: React.RefObject<(() => Promise<boolean>) | null>
+  platformFlushRef?: React.RefObject<((validate?: boolean) => Promise<boolean>) | null>
   aiFlushRef?: React.RefObject<(() => Promise<boolean>) | null>
   /** 只读状态，跟规格上下文放在一起。 */
   status?: ReactNode
@@ -51,7 +51,7 @@ export function SupplierRowBody({ row, rows = [], sharedRow = row, mode = "produ
   const [busy, setBusy] = useState(false)
   const [configEpoch, setConfigEpoch] = useState(0)
   const editorRef = useRef<HTMLDivElement>(null)
-  const localPlatformRef = useRef<(() => Promise<boolean>) | null>(null)
+  const localPlatformRef = useRef<((validate?: boolean) => Promise<boolean>) | null>(null)
   const localAiRef = useRef<(() => Promise<boolean>) | null>(null)
   const platformSave = platformFlushRef ?? localPlatformRef
   const aiSave = aiFlushRef ?? localAiRef
@@ -75,15 +75,15 @@ export function SupplierRowBody({ row, rows = [], sharedRow = row, mode = "produ
     : mode === "product" && step === "defaults" && group.length > 1
       ? `${group.length} 个规格共用字段`
       : null
-  const selectStep = async (next: SupplierRowTab) => {
+  const selectStep = async (next: SupplierRowTab, validate = false) => {
     if (busy || pending || next === step) return
     const invalid = editorRef.current?.querySelector<HTMLElement>('[data-supplier-row-info-tab] [aria-invalid="true"]')
     if (invalid) { invalid.focus(); notifyError("请先重试保存标红字段，或按 Esc 撤销输入"); return }
     setBusy(true)
     try {
       if (step === "defaults") {
-        if (platformSave.current && !await platformSave.current()) return
-        if (onSyncShared && !await onSyncShared()) return
+        if (platformSave.current && !await platformSave.current(validate)) return
+        if (onSyncShared && !await onSyncShared(validate)) return
       }
       if (step === "ocr" && aiSave.current && !await aiSave.current()) return
       setVisited((current) => new Set([...current, next]))
@@ -143,7 +143,7 @@ export function SupplierRowBody({ row, rows = [], sharedRow = row, mode = "produ
     </div>
     <div className="supplier-editor-footer"><span className="text-meta text-muted-foreground">{pending || busy ? "正在保存…" : null}</span>{index < STEPS.length - 1 ? <Button variant="ghost" disabled={pending || busy} onClick={onExit}>保存并退出</Button> : null}
       {index > 0 ? <Button variant="outline" disabled={pending || busy} onClick={() => void selectStep(STEPS[index - 1].key)}>上一步</Button> : null}
-      {index < STEPS.length - 1 ? <Button variant="brand" disabled={pending || busy} onClick={() => void selectStep(STEPS[index + 1].key)}>{busy ? <Spinner /> : null}保存并继续</Button> : <Button variant="brand" disabled={pending || busy} onClick={onExit}>保存并返回</Button>}
+      {index < STEPS.length - 1 ? <Button variant="brand" disabled={pending || busy} onClick={() => void selectStep(STEPS[index + 1].key, true)}>{busy ? <Spinner /> : null}保存并继续</Button> : <Button variant="brand" disabled={pending || busy} onClick={onExit}>保存并返回</Button>}
     </div>
   </div>
 }

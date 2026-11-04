@@ -170,7 +170,7 @@ func TestListingHotPath(t *testing.T) {
 		t.Fatal("heartbeat body")
 	}
 	badID := callJSON(ownerH, http.MethodPost, "/api/listing/jobs/not-a-uuid/claim", "")
-	if badID.Code != http.StatusInternalServerError || !strings.Contains(badID.Body.String(), "服务暂不可用") {
+	if badID.Code != http.StatusBadRequest || !strings.Contains(badID.Body.String(), "作业编号无效") {
 		t.Fatalf("bad id %d %s", badID.Code, badID.Body.String())
 	}
 	cross := callJSON(otherH, http.MethodPost, "/api/listing/jobs/"+jobOK+"/claim", "")

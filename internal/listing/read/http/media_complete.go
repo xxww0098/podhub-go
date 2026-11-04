@@ -80,7 +80,7 @@ func (h Host) completeMedia(w http.ResponseWriter, r *http.Request) {
 	}
 	result := mediaWriteResult{Jobs: []mediaRun{}}
 	err := h.mediaTx(r.Context(), p, func(tx pgx.Tx) error {
-		row, card, err := mediaRow(r.Context(), tx, p.OrgID, id)
+		row, card, err := mediaRow(r.Context(), tx, p.OrgID, p.UserID, id)
 		if err != nil {
 			return err
 		}
@@ -276,7 +276,7 @@ func (h Host) completeMediaImages(w http.ResponseWriter, r *http.Request, jobID 
 		if transit == nil || transit.PublicURL == nil {
 			return rowRefuse{503, "切片 R2 尚未配置", "missing_media_account"}
 		}
-		row, card, err := mediaRow(r.Context(), tx, p.OrgID, id)
+		row, card, err := mediaRow(r.Context(), tx, p.OrgID, p.UserID, id)
 		if err != nil {
 			return err
 		}

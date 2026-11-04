@@ -197,7 +197,7 @@ RETURNING revision`, expected, next, nonce, cipher, s.Now().UnixMilli(), actor.P
 			Summary  string `json:"summary"`
 			AICount  int    `json:"aiCount"`
 			Revision int64  `json:"revision"`
-		}{"更新平台 AI 连接配置", aiCount, revision})
+		}{"更新平台连接配置", aiCount, revision})
 		return writeAudit(ctx, tx, auditRow{
 			OrgID: orgFloor(actor.OrgID), UserID: actor.ID, Module: "admin",
 			EntityType: "platform_integration_config", EntityID: "singleton",

@@ -22,7 +22,6 @@ podhub-go/
 ├── internal/
 │   ├── app/                          # 配置、依赖注入、路由和 worker 装配
 │   ├── platform/                     # DB、存储、网络、WASM 等基础设施
-│   │   ├── cloudflare/               # 固定主机的 OAuth 与 R2 管理 API 客户端
 │   │   ├── mail/                     # TLS SMTP 传输与失败分类；邮件业务由调用域维护
 │   │   └── wasm/                     # wazero、宿主导入、实例池和资源回收
 │   ├── seller/                       # Seller 出口边界

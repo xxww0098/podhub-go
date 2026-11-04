@@ -97,7 +97,7 @@ func (gateDB) PatchBinding(context.Context, int64, int64, bool, string, int64, *
 	return contract.Binding{}, nil
 }
 func (gateDB) DeleteBinding(context.Context, int64, int64, bool, string, int64) error { return nil }
-func (gateDB) CommitAsset(context.Context, int64, int64, bool, contract.AssetIdentity, bool, int64, func() error, func() error) (contract.Asset, error) {
+func (gateDB) CommitAsset(context.Context, int64, int64, bool, contract.AssetIdentity, bool, int64, int64, func() error) (contract.Asset, error) {
 	return contract.Asset{}, nil
 }
 func (gateDB) DeleteAsset(context.Context, int64, int64, bool, string, bool, int64) (contract.DeletedAsset, error) {

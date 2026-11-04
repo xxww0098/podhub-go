@@ -7,9 +7,10 @@ var errSnapshotVersion = corecontract.ErrSnapshotVersion
 
 // Snapshot, StoredAI, and AIRuntime are the sealed integration document.
 type (
-	Snapshot  = corecontract.Snapshot
-	StoredAI  = corecontract.StoredAI
-	AIRuntime = corecontract.AIRuntime
+	Snapshot      = corecontract.Snapshot
+	StoredAI      = corecontract.StoredAI
+	AIRuntime     = corecontract.AIRuntime
+	StoredStorage = corecontract.StoredStorage
 )
 
 // AI account purposes and the default AI runtime.

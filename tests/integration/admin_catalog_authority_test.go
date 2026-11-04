@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	catalogrepo "github.com/xxww0098/podhub-go/internal/admin/catalog/repo"
+	configdoc "github.com/xxww0098/podhub-go/internal/admin/core/contract"
 	admindomain "github.com/xxww0098/podhub-go/internal/admin/domain"
 	adminhttp "github.com/xxww0098/podhub-go/internal/admin/http"
 	"github.com/xxww0098/podhub-go/internal/app"
@@ -50,13 +51,13 @@ func TestAdminCatalogRuntimeRole(t *testing.T) {
 		if err != nil || len(bases) != 0 {
 			t.Fatalf("missing media config: bases=%v err=%v", bases, err)
 		}
-		bases, err = (catalogrepo.CatalogRepo{Pool: login, PublicBases: []string{"https://cdn.example/native"}}).Bases(ctx)
+		bases, err = (catalogrepo.CatalogRepo{Pool: login, PublicBases: func(context.Context) ([]string, error) { return []string{"https://cdn.example/native"}, nil }}).Bases(ctx)
 		if err != nil || len(bases) != 1 || bases[0] != "https://cdn.example/native" {
 			t.Fatalf("configured media bases=%v err=%v", bases, err)
 		}
 	})
 	t.Run("real admin HTTP", func(t *testing.T) {
-		setR2StorageAccount(t, config.R2StorageAccount{
+		setR2StorageAccount(t, fixture, configdoc.StoredStorage{
 			Role: "assets", ID: "catalog", Endpoint: "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.r2.cloudflarestorage.com",
 			AccessKeyID: "CATALOGTEST", SecretAccessKey: "catalog-fixture-secret",
 		})

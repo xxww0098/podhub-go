@@ -10,25 +10,25 @@ import (
 // DecodeFactory validates factory details; only creation accepts a login email.
 func DecodeFactory(body []byte, creating bool) (FactoryInput, error) {
 	raw, err := strictObject(body)
-	if err != nil || !hasOnly(raw, []string{"name", "country", "contact", "internalNote", "icon", "accountEmail"}) ||
-		!requireKeys(raw, []string{"name", "country", "contact", "internalNote", "icon"}) {
+	if err != nil || !hasOnly(raw, []string{"name", "country", "contact", "internal_note", "icon", "account_email"}) ||
+		!requireKeys(raw, []string{"name", "country", "contact", "internal_note", "icon"}) {
 		return FactoryInput{}, invalid()
 	}
 	var in FactoryInput
 	if !unmarshal(raw["name"], &in.Name) || !unmarshal(raw["country"], &in.Country) ||
-		!unmarshal(raw["contact"], &in.Contact) || !unmarshal(raw["internalNote"], &in.InternalNote) ||
+		!unmarshal(raw["contact"], &in.Contact) || !unmarshal(raw["internal_note"], &in.InternalNote) ||
 		!unmarshal(raw["icon"], &in.Icon) {
 		return FactoryInput{}, invalid()
 	}
 	if creating {
-		if !unmarshal(raw["accountEmail"], &in.AccountEmail) {
+		if !unmarshal(raw["account_email"], &in.AccountEmail) {
 			return FactoryInput{}, fail(contract.KindValidation, "请填写工厂登录邮箱")
 		}
 		in.AccountEmail = strings.ToLower(strings.TrimSpace(in.AccountEmail))
 		if len(in.AccountEmail) > MaxEmailChars || !EmailShaped(in.AccountEmail) {
 			return FactoryInput{}, fail(contract.KindValidation, "工厂登录邮箱无效")
 		}
-	} else if raw["accountEmail"] != nil {
+	} else if raw["account_email"] != nil {
 		return FactoryInput{}, invalid()
 	}
 	in.Name = strings.TrimSpace(in.Name)

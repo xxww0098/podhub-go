@@ -16,6 +16,7 @@ import (
 	billing "github.com/xxww0098/podhub-go/internal/billing/contract"
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
 	readdomain "github.com/xxww0098/podhub-go/internal/listing/read/domain"
+	readhttp "github.com/xxww0098/podhub-go/internal/listing/read/http"
 	platform "github.com/xxww0098/podhub-go/internal/listing/rules"
 	"github.com/xxww0098/podhub-go/internal/platform/db"
 	"github.com/xxww0098/podhub-go/internal/platform/db/sqlc"
@@ -439,10 +440,16 @@ func (s *Server) ListListingJobs(w http.ResponseWriter, r *http.Request) {
 		cursorText = *raw
 	}
 	micros, afterID := readdomain.ParseCursor(cursorText)
+	all, stores, err := readhttp.StoreScope(r.Context(), s.Pool, p.OrgID, p.UserID)
+	if err != nil {
+		slog.Error("listing runs scope", "err", err)
+		writeListing(w, http.StatusInternalServerError, access.MsgUnavailable, "internal")
+		return
+	}
 	var jobs []jobSource
 	err = s.tenantRead(r.Context(), p.OrgID, func(q *sqlc.Queries) error {
 		var qerr error
-		jobs, qerr = listJobSources(r.Context(), q, p.OrgID, fetch, micros, afterID, card)
+		jobs, qerr = listJobSources(r.Context(), q, p.OrgID, p.UserID, all, stores, fetch, micros, afterID, card)
 		return qerr
 	})
 	if err != nil {
@@ -474,10 +481,18 @@ func (s *Server) GetListingRun(w http.ResponseWriter, r *http.Request, id string
 		writeListing(w, http.StatusBadRequest, "作业编号无效", "validation")
 		return
 	}
+	all, stores, err := readhttp.StoreScope(r.Context(), s.Pool, p.OrgID, p.UserID)
+	if err != nil {
+		slog.Error("listing job scope", "err", err)
+		writeListing(w, http.StatusInternalServerError, access.MsgUnavailable, "internal")
+		return
+	}
 	var row sqlc.GetJobRow
-	err := s.tenantRead(r.Context(), p.OrgID, func(q *sqlc.Queries) error {
+	err = s.tenantRead(r.Context(), p.OrgID, func(q *sqlc.Queries) error {
 		var qerr error
-		row, qerr = q.GetJob(r.Context(), sqlc.GetJobParams{OrgID: p.OrgID, Column2: uid})
+		row, qerr = q.GetJob(r.Context(), sqlc.GetJobParams{
+			OrgID: p.OrgID, Column2: uid, Column3: all, SubmitterUserID: p.UserID, Column5: storeIDs(stores),
+		})
 		return qerr
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -567,7 +582,8 @@ func sourceFromGet(row sqlc.GetJobRow) jobSource {
 	}
 }
 
-func listJobSources(ctx context.Context, q *sqlc.Queries, orgID, fetch, micros int64, afterID, card string) ([]jobSource, error) {
+func listJobSources(ctx context.Context, q *sqlc.Queries, orgID, userID int64, all bool, stores []string, fetch, micros int64, afterID, card string) ([]jobSource, error) {
+	visible := storeIDs(stores)
 	var uid pgtype.UUID
 	if afterID != "" {
 		if err := uid.Scan(afterID); err != nil {
@@ -582,20 +598,40 @@ func listJobSources(ctx context.Context, q *sqlc.Queries, orgID, fetch, micros i
 	}
 	switch {
 	case card == "" && micros == 0:
-		rows, err := q.ListJobs(ctx, sqlc.ListJobsParams{OrgID: orgID, Column2: fetch})
+		rows, err := q.ListJobs(ctx, sqlc.ListJobsParams{
+			OrgID: orgID, Column2: fetch, Column3: all, SubmitterUserID: userID, Column5: visible,
+		})
 		return mapList(rows, err)
 	case card == "":
-		rows, err := q.ListJobsAfter(ctx, sqlc.ListJobsAfterParams{OrgID: orgID, Column2: micros, Column3: uid, Column4: fetch})
+		rows, err := q.ListJobsAfter(ctx, sqlc.ListJobsAfterParams{
+			OrgID: orgID, Column2: micros, Column3: uid, Column4: fetch,
+			Column5: all, SubmitterUserID: userID, Column7: visible,
+		})
 		return mapAfter(rows, err)
 	case micros == 0:
-		rows, err := q.ListJobsForCard(ctx, sqlc.ListJobsForCardParams{OrgID: orgID, Column2: fetch, Column3: cardID})
+		rows, err := q.ListJobsForCard(ctx, sqlc.ListJobsForCardParams{
+			OrgID: orgID, Column2: fetch, Column3: cardID,
+			Column4: all, SubmitterUserID: userID, Column6: visible,
+		})
 		return mapCard(rows, err)
 	default:
 		rows, err := q.ListJobsForCardAfter(ctx, sqlc.ListJobsForCardAfterParams{
 			OrgID: orgID, Column2: micros, Column3: uid, Column4: fetch, Column5: cardID,
+			Column6: all, SubmitterUserID: userID, Column8: visible,
 		})
 		return mapCardAfter(rows, err)
 	}
+}
+
+func storeIDs(stores []string) []pgtype.UUID {
+	out := make([]pgtype.UUID, 0, len(stores))
+	for _, id := range stores {
+		var uid pgtype.UUID
+		if err := uid.Scan(id); err == nil {
+			out = append(out, uid)
+		}
+	}
+	return out
 }
 
 func mapList(rows []sqlc.ListJobsRow, err error) ([]jobSource, error) {

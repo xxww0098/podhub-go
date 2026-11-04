@@ -25,6 +25,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/xxww0098/podhub-go/internal/ai"
 	"github.com/xxww0098/podhub-go/internal/app"
 	billingrepo "github.com/xxww0098/podhub-go/internal/billing/repo"
@@ -289,7 +290,7 @@ func TestAIImageSetsNormalAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	publicURL := func(bucketIdentity, key string) (string, error) {
+	publicURL := func(_ context.Context, bucketIdentity, key string) (string, error) {
 		if bucketIdentity != storageIdentity {
 			return "", errors.New("image bucket changed")
 		}
@@ -412,7 +413,33 @@ func TestAIImageSetsNormalAPI(t *testing.T) {
 				t.Fatal("stored image URL changed or inference repeated")
 			}
 		}
-		changed := makeHandler(&ai.ImageRuntime{PublicURL: func(storedIdentity, key string) (string, error) {
+		oneConfig, err := pgxpool.ParseConfig(swapUser(dsn, "podhub_login_api", "image-test-login"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		oneConfig.MaxConns = 1
+		one, err := pgxpool.NewWithConfig(ctx, oneConfig)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer one.Close()
+		oneSession := identitysvc.New(one)
+		oneRouter := chi.NewRouter()
+		oneRouter.Use(identitysvc.CSRF)
+		oneRouter.Use(oneSession.Middleware)
+		ai.Register(oneRouter, ai.HTTPDeps{Deps: ai.Deps{Pool: one, Wallet: aiWalletPort(), Images: &ai.ImageRuntime{PublicURL: func(ctx context.Context, identity, key string) (string, error) {
+			bounded, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			var value int
+			if err := one.QueryRow(bounded, `SELECT 1`).Scan(&value); err != nil {
+				return "", err
+			}
+			return publicURL(ctx, identity, key)
+		}}}, Access: oneSession})
+		if rec := request(oneRouter, "GET", "/api/ai/image-sets/"+ready.ID, "", cookie, nil, nil); rec.Code != http.StatusOK {
+			t.Fatalf("single connection could not resolve stored image: %d", rec.Code)
+		}
+		changed := makeHandler(&ai.ImageRuntime{PublicURL: func(_ context.Context, storedIdentity, key string) (string, error) {
 			if storedIdentity != storageIdentity {
 				t.Fatal("task read did not supply stored bucket identity")
 			}

@@ -78,7 +78,7 @@ test("platform administration lives behind the settings page's super_admin gate"
   )
   // The settings page consumes the vocabulary's own rank filter; which rows that is
   // is pinned behaviourally in settings-sections.test.ts.
-  assert.match(source, /settingsRowsFor\(overview\?\.session\.role\)/)
+  assert.match(source, /settingsRowsFor\(overview\?\.session\.role, overview\?\.active_workspace\?\.role\)/)
   // The section table itself lives in the React-free vocabulary module now;
   // the settings page keeps the role filter and the pane bodies.
   const sections = readFileSync(
@@ -89,6 +89,7 @@ test("platform administration lives behind the settings page's super_admin gate"
   for (const id of [
     "users",
     "ai-accounts",
+    "system-storage",
     "payment",
     "proxy",
     "banned-tags",

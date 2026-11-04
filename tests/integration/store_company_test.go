@@ -324,7 +324,9 @@ func seedCompanyMember(t *testing.T, ctx context.Context, pool *pgxpool.Pool, or
 	}
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO organization_members (org_id, user_id, role, status, display_name, created_at, updated_at, join_order)
-		VALUES ($1, $2, $3, 'active', $3, clock_timestamp(), clock_timestamp(), $4) RETURNING id`,
+		VALUES ($1, $2, $3, 'active', $3, clock_timestamp(), clock_timestamp(), $4)
+		ON CONFLICT (org_id, user_id) DO UPDATE SET role = EXCLUDED.role, join_order = EXCLUDED.join_order
+		RETURNING id`,
 		orgID, userID, role, order).Scan(&id); err != nil {
 		t.Fatal(err)
 	}

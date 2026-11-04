@@ -173,19 +173,13 @@ func (s *Service) ConfirmEmailChange(r *http.Request) Result {
 		if _, err := q.DeleteUserSessions(ctx, change.UserID); err != nil {
 			return false, err
 		}
-		if !IsSupplierAccount(change.AccountKind) {
-			if _, err := tx.Exec(ctx, `DELETE FROM notifications n USING org_invitations i WHERE n.invitation_id=i.id AND n.user_id=$1 AND i.invitee_user_id=$1 AND lower(i.email)=lower($2) AND i.accepted_at IS NULL AND i.declined_at IS NULL AND i.revoked_at IS NULL AND i.expires_at>clock_timestamp()`, change.UserID, change.Email); err != nil {
-				return false, err
-			}
-			if _, err := tx.Exec(ctx, `UPDATE org_invitations SET invitee_user_id=NULL,updated_at=clock_timestamp() WHERE invitee_user_id=$1 AND lower(email)=lower($2) AND accepted_at IS NULL AND declined_at IS NULL AND revoked_at IS NULL AND expires_at>clock_timestamp()`, change.UserID, change.Email); err != nil {
-				return false, err
-			}
-			if _, err := q.BindInvitations(ctx, sqlc.BindInvitationsParams{InviteeUserID: pgtype.Int8{Int64: change.UserID, Valid: true}, Lower: change.NewEmail}); err != nil {
-				return false, err
-			}
-			if err := notifyPendingInvitations(ctx, tx, change.UserID); err != nil {
-				return false, err
-			}
+		if _, err := tx.Exec(ctx, `UPDATE org_invitations SET revoked_at=clock_timestamp(),updated_at=clock_timestamp()
+		 WHERE lower(email)=lower($1) AND accepted_at IS NULL AND declined_at IS NULL AND revoked_at IS NULL AND expires_at<=clock_timestamp()
+		 AND org_id IN (SELECT org_id FROM org_invitations WHERE invitee_user_id=$2 AND accepted_at IS NULL AND declined_at IS NULL AND revoked_at IS NULL AND expires_at>clock_timestamp())`, change.NewEmail, change.UserID); err != nil {
+			return false, err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE org_invitations SET email=lower($2),updated_at=clock_timestamp() WHERE invitee_user_id=$1 AND accepted_at IS NULL AND declined_at IS NULL AND revoked_at IS NULL AND expires_at>clock_timestamp()`, change.UserID, change.NewEmail); err != nil {
+			return false, err
 		}
 		return true, q.InsertAudit(ctx, sqlc.InsertAuditParams{OrgID: 0, UserID: change.UserID, Module: "auth", EntityType: "account", EntityID: itoa(change.UserID), ApiMethod: "POST", ApiPath: "/api/auth/email/confirm", Action: "email_changed", Message: `{"summary":"更换登录邮箱"}`})
 	})

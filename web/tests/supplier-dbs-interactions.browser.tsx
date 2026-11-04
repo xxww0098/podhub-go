@@ -34,7 +34,7 @@ window.fetch = async (input) => {
   const url = String(input instanceof Request ? input.url : input)
   if (url.includes("/api/me/catalog/banned-tags")) return Response.json({ data: { rules: [] } })
   if (url.includes("/api/admin/supplier-withdrawals")) return Response.json({ data: { withdrawals: [] } })
-  if (url.endsWith("/api/admin/factories")) return Response.json({ data: { factories: [{ factoryId: "fac-1", name: "杭州工厂", country: "CN", contact: "", internalNote: "", icon: "", createdAtMs: 1, updatedAtMs: 1 }] } })
+  if (url.endsWith("/api/admin/factories")) return Response.json({ data: { factories: [{ factory_id: "fac-1", name: "杭州工厂", country: "CN", contact: "", internal_note: "", icon: "", created_at_ms: 1, updated_at_ms: 1, libraries: [] }] } })
   if (url.endsWith("/api/admin/supplier-accounts")) {
     const factory = { factoryId: "fac-1", name: "杭州工厂", country: "CN", icon: "" }
     return Response.json({ data: { groups: [{ factory, members: [
@@ -48,8 +48,8 @@ window.fetch = async (input) => {
 listingHttp.listingCardLoadCategoryTree = async () => TREE
 listingHttp.listingCardLoadCategorySchema = async (): Promise<CategorySchemaView> => ({
   description_category_id: 11, type_id: 101, language: "zh_hans", complex_groups: [],
-  fields: [{ key: "width", name: "包装宽度", description: "", group_name: "物流与税务", source: "fixed", editor: "integer",
-    complex_group_collection: false, read_only: false, constraints: { required: true, collection: false }, options: [], options_truncated: false, aspect: null }],
+  fields: ["width", "height"].map((key) => ({ key, name: key === "width" ? "包装宽度" : "包装高度", description: "", group_name: "物流与税务", source: "fixed", editor: "integer",
+    complex_group_collection: false, read_only: false, constraints: { required: true, collection: false }, options: [], options_truncated: false, aspect: null })),
 })
 const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
 async function settle() { await frame(); await frame() }
@@ -126,7 +126,9 @@ async function mounted(seed: SupplierDbDetail[], action: (context: {
   supplierOzonConfigIO.put = async (sourceId, productId, body) => {
     const key = `${sourceId}:${productId}`
     if (body.expected_revision !== (configs.get(key)?.revision ?? 0)) throw { code: "cloud_conflict" }
-    const saved: SupplierOzonConfigData = { ...body, product_id: productId, revision: body.expected_revision + 1, state: "valid", issues: [], usable: false, updated_at_ms: Date.now() }
+    const { validate, ...config } = body
+    const saved: SupplierOzonConfigData = { ...config, product_id: productId, revision: body.expected_revision + 1,
+      state: validate ? "valid" : "needs_reconfiguration", issues: validate ? [] : [{ issue: "validation_pending" }], usable: false, updated_at_ms: Date.now() }
     configs.set(key, saved)
     const current = (await client.supplierDbGet(sourceId)).rows.find((item) => item.productId === productId)
     if (current) await update(sourceId, productId, { ...rowToUpsert(current), expectedRevision: current.revision })
@@ -216,48 +218,112 @@ async function productStepsSaveAndGuard() {
 
 async function configValidationFeedback() {
   await mounted(seed(), async ({ configs }) => {
+    const put = supplierOzonConfigIO.put
+    const invalidConfig = (saved: SupplierOzonConfigData): SupplierOzonConfigData => ({
+      ...saved, state: "needs_reconfiguration", issues: [
+        { issue: "field_validation", field_key: "width", code: "required", message: "请填写包装宽度" },
+        { issue: "field_validation", field_key: "height", code: "required", message: "请填写包装高度" },
+      ],
+    })
+    configs.set("src-1:p1", invalidConfig(configs.get("src-1:p1")!))
+    const writes: boolean[] = []
+    supplierOzonConfigIO.put = async (...args) => {
+      writes.push(args[2].validate)
+      const saved = await put(...args)
+      const result = args[2].validate ? invalidConfig(saved) : saved
+      configs.set("src-1:p1", result)
+      return result
+    }
     await click(byText("编辑商品 靠枕"))
     await click(fixture.querySelector<HTMLElement>('[data-row-tab="defaults"]')!)
     await until(() => fixture.querySelector('[data-field-key="width"] input'), "Ozon 字段未显示")
-    const notices = () => [...document.querySelectorAll('[data-slot="toast-title"]')].map((node) => node.textContent)
-    const successes = () => notices().filter((title) => title === "配置校验通过").length
-    const before = successes()
-    const put = supplierOzonConfigIO.put
+    const summary = () => fixture.querySelector('[aria-label="Ozon 配置校验问题"]')
+    const width = () => fixture.querySelector<HTMLInputElement>('[data-field-key="width"] input')!
+    const height = () => fixture.querySelector<HTMLInputElement>('[data-field-key="height"] input')!
+    check(!summary() && width().getAttribute("aria-invalid") !== "true", "读取旧配置时提前显示校验错误")
+    check(!fixture.querySelector('[aria-label="Ozon 配置操作"] [role="status"]')?.textContent?.includes("校验"), "自动保存状态提前显示校验结果")
 
-    setInput(fixture.querySelector<HTMLInputElement>('[data-field-key="width"] input')!, "400")
+    setInput(width(), "400")
     await until(() => {
       const width = configs.get("src-1:p1")?.values["fixed:width"]?.[0]
       return width?.kind === "integer" && width.value === 400
     }, "字段未自动保存")
-    check(successes() === before, "自动保存弹出了手动校验成功提示")
+    check(writes.length > 0 && writes.every((validate) => !validate), "自动保存触发了后台校验")
+    check(configs.get("src-1:p1")?.issues[0]?.issue === "validation_pending", "自动保存的草稿没有标记为待校验")
+    check(!summary() && width().getAttribute("aria-invalid") !== "true", "输入后自动显示了校验错误")
+    await click(fixture.querySelector<HTMLElement>('[data-row-tab="info"]')!)
+    await click(fixture.querySelector<HTMLElement>('[data-row-tab="defaults"]')!)
+    check(!summary(), "切换步骤时提前显示校验错误")
+
     for (let attempt = 1; attempt <= 2; attempt++) {
-      await click(byText("校验配置"))
-      await until(() => successes() === before + attempt, "已通过的配置再次校验没有明确提示")
+      const before = writes.length
+      await click(byText("保存并继续"))
+      await until(() => writes.length > before && summary() === document.activeElement, "继续时没有重新校验并定位问题")
+      check(writes.at(-1) === true, "保存并继续没有请求后台校验")
+      check(summary()?.textContent?.includes("请填写包装宽度") && fixture.querySelector('[data-active-tab="defaults"]'), "校验未通过仍进入下一步")
     }
 
-    supplierOzonConfigIO.put = async (...args) => {
-      const saved = await put(...args)
-      const invalid: SupplierOzonConfigData = { ...saved, state: "needs_reconfiguration", issues: [
-        { issue: "field_validation", field_key: "width", code: "required", message: "请填写包装宽度" },
-      ] }
-      configs.set("src-1:p1", invalid)
-      return invalid
-    }
-    await click(byText("校验配置"))
-    await until(() => notices().includes("配置校验未通过"), "校验未通过缺少结果提示")
-    check(successes() === before + 2, "未通过的配置误报校验成功")
-    const summary = fixture.querySelector('[aria-label="Ozon 配置校验问题"]')
-    check(summary === document.activeElement && summary?.textContent?.includes("请填写包装宽度"), "校验未定位到字段问题")
+    width().focus()
+    setInput(width(), "401")
+    await until(() => !summary()?.textContent?.includes("请填写包装宽度"), "编辑后没有清除该字段的旧错误")
+    check(summary()?.textContent?.includes("请填写包装高度"), "编辑一个字段时丢失了其他字段的错误")
+    check(width() === document.activeElement, "输入时错误筛选移除了当前字段")
+    await until(() => {
+      const value = configs.get("src-1:p1")?.values["fixed:width"]?.[0]
+      return value?.kind === "integer" && value.value === 401
+    }, "修改后的字段未自动保存")
+    check(!summary()?.textContent?.includes("请填写包装宽度"), "自动保存重新显示了旧的字段错误")
+    height().focus()
+    setInput(height(), "200")
+    await until(() => !summary(), "编辑后没有清除高度字段的旧错误")
+    await until(() => {
+      const value = configs.get("src-1:p1")?.values["fixed:height"]?.[0]
+      return value?.kind === "integer" && value.value === 200
+    }, "高度字段未自动保存")
+    check(!summary(), "自动保存重新显示了校验错误")
 
-    const count = notices().length
-    supplierOzonConfigIO.put = async () => { throw new Error("校验保存失败测试") }
-    await click(byText("校验配置"))
+    supplierOzonConfigIO.put = async (...args) => { check(args[2].validate, "继续时未请求校验"); throw new Error("校验保存失败测试") }
+    await click(byText("保存并继续"))
     await until(() => fixture.querySelector('[aria-label="Ozon 配置操作"] [role="status"]')?.textContent?.includes("保存失败"), "保存失败缺少重试状态")
-    check(successes() === before + 2 && notices().length === count + 1, "保存失败后仍提示了校验结果")
-    supplierOzonConfigIO.put = put
+    check(!summary() && fixture.querySelector('[data-active-tab="defaults"]'), "保存失败后显示了校验结果或进入下一步")
+    supplierOzonConfigIO.put = async (...args) => { check(!args[2].validate, "重试保存意外触发了校验"); return put(...args) }
     await click(byText("重试保存"))
     await until(() => fixture.querySelector('[aria-label="Ozon 配置操作"] [role="status"]')?.textContent?.includes("已保存"), "失败后重试未保存")
-    check(successes() === before + 2, "重试保存弹出了手动校验成功提示")
+    check(!summary(), "重试保存提前显示了校验结果")
+    supplierOzonConfigIO.put = async (...args) => ({ ...await put(...args), state: "needs_reconfiguration", issues: [{ issue: "catalog_missing" }] })
+    await click(byText("保存并继续"))
+    await until(() => document.body.textContent?.includes("Ozon 配置校验未通过，请检查类目后重试"), "类目校验失败没有说明")
+    check(fixture.querySelector('[data-active-tab="defaults"]'), "类目校验失败仍进入下一步")
+
+    await click(fixture.querySelector<HTMLElement>('[aria-label="OZON字段筛选"] button')!)
+    let release!: () => void
+    let started = false
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const concurrentWrites: boolean[] = []
+    supplierOzonConfigIO.put = async (...args) => {
+      concurrentWrites.push(args[2].validate)
+      if (args[2].validate) { started = true; await gate }
+      return put(...args)
+    }
+    await click(byText("保存并继续"))
+    await until(() => started, "没有开始校验")
+    setInput(width(), "450")
+    await settle(); release()
+    await until(() => document.body.textContent?.includes("字段已修改，请再次点击保存并继续"), "校验中的修改没有要求重新继续")
+    check(JSON.stringify(concurrentWrites) === JSON.stringify([true, false]), "校验中输入导致了额外校验")
+    check(fixture.querySelector('[data-active-tab="defaults"]'), "修改后的未校验草稿进入下一步")
+    supplierOzonConfigIO.put = put
+    await until(() => !byText("保存并继续").hasAttribute("disabled"), "继续按钮没有恢复")
+    await click(byText("保存并继续"))
+    await until(() => fixture.querySelector('[data-active-tab="ocr"]'), "校验通过后没有继续")
+  })
+
+  await mounted([{ ...seed()[0], rows: [product("p1", "src-1", { descriptionCategoryId: null, typeId: null })] }], async () => {
+    await click(byText("编辑商品 靠枕"))
+    await click(fixture.querySelector<HTMLElement>('[data-row-tab="defaults"]')!)
+    await click(byText("保存并继续"))
+    check(fixture.querySelector('[data-active-tab="defaults"]'), "未选择类目仍进入下一步")
+    await until(() => document.body.textContent?.includes("请先选择 Ozon 类目"), "未选择类目时没有说明")
   })
 }
 
@@ -582,7 +648,7 @@ run.addEventListener("click", async () => {
     ["先配置工厂 / 新增商品绑定既有工厂", factoryBeforeProduct],
     ["一张商品表 / 工厂筛选", singleTableAndFactoryFilter],
     ["三步流程 / Ozon 隐藏 / 保存失败保稿 / 离开确认", productStepsSaveAndGuard],
-    ["手动校验结果 / 重复校验 / 自动保存静默 / 保存失败不误报", configValidationFeedback],
+    ["继续时校验 / 自动保存静默 / 保存失败不误报", configValidationFeedback],
     ["先命名规格 / 失败重试不重复创建 / Ozon 与 AI 独立编辑", variantsInheritAndEditOzonFields],
     ["跨工厂批量操作保留归属", bulkKeepsFactory],
     ["工厂负责人授权与撤销", factoryPermissions],

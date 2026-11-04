@@ -50,6 +50,7 @@ export const SETTINGS_SECTION_ICONS: Record<
   users: Users,
   "supplier-accounts": ContactRound,
   "ai-accounts": KeyRound,
+  "system-storage": Cloud,
   payment: CreditCard,
   proxy: Globe,
   "banned-tags": Ban,

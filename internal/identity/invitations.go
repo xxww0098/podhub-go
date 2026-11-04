@@ -26,17 +26,16 @@ var (
 	errInvitationPending   = errors.New("待接受的邀请已达上限，请先撤销不再需要的邀请")
 	errInvitationDuplicate = errors.New("该邮箱已有待接受的邀请，请先撤销原邀请")
 	errInvitationMember    = errors.New("该邮箱已经是工作空间成员")
+	errInvitationAccount   = errors.New("该邮箱没有可用账号，请对方先注册后再邀请")
 )
 
 type createdInvitation struct {
 	UUID         string `json:"uuid"`
-	Token        string `json:"token"`
 	Email        string `json:"email"`
 	Role         string `json:"role"`
 	ExpiresAtMS  int64  `json:"expires_at_ms"`
 	PendingUsed  int64  `json:"pending_used"`
 	PendingLimit int64  `json:"pending_limit"`
-	Notified     bool   `json:"notified"`
 }
 
 // Take the email lock before user rows in registration, invitations and email changes.
@@ -69,7 +68,7 @@ func invitationResult(err error) Result {
 	if errors.Is(err, errInvitationRole) {
 		return authResult(http.StatusForbidden, err.Error(), "FORBIDDEN")
 	}
-	for _, expected := range []error{errInvitationInvalid, errInvitationSeats, errInvitationPending, errInvitationDuplicate, errInvitationMember} {
+	for _, expected := range []error{errInvitationInvalid, errInvitationSeats, errInvitationPending, errInvitationDuplicate, errInvitationMember, errInvitationAccount} {
 		if errors.Is(err, expected) {
 			return authResult(http.StatusBadRequest, err.Error(), "VALIDATION")
 		}
@@ -145,12 +144,8 @@ func (s *Service) CreateInvitation(r *http.Request) Result {
 	if !valid || (body.Role != "manager" && body.Role != "member") {
 		return authResult(http.StatusBadRequest, "只能邀请主管或运营", "VALIDATION")
 	}
-	token, err := randomToken()
-	if err != nil {
-		return dbResult(err)
-	}
-	created := createdInvitation{Token: token, Email: email, Role: string(target), PendingLimit: idservice.PendingInviteLimit}
-	err = s.inTx(r.Context(), func(tx pgx.Tx, q *sqlc.Queries) (bool, error) {
+	created := createdInvitation{Email: email, Role: string(target), PendingLimit: idservice.PendingInviteLimit}
+	err := s.inTx(r.Context(), func(tx pgx.Tx, q *sqlc.Queries) (bool, error) {
 		ctx := r.Context()
 		if err := lockInvitationEmail(ctx, tx, email); err != nil {
 			return false, err
@@ -176,7 +171,7 @@ func (s *Service) CreateInvitation(r *http.Request) Result {
 			return false, errInvitationMember
 		}
 		if _, err := tx.Exec(ctx, `UPDATE org_invitations SET revoked_at=clock_timestamp(),updated_at=clock_timestamp()
-		 WHERE org_id=$1 AND email=$2 AND accepted_at IS NULL AND revoked_at IS NULL AND declined_at IS NULL AND expires_at<=clock_timestamp()`, acc.orgID, email); err != nil {
+		 WHERE org_id=$1 AND lower(email)=$2 AND accepted_at IS NULL AND revoked_at IS NULL AND declined_at IS NULL AND expires_at<=clock_timestamp()`, acc.orgID, email); err != nil {
 			return false, err
 		}
 		var duplicate bool
@@ -190,22 +185,23 @@ func (s *Service) CreateInvitation(r *http.Request) Result {
 		if created.PendingUsed >= idservice.PendingInviteLimit {
 			return false, errInvitationPending
 		}
-		var invitee *int64
+		var invitee int64
 		err = tx.QueryRow(ctx, `SELECT id FROM account_users WHERE lower(email)=$1 AND account_kind='platform' AND disabled_at IS NULL`, email).Scan(&invitee)
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, errInvitationAccount
+		}
+		if err != nil {
 			return false, err
 		}
 		var expires time.Time
-		if err := tx.QueryRow(ctx, `INSERT INTO org_invitations (org_id,email,role,token_hash,invited_by_user_id,invited_by_email,invitee_user_id,expires_at,created_at,updated_at)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,clock_timestamp()+interval '7 days',clock_timestamp(),clock_timestamp()) RETURNING uuid::text,expires_at`, acc.orgID, email, created.Role, hashToken(token), acc.id, acc.email, invitee).Scan(&created.UUID, &expires); err != nil {
+		if err := tx.QueryRow(ctx, `INSERT INTO org_invitations (org_id,email,role,invited_by_user_id,invited_by_email,invitee_user_id,expires_at,created_at,updated_at)
+		 VALUES ($1,$2,$3,$4,$5,$6,clock_timestamp()+interval '7 days',clock_timestamp(),clock_timestamp()) RETURNING uuid::text,expires_at`, acc.orgID, email, created.Role, acc.id, acc.email, invitee).Scan(&created.UUID, &expires); err != nil {
 			return false, err
 		}
 		created.ExpiresAtMS = expires.UnixMilli()
 		created.PendingUsed++
-		if invitee != nil {
-			if err := notifyPendingInvitations(ctx, tx, *invitee); err != nil {
-				return false, err
-			}
+		if err := notifyPendingInvitations(ctx, tx, invitee); err != nil {
+			return false, err
 		}
 		return true, invitationAudit(ctx, q, acc, acc.orgID, created.UUID, r, "workspace_invitation_created")
 	})
@@ -234,12 +230,6 @@ func (s *Service) RespondInvitation(r *http.Request, id string, accept bool) Res
 	if err != nil || !strings.EqualFold(parsed.String(), id) {
 		return invitationResult(errInvitationInvalid)
 	}
-	var proof struct {
-		Token string `json:"token"`
-	}
-	if !decodeBoundedJSON(r, &proof) || !IsSessionToken(proof.Token) {
-		return invitationResult(errInvitationInvalid)
-	}
 	var invite invitationRow
 	err = s.inTx(r.Context(), func(tx pgx.Tx, q *sqlc.Queries) (bool, error) {
 		ctx := r.Context()
@@ -250,7 +240,7 @@ func (s *Service) RespondInvitation(r *http.Request, id string, accept bool) Res
 		if current.Disabled || !strings.EqualFold(current.Email, acc.email) {
 			return false, errInvitationInvalid
 		}
-		if err := tx.QueryRow(ctx, `SELECT org_id FROM org_invitations WHERE uuid=$1::uuid AND lower(email)=lower($2) AND token_hash=$3 AND (invitee_user_id IS NULL OR invitee_user_id=$4)`, parsed.String(), acc.email, hashToken(proof.Token), acc.id).Scan(&invite.orgID); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT org_id FROM org_invitations WHERE uuid=$1::uuid AND invitee_user_id=$2`, parsed.String(), acc.id).Scan(&invite.orgID); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return false, errInvitationInvalid
 			}
@@ -264,10 +254,20 @@ func (s *Service) RespondInvitation(r *http.Request, id string, accept bool) Res
 			return false, err
 		}
 		if err := tx.QueryRow(ctx, `SELECT id,role,invited_by_user_id,accepted_at IS NOT NULL,accepted_user_id,declined_at IS NOT NULL,revoked_at IS NOT NULL,expires_at<=clock_timestamp()
-		 FROM org_invitations WHERE uuid=$1::uuid AND org_id=$2 AND lower(email)=lower($3) AND token_hash=$4 AND (invitee_user_id IS NULL OR invitee_user_id=$5) FOR UPDATE`, parsed.String(), invite.orgID, acc.email, hashToken(proof.Token), acc.id).Scan(&invite.id, &invite.role, &invite.inviter, &invite.accepted, &invite.acceptedUser, &invite.declined, &invite.revoked, &invite.expired); err != nil {
+		 FROM org_invitations WHERE uuid=$1::uuid AND org_id=$2 AND invitee_user_id=$3 FOR UPDATE`, parsed.String(), invite.orgID, acc.id).Scan(&invite.id, &invite.role, &invite.inviter, &invite.accepted, &invite.acceptedUser, &invite.declined, &invite.revoked, &invite.expired); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return false, errInvitationInvalid
+			}
 			return false, err
 		}
 		if accept && invite.accepted && invite.acceptedUser != nil && *invite.acceptedUser == acc.id {
+			var member bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM organization_members WHERE org_id=$1 AND user_id=$2)`, invite.orgID, acc.id).Scan(&member); err != nil {
+				return false, err
+			}
+			if !member {
+				return false, errInvitationInvalid
+			}
 			return true, nil
 		}
 		if !accept && invite.declined {

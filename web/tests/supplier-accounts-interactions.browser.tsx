@@ -9,7 +9,8 @@ const fixture = document.querySelector<HTMLDivElement>("#fixture")!
 const results = document.querySelector<HTMLPreElement>("#results")!
 const factory = { factoryId: "test-factory", name: "测试厂家", country: "CN", icon: "" }
 const member = { memberId: "test-member", accountUuid: "test-account", factory, email: "factory@example.invalid", name: "成员", status: "active", createdAtMs: 1 }
-const makeFactory = (factoryId: string, name: string): Factory => ({ factoryId, name, country: "CN", contact: "", internalNote: "", icon: "", createdAtMs: 1, updatedAtMs: 1, libraries: [] })
+const makeFactory = (factory_id: string, name: string): Factory => ({ factory_id, name, country: "CN", contact: "", internal_note: "", icon: "", created_at_ms: 1, updated_at_ms: 1, libraries: [] })
+const accountFactory = (item: Factory) => ({ factoryId: item.factory_id, name: item.name, country: item.country, icon: item.icon })
 let accountGroups = [{ factory, members: [member] }]
 let factories = [makeFactory(factory.factoryId, factory.name), makeFactory("no-member", "无成员工厂")]
 let failFactories = false
@@ -28,22 +29,24 @@ window.fetch = async (input, init) => {
     : Response.json({ data: { factories } })
   if (method === "POST" && url.pathname === "/api/admin/factories") {
     const body = JSON.parse(String(init?.body))
+    if (typeof body.account_email !== "string" || !("internal_note" in body) || "accountEmail" in body || "internalNote" in body) throw new Error("factory create did not use snake_case")
     const created = makeFactory("new-factory", body.name)
     factories.push(created)
-    accountGroups.push({ factory: created, members: [{ ...member, memberId: "first-new-member", factory: created, email: body.accountEmail }] })
-    return Response.json({ data: { factory: created, initialPassword: "first-password" } })
+    const ref = accountFactory(created)
+    accountGroups.push({ factory: ref, members: [{ ...member, memberId: "first-new-member", factory: ref, email: body.account_email }] })
+    return Response.json({ data: { factory: created, initial_password: "first-password" } })
   }
   if (method === "PUT" && url.pathname.startsWith("/api/admin/factories/")) {
     const body = JSON.parse(String(init?.body))
     factoryUpdates.push(body)
     const id = decodeURIComponent(url.pathname.split("/").at(-1)!)
-    factories = factories.map((factory) => factory.factoryId === id ? { ...factory, ...body } : factory)
-    return Response.json({ data: { factory: factories.find((factory) => factory.factoryId === id) } })
+    factories = factories.map((factory) => factory.factory_id === id ? { ...factory, ...body } : factory)
+    return Response.json({ data: { factory: factories.find((factory) => factory.factory_id === id) } })
   }
   if (method === "POST" && url.pathname === "/api/admin/supplier-accounts") {
     const body = JSON.parse(String(init?.body))
     createdMembers.push({ factoryId: body.factoryId, email: body.email })
-    const selected = factories.find((item) => item.factoryId === body.factoryId)!
+    const selected = accountFactory(factories.find((item) => item.factory_id === body.factoryId)!)
     const created = { memberId: "new-member", accountUuid: "new-account", factory: selected, email: body.email, name: "", status: "active", createdAtMs: 1 }
     const group = accountGroups.find((item) => item.factory.factoryId === body.factoryId)
     if (group) group.members.push(created)
@@ -277,7 +280,7 @@ document.querySelector<HTMLButtonElement>("#run")!.addEventListener("click", asy
     if (document.querySelector("#factory-email")) throw new Error("编辑资料仍可换绑并移除其他成员")
     flushSync(() => button("保存").click())
     await waitFor(() => factoryUpdates.length > 0 && !document.querySelector("#factory-name"), "工厂资料未保存")
-    if ("accountEmail" in factoryUpdates.at(-1)!) throw new Error("保存工厂资料提交了成员换绑")
+    if ("account_email" in factoryUpdates.at(-1)!) throw new Error("保存工厂资料提交了成员换绑")
     await waitFor(() => Boolean(fixture.querySelector('[aria-label="刷新工厂管理"]')), "工厂资料回读未完成")
 
     failFactories = true

@@ -127,6 +127,15 @@ export const SETTINGS_SECTIONS = [
     description: "识图与生图账号、识图模型定价和运行限制",
   },
   {
+    id: "system-storage",
+    group: "平台管理",
+    label: "系统存储桶",
+    admin: true,
+    wide: true,
+    title: "系统存储桶",
+    description: "平台素材与私有数据的 R2 存储",
+  },
+  {
     id: "payment",
     group: "平台管理",
     label: "支付",
@@ -234,8 +243,10 @@ export const ADMIN_SETTINGS_ROWS = SETTINGS_ROWS.filter((row) => row.admin)
  */
 export function settingsRowsFor(
   role: string | null | undefined,
+  workspaceRole?: string | null,
 ): readonly SettingsSectionRow[] {
-  return isPlatformSuperAdminRole(role) ? SETTINGS_ROWS : SETTINGS_ROWS.filter((row) => !row.admin)
+  const owner = workspaceRole === undefined || workspaceRole === "owner"
+  return SETTINGS_ROWS.filter((row) => (!row.admin || isPlatformSuperAdminRole(role)) && (row.id !== "workspace-storage" || owner))
 }
 
 /** The platform-management rows this rank may open; empty for everyone else. */

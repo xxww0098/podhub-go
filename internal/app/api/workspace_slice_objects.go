@@ -15,12 +15,12 @@ import (
 	sign "github.com/xxww0098/podhub-go/internal/platform/r2/sigv4"
 )
 
-func (s *Server) workspaceSliceAccount(r *http.Request, writing bool) (access.Principal, sign.Account, error) {
+func (s *Server) workspaceSliceAccount(r *http.Request) (access.Principal, sign.Account, error) {
 	actor, _, err := s.mediaActor(r, "")
 	if err != nil {
 		return actor, sign.Account{}, err
 	}
-	if writing && actor.WorkspaceRole != "owner" {
+	if actor.WorkspaceRole != "owner" {
 		return actor, sign.Account{}, workspaceStorageOwnerRequired()
 	}
 	account, ok := s.mediaAccount(r.Context(), actor)
@@ -32,7 +32,7 @@ func (s *Server) workspaceSliceAccount(r *http.Request, writing bool) (access.Pr
 
 func (s *Server) listWorkspaceSliceObjects(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	_, account, err := s.workspaceSliceAccount(r, false)
+	_, account, err := s.workspaceSliceAccount(r)
 	if err != nil {
 		writeMediaFailure(w, err)
 		return
@@ -56,7 +56,7 @@ func (s *Server) listWorkspaceSliceObjects(w http.ResponseWriter, r *http.Reques
 
 func (s *Server) workspaceSliceStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	_, account, err := s.workspaceSliceAccount(r, false)
+	_, account, err := s.workspaceSliceAccount(r)
 	if err != nil {
 		writeMediaFailure(w, err)
 		return
@@ -94,7 +94,7 @@ func ownedSliceObject(account sign.Account, key string) bool {
 
 func (s *Server) downloadWorkspaceSliceObject(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	_, account, err := s.workspaceSliceAccount(r, false)
+	_, account, err := s.workspaceSliceAccount(r)
 	if err != nil {
 		writeMediaFailure(w, err)
 		return
@@ -114,7 +114,7 @@ func (s *Server) downloadWorkspaceSliceObject(w http.ResponseWriter, r *http.Req
 }
 
 func (s *Server) deleteWorkspaceSliceObjects(w http.ResponseWriter, r *http.Request) {
-	actor, account, err := s.workspaceSliceAccount(r, true)
+	actor, account, err := s.workspaceSliceAccount(r)
 	if err != nil {
 		writeMediaFailure(w, err)
 		return

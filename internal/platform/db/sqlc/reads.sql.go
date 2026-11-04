@@ -13,37 +13,51 @@ import (
 
 const getJob = `-- name: GetJob :one
 SELECT
-    id::text AS id,
-    org_id,
-    kind,
-    aggregate_type,
-    aggregate_id::text AS aggregate_id,
-    input_revision,
-    input_fingerprint,
-    idempotency_key,
-    priority,
-    state,
-    attempt,
-    max_attempts,
-    lease_owner,
-    lease_until,
-    lease_epoch,
-    cost_units,
-    lane,
-    submitter_user_id,
-    payload,
-    result_ref,
-    cancel_requested_at,
-    last_error_code,
-    created_at,
-    updated_at
+    jobs.id::text AS id,
+    jobs.org_id,
+    jobs.kind,
+    jobs.aggregate_type,
+    jobs.aggregate_id::text AS aggregate_id,
+    jobs.input_revision,
+    jobs.input_fingerprint,
+    jobs.idempotency_key,
+    jobs.priority,
+    jobs.state,
+    jobs.attempt,
+    jobs.max_attempts,
+    jobs.lease_owner,
+    jobs.lease_until,
+    jobs.lease_epoch,
+    jobs.cost_units,
+    jobs.lane,
+    jobs.submitter_user_id,
+    jobs.payload,
+    jobs.result_ref,
+    jobs.cancel_requested_at,
+    jobs.last_error_code,
+    jobs.created_at,
+    jobs.updated_at
 FROM jobs
-WHERE org_id = $1 AND id = $2::uuid
+WHERE jobs.org_id = $1 AND jobs.id = $2::uuid
+  AND (
+    $3::boolean
+    OR submitter_user_id = $4
+    OR EXISTS (
+        SELECT 1 FROM listing_rows r
+        LEFT JOIN listing_cards c ON c.org_id = r.org_id AND c.id = r.card_id
+        WHERE r.org_id = jobs.org_id AND r.id = jobs.aggregate_id
+          AND (COALESCE(r.store_id, c.store_id) IS NULL
+               OR COALESCE(r.store_id, c.store_id) = ANY($5::uuid[]))
+    )
+  )
 `
 
 type GetJobParams struct {
-	OrgID   int64
-	Column2 pgtype.UUID
+	OrgID           int64
+	Column2         pgtype.UUID
+	Column3         bool
+	SubmitterUserID int64
+	Column5         []pgtype.UUID
 }
 
 type GetJobRow struct {
@@ -74,7 +88,13 @@ type GetJobRow struct {
 }
 
 func (q *Queries) GetJob(ctx context.Context, arg GetJobParams) (GetJobRow, error) {
-	row := q.db.QueryRow(ctx, getJob, arg.OrgID, arg.Column2)
+	row := q.db.QueryRow(ctx, getJob,
+		arg.OrgID,
+		arg.Column2,
+		arg.Column3,
+		arg.SubmitterUserID,
+		arg.Column5,
+	)
 	var i GetJobRow
 	err := row.Scan(
 		&i.ID,
@@ -311,39 +331,53 @@ func (q *Queries) ListEnabledBannedTagRules(ctx context.Context) ([]ListEnabledB
 
 const listJobs = `-- name: ListJobs :many
 SELECT
-    id::text AS id,
-    org_id,
-    kind,
-    aggregate_type,
-    aggregate_id::text AS aggregate_id,
-    input_revision,
-    input_fingerprint,
-    idempotency_key,
-    priority,
-    state,
-    attempt,
-    max_attempts,
-    lease_owner,
-    lease_until,
-    lease_epoch,
-    cost_units,
-    lane,
-    submitter_user_id,
-    payload,
-    result_ref,
-    cancel_requested_at,
-    last_error_code,
-    created_at,
-    updated_at
+    jobs.id::text AS id,
+    jobs.org_id,
+    jobs.kind,
+    jobs.aggregate_type,
+    jobs.aggregate_id::text AS aggregate_id,
+    jobs.input_revision,
+    jobs.input_fingerprint,
+    jobs.idempotency_key,
+    jobs.priority,
+    jobs.state,
+    jobs.attempt,
+    jobs.max_attempts,
+    jobs.lease_owner,
+    jobs.lease_until,
+    jobs.lease_epoch,
+    jobs.cost_units,
+    jobs.lane,
+    jobs.submitter_user_id,
+    jobs.payload,
+    jobs.result_ref,
+    jobs.cancel_requested_at,
+    jobs.last_error_code,
+    jobs.created_at,
+    jobs.updated_at
 FROM jobs
-WHERE org_id = $1
-ORDER BY updated_at DESC, id DESC
+WHERE jobs.org_id = $1
+  AND (
+    $3::boolean
+    OR submitter_user_id = $4
+    OR EXISTS (
+        SELECT 1 FROM listing_rows r
+        LEFT JOIN listing_cards c ON c.org_id = r.org_id AND c.id = r.card_id
+        WHERE r.org_id = jobs.org_id AND r.id = jobs.aggregate_id
+          AND (COALESCE(r.store_id, c.store_id) IS NULL
+               OR COALESCE(r.store_id, c.store_id) = ANY($5::uuid[]))
+    )
+  )
+ORDER BY jobs.updated_at DESC, jobs.id DESC
 LIMIT $2::bigint
 `
 
 type ListJobsParams struct {
-	OrgID   int64
-	Column2 int64
+	OrgID           int64
+	Column2         int64
+	Column3         bool
+	SubmitterUserID int64
+	Column5         []pgtype.UUID
 }
 
 type ListJobsRow struct {
@@ -374,7 +408,13 @@ type ListJobsRow struct {
 }
 
 func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]ListJobsRow, error) {
-	rows, err := q.db.Query(ctx, listJobs, arg.OrgID, arg.Column2)
+	rows, err := q.db.Query(ctx, listJobs,
+		arg.OrgID,
+		arg.Column2,
+		arg.Column3,
+		arg.SubmitterUserID,
+		arg.Column5,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -420,42 +460,56 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]ListJobsR
 
 const listJobsAfter = `-- name: ListJobsAfter :many
 SELECT
-    id::text AS id,
-    org_id,
-    kind,
-    aggregate_type,
-    aggregate_id::text AS aggregate_id,
-    input_revision,
-    input_fingerprint,
-    idempotency_key,
-    priority,
-    state,
-    attempt,
-    max_attempts,
-    lease_owner,
-    lease_until,
-    lease_epoch,
-    cost_units,
-    lane,
-    submitter_user_id,
-    payload,
-    result_ref,
-    cancel_requested_at,
-    last_error_code,
-    created_at,
-    updated_at
+    jobs.id::text AS id,
+    jobs.org_id,
+    jobs.kind,
+    jobs.aggregate_type,
+    jobs.aggregate_id::text AS aggregate_id,
+    jobs.input_revision,
+    jobs.input_fingerprint,
+    jobs.idempotency_key,
+    jobs.priority,
+    jobs.state,
+    jobs.attempt,
+    jobs.max_attempts,
+    jobs.lease_owner,
+    jobs.lease_until,
+    jobs.lease_epoch,
+    jobs.cost_units,
+    jobs.lane,
+    jobs.submitter_user_id,
+    jobs.payload,
+    jobs.result_ref,
+    jobs.cancel_requested_at,
+    jobs.last_error_code,
+    jobs.created_at,
+    jobs.updated_at
 FROM jobs
-WHERE org_id = $1
+WHERE jobs.org_id = $1
   AND (updated_at, id) < ((TIMESTAMPTZ 'epoch' + ($2::bigint || ' microseconds')::interval), $3::uuid)
-ORDER BY updated_at DESC, id DESC
+  AND (
+    $5::boolean
+    OR submitter_user_id = $6
+    OR EXISTS (
+        SELECT 1 FROM listing_rows r
+        LEFT JOIN listing_cards c ON c.org_id = r.org_id AND c.id = r.card_id
+        WHERE r.org_id = jobs.org_id AND r.id = jobs.aggregate_id
+          AND (COALESCE(r.store_id, c.store_id) IS NULL
+               OR COALESCE(r.store_id, c.store_id) = ANY($7::uuid[]))
+    )
+  )
+ORDER BY jobs.updated_at DESC, jobs.id DESC
 LIMIT $4::bigint
 `
 
 type ListJobsAfterParams struct {
-	OrgID   int64
-	Column2 int64
-	Column3 pgtype.UUID
-	Column4 int64
+	OrgID           int64
+	Column2         int64
+	Column3         pgtype.UUID
+	Column4         int64
+	Column5         bool
+	SubmitterUserID int64
+	Column7         []pgtype.UUID
 }
 
 type ListJobsAfterRow struct {
@@ -491,6 +545,9 @@ func (q *Queries) ListJobsAfter(ctx context.Context, arg ListJobsAfterParams) ([
 		arg.Column2,
 		arg.Column3,
 		arg.Column4,
+		arg.Column5,
+		arg.SubmitterUserID,
+		arg.Column7,
 	)
 	if err != nil {
 		return nil, err
@@ -537,30 +594,30 @@ func (q *Queries) ListJobsAfter(ctx context.Context, arg ListJobsAfterParams) ([
 
 const listJobsForCard = `-- name: ListJobsForCard :many
 SELECT
-    id::text AS id,
-    org_id,
-    kind,
-    aggregate_type,
-    aggregate_id::text AS aggregate_id,
-    input_revision,
-    input_fingerprint,
-    idempotency_key,
-    priority,
-    state,
-    attempt,
-    max_attempts,
-    lease_owner,
-    lease_until,
-    lease_epoch,
-    cost_units,
-    lane,
-    submitter_user_id,
-    payload,
-    result_ref,
-    cancel_requested_at,
-    last_error_code,
-    created_at,
-    updated_at
+    jobs.id::text AS id,
+    jobs.org_id,
+    jobs.kind,
+    jobs.aggregate_type,
+    jobs.aggregate_id::text AS aggregate_id,
+    jobs.input_revision,
+    jobs.input_fingerprint,
+    jobs.idempotency_key,
+    jobs.priority,
+    jobs.state,
+    jobs.attempt,
+    jobs.max_attempts,
+    jobs.lease_owner,
+    jobs.lease_until,
+    jobs.lease_epoch,
+    jobs.cost_units,
+    jobs.lane,
+    jobs.submitter_user_id,
+    jobs.payload,
+    jobs.result_ref,
+    jobs.cancel_requested_at,
+    jobs.last_error_code,
+    jobs.created_at,
+    jobs.updated_at
 FROM jobs
 WHERE jobs.org_id = $1
   AND EXISTS (
@@ -569,14 +626,28 @@ WHERE jobs.org_id = $1
         AND r.id = jobs.aggregate_id
         AND r.card_id = $3::uuid
   )
-ORDER BY updated_at DESC, id DESC
+  AND (
+    $4::boolean
+    OR submitter_user_id = $5
+    OR EXISTS (
+        SELECT 1 FROM listing_rows r
+        LEFT JOIN listing_cards c ON c.org_id = r.org_id AND c.id = r.card_id
+        WHERE r.org_id = jobs.org_id AND r.id = jobs.aggregate_id
+          AND (COALESCE(r.store_id, c.store_id) IS NULL
+               OR COALESCE(r.store_id, c.store_id) = ANY($6::uuid[]))
+    )
+  )
+ORDER BY jobs.updated_at DESC, jobs.id DESC
 LIMIT $2::bigint
 `
 
 type ListJobsForCardParams struct {
-	OrgID   int64
-	Column2 int64
-	Column3 pgtype.UUID
+	OrgID           int64
+	Column2         int64
+	Column3         pgtype.UUID
+	Column4         bool
+	SubmitterUserID int64
+	Column6         []pgtype.UUID
 }
 
 type ListJobsForCardRow struct {
@@ -607,7 +678,14 @@ type ListJobsForCardRow struct {
 }
 
 func (q *Queries) ListJobsForCard(ctx context.Context, arg ListJobsForCardParams) ([]ListJobsForCardRow, error) {
-	rows, err := q.db.Query(ctx, listJobsForCard, arg.OrgID, arg.Column2, arg.Column3)
+	rows, err := q.db.Query(ctx, listJobsForCard,
+		arg.OrgID,
+		arg.Column2,
+		arg.Column3,
+		arg.Column4,
+		arg.SubmitterUserID,
+		arg.Column6,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -653,30 +731,30 @@ func (q *Queries) ListJobsForCard(ctx context.Context, arg ListJobsForCardParams
 
 const listJobsForCardAfter = `-- name: ListJobsForCardAfter :many
 SELECT
-    id::text AS id,
-    org_id,
-    kind,
-    aggregate_type,
-    aggregate_id::text AS aggregate_id,
-    input_revision,
-    input_fingerprint,
-    idempotency_key,
-    priority,
-    state,
-    attempt,
-    max_attempts,
-    lease_owner,
-    lease_until,
-    lease_epoch,
-    cost_units,
-    lane,
-    submitter_user_id,
-    payload,
-    result_ref,
-    cancel_requested_at,
-    last_error_code,
-    created_at,
-    updated_at
+    jobs.id::text AS id,
+    jobs.org_id,
+    jobs.kind,
+    jobs.aggregate_type,
+    jobs.aggregate_id::text AS aggregate_id,
+    jobs.input_revision,
+    jobs.input_fingerprint,
+    jobs.idempotency_key,
+    jobs.priority,
+    jobs.state,
+    jobs.attempt,
+    jobs.max_attempts,
+    jobs.lease_owner,
+    jobs.lease_until,
+    jobs.lease_epoch,
+    jobs.cost_units,
+    jobs.lane,
+    jobs.submitter_user_id,
+    jobs.payload,
+    jobs.result_ref,
+    jobs.cancel_requested_at,
+    jobs.last_error_code,
+    jobs.created_at,
+    jobs.updated_at
 FROM jobs
 WHERE jobs.org_id = $1
   AND EXISTS (
@@ -686,16 +764,30 @@ WHERE jobs.org_id = $1
         AND r.card_id = $5::uuid
   )
   AND (updated_at, id) < ((TIMESTAMPTZ 'epoch' + ($2::bigint || ' microseconds')::interval), $3::uuid)
-ORDER BY updated_at DESC, id DESC
+  AND (
+    $6::boolean
+    OR submitter_user_id = $7
+    OR EXISTS (
+        SELECT 1 FROM listing_rows r
+        LEFT JOIN listing_cards c ON c.org_id = r.org_id AND c.id = r.card_id
+        WHERE r.org_id = jobs.org_id AND r.id = jobs.aggregate_id
+          AND (COALESCE(r.store_id, c.store_id) IS NULL
+               OR COALESCE(r.store_id, c.store_id) = ANY($8::uuid[]))
+    )
+  )
+ORDER BY jobs.updated_at DESC, jobs.id DESC
 LIMIT $4::bigint
 `
 
 type ListJobsForCardAfterParams struct {
-	OrgID   int64
-	Column2 int64
-	Column3 pgtype.UUID
-	Column4 int64
-	Column5 pgtype.UUID
+	OrgID           int64
+	Column2         int64
+	Column3         pgtype.UUID
+	Column4         int64
+	Column5         pgtype.UUID
+	Column6         bool
+	SubmitterUserID int64
+	Column8         []pgtype.UUID
 }
 
 type ListJobsForCardAfterRow struct {
@@ -732,6 +824,9 @@ func (q *Queries) ListJobsForCardAfter(ctx context.Context, arg ListJobsForCardA
 		arg.Column3,
 		arg.Column4,
 		arg.Column5,
+		arg.Column6,
+		arg.SubmitterUserID,
+		arg.Column8,
 	)
 	if err != nil {
 		return nil, err

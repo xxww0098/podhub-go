@@ -2,8 +2,6 @@ package integration
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"testing"
 	"time"
 
@@ -89,48 +87,5 @@ func TestWorkspaceSliceStorageOwnerAndTenantIsolation(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("one physical bucket was bound to two workspaces")
-	}
-	var first, second *mediarepo.SliceProvision
-	err = db.InTx(ctx, pool, db.App(otherOrg), func(tx pgx.Tx) error {
-		var err error
-		first, _, err = mediarepo.ReserveSliceProvision(ctx, tx, otherOrg, member, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "")
-		return err
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = db.InTx(ctx, pool, db.App(otherOrg), func(tx pgx.Tx) error {
-		var inserted bool
-		var err error
-		second, inserted, err = mediarepo.ReserveSliceProvision(ctx, tx, otherOrg, member, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "")
-		if inserted {
-			t.Fatal("retry reserved another bucket")
-		}
-		return err
-	})
-	if err != nil || first.ID != second.ID || first.Bucket != second.Bucket || first.AccountID != second.AccountID {
-		t.Fatalf("provision identity changed: %v", err)
-	}
-}
-
-func TestWorkspaceSliceCustomNameAccountNamespace(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-	pool := migratedPool(t, ctx)
-	for i, account := range []string{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"} {
-		owner, org, _ := securityOrg(t, ctx, pool, fmt.Sprintf("custom-bucket-%d", i))
-		err := db.InTx(ctx, pool, db.App(org), func(tx pgx.Tx) error {
-			provision, inserted, err := mediarepo.ReserveSliceProvision(ctx, tx, org, owner, account, "team-assets")
-			if err == nil && (!inserted || !provision.CustomName || provision.Bucket != "team-assets") {
-				t.Fatal("custom bucket identity was not retained")
-			}
-			return err
-		})
-		if i < 2 && err != nil {
-			t.Fatal(err)
-		}
-		if i == 2 && !errors.Is(err, mediarepo.ErrSliceBucketNameInUse) {
-			t.Fatalf("duplicate name in the same account: %v", err)
-		}
 	}
 }

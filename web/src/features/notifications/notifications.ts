@@ -19,8 +19,6 @@ import {
   notifySuccess,
 } from "@/lib/notify"
 import { isUnread, notificationHeadline } from "./notification-view"
-import { WorkspaceInvitationPrompt } from "./workspace-invitation-prompt"
-import { useInvitationCredential } from "@/lib/invitation-link"
 import { appendNotificationPage, readNotificationPages } from "./notifications-read"
 import { useVisiblePolling } from "@/lib/visible-polling"
 
@@ -156,8 +154,8 @@ export type NotificationsController = {
   markRead: (notificationUuid: string) => Promise<void>
   markAllRead: () => Promise<void>
   /** Takes `invitation.uuid` — the Notification is the envelope, not the target. */
-  acceptInvitation: (invitationUuid: string, token: string) => Promise<boolean>
-  declineInvitation: (invitationUuid: string, token: string) => Promise<boolean>
+  acceptInvitation: (invitationUuid: string) => Promise<boolean>
+  declineInvitation: (invitationUuid: string) => Promise<boolean>
 }
 
 export type UseNotificationsOptions = {
@@ -233,10 +231,7 @@ export function NotificationsProvider({
   onAccepted,
 }: { children: ReactNode } & UseNotificationsOptions) {
   const controller = useNotifications({ enabled, onAccepted })
-  const credential = useInvitationCredential()
-  useNotificationLiveToasts(controller, "invitation-link", Boolean(credential))
-  return createElement(NotificationsContext.Provider, { value: controller },
-    children, createElement(WorkspaceInvitationPrompt, { controller }))
+  return createElement(NotificationsContext.Provider, { value: controller }, children)
 }
 
 /** Injected controller wins so tests do not have to mount the poll. */
@@ -299,7 +294,7 @@ export function useNotifications(
         if (!cursor) {
           const headline = arrivedInvitationHeadline(current, next)
           if (headline) {
-            notifyInfo(headline, { description: "打开通知，粘贴创建者私下提供的邀请链接后接受或拒绝。" })
+            notifyInfo(headline, { description: "打开通知即可接受或拒绝。" })
           }
         }
         if (!sameNotificationsView(current, next)) {
@@ -421,11 +416,11 @@ export function useNotifications(
   }, [reload, settleRow])
 
   const acceptInvitation = useCallback(
-    async (invitationUuid: string, token: string) => {
+    async (invitationUuid: string) => {
       try {
         const joined = await settleRow(`accept:${invitationUuid}`, () =>
           settleAcceptInvitation(
-            () => accountHttp.accountAcceptWorkspaceInvitation(invitationUuid, token),
+            () => accountHttp.accountAcceptWorkspaceInvitation(invitationUuid),
             reload,
             accepted.current,
           ),
@@ -448,10 +443,10 @@ export function useNotifications(
   )
 
   const declineInvitation = useCallback(
-    async (invitationUuid: string, token: string) => {
+    async (invitationUuid: string) => {
       const declined = await settleRow(`decline:${invitationUuid}`, () =>
         settleNotificationAction(
-          () => accountHttp.accountDeclineWorkspaceInvitation(invitationUuid, token),
+          () => accountHttp.accountDeclineWorkspaceInvitation(invitationUuid),
           reload,
           "无法拒绝邀请，请稍后重试。",
         ),

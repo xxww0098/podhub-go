@@ -27,6 +27,26 @@ func TestIntentQueryEdges(t *testing.T) {
 	if _, msg, valid = ParseIntentQuery(map[string][]string{"latestPerRow": {"1"}}); valid || msg != "请求格式无效" {
 		t.Fatal(msg)
 	}
+	if _, msg, valid = ParseIntentQuery(map[string][]string{"review": {"1"}}); valid || msg != "请求格式无效" {
+		t.Fatal(msg)
+	}
+	if _, msg, valid = ParseIntentQuery(map[string][]string{"needsReview": {"1"}}); valid || msg != "请求格式无效" {
+		t.Fatal(msg)
+	}
+	queue, _, valid := ParseIntentQuery(map[string][]string{"needsReview": {"true"}})
+	if !valid || !queue.NeedsReview || !queue.LatestPerRow {
+		t.Fatalf("needsReview must imply the latest intent per row: %+v", queue)
+	}
+	if flat, _, valid := ParseIntentQuery(map[string][]string{"needsReview": {"false"}}); !valid || flat.NeedsReview || flat.LatestPerRow {
+		t.Fatalf("needsReview=false stays a flat list: %+v", flat)
+	}
+	kind, _, valid := ParseIntentQuery(map[string][]string{"reviewKind": {"failed"}})
+	if !valid || !kind.NeedsReview || !kind.LatestPerRow || kind.ReviewKind != "failed" {
+		t.Fatalf("reviewKind must open the review queue: %+v", kind)
+	}
+	if _, msg, valid = ParseIntentQuery(map[string][]string{"reviewKind": {"everything"}}); valid || msg != "reviewKind 无效" {
+		t.Fatal(msg)
+	}
 	if _, msg, valid = ParseIntentQuery(map[string][]string{"rowId": {"x"}, "rowIds": {"y"}}); valid || msg != "rowId 与 rowIds 不能同时使用" {
 		t.Fatal(msg)
 	}
@@ -44,9 +64,9 @@ func TestIntentQueryEdges(t *testing.T) {
 	store := "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
 	got, _, valid := ParseIntentQuery(map[string][]string{
 		"storeId": {store}, "rowIds": {id2 + "," + id + "," + strings.ToUpper(id)}, "cursor": {"nope"},
-		"categoryKey": {"ignored"}, "stableOrder": {"true"},
+		"categoryKey": {"ignored"}, "stableOrder": {"true"}, "review": {"true"},
 	})
-	if !valid || len(got.RowIDs) != 2 || got.RowIDs[0] != id || got.CursorID != "" || !got.StableOrder || !got.ExactStore {
+	if !valid || len(got.RowIDs) != 2 || got.RowIDs[0] != id || got.CursorID != "" || !got.StableOrder || !got.Review || !got.ExactStore {
 		t.Fatalf("%+v", got)
 	}
 	var manyIDs strings.Builder

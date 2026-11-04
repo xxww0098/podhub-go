@@ -15,6 +15,7 @@ import (
 	"github.com/xxww0098/podhub-go/internal/admin/contract"
 	"github.com/xxww0098/podhub-go/internal/admin/domain"
 	"github.com/xxww0098/podhub-go/internal/admin/service"
+	suppliercontract "github.com/xxww0098/podhub-go/internal/admin/supplier/contract"
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
 )
 
@@ -46,6 +47,26 @@ func TestSupplierListBytesAndHeaders(t *testing.T) {
 	}
 	if rec.Header().Get("Cache-Control") != "" {
 		t.Fatalf("accounts cache %q", rec.Header().Get("Cache-Control"))
+	}
+}
+
+func TestFactoryWireUsesSnakeCase(t *testing.T) {
+	password := "one-time-password"
+	factory := domain.Factory{
+		FactoryID: "fac_1", Name: "工厂", Country: "CN", Contact: "ops", InternalNote: "note", Icon: "",
+		CreatedAtMs: 1, UpdatedAtMs: 2, Libraries: []suppliercontract.FactoryLibrary{{SourceID: "src_1", Name: "库", Country: "CN"}},
+	}
+	svc := service.New(fakeStore{factories: []domain.Factory{factory}, initialPassword: &password})
+	h := chi.NewRouter()
+	Mount(h, Deps{Resolve: fixed(access.FixedResolver{Principal: &access.Principal{UserID: 1, PlatformRole: "super_admin"}}), Supplier: &svc})
+	const wire = `{"factory_id":"fac_1","name":"工厂","country":"CN","contact":"ops","internal_note":"note","icon":"","created_at_ms":1,"updated_at_ms":2,"libraries":[{"source_id":"src_1","name":"库","country":"CN","icon":""}]}`
+	rec := call(h, http.MethodGet, "/api/admin/factories", "")
+	if rec.Code != http.StatusOK || rec.Body.String() != `{"data":{"factories":[`+wire+`]}}` {
+		t.Fatalf("list %d %s", rec.Code, rec.Body.String())
+	}
+	rec = call(h, http.MethodPost, "/api/admin/factories", `{"name":"工厂","country":"CN","contact":"ops","internal_note":"note","icon":"","account_email":"factory@example.invalid"}`)
+	if rec.Code != http.StatusCreated || rec.Body.String() != `{"data":{"factory":`+wire+`,"initial_password":"one-time-password"}}` {
+		t.Fatalf("create %d %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -130,13 +151,18 @@ func TestCSRFStillRejectsCookieWrite(t *testing.T) {
 }
 
 type fakeStore struct {
-	dbs []domain.SupplierDb
+	dbs             []domain.SupplierDb
+	factories       []domain.Factory
+	initialPassword *string
 }
 
 func (f fakeStore) ListFactories(context.Context, contract.Actor) ([]domain.Factory, error) {
-	return []domain.Factory{}, nil
+	return f.factories, nil
 }
 func (f fakeStore) CreateFactory(context.Context, contract.Actor, domain.FactoryInput, string, int64, string, string) (domain.Factory, *string, error) {
+	if len(f.factories) > 0 {
+		return f.factories[0], f.initialPassword, nil
+	}
 	return domain.Factory{}, nil, nil
 }
 func (f fakeStore) UpdateFactory(context.Context, contract.Actor, string, domain.FactoryInput, int64) (domain.Factory, error) {

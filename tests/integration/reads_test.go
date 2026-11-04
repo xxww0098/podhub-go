@@ -182,6 +182,14 @@ func insertWorkspace(t *testing.T, ctx context.Context, pool *pgxpool.Pool, emai
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Creating a workspace also creates the owner membership; store and job
+	// visibility resolve through organization_members.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO public.organization_members (org_id, user_id, role, status, display_name, join_order, created_at, updated_at)
+		VALUES ($1, $2, 'owner', 'active', $3, 9223372036854775807, timestamptz '2026-08-21 17:30:00+00', timestamptz '2026-08-21 17:30:00+00')`,
+		orgID, userID, name); err != nil {
+		t.Fatal(err)
+	}
 	return userID, orgID
 }
 

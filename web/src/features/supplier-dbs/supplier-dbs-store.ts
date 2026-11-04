@@ -382,7 +382,7 @@ export function createSupplierDbsStore(
         }
       } catch (reason) { return failed(reason, "新增规格失败") }
     },
-    syncProductOzon: async (sourceId, productId) => {
+    syncProductOzon: async (sourceId, productId, validate = false) => {
       const generation = sessionGeneration
       const rows = state.details[sourceId]?.detail?.rows ?? []
       const parent = rows.find((row) => row.productId === productId && !row.archived)
@@ -391,7 +391,7 @@ export function createSupplierDbsStore(
         for (const row of rows) {
           if (!parent.variantGroup?.trim() || row.archived || row.productId === productId || row.variantGroup?.trim() !== parent.variantGroup?.trim()) continue
           if (generation !== sessionGeneration) return failed("会话已变化", "同步已取消")
-          if (!await copySupplierOzonFields(configIO, sourceId, productId, row)) return failed(`规格“${row.size || row.platformCode}”的类目与商品配置不一致，请先统一类目`, "同步 Ozon 字段失败")
+          if (!await copySupplierOzonFields(configIO, sourceId, productId, row, validate)) return failed(`规格“${row.size || row.platformCode}”的类目不一致或字段校验未通过，请检查`, "同步 Ozon 字段失败")
         }
         const fresh = await client.supplierDbGet(sourceId)
         if (generation === sessionGeneration) emitDetail(sourceId, { status: "ready", detail: fresh })

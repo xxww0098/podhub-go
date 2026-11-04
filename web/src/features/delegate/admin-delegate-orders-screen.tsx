@@ -206,7 +206,7 @@ function AdminDelegateQueue({ onOpen }: { onOpen: (orderId: string) => void }) {
     try {
       const data = await factoriesHttp.list()
       if (sequence === sourceSequence.current) {
-        setSources(data.factories.flatMap((factory) => (factory.libraries ?? []).map((db) => ({ source_id: db.sourceId, name: db.name, country: db.country, icon: db.icon }))))
+        setSources(data.factories.flatMap((factory) => (factory.libraries ?? []).map((db) => ({ source_id: db.source_id, name: db.name, country: db.country, icon: db.icon }))))
         setSourcesFailed(false)
       }
     } catch {

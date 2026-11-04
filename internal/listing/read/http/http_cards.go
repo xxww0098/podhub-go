@@ -76,8 +76,13 @@ func (h Host) listCards(w http.ResponseWriter, r *http.Request) {
 	fetch := limit + 1
 	micros, afterID := ParseCursor(q.Get("cursor"))
 	store := q.Get("storeId")
+	scope, err := h.storeScope(r.Context(), p.OrgID, p.UserID)
+	if err != nil {
+		writeDB(w, err)
+		return
+	}
 	var rows []cardRow
-	err := h.withOrg(r.Context(), p.OrgID, func(tx pgx.Tx) error {
+	err = h.withOrg(r.Context(), p.OrgID, func(tx pgx.Tx) error {
 		// Placeholders are numbered only for arguments that appear. An unused
 		// $2 makes Postgres reject the statement (42P18) before any row is read.
 		sql := `SELECT ` + cardSelect + ` FROM listing_cards WHERE org_id = $1`
@@ -85,6 +90,10 @@ func (h Host) listCards(w http.ResponseWriter, r *http.Request) {
 		if store != "" {
 			args = append(args, store)
 			sql += fmt.Sprintf(` AND store_id = $%d::uuid`, len(args))
+		}
+		if !scope.all {
+			args = append(args, scope.stores)
+			sql += scope.cardFilter(len(args))
 		}
 		if micros != 0 {
 			args = append(args, micros, afterID)
@@ -144,7 +153,7 @@ func (h Host) getCard(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "cardId 无效", "validation")
 		return
 	}
-	item, err := h.loadCard(r, p.OrgID, id)
+	item, err := h.loadCard(r, p.OrgID, p.UserID, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeErr(w, http.StatusNotFound, "上架方案不存在", "not_found")
@@ -162,12 +171,19 @@ func (h Host) getCard(w http.ResponseWriter, r *http.Request) {
 	}{Data: item.view})
 }
 
-func (h Host) loadCard(r *http.Request, org int64, id string) (cardRow, error) {
+func (h Host) loadCard(r *http.Request, org, user int64, id string) (cardRow, error) {
 	var item cardRow
 	err := h.withOrg(r.Context(), org, func(tx pgx.Tx) error {
 		row := tx.QueryRow(r.Context(), `SELECT `+cardSelect+` FROM listing_cards WHERE org_id = $1 AND id = $2::uuid`, org, id)
 		var scanErr error
 		item, scanErr = scanCard(row)
+		if scanErr == nil {
+			var allowed bool
+			allowed, scanErr = storeAllowedTx(r.Context(), tx, org, user, item.view.StoreID)
+			if scanErr == nil && !allowed {
+				scanErr = pgx.ErrNoRows
+			}
+		}
 		if scanErr == nil && item.supplier {
 			item.payload, scanErr = projectSupplierCard(r.Context(), tx, item.payload, h.clock().UnixMilli())
 		}

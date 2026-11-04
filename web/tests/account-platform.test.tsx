@@ -165,7 +165,7 @@ test("the /admin surface paints the staff rail, one mode and no switcher", () =>
   // Platform settings offer only the permitted sections.
   assert.deepEqual(
     adminSettingsRowsFor("super_admin").map((row) => row.label),
-    ["用户", "工厂管理", "AI 账号", "支付", "网络代理", "全局受限标签", "类目", "兑换", "代理", "日志", "订单"],
+    ["用户", "工厂管理", "AI 账号", "系统存储桶", "支付", "网络代理", "全局受限标签", "类目", "兑换", "代理", "日志", "订单"],
   )
 })
 

@@ -13,7 +13,7 @@ import { missingReadiness } from "./supplier-readiness"
 import { categoryShortLabel } from "./supplier-prop-editors"
 import { productNeedsCompletion, supplierProductGroups } from "./supplier-product-groups"
 
-/** 状态筛选（就绪口径）：全部 / 就绪 / 待完善（缺项）/ 待复核（类目更新待人工）。 */
+/** 状态筛选（就绪口径）：全部 / 就绪 / 待完善（缺项）/ 待复核（Ozon 配置待校验）。 */
 export type SupplierDbRowStatus =
   | "all"
   | "ready"

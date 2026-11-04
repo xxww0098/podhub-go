@@ -315,7 +315,7 @@ func testOldOrderDeadlocks(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 		}
 		defer tx.Rollback(claimCtx)
 		req := httptest.NewRequest(http.MethodPost, "/", nil).WithContext(claimCtx)
-		_, _, err = runClaimWindow(req, tx, org, user, []string{id}, "ai.recognize", 4, false)
+		_, _, err = runClaimWindow(req, tx, org, user, []string{id}, "ai.recognize", 4, false, storeScope{all: true})
 		if err != nil {
 			errCh <- err
 			return
@@ -635,7 +635,7 @@ func claimWindowSnap(t *testing.T, ctx context.Context, pool *pgxpool.Pool, org,
 	var snap claimSnap
 	withApp(t, ctx, pool, org, func(tx pgx.Tx) {
 		req := httptest.NewRequest(http.MethodPost, "/", nil)
-		out, level, err := runClaimWindow(req, tx, org, owner, ids, kind, limit, headsFirst)
+		out, level, err := runClaimWindow(req, tx, org, owner, ids, kind, limit, headsFirst, storeScope{all: true})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -682,7 +682,7 @@ func windowBody(t *testing.T, ctx context.Context, pool *pgxpool.Pool, org, user
 			t.Fatal(err)
 		}
 		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-		out, level, err := runClaimWindow(req, tx, org, user, fields.JobIDs, fields.Kind, fields.Limit, headsFirst)
+		out, level, err := runClaimWindow(req, tx, org, user, fields.JobIDs, fields.Kind, fields.Limit, headsFirst, storeScope{all: true})
 		if err != nil {
 			t.Fatal(err)
 		}

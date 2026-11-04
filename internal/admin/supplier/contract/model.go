@@ -26,19 +26,19 @@ type NormalizedDb struct {
 
 // Factory is independent from the product libraries that bind to it.
 type Factory struct {
-	FactoryID    string           `json:"factoryId"`
+	FactoryID    string           `json:"factory_id"`
 	Name         string           `json:"name"`
 	Country      string           `json:"country"`
 	Contact      string           `json:"contact"`
-	InternalNote string           `json:"internalNote"`
+	InternalNote string           `json:"internal_note"`
 	Icon         string           `json:"icon"`
-	CreatedAtMs  int64            `json:"createdAtMs"`
-	UpdatedAtMs  int64            `json:"updatedAtMs"`
+	CreatedAtMs  int64            `json:"created_at_ms"`
+	UpdatedAtMs  int64            `json:"updated_at_ms"`
 	Libraries    []FactoryLibrary `json:"libraries"`
 }
 
 type FactoryLibrary struct {
-	SourceID string `json:"sourceId"`
+	SourceID string `json:"source_id"`
 	Name     string `json:"name"`
 	Country  string `json:"country"`
 	Icon     string `json:"icon"`

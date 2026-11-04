@@ -35,7 +35,7 @@ export function SupplierLibraryManagement({ store, superAdmin, onBack }: { store
     catch (reason) { setLoadFailed(true); notifyCommandError(reason, "读取工厂失败") }
   }
   useEffect(() => { void loadFactories() }, [])
-  const items = (factories ?? []).map((factory) => ({ value: factory.factoryId, label: factory.name }))
+  const items = (factories ?? []).map((factory) => ({ value: factory.factory_id, label: factory.name }))
   const permissionsDb = (permissionsId && state.details[permissionsId]?.detail?.db) || state.dbs.find((db) => db.sourceId === permissionsId)
   const propDetail = propertiesId ? state.details[propertiesId]?.detail : undefined
   if (permissionsDb) return <SupplierDbPermissions db={permissionsDb} superAdmin={superAdmin} onBack={() => setPermissionsId(null)}
@@ -55,7 +55,7 @@ export function SupplierLibraryManagement({ store, superAdmin, onBack }: { store
       {loadFailed ? <div role="alert">无法读取工厂目录 <Button variant="outline" size="sm" onClick={() => void loadFactories()}>重试</Button></div> : null}
       {!state.dbs.length ? <p className="text-sm text-muted-foreground">还没有商品库，先绑定已有工厂。</p> : null}
       {state.dbs.map((listDb) => { const db = state.details[listDb.sourceId]?.detail?.db ?? listDb; return <div key={db.sourceId} className="flex flex-wrap items-center gap-3 rounded-lg border p-3">
-        <div className="min-w-0 flex-1"><p className="font-medium">{db.name}</p><p className="text-meta text-muted-foreground">{factories?.find((factory) => factory.factoryId === db.factoryId)?.name ?? (db.factoryId ? "工厂资料不可用" : "未绑定工厂")} · {db.rowCount} 个规格 · 履约：{db.fulfillerEmail || "待绑定"}</p></div>
+        <div className="min-w-0 flex-1"><p className="font-medium">{db.name}</p><p className="text-meta text-muted-foreground">{factories?.find((factory) => factory.factory_id === db.factoryId)?.name ?? (db.factoryId ? "工厂资料不可用" : "未绑定工厂")} · {db.rowCount} 个规格 · 履约：{db.fulfillerEmail || "待绑定"}</p></div>
         {!db.factoryId && db.sourceId !== "src_unassigned" ? <Button size="sm" variant="outline" onClick={() => openBinding(db)}><Link2 />绑定工厂</Button> : null}
         <label className="flex items-center gap-2 text-sm">卖家可见<Switch checked={db.listed} disabled={busy} aria-label={`${db.name} 卖家可见`} onCheckedChange={async (value) => {
           setBusy(true); const result = await store.updateDb(db.sourceId, { listed: value === true }); setBusy(false)

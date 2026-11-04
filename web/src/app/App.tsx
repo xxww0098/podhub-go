@@ -20,7 +20,6 @@ import { commandErrorCode, errorMessage } from "@/lib/error-message"
 import { clearLive, notifyLive } from "@/lib/notify"
 import { isSupplierPath } from "@/lib/supplier-surface"
 import { invalidateAllSessionCaches } from "@/lib/session-cache"
-import { useInvitationCredential } from "@/lib/invitation-link"
 
 /**
  * Anonymous first paint is the marketing homepage. Login lives at `/login`
@@ -180,7 +179,6 @@ function PublicSiteSessionDown({
 }
 
 export function App() {
-  const invitationCredential = useInvitationCredential()
   const [auth, setAuth] = useState<AuthState>({ phase: "loading" })
   const [attempt, setAttempt] = useState(0)
   // The address is the only navigation state: the resolver below turns
@@ -299,14 +297,6 @@ export function App() {
   }
 
   if (auth.phase === "anonymous") {
-    if (invitationCredential) {
-      return (
-        <LoginScreen
-          onSignedIn={signIn}
-          onPasswordChangeRequired={lockAccount}
-        />
-      )
-    }
     // Anonymous standing has exactly two outcomes: a public page, or the way
     // in. `/admin` resolves to the login page and keeps its address.
     // `/supplier` is the factory surface's own boundary: an anonymous visitor

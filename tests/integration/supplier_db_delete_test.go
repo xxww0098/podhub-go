@@ -24,6 +24,7 @@ func TestDeleteSupplierDbWithRows(t *testing.T) {
 	if !testkit.DockerAvailable() {
 		t.Skip("docker daemon is not available")
 	}
+	t.Setenv("CLOUD_INTEGRATION_CONFIG_KEY", r2FixtureKey)
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 	container, err := postgres.Run(ctx, "postgres:16-alpine",

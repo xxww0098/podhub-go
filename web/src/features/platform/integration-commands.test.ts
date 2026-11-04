@@ -91,6 +91,7 @@ function rosterReply(
 const config = {
   schema_version: 1,
   ai_default_model: "gpt-test",
+  system_storage: [],
   revision: 12,
   cache_ttl_seconds: 300,
   ai_runtime: { max_concurrency_global: 0, max_concurrency_user: 0, max_concurrency_account: 0, user_rate_per_minute: 0, lease_ttl_seconds: 90, allow_public_egress: false },

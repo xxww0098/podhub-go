@@ -61,7 +61,7 @@ type ImageRuntime struct {
 	Account func(context.Context) (string, error)
 	Resolve func(context.Context, string, string) (ImageGenerator, ImageAssets, error)
 	// PublicURL resolves an existing object independently of model availability.
-	PublicURL func(bucketIdentity, key string) (string, error)
+	PublicURL func(context.Context, string, string) (string, error)
 }
 type imageInput struct {
 	AccountID            string `json:"account_id"`

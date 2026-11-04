@@ -70,6 +70,16 @@ func notificationCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, us
 func TestAutoRenewIssuesOneUnpaidOrderInsideTheLeadWindow(t *testing.T) {
 	ctx, pool, org, user := subscriptionTenant(t)
 	buySubscription(t, ctx, pool, org, user, "lite", 8, subscriptionTime(10, 21))
+	const (
+		keepA = "a1111111-1111-4111-8111-111111111111"
+		keepB = "a2222222-2222-4222-8222-222222222222"
+	)
+	insertStoreN(t, ctx, pool, org, keepA, 1)
+	insertStoreN(t, ctx, pool, org, keepB, 2)
+	if _, err := pool.Exec(ctx, `UPDATE subscription_periods SET keep_store_ids = ARRAY[$1,$2]::uuid[] WHERE org_id=$3`,
+		keepA, keepB, org); err != nil {
+		t.Fatal(err)
+	}
 	end := time.Date(2026, 11, 21, 10, 0, 0, 0, domain.Shanghai)
 
 	if n, err := billingrepo.IssueDueRenewals(ctx, pool, subscriptionTime(11, 17)); err != nil || n != 0 {
@@ -94,6 +104,30 @@ func TestAutoRenewIssuesOneUnpaidOrderInsideTheLeadWindow(t *testing.T) {
 	}
 	if auto.AutoEnd == nil || !auto.AutoEnd.Equal(end) || auto.Deadline == nil || !auto.Deadline.Equal(end) {
 		t.Fatalf("auto order is tied to the paid end %v: %+v", end, auto)
+	}
+	var quoteKeep []string
+	var snapshot []byte
+	if err := pool.QueryRow(ctx, `
+		SELECT q.keep_store_ids, o.subscription_snapshot
+		  FROM payment_orders o JOIN subscription_quotes q ON q.id = o.quote_id
+		 WHERE o.public_id = $1`, auto.PublicID).Scan(&quoteKeep, &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Request struct {
+			KeepStores []string `json:"keep_store_ids"`
+		} `json:"request"`
+		Period struct {
+			KeepStores []string `json:"keep_store_ids"`
+		} `json:"period"`
+	}
+	if err := json.Unmarshal(snapshot, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(quoteKeep) != 2 || quoteKeep[0] != keepA || quoteKeep[1] != keepB ||
+		len(payload.Request.KeepStores) != 2 || payload.Request.KeepStores[0] != keepA ||
+		len(payload.Period.KeepStores) != 2 || payload.Period.KeepStores[0] != keepA {
+		t.Fatalf("renewal did not keep the chosen stores: quote %v request %v period %v", quoteKeep, payload.Request.KeepStores, payload.Period.KeepStores)
 	}
 	if got := notificationCount(t, ctx, pool, user, "subscription_renewal_due"); got != 1 {
 		t.Fatalf("renewal notifications=%d", got)

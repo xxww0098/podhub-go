@@ -24,7 +24,7 @@ type DB interface {
 	CreateBinding(ctx context.Context, orgID, userID int64, storeID, offerID, sourceID, note string, auto bool, nowMS int64) (contract.Binding, error)
 	PatchBinding(ctx context.Context, orgID, userID int64, canManage bool, bindingID string, expected int64, sourceID, note *string, active *bool, auto bool, nowMS int64) (contract.Binding, error)
 	DeleteBinding(ctx context.Context, orgID, userID int64, canManage bool, bindingID string, nowMS int64) error
-	CommitAsset(ctx context.Context, orgID, userID int64, canManage bool, in contract.AssetIdentity, auto bool, nowMS int64, reload, reverify func() error) (contract.Asset, error)
+	CommitAsset(ctx context.Context, orgID, userID int64, canManage bool, in contract.AssetIdentity, auto bool, nowMS, revision int64, reverify func() error) (contract.Asset, error)
 	DeleteAsset(ctx context.Context, orgID, userID int64, canManage bool, assetID string, auto bool, nowMS int64) (contract.DeletedAsset, error)
 	ListOrders(ctx context.Context, orgID int64, q contract.OrderQuery) ([]contract.Order, bool, string, error)
 	GetOrder(ctx context.Context, orgID, userID int64, canManage bool, orderID string) (contract.Order, error)
@@ -48,6 +48,7 @@ type Issue struct {
 type Confirmed struct {
 	Key, SHA, ContentType string
 	Bytes                 int64
+	Reverify              func() error
 }
 
 // Edge is storage, tickets, and the Seller read. Nil methods mean that arm is unconfigured.
@@ -255,6 +256,9 @@ func (s Seller) Finalize(ctx context.Context, actor Actor, bindingID, ticket, fi
 		}
 		return contract.Asset{}, asAPI(err)
 	}
+	if confirmed.Reverify == nil {
+		return contract.Asset{}, contract.StorageUnavailable(contract.MsgStorageMissing)
+	}
 	ext, sha, err := domain.ValidateFile(confirmed.SHA, confirmed.ContentType, fileName, confirmed.Bytes)
 	if err != nil {
 		return contract.Asset{}, err
@@ -268,19 +272,7 @@ func (s Seller) Finalize(ctx context.Context, actor Actor, bindingID, ticket, fi
 	asset, err := s.DB.CommitAsset(ctx, actor.OrgID, actor.UserID, actor.CanManage, contract.AssetIdentity{
 		Key: confirmed.Key, SHA: sha, Mime: strings.TrimSpace(confirmed.ContentType), FileName: strings.TrimSpace(fileName),
 		BindingID: id, StoreID: storeID, Bytes: confirmed.Bytes, Position: position,
-	}, s.Auto, s.millis(), func() error {
-		nextPrefix, nextRevision, err := s.Edge.Storage(ctx)
-		if err != nil {
-			return err
-		}
-		if nextRevision != revision || nextPrefix != prefix {
-			return contract.Conflict("存储配置已变化，请重新授权上传")
-		}
-		return nil
-	}, func() error {
-		_, err := s.Edge.Confirm(ctx, purpose, actor.UserID, actor.OrgID, ticket)
-		return err
-	})
+	}, s.Auto, s.millis(), revision, confirmed.Reverify)
 	return asset, asAPI(err)
 }
 

@@ -36,7 +36,7 @@ test("section ids stay unique, known and fully described", () => {
 test("platform management panes are one super_admin group", () => {
   assert.deepEqual(
     ADMIN_SETTINGS_ROWS.map((row) => row.id),
-    ["users", "supplier-accounts", "ai-accounts", "payment", "proxy", "banned-tags", "categories", "redeem-codes", "agents", "admin-logs", "plan-orders"],
+    ["users", "supplier-accounts", "ai-accounts", "system-storage", "payment", "proxy", "banned-tags", "categories", "redeem-codes", "agents", "admin-logs", "plan-orders"],
   )
   assert.equal(new Set(ADMIN_SETTINGS_ROWS.map((row) => row.group)).size, 1)
   assert.equal(ADMIN_SETTINGS_ROWS[0].group, "平台管理")
@@ -61,6 +61,17 @@ test("平台管理员 runs the main-menu platform screens but opens no 平台管
   assert.deepEqual(
     adminSettingsRowsFor("super_admin").map((row) => row.id),
     managed,
+  )
+})
+
+test("workspace bucket settings are owner-only", () => {
+  for (const role of ["manager", "member", "", null]) {
+    assert.ok(!settingsRowsFor("user", role).some((row) => row.id === "workspace-storage"), String(role))
+  }
+  assert.ok(settingsRowsFor("user", "owner").some((row) => row.id === "workspace-storage"))
+  assert.deepEqual(
+    resolveSettingsPane({ requested: "workspace-storage", available: settingsRowsFor("user", "member"), adminSurface: false }),
+    { kind: "pane", section: "account" },
   )
 })
 

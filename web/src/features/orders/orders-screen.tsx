@@ -242,8 +242,8 @@ export function OrdersScreen({
                           {order.status === "pending" ? <DropdownMenu>
                             <DropdownMenuTrigger render={<Button size="icon-sm" variant="ghost" aria-label={`订单 ${order.public_id} 的更多操作`} disabled={busy || loadFailed} />}><Ellipsis aria-hidden /></DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => setConfirming(order)}>确认收款</DropdownMenuItem>
-                              {order.provider === "manual" ? <DropdownMenuItem variant="destructive" onClick={() => setCanceling(order)}>取消订单</DropdownMenuItem> : null}
+                              {order.provider !== "unselected" ? <DropdownMenuItem onClick={() => setConfirming(order)}>确认收款</DropdownMenuItem> : null}
+                              {order.provider === "manual" || order.provider === "unselected" ? <DropdownMenuItem variant="destructive" onClick={() => setCanceling(order)}>取消订单</DropdownMenuItem> : null}
                             </DropdownMenuContent>
                           </DropdownMenu> : null}
                         </div>

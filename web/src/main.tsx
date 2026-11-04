@@ -10,13 +10,11 @@ import { queryClient } from "@/lib/query-client"
 import { migrateLegacyStorage } from "@/lib/legacy-storage"
 import { installAddressSync } from "@/lib/address"
 import { installBrowserDiagnostics, reactErrorHandlers } from "@/lib/browser-diagnostics"
-import { installInvitationLink } from "@/lib/invitation-link"
 import "@/index.css"
 import "@/features/site/public-site.css"
 import "@/features/site/public-site-responsive.css"
 import "@/features/account/login-screen.css"
 
-const removeInvitationLink = installInvitationLink()
 const removeDiagnostics = installBrowserDiagnostics(window)
 // The address is the router: back/forward and a bfcache restore must repaint
 // from what the URL says, exactly like a first paint does.
@@ -24,7 +22,6 @@ const removeAddressSync = installAddressSync()
 if (import.meta.hot) import.meta.hot.dispose(() => {
   removeDiagnostics()
   removeAddressSync()
-  removeInvitationLink()
 })
 
 // Before any module reads a stored preference.

@@ -184,6 +184,12 @@ type Job struct {
 	UpdatedAt         pgtype.Timestamptz
 }
 
+type ListingCard struct {
+	ID      pgtype.UUID
+	OrgID   int64
+	StoreID pgtype.UUID
+}
+
 type ListingCardCursor struct {
 	OrgID  int64
 	CardID pgtype.UUID
@@ -191,9 +197,10 @@ type ListingCardCursor struct {
 }
 
 type ListingRow struct {
-	ID     pgtype.UUID
-	OrgID  int64
-	CardID pgtype.UUID
+	ID      pgtype.UUID
+	OrgID   int64
+	CardID  pgtype.UUID
+	StoreID pgtype.UUID
 }
 
 type OrgInvitation struct {

@@ -18,31 +18,15 @@ function summary(release: ChangelogRelease): string[] {
   )
 }
 
-test("仓库 CHANGELOG 解析出最近 3 个版本，并按新增优化修复分组", () => {
+test("仓库 CHANGELOG 从 0.0.1 开始，展示最近 3 个当前版本", () => {
   const releases = parseChangelog(REAL_CHANGELOG)
-  assert.equal(releases.length, CHANGELOG_VISIBLE_LIMIT)
-  assert.deepEqual(
-    releases.map((release) => release.version),
-    ["0.0.107", "0.0.103", "0.0.102"],
-  )
-  assert.equal(releases[0]?.date, "2026-10-14")
-  assert.equal(releases[0]?.note, "没有 git tag")
-  assert.deepEqual(
-    releases[0]?.sections.map((section) => section.title),
-    ["新增", "优化", "修复"],
-  )
-  assert.equal(releases[0]?.sections[0]?.items.length, 3)
-  assert.deepEqual(summary(releases[0]!), [
-    "店铺商品页可以按规格整理商品：把同一个设计的几个尺寸合并成一个共同型号，也可以把其中一件拆出来，或把它移进已有的分组。每一步都先给预览，确认后才写到 Ozon；每个尺寸仍保留自己的图片、价格和库存",
-    "工作台的「型号」成为独立一列，可以逐行填写；卡片默认值、识图结果和源图文件名都不会覆盖你写过的型号",
-    "账户安全补齐：邮箱验证、自助重置密码和工作区邀请邮件改走新的外发通道（未配置 CLOUD_SMTP_URL 时只写 Cloud 日志）；超级管理员要在登录后绑定验证器，绑定前平台管理页会要求先绑定，绑定后登录还要一次验证码或恢复码",
-    "分组之后系统只做只读核对（最多 10 趟、30 分钟、每趟最多 3 次读取）：确认组合真的生效，或者说明还需要人工核实；用完之后不会自动重发",
-    "同一个 Ozon 账号登记成两个 Cloud 店铺（甚至两个工作区）时，两边的分组与同款发送会互相排队，不会把对方的改动盖掉",
-    "识图计费护栏默认开启：先校验答案再结算，不合格的答案释放预占；同一个购买键重放不再调用上游、不再重复扣费。显式设置 CLOUD_OCR_BILLING_GUARD=0 可回到原来的先结算后校验",
-    "类目字段缓存缺变体维度元数据时不再被当成「过期不可用」：普通读取、草稿与校验照常，只有分组判定会要求刷新材料，不会再出现「类目需要同步」却同步不掉的循环",
-    "改价、改库存、促销、归档、恢复、删除商品，以及确认分组执行，不再因为写入账本回执编号读错类型或漂移比对读错字段而报「服务暂不可用」「商品属性已变化」",
-    "识图写俄语时，会把词里能确定的拉丁形近字改成对应的西里尔字母，包括以前对不上的 г、ш 和 Ь。英文词里误写的西里尔形近字会改回拉丁字母。对不上的字母再识别一次时，会指出是哪几个词、哪几个字母；指不出来就不再扣第二次",
-  ])
+  const all = parseChangelog(REAL_CHANGELOG, 1000)
+  assert.deepEqual(releases, all.slice(0, CHANGELOG_VISIBLE_LIMIT))
+  assert.equal(all.at(-1)?.version, "0.0.1")
+  assert.equal(all.find((release) => release.version === "0.0.1")?.date, "2026-11-03")
+  assert.equal(all.find((release) => release.version === "0.0.2")?.date, "2026-11-03")
+  assert.doesNotMatch(all.flatMap(summary).join("\n"), /账户安全补齐：邮箱验证|限制模型输出参数并发布 0\.0\.85/)
+  assert.ok(all.every((release) => release.sections.length > 0))
   const shown = releases.flatMap((release) => summary(release)).join("\n")
   for (const word of [
     "log-poll",
@@ -64,28 +48,13 @@ test("仓库 CHANGELOG 解析出最近 3 个版本，并按新增优化修复分
   ]) {
     assert.equal(shown.includes(word), false, word)
   }
-  assert.equal(releases[1]?.note, "")
-  assert.deepEqual(
-    releases[1]?.sections.map((section) => section.title),
-    ["优化", "修复"],
-  )
-  assert.equal(releases[2]?.note, "")
-  assert.deepEqual(
-    releases[2]?.sections.map((section) => section.title),
-    ["优化", "修复"],
-  )
-  const older = parseChangelog(REAL_CHANGELOG, 20)
-  assert.equal(older.find((release) => release.version === "0.0.85")?.sections[0]?.title, "修复")
 })
 
 test("构建注入只打包最近 3 个版本的 JSON", () => {
   const webDir = new URL("../..", import.meta.url)
   const json = changelogJsonFromRoot(webDir.pathname)
   const releases = changelogReleasesFromJson(json)
-  assert.deepEqual(
-    releases.map((release) => release.version),
-    ["0.0.107", "0.0.103", "0.0.102"],
-  )
+  assert.deepEqual(releases, parseChangelog(REAL_CHANGELOG))
   assert.equal(changelogJsonFromRoot("/missing/podhub/web"), "[]")
 })
 

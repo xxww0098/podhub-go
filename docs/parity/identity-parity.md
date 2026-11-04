@@ -32,7 +32,7 @@
 1. 黄金字节来自读过的 Rust 结构经 serde_json 的形状，不是一台活着的 Rust 进程。没有把 Rust 指到生产库。
 2. 审计行的 `writer_lease_id` 与 `writer_fence_token` 写 NULL。writer lease（domain `auth`，holder `axum`）没有移植。这是行内容差异，不是优化。
 3. 非空邀请码一律 400 `邀请码无效`。代理归因查询没有移植。空码与缺省仍是不绑定。
-4. 注册会按邮箱回填未处理邀请的 `invitee_user_id`，不写通知行。
+4. 工作空间邀请只发送给已注册且可用的平台账号；邀请绑定账号并写入站内通知，由该账号接受或拒绝。注册不会回填旧邀请。更换邮箱时，待处理邀请仍绑定原账号；迁移 `00041` 撤销未绑定账号的旧邀请。注册不验证邮箱，邀请人仍需确认账号归属。
 5. 超级管理员不再有验证器：登录只校验邮箱和密码，没有 `totpCode` 字段、`TOTP_REQUIRED` 错误码、恢复码或 15 分钟 step-up。迁移 `00004_drop_admin_totp.sql` 删除 `account_admin_totp` 与 `account_sessions.admin_step_up_until`，管理端 enroll、confirm、step-up 三条路由也一并删除。`TestIdentitySessionIssuanceRechecksLockedCredential` 仍覆盖锁定凭据的会话签发复查；Rust 侧的 TOTP 登录不再作为对拍目标。
 6. 早期浏览器交接页（GET/POST `/auth/handoff`）没有实现；`POST /api/auth/handoff` 也已从当前路由表撤下，旧的 60 秒码说明不能作为现行登录流程。
 7. 密码找回通过 TLS SMTP 投递；令牌表只落哈希，专用发件箱保存 AES-GCM 加密载荷，失败退避重试且终态擦除。迁移 `00010_password_reset_mail.sql` 新增持久化发件箱、IP 限流和凭证变更撤销触发器。注册不要求邮箱验证；迁移 `00038_email_change.sql` 为登录邮箱换绑增加新地址确认，复用邮件发件箱，并在换绑后撤销会话及旧链接。`password_changed` 摘要「修改密码」、`password_reset` 摘要「重置密码」是按任务说明写的，没有打开对应的 Rust `json!`。

@@ -41,13 +41,16 @@ func (r X1) SaveOzon(ctx context.Context, actor contract.Actor, sourceID, produc
 		if _, _, err := corerepo.LockProduct(ctx, tx, sourceID, productID); err != nil {
 			return err
 		}
-		stamp, err := loadStamp(ctx, tx, in.Category, in.TypeID, in.Language)
-		if err != nil {
-			return err
-		}
-		judge, err := r.judgeOzon(ctx, tx, in.Category, in.TypeID, in.Language, in.ValuesJSON, in.ComplexJSON, stamp, now)
-		if err != nil {
-			return err
+		judge := x1contract.PendingOzon()
+		if in.Validate {
+			stamp, err := loadStamp(ctx, tx, in.Category, in.TypeID, in.Language)
+			if err != nil {
+				return err
+			}
+			judge, err = r.judgeOzon(ctx, tx, in.Category, in.TypeID, in.Language, in.ValuesJSON, in.ComplexJSON, stamp, now)
+			if err != nil {
+				return err
+			}
 		}
 		if err := putOzon(ctx, tx, actor, sourceID, productID, in.Category, in.TypeID, in.Language, in.ValuesJSON, in.ComplexJSON, jsonBytes(in.Tags), in.Prompt, jsonBytes(in.AI), judge, in.Expected, publicID, now); err != nil {
 			return err

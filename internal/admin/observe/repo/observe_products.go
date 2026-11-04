@@ -249,7 +249,7 @@ func (r *Observe) Products(ctx context.Context, actor corecontract.Actor, query 
 		needleArg = needle
 	}
 	sql := fmt.Sprintf(`
-		SELECT p.org_id, s.uuid::text, p.product_id, p.offer_id, p.name, CASE WHEN p.sku > 0 THEN p.sku::text END, p.primary_image,
+		SELECT p.org_id, s.uuid::text, p.product_id, p.offer_id, p.name, CASE WHEN p.sku > 0 THEN p.sku::text END, COALESCE(p.primary_image, ''),
 		       d.status_name, d.state, p.model_id, p.model_count, p.price::text, p.old_price::text,
 		       p.stock_present, p.stock_reserved, (p.gone_at_ms IS NOT NULL), p.refreshed_at_ms,
 		       m.hits_view, m.session_view, m.hits_tocart, m.conv_tocart, m.ordered_units, m.revenue,
@@ -408,7 +408,7 @@ func (r *Observe) Thumbnail(ctx context.Context, actor corecontract.Actor, thumb
 	}
 	var image string
 	err = tx.QueryRow(ctx, `
-		SELECT p.primary_image FROM store_products p
+		SELECT COALESCE(p.primary_image, '') FROM store_products p
 		  JOIN organization_stores s ON s.id = p.store_pk AND s.org_id = p.org_id
 		  JOIN organizations o ON o.id = s.org_id
 		 WHERE s.uuid = $1::uuid AND p.product_id = $2

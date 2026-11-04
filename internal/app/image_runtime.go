@@ -36,7 +36,7 @@ func selectImageAccount(snapshot configdoc.Snapshot) (*configdoc.StoredAI, error
 	return account, nil
 }
 
-// The model comes from the encrypted snapshot; storage comes only from the environment.
+// The model and system storage come from the encrypted snapshot.
 func newImageRuntime(pool *pgxpool.Pool, cfg config.Config) *ai.ImageRuntime {
 	load := func(ctx context.Context) (*configdoc.StoredAI, registry.Account, error) {
 		snapshot, err := requireAISnapshot(ctx, pool, cfg)
@@ -50,7 +50,7 @@ func newImageRuntime(pool *pgxpool.Pool, cfg config.Config) *ai.ImageRuntime {
 		if _, err = ai.ImageEndpoint(account.BaseURL); err != nil {
 			return nil, registry.Account{}, err
 		}
-		stored, err := configuredR2Account(cfg, media.RoleAssets)
+		stored, _, err := configuredR2Account(ctx, pool, cfg, media.RoleAssets)
 		if err != nil {
 			return nil, registry.Account{}, err
 		}
@@ -58,8 +58,8 @@ func newImageRuntime(pool *pgxpool.Pool, cfg config.Config) *ai.ImageRuntime {
 		return account, bucket, nil
 	}
 	return &ai.ImageRuntime{
-		PublicURL: func(identity, key string) (string, error) {
-			account, err := configuredR2Account(cfg, media.RoleAssets)
+		PublicURL: func(ctx context.Context, identity, key string) (string, error) {
+			account, _, err := configuredR2Account(ctx, pool, cfg, media.RoleAssets)
 			if err != nil {
 				return "", err
 			}

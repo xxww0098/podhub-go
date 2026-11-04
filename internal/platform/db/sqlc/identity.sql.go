@@ -88,31 +88,6 @@ func (q *Queries) AttachOwner(ctx context.Context, arg AttachOwnerParams) error 
 	return err
 }
 
-const bindInvitations = `-- name: BindInvitations :execrows
-UPDATE org_invitations AS i
-SET invitee_user_id = $1, updated_at = clock_timestamp()
-FROM organizations AS o
-WHERE o.id = i.org_id
-  AND lower(i.email) = lower($2)
-  AND i.accepted_at IS NULL
-  AND i.revoked_at IS NULL
-  AND i.declined_at IS NULL
-  AND i.expires_at > clock_timestamp()
-`
-
-type BindInvitationsParams struct {
-	InviteeUserID pgtype.Int8
-	Lower         string
-}
-
-func (q *Queries) BindInvitations(ctx context.Context, arg BindInvitationsParams) (int64, error) {
-	result, err := q.db.Exec(ctx, bindInvitations, arg.InviteeUserID, arg.Lower)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const bumpLoginAttempt = `-- name: BumpLoginAttempt :exec
 INSERT INTO auth_login_attempts AS current
     (email_hash, ip_hash, failures, window_start, next_allowed_at, updated_at)

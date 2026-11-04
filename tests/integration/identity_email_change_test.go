@@ -43,8 +43,12 @@ func TestIdentityEmailChangeEndToEnd(t *testing.T) {
 	svc := identity.New(f.runtime).WithPasswordRecovery(mailer, bytes.Repeat([]byte{23}, 32))
 	owner := invitationLogin(t, f, 96311)
 	oldSession := invitationLogin(t, f, 96312)
-	oldInvite := createInvitationProof(t, f, owner, "a96312@example.invalid", "member")
-	newInvite := createInvitationProof(t, f, owner, "new-address@example.invalid", "member")
+	oldInvite := createWorkspaceInvitation(t, f, owner, "a96312@example.invalid", "member")
+	if _, err := f.fixture.Exec(f.ctx, `INSERT INTO org_invitations (org_id,email,role,invited_by_user_id,invited_by_email,invitee_user_id,expires_at,created_at,updated_at)
+	 SELECT org_id,'new-address@example.invalid','member',96311,'a96311@example.invalid',96311,clock_timestamp()-interval '1 day',clock_timestamp(),clock_timestamp()
+	 FROM organization_members WHERE user_id=96311 AND role='owner'`); err != nil {
+		t.Fatal(err)
+	}
 
 	for _, tc := range []struct {
 		email, password string
@@ -99,18 +103,23 @@ func TestIdentityEmailChangeEndToEnd(t *testing.T) {
 		t.Fatal("reused idempotency key revived a revoked session")
 	}
 	f.requireAnonymous(t, oldSession)
-	var oldBound, newBound, oldNotifications, newNotifications int
-	err := f.fixture.QueryRow(f.ctx, `SELECT
-	 (SELECT count(*) FROM org_invitations WHERE uuid=$1::uuid AND invitee_user_id IS NOT NULL),
-	 (SELECT count(*) FROM org_invitations WHERE uuid=$2::uuid AND invitee_user_id=96312),
-	 (SELECT count(*) FROM notifications n JOIN org_invitations i ON i.id=n.invitation_id WHERE i.uuid=$1::uuid AND n.user_id=96312),
-	 (SELECT count(*) FROM notifications n JOIN org_invitations i ON i.id=n.invitation_id WHERE i.uuid=$2::uuid AND n.user_id=96312)`, oldInvite.UUID, newInvite.UUID).Scan(&oldBound, &newBound, &oldNotifications, &newNotifications)
-	if err != nil || oldBound != 0 || newBound != 1 || oldNotifications != 0 || newNotifications != 1 {
-		t.Fatalf("invitation transfer: old=%d/%d new=%d/%d err=%v", oldBound, oldNotifications, newBound, newNotifications, err)
+	var recipient int64
+	var email string
+	var notifications int
+	var expiredRevoked bool
+	err := f.fixture.QueryRow(f.ctx, `SELECT i.invitee_user_id,i.email,
+	 (SELECT count(*) FROM notifications n WHERE n.invitation_id=i.id AND n.user_id=96312),
+	 (SELECT revoked_at IS NOT NULL FROM org_invitations WHERE email='new-address@example.invalid' AND expires_at<=clock_timestamp())
+	 FROM org_invitations i WHERE i.uuid=$1::uuid`, oldInvite.UUID).Scan(&recipient, &email, &notifications, &expiredRevoked)
+	if err != nil || recipient != 96312 || email != "new-address@example.invalid" || notifications != 1 || !expiredRevoked {
+		t.Fatalf("invitation after email change: recipient=%d email=%q notifications=%d expired revoked=%v err=%v", recipient, email, notifications, expiredRevoked, err)
 	}
 	newOwner := identityRuntimeToken(t, f.request(http.MethodPost, "/api/auth/register", `{"email":"a96312@example.invalid","password":"replacement-password"}`, "", "old-email-register"))
-	if res := f.request(http.MethodPost, "/api/invitations/"+oldInvite.UUID+"/accept", invitationProofBody(oldInvite), newOwner, ""); res.Code != http.StatusOK {
-		t.Fatalf("old email invitation after registration: %d %s", res.Code, res.Body.String())
+	if res := f.request(http.MethodPost, "/api/invitations/"+oldInvite.UUID+"/accept", "", newOwner, ""); res.Code != http.StatusBadRequest {
+		t.Fatalf("old email account accepted invitation: %d %s", res.Code, res.Body.String())
+	}
+	if res := f.request(http.MethodPost, "/api/invitations/"+oldInvite.UUID+"/accept", "", newSession, ""); res.Code != http.StatusOK {
+		t.Fatalf("recipient accepted after email change: %d %s", res.Code, res.Body.String())
 	}
 	f.assertClean(t)
 }
@@ -223,13 +232,13 @@ func TestInvitationEmailLockPrecedesUserLock(t *testing.T) {
 	if err := holder.QueryRow(f.ctx, `SELECT pg_backend_pid()`).Scan(&pid); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := holder.Exec(f.ctx, `SELECT pg_advisory_xact_lock(hashtextextended('workspace-invitation-email:' || lower($1), 0))`, "pending@example.invalid"); err != nil {
+	if _, err := holder.Exec(f.ctx, `SELECT pg_advisory_xact_lock(hashtextextended('workspace-invitation-email:' || lower($1), 0))`, "a96311@example.invalid"); err != nil {
 		t.Fatal(err)
 	}
 	svc := identity.New(f.runtime)
 	done := make(chan identity.Result, 1)
 	go func() {
-		r := httptest.NewRequest(http.MethodPost, "/api/invitations", strings.NewReader(`{"email":"pending@example.invalid","role":"member"}`)).WithContext(f.ctx)
+		r := httptest.NewRequest(http.MethodPost, "/api/invitations", strings.NewReader(`{"email":"a96311@example.invalid","role":"member"}`)).WithContext(f.ctx)
 		r.Header.Set("Authorization", "Bearer "+session)
 		done <- svc.CreateInvitation(r)
 	}()

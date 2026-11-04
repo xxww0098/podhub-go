@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Spinner } from "@/components/ui/spinner"
 
 export type FactoryEditor = { factoryId?: string; draft: FactoryDraft }
-export const EMPTY_FACTORY: FactoryDraft = { name: "", country: "", contact: "", internalNote: "", icon: "", accountEmail: "" }
+export const EMPTY_FACTORY: FactoryDraft = { name: "", country: "", contact: "", internal_note: "", icon: "", account_email: "" }
 
 export function FactoryFormDialog({ editor, busy, onClose, onChange, onSubmit }: {
   editor: FactoryEditor | null
@@ -24,10 +24,10 @@ export function FactoryFormDialog({ editor, busy, onClose, onChange, onSubmit }:
       {draft ? <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); onSubmit() }}>
         <FieldGroup>
           <Field><FieldLabel htmlFor="factory-name">工厂名称</FieldLabel><Input id="factory-name" required maxLength={80} value={draft.name} disabled={busy} onChange={(event) => onChange({ ...draft, name: event.target.value })} /></Field>
-          {creating ? <Field><FieldLabel htmlFor="factory-email">工厂登录邮箱</FieldLabel><Input id="factory-email" type="email" required value={draft.accountEmail ?? ""} disabled={busy} onChange={(event) => onChange({ ...draft, accountEmail: event.target.value })} /></Field> : null}
+          {creating ? <Field><FieldLabel htmlFor="factory-email">工厂登录邮箱</FieldLabel><Input id="factory-email" type="email" required value={draft.account_email ?? ""} disabled={busy} onChange={(event) => onChange({ ...draft, account_email: event.target.value })} /></Field> : null}
           <Field><FieldLabel htmlFor="factory-contact">联系方式</FieldLabel><Input id="factory-contact" value={draft.contact} disabled={busy} onChange={(event) => onChange({ ...draft, contact: event.target.value })} /></Field>
           <Field><FieldLabel htmlFor="factory-country">国家或地区代码</FieldLabel><Input id="factory-country" maxLength={2} placeholder="如 CN" value={draft.country} disabled={busy} onChange={(event) => onChange({ ...draft, country: event.target.value })} /></Field>
-          <Field><FieldLabel htmlFor="factory-note">备注</FieldLabel><Textarea id="factory-note" value={draft.internalNote} disabled={busy} onChange={(event) => onChange({ ...draft, internalNote: event.target.value })} /></Field>
+          <Field><FieldLabel htmlFor="factory-note">备注</FieldLabel><Textarea id="factory-note" value={draft.internal_note} disabled={busy} onChange={(event) => onChange({ ...draft, internal_note: event.target.value })} /></Field>
         </FieldGroup>
         <DialogFooter><Button type="button" variant="outline" disabled={busy} onClick={onClose}>取消</Button><Button type="submit" variant="brand" disabled={busy}>{busy ? <Spinner /> : null}{creating ? "创建工厂" : "保存"}</Button></DialogFooter>
       </form> : null}

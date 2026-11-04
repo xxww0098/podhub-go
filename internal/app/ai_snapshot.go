@@ -17,32 +17,37 @@ import (
 // false only when no configuration row exists. A present row that cannot be
 // read, decrypted, or parsed is an error.
 func loadAISnapshot(ctx context.Context, pool *pgxpool.Pool, cfg config.Config) (snapshot configdoc.Snapshot, found bool, err error) {
+	snapshot, _, found, err = loadSnapshot(ctx, pool, cfg)
+	return
+}
+
+func loadSnapshot(ctx context.Context, pool *pgxpool.Pool, cfg config.Config) (snapshot configdoc.Snapshot, revision int64, found bool, err error) {
 	if pool == nil {
-		return snapshot, false, errors.New("integration configuration missing")
+		return snapshot, 0, false, errors.New("integration configuration missing")
 	}
 	key, err := seal.IntegrationKEK(cfg.IntegrationConfigKey)
 	if err != nil {
-		return snapshot, false, err
+		return snapshot, 0, false, err
 	}
 	var nonce, ciphertext []byte
 	err = imageRuntimeTx(ctx, pool, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT nonce,ciphertext FROM platform_integration_config WHERE singleton=true`).Scan(&nonce, &ciphertext)
+		return tx.QueryRow(ctx, `SELECT revision,nonce,ciphertext FROM platform_integration_config WHERE singleton=true`).Scan(&revision, &nonce, &ciphertext)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return snapshot, false, nil
+		return snapshot, 0, false, nil
 	}
 	if err != nil {
-		return snapshot, false, err
+		return snapshot, 0, false, err
 	}
 	plain, err := seal.OpenIntegration(key, nonce, ciphertext)
 	if err != nil {
-		return snapshot, false, err
+		return snapshot, 0, false, err
 	}
 	snapshot, _, err = configdoc.ParseStored(plain)
 	if err != nil {
-		return configdoc.Snapshot{}, false, err
+		return configdoc.Snapshot{}, 0, false, err
 	}
-	return snapshot, true, nil
+	return snapshot, revision, true, nil
 }
 
 // requireAISnapshot is loadAISnapshot for runtimes that cannot work without a row.

@@ -29,6 +29,7 @@ type OzonPut struct {
 	Prompt      string
 	AI          AiOutput
 	Expected    int64
+	Validate    bool
 }
 
 // OzonConfig is SupplierOzonConfigData, in declaration order.
@@ -72,9 +73,9 @@ func LegacyIssues() json.RawMessage {
 	return json.RawMessage(`[{"issue":"legacy_configuration_requires_review"}]`)
 }
 
-// HasLegacyIssue reports the early-return exclusion.
-func HasLegacyIssue(raw []byte) bool {
-	return bytes.Contains(raw, []byte(`"legacy_configuration_requires_review"`))
+// PendingOzon marks saved fields unusable until explicitly validated.
+func PendingOzon() JudgeResult {
+	return JudgeResult{State: "needs_reconfiguration", Issues: json.RawMessage(`[{"issue":"validation_pending"}]`), Count: 1}
 }
 
 // Judge adds catalog freshness to the canonical Rust field issues.
@@ -101,18 +102,19 @@ func Judge(fieldIssues json.RawMessage, stamp CatalogStamp, now int64) JudgeResu
 func DecodeOzon(body []byte) (OzonPut, error) {
 	raw, err := strictObject(body)
 	if err != nil || !hasOnly(raw, []string{
-		"description_category_id", "type_id", "language", "values", "complex_values", "fixed_tags", "prompt_text", "ai_output", "expected_revision",
+		"description_category_id", "type_id", "language", "values", "complex_values", "fixed_tags", "prompt_text", "ai_output", "expected_revision", "validate",
 	}) || !requireKeys(raw, []string{
-		"description_category_id", "type_id", "language", "values", "complex_values", "fixed_tags", "prompt_text", "ai_output", "expected_revision",
+		"description_category_id", "type_id", "language", "values", "complex_values", "fixed_tags", "prompt_text", "ai_output", "expected_revision", "validate",
 	}) {
 		return OzonPut{}, invalid()
 	}
 	var category, typeID, expected int64
+	var validate *bool
 	var language, prompt string
 	var tags []string
 	if !unmarshal(raw["description_category_id"], &category) || !unmarshal(raw["type_id"], &typeID) ||
 		!unmarshal(raw["language"], &language) || !unmarshal(raw["fixed_tags"], &tags) ||
-		!unmarshal(raw["prompt_text"], &prompt) || !unmarshal(raw["expected_revision"], &expected) {
+		!unmarshal(raw["prompt_text"], &prompt) || !unmarshal(raw["expected_revision"], &expected) || !unmarshal(raw["validate"], &validate) || validate == nil {
 		return OzonPut{}, invalid()
 	}
 	if expected < 0 {
@@ -153,7 +155,7 @@ func DecodeOzon(body []byte) (OzonPut, error) {
 	}
 	return OzonPut{
 		Category: category, TypeID: typeID, Language: language,
-		Values: values, ValuesJSON: packed, ComplexJSON: complex, Tags: norm, Prompt: prompt, AI: ai, Expected: expected,
+		Values: values, ValuesJSON: packed, ComplexJSON: complex, Tags: norm, Prompt: prompt, AI: ai, Expected: expected, Validate: *validate,
 	}, nil
 }
 

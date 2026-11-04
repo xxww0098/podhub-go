@@ -446,7 +446,7 @@ func (h handler) probe(r *http.Request, verify bool) (any, *contract.Fault) {
 
 func (h handler) replaceConfig(r *http.Request, actor domain.Actor) (any, *contract.Fault) {
 	obj, fault := readObject(r, []string{"expected_revision", "ai_accounts"}, []string{
-		"ai_default_model", "ai_runtime",
+		"ai_default_model", "ai_runtime", "system_storage",
 	})
 	if fault != nil {
 		return nil, fault
@@ -472,6 +472,31 @@ func (h handler) replaceConfig(r *http.Request, actor domain.Actor) (any, *contr
 		if in.Runtime, fault = decodeRuntime(raw); fault != nil {
 			return nil, fault
 		}
+	}
+	if _, ok := obj["system_storage"]; ok {
+		rows, fault := obj.objects("system_storage")
+		if fault != nil {
+			return nil, fault
+		}
+		storage := make([]service.StorageIn, 0, len(rows))
+		for _, row := range rows {
+			if fault := onlyKeys(row, []string{"role", "endpoint", "bucket", "public_base_url", "access_key_id", "secret_access_key"}, nil); fault != nil {
+				return nil, fault
+			}
+			var item service.StorageIn
+			for key, target := range map[string]*string{
+				"role": &item.Role, "endpoint": &item.Endpoint, "bucket": &item.Bucket,
+				"public_base_url": &item.PublicBaseURL,
+				"access_key_id":   &item.AccessKeyID, "secret_access_key": &item.SecretAccessKey,
+			} {
+				*target, fault = row.str(key)
+				if fault != nil {
+					return nil, fault
+				}
+			}
+			storage = append(storage, item)
+		}
+		in.Storage = &storage
 	}
 	return h.API.ReplaceConfig(r.Context(), actor, in)
 }

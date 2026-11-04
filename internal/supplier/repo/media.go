@@ -136,7 +136,11 @@ func (r Repo) CatalogImage(ctx context.Context, sourceID, file string, edge uint
 	if r.catalogStore == nil {
 		return contract.ImageBody{}, fail(503, "STORAGE_NOT_CONFIGURED", "先配置供应商商品库存储桶")
 	}
-	prefix, err := domain.NormalizeKeyPrefix(r.catalogStore.KeyPrefix)
+	account, err := r.catalogStore(ctx)
+	if err != nil {
+		return contract.ImageBody{}, fail(503, "STORAGE_NOT_CONFIGURED", "先配置供应商商品库存储桶")
+	}
+	prefix, err := domain.NormalizeKeyPrefix(account.KeyPrefix)
 	if err != nil {
 		return contract.ImageBody{}, fail(500, "INTERNAL", "服务暂不可用")
 	}
@@ -145,7 +149,7 @@ func (r Repo) CatalogImage(ctx context.Context, sourceID, file string, edge uint
 		return contract.ImageBody{}, err
 	}
 	key := prefix + "supplier-dbs/" + sourceID + "/" + id + "." + ext
-	publicURL := strings.TrimRight(strings.TrimSpace(r.catalogStore.PublicBaseURL), "/") + "/" + encodeObjectPath(key)
+	publicURL := strings.TrimRight(strings.TrimSpace(account.PublicBaseURL), "/") + "/" + encodeObjectPath(key)
 	ok, err := r.imageVisible(ctx, sourceID, publicURL)
 	if err != nil {
 		return contract.ImageBody{}, err
@@ -153,7 +157,7 @@ func (r Repo) CatalogImage(ctx context.Context, sourceID, file string, edge uint
 	if !ok {
 		return contract.ImageBody{}, fail(404, "NOT_FOUND", "记录不存在或已删除")
 	}
-	body, err := fetchCatalogImage(ctx, *r.catalogStore, key, 300*time.Second, 20*time.Second)
+	body, err := fetchCatalogImage(ctx, account, key, 300*time.Second, 20*time.Second)
 	if err != nil {
 		if strings.Contains(err.Error(), "404") {
 			return contract.ImageBody{}, fail(404, "NOT_FOUND", "对象不存在")

@@ -22,7 +22,7 @@ type Repo struct {
 	pool         *pgxpool.Pool
 	begin        BeginApp
 	assets       func(context.Context) (sign.Account, error)
-	catalogStore *sign.Account
+	catalogStore func(context.Context) (sign.Account, error)
 	profileValid func(string) bool
 	holdTx       func(context.Context, pgx.Tx, int64, string, *int64, int64) (bill.WalletRow, error)
 	settleTx     func(context.Context, pgx.Tx, int64, string, *int64, int64, int64) (bill.Settlement, error)
@@ -38,8 +38,8 @@ func (r Repo) WithProfileValidation(validate func(string) bool) Repo {
 	return r
 }
 
-// WithBlobs resolves private storage on each download and captures catalog storage.
-func (r Repo) WithBlobs(assets func(context.Context) (sign.Account, error), catalog *sign.Account) Repo {
+// WithBlobs resolves the current private and catalog storage on each request.
+func (r Repo) WithBlobs(assets func(context.Context) (sign.Account, error), catalog func(context.Context) (sign.Account, error)) Repo {
 	r.assets = assets
 	r.catalogStore = catalog
 	return r

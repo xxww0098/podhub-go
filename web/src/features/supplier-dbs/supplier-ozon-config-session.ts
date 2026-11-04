@@ -66,6 +66,7 @@ export class OzonConfigSession {
     draft: WorkflowCategoryDraft,
     schema: CategorySchemaView,
     coordinate: { descriptionCategoryId: number; typeId: number },
+    validate = false,
   ): Promise<SupplierOzonConfigData> {
     const base = this.baseline
     const body: PutSupplierOzonConfigBody = {
@@ -76,6 +77,7 @@ export class OzonConfigSession {
       fixed_tags: base?.fixed_tags ?? [],
       ai_output: base?.ai_output ?? { title: true, description: true, tags: true },
       expected_revision: base?.revision ?? 0,
+      validate,
       values: draftToOzonConfigValues(draft, schema),
       complex_values: draftToOzonConfigComplexValues(draft, schema),
     }

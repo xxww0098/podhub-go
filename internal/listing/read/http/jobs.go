@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 
 	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
@@ -37,7 +36,14 @@ func (h Host) claimJob(w http.ResponseWriter, r *http.Request) {
 		writeDB(w, err)
 		return
 	}
-	id := chi.URLParam(r, "id")
+	id, ok := queryID(r)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "作业编号无效", "validation")
+		return
+	}
+	if !h.requireJob(w, r, p, id) {
+		return
+	}
 	tx, err := tenant.BeginApp(r.Context(), h.Pool.Begin, p.OrgID)
 	if err != nil {
 		writeDB(w, err)
@@ -159,13 +165,18 @@ func (h Host) claimWindow(w http.ResponseWriter, r *http.Request) {
 		writeDB(w, err)
 		return
 	}
+	scope, err := h.storeScope(r.Context(), p.OrgID, p.UserID)
+	if err != nil {
+		writeDB(w, err)
+		return
+	}
 	tx, err := tenant.BeginApp(r.Context(), h.Pool.Begin, p.OrgID)
 	if err != nil {
 		writeDB(w, err)
 		return
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
-	out, level, err := runClaimWindow(r, tx, p.OrgID, p.UserID, jobIDs, kind, limit, true)
+	out, level, err := runClaimWindow(r, tx, p.OrgID, p.UserID, jobIDs, kind, limit, true, scope)
 	if err != nil {
 		writeDB(w, err)
 		return
@@ -206,7 +217,14 @@ func (h Host) heartbeatJob(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "服务暂不可用", "internal")
 		return
 	}
-	id := chi.URLParam(r, "id")
+	id, ok := queryID(r)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "作业编号无效", "validation")
+		return
+	}
+	if !h.requireJob(w, r, p, id) {
+		return
+	}
 	var n int64
 	err = h.withOrg(r.Context(), p.OrgID, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(r.Context(), `
@@ -270,12 +288,12 @@ type windowCand struct {
 // quota-first order deadlocks kernel Claim on ai.recognize. media.render and
 // media.upload never enter this loop. Tests pass headsFirst false to replay
 // the previous order and compare which jobs were claimed.
-func runClaimWindow(r *http.Request, tx pgx.Tx, org, principal int64, jobIDs []string, kind string, limit int64, headsFirst bool) ([]browserClaim, *queueLevelView, error) {
+func runClaimWindow(r *http.Request, tx pgx.Tx, org, principal int64, jobIDs []string, kind string, limit int64, headsFirst bool, scope storeScope) ([]browserClaim, *queueLevelView, error) {
 	out := []browserClaim{}
 	media := kind == "media.render" || kind == "media.upload"
 	if len(jobIDs) > 0 && !media {
 		class := browserPermitClass(kind)
-		rows, err := tx.Query(r.Context(), `
+		sql := `
 			SELECT id::text, submitter_user_id, aggregate_id::text, lane
 			FROM jobs
 			WHERE org_id = $1
@@ -286,9 +304,15 @@ func runClaimWindow(r *http.Request, tx pgx.Tx, org, principal int64, jobIDs []s
 			  AND cancel_requested_at IS NULL
 			  AND state IN ('queued', 'retry_wait')
 			  AND run_at <= clock_timestamp()
-			  AND (attempt < max_attempts OR last_error_code = 'uncertain_closed')
-			ORDER BY priority ASC, created_at ASC, id ASC
-			LIMIT $4`, org, strings.Join(jobIDs, ","), kind, limit)
+			  AND (attempt < max_attempts OR last_error_code = 'uncertain_closed')`
+		args := []any{org, strings.Join(jobIDs, ","), kind}
+		if !scope.all {
+			args = append(args, principal, scope.stores)
+			sql += scope.jobFilter(len(args)-1, len(args))
+		}
+		args = append(args, limit)
+		sql += ` ORDER BY priority ASC, created_at ASC, id ASC LIMIT $` + strconv.Itoa(len(args))
+		rows, err := tx.Query(r.Context(), sql, args...)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -595,6 +619,9 @@ func (h Host) getJob(w http.ResponseWriter, r *http.Request) {
 	id, ok := queryID(r)
 	if !ok {
 		writeErr(w, 400, "任务编号无效", "validation")
+		return
+	}
+	if !h.requireJob(w, r, p, id) {
 		return
 	}
 	var run mediaRun

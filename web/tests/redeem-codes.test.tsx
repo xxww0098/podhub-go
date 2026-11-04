@@ -66,7 +66,7 @@ test("兑换码列表用勾选列驱动批量删除，逐条删除并把失败�
   assert.ok(source.includes("删除后无法恢复。"))
 })
 
-test("创建表单只有钱包额度，没有成员名额、档位或有效天数", () => {
+test("创建表单不包含已移除的旧版权益字段", () => {
   const source = readFileSync(
     new URL("../src/features/redeem-codes/redeem-codes-screen.tsx", import.meta.url),
     "utf8",
@@ -76,13 +76,12 @@ test("创建表单只有钱包额度，没有成员名额、档位或有效天�
   const form = source.slice(start, source.indexOf("\nfunction ", start + 1))
   assert.doesNotMatch(form, /<TabsTrigger/)
   assert.doesNotMatch(source, /识别次数|成员名额|有效天数/)
-  // 元 typed by the operator reaches the wire as 分.
-  assert.match(source, /wallet_cents: walletCents,/)
 })
 
-test("钱包兑换码与订阅优惠码有各自的管理页签", () => {
+test("钱包、套餐兑换码与订阅优惠码有各自的管理页签", () => {
   const html = renderToStaticMarkup(<RedeemCodesScreen />)
   assert.match(html, /钱包兑换码/)
+  assert.match(html, /套餐兑换码/)
   assert.match(html, /订阅优惠码/)
 })
 

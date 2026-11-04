@@ -232,7 +232,7 @@ export type SupplierDbsStore = {
   ) => Promise<MutationResult<SupplierDbPropDeleteResult>>
   createRow: (sourceId: string, initial?: Partial<Pick<UpsertSupplierDbRowRequest, "title" | "size" | "variantGroup" | "descriptionCategoryId" | "typeId">>) => Promise<MutationResult<SupplierDbRow>>
   createVariant: (sourceId: string, productId: string, initial: Partial<UpsertSupplierDbRowRequest> & { size: string }) => Promise<MutationResult<DuplicatedRow>>
-  syncProductOzon: (sourceId: string, productId: string) => Promise<MutationResult<void>>
+  syncProductOzon: (sourceId: string, productId: string, validate?: boolean) => Promise<MutationResult<void>>
   updateRow: (
     sourceId: string,
     productId: string,

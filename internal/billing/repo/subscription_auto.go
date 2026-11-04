@@ -89,22 +89,30 @@ func issueRenewal(ctx context.Context, pool *pgxpool.Pool, orgID int64, now time
 		}
 		// Renew what was bought last. A future period may already hold less
 		// than the current one, and that is the capacity the buyer chose.
+		// The kept-store list is part of that choice: without it the new
+		// period falls back to the first N stores by creation order and
+		// silently swaps which stores stay active.
 		target := domain.Target{PlanKey: sub.PlanKey, Stores: sub.Stores}
+		var keep []string
 		if n := len(sub.Periods); n > 0 {
-			target = sub.Periods[n-1].Target
+			last := sub.Periods[n-1]
+			target = last.Target
+			if len(last.KeepStores) > 0 {
+				keep = append([]string(nil), last.KeepStores...)
+			}
 		}
 		cat, err := Catalog(ctx, tx)
 		if err != nil {
 			return err
 		}
 		q, err := domain.Quote(cat, domain.QuoteInput{Now: now, Snapshot: sub.Snapshot(),
-			Action: domain.ActionRenew, Target: target, Months: 1})
+			Action: domain.ActionRenew, Target: target, Months: 1, KeepStores: len(keep)})
 		if err != nil {
 			return err
 		}
-		req := QuoteRequest{Action: domain.ActionRenew, Target: contract.Target(target), Months: 1}
+		req := QuoteRequest{Action: domain.ActionRenew, Target: contract.Target(target), Months: 1, KeepStores: keep}
 		payload := quotePayload{Revision: sub.Revision, Request: req, Quote: q, Period: domain.Period{
-			Target: target, StoreMonthlyCents: cat.Plans[q.PlanKey].StoreMonthlyCents}}
+			Target: target, StoreMonthlyCents: cat.Plans[q.PlanKey].StoreMonthlyCents, KeepStores: keep}}
 		snapshot, err := json.Marshal(payload)
 		if err != nil {
 			return err
@@ -112,8 +120,8 @@ func issueRenewal(ctx context.Context, pool *pgxpool.Pool, orgID int64, now time
 		var quoteID string
 		if err = tx.QueryRow(ctx, `INSERT INTO subscription_quotes
    (id,org_id,revision,action,months,term_start,term_end,plan_key,stores,keep_store_ids,amount_cents,breakdown,expires_at,consumed_at,created_at,payload)
-   VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,'{}',$9,$10,$11,$11,$11,$12) RETURNING id::text`,
-			orgID, sub.Revision, q.Action, q.Months, q.TermStart, q.TermEnd, q.PlanKey, q.Stores, q.AmountCents,
+   VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,COALESCE($9,'{}'::uuid[]),$10,$11,$12,$12,$12,$13) RETURNING id::text`,
+			orgID, sub.Revision, q.Action, q.Months, q.TermStart, q.TermEnd, q.PlanKey, q.Stores, keep, q.AmountCents,
 			mustJSON(q.Breakdown), now, snapshot).Scan(&quoteID); err != nil {
 			return err
 		}

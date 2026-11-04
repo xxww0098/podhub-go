@@ -295,17 +295,6 @@ WHERE i.org_id = $1
   AND i.expires_at > clock_timestamp()
 ORDER BY i.created_at DESC, i.id DESC;
 
--- name: BindInvitations :execrows
-UPDATE org_invitations AS i
-SET invitee_user_id = $1, updated_at = clock_timestamp()
-FROM organizations AS o
-WHERE o.id = i.org_id
-  AND lower(i.email) = lower($2)
-  AND i.accepted_at IS NULL
-  AND i.revoked_at IS NULL
-  AND i.declined_at IS NULL
-  AND i.expires_at > clock_timestamp();
-
 -- name: CountCardCursors :one
 SELECT count(*)::bigint AS n FROM listing_card_cursors;
 

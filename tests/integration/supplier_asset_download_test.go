@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	configdoc "github.com/xxww0098/podhub-go/internal/admin/core/contract"
 	"github.com/xxww0098/podhub-go/internal/app"
 	"github.com/xxww0098/podhub-go/internal/platform/config"
 	"github.com/xxww0098/podhub-go/internal/platform/db"
@@ -42,12 +43,12 @@ func TestSupplierAssetDownloadNormalRole(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.exec(t, `UPDATE delegate_dispatches SET payload=$2::jsonb,nudge_count=1 WHERE dispatch_id=$1::uuid`, dispatch, payload)
-	bucket := config.R2StorageAccount{
+	bucket := configdoc.StoredStorage{
 		ID: "private-download", Role: "private",
 		Endpoint: "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.r2.cloudflarestorage.com", KeyPrefix: "test-prefix/",
 		AccessKeyID: "DOWNLOADTEST", SecretAccessKey: "isolated-download-secret",
 	}
-	setR2StorageAccount(t, bucket)
+	setR2StorageAccount(t, f.pool, bucket)
 	hash, err := bcrypt.GenerateFromPassword([]byte("private-download-password"), bcrypt.MinCost)
 	if err != nil {
 		t.Fatal(err)
@@ -186,7 +187,7 @@ func TestSupplierAssetDownloadNormalRole(t *testing.T) {
 		status            int
 	}{
 		{"anonymous", base + imageID, "", http.StatusUnauthorized},
-		{"other account", base + imageID, otherToken, http.StatusForbidden},
+		{"other account", base + imageID, otherToken, http.StatusNotFound},
 		{"missing asset", base + uuid.NewString(), supplierToken, http.StatusNotFound},
 		{"other dispatch", "/api/supplier/dispatches/" + uuid.NewString() + "/assets/" + imageID, supplierToken, http.StatusNotFound},
 	} {
@@ -198,22 +199,16 @@ func TestSupplierAssetDownloadNormalRole(t *testing.T) {
 		})
 	}
 	bucket.AccessKeyID = "ROTATED"
-	setR2StorageAccount(t, bucket)
-	if rec := request(base+imageID, supplierToken, "*/*"); rec.Code != 307 || !strings.Contains(rec.Header().Get("Location"), "X-Amz-Credential=DOWNLOADTEST") {
-		t.Fatal("environment change affected an already assembled handler")
-	}
-	handler = app.Handler(api)
+	setR2StorageAccount(t, f.pool, bucket)
 	if rec := request(base+imageID, supplierToken, "*/*"); rec.Code != 307 || !strings.Contains(rec.Header().Get("Location"), "X-Amz-Credential=ROTATED") {
 		t.Fatal("download retained stale storage credentials")
 	}
-	setR2StorageAccount(t, config.R2StorageAccount{Role: "private"})
-	handler = app.Handler(api)
+	setR2StorageAccount(t, f.pool, configdoc.StoredStorage{Role: "private"})
 	if rec := request(base+imageID, supplierToken, "*/*"); rec.Code != 503 || rec.Header().Get("Location") != "" {
 		t.Fatal("inactive private storage issued a grant")
 	}
 	bucket.Endpoint = "https://untrusted.example"
-	setR2StorageAccount(t, bucket)
-	handler = app.Handler(api)
+	setR2StorageAccount(t, f.pool, bucket)
 	if rec := request(base+imageID, supplierToken, "*/*"); rec.Code != 503 || rec.Header().Get("Location") != "" {
 		t.Fatal("untrusted storage endpoint issued a grant")
 	}

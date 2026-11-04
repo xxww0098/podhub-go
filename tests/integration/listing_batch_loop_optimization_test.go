@@ -31,7 +31,8 @@ func TestListingBatchLoopSerializesOneOrgAndMakesProgress(t *testing.T) {
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO organization_members (org_id, user_id, role, status, display_name, created_at, updated_at, join_order)
 		VALUES ($1, $2, 'owner', 'active', 'Batch owner', clock_timestamp(), clock_timestamp(), 1),
-		       ($1, $3, 'member', 'active', 'Batch member', clock_timestamp(), clock_timestamp(), 2)`, orgID, userA, userB); err != nil {
+		       ($1, $3, 'member', 'active', 'Batch member', clock_timestamp(), clock_timestamp(), 2)
+		ON CONFLICT (org_id, user_id) DO NOTHING`, orgID, userA, userB); err != nil {
 		t.Fatal(err)
 	}
 	jobs := make([]queuecontract.NewJob, 4)

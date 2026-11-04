@@ -22,6 +22,7 @@ type currentSnapshot struct {
 	AIDefaultModel string          `json:"aiDefaultModel"`
 	AIAccounts     []StoredAI      `json:"aiAccounts"`
 	AIRuntime      *AIRuntime      `json:"aiRuntime"`
+	SystemStorage  []StoredStorage `json:"systemStorage,omitempty"`
 	RetiredStorage json.RawMessage `json:"storageBuckets,omitempty"`
 	Payment        json.RawMessage `json:"payment"`
 }
@@ -71,7 +72,8 @@ func ParseStored(plain []byte) (Snapshot, bool, error) {
 		}
 		snap := Snapshot{
 			SchemaVersion: 1, AIDefaultModel: current.AIDefaultModel, AIAccounts: current.AIAccounts,
-			AIRuntime: DefaultAIRuntime(),
+			AIRuntime:     DefaultAIRuntime(),
+			SystemStorage: current.SystemStorage,
 		}
 		legacy := current.AIRuntime == nil || len(current.RetiredStorage) > 0
 		if current.AIRuntime != nil {
@@ -185,7 +187,7 @@ func (old previousSnapshot) upgrade() (Snapshot, bool, error) {
 func (s Snapshot) Marshal() ([]byte, error) {
 	doc := currentSnapshot{
 		SchemaVersion: 1, AIDefaultModel: s.AIDefaultModel, AIAccounts: s.AIAccounts,
-		AIRuntime: &s.AIRuntime,
+		AIRuntime: &s.AIRuntime, SystemStorage: s.SystemStorage,
 	}
 	if s.Payment != nil {
 		raw, err := json.Marshal(s.Payment)

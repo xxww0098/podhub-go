@@ -129,7 +129,7 @@ func (h Host) prepareRecognition(w http.ResponseWriter, r *http.Request, p acces
 				return err
 			}
 		}
-		row, card, err := mediaRow(r.Context(), tx, p.OrgID, id)
+		row, card, err := mediaRow(r.Context(), tx, p.OrgID, p.UserID, id)
 		if err != nil {
 			return err
 		}

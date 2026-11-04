@@ -602,8 +602,8 @@ func (r Repo) DeleteBinding(ctx context.Context, orgID, userID int64, canManage 
 type AssetIdentity = contract.AssetIdentity
 
 // CommitAsset inserts or replays one verified asset.
-// reload and reverify run inside the write transaction after the store is re-read.
-func (r Repo) CommitAsset(ctx context.Context, orgID, userID int64, canManage bool, in AssetIdentity, auto bool, nowMS int64, reload, reverify func() error) (contract.Asset, error) {
+// The storage revision is locked and the object is reverified before commit.
+func (r Repo) CommitAsset(ctx context.Context, orgID, userID int64, canManage bool, in AssetIdentity, auto bool, nowMS, expectedRevision int64, reverify func() error) (contract.Asset, error) {
 	var out contract.Asset
 	err := r.writeTx(ctx, orgID, nowMS, func(tx pgx.Tx) error {
 		storeID, err := bindingStore(ctx, tx, orgID, userID, canManage, in.BindingID)
@@ -613,10 +613,9 @@ func (r Repo) CommitAsset(ctx context.Context, orgID, userID int64, canManage bo
 		if storeID != in.StoreID {
 			return contract.Conflict("绑定店铺已变化，请重新授权上传")
 		}
-		if reload != nil {
-			if err := reload(); err != nil {
-				return err
-			}
+		var revision int64
+		if err := tx.QueryRow(ctx, `SELECT revision FROM platform_integration_config WHERE singleton=true FOR SHARE`).Scan(&revision); err != nil || revision != expectedRevision {
+			return contract.Conflict("存储配置已变化，请重新授权上传")
 		}
 		if reverify != nil {
 			if err := reverify(); err != nil {

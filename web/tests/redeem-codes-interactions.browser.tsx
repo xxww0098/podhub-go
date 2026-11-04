@@ -1,8 +1,11 @@
 import { flushSync } from "react-dom"
 import { createRoot } from "react-dom/client"
+import { useState } from "react"
 import type { components } from "@/api/schema"
 import type { AdminRedeemCodeView, AdminRedeemCodesOverview } from "@/bindings/commands"
+import { accountHttp } from "@/bindings/http-account"
 import { adminHttp } from "@/bindings/http-admin"
+import { RedeemCodeDialog } from "@/features/plans/redeem-code-dialog"
 import { RedeemCodesScreen } from "@/features/redeem-codes/redeem-codes-screen"
 import { formatDateTimeShort } from "@/lib/format"
 import "../src/index.css"
@@ -13,10 +16,19 @@ const run = document.querySelector<HTMLButtonElement>("#run")!
 const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
 function check(value: unknown, message: string): asserts value { if (!value) throw new Error(message) }
 
+function RedemptionHarness() {
+  const [open, setOpen] = useState(true)
+  return <>
+    <RedeemCodesScreen />
+    <button id="open-redeem" onClick={() => setOpen(true)}>打开兑换</button>
+    <RedeemCodeDialog open={open} onOpenChange={setOpen} canRedeem workspaceUuid="8f0a3f5e-6c1d-4a5f-9a3e-6d2c8b7f4a11" />
+  </>
+}
+
 run.onclick = async () => {
   run.disabled = true
   delete results.dataset.result
-  const original = { list: adminHttp.adminListRedeemCodes, create: adminHttp.adminCreateRedeemCodes, remove: adminHttp.adminDeleteRedeemCode, coupons: adminHttp.adminListSubscriptionCoupons, createCoupon: adminHttp.adminCreateSubscriptionCoupon, toggleCoupon: adminHttp.adminSetSubscriptionCouponEnabled, fetch: window.fetch }
+  const original = { list: adminHttp.adminListRedeemCodes, create: adminHttp.adminCreateRedeemCodes, remove: adminHttp.adminDeleteRedeemCode, coupons: adminHttp.adminListSubscriptionCoupons, createCoupon: adminHttp.adminCreateSubscriptionCoupon, toggleCoupon: adminHttp.adminSetSubscriptionCouponEnabled, workspaces: accountHttp.accountListWorkspaces, fetch: window.fetch }
   const root = createRoot(fixture)
   let codes: AdminRedeemCodeView[] = Array.from({ length: 12 }, (_, index) => ({
     id: index + 1,
@@ -32,6 +44,7 @@ run.onclick = async () => {
   let reads = 0
   let holdNextRead = false
   let finishOldRead: ((result: AdminRedeemCodesOverview) => void) | undefined
+  const walletRequests: components["schemas"]["AdminRedeemCodeCreateRequest"][] = []
   const settle = async (predicate: () => boolean, message: string) => {
     const deadline = performance.now() + 5000
     while (!predicate()) { check(performance.now() < deadline, message); await frame() }
@@ -65,7 +78,7 @@ run.onclick = async () => {
       }
       return overview
     }
-    adminHttp.adminCreateRedeemCodes = async () => ({ codes: [] })
+    adminHttp.adminCreateRedeemCodes = async (request) => { walletRequests.push(request); return { codes: [] } }
     adminHttp.adminDeleteRedeemCode = async (id) => {
       if (++deletes === 1) throw new Error("fixture delete failed")
       codes = codes.filter((code) => code.id !== id)
@@ -80,8 +93,11 @@ run.onclick = async () => {
     await settle(() => !!finishOldRead, "refresh did not start")
     fixture.querySelector<HTMLButtonElement>('[aria-label="创建兑换码"]')!.click()
     await settle(() => !!button("生成兑换码"), "create form did not open")
+    setInput(document.querySelector<HTMLInputElement>("#redeem-wallet")!, "123.45")
+    await frame()
     button("生成兑换码")!.click()
     await settle(() => !!button("不保存，直接关闭") && reads >= 4, "create did not trigger a newer read")
+    check(walletRequests[0]?.wallet_cents === 12345 && walletRequests[0]?.plan_key === undefined, `wallet grant was sent incorrectly: ${JSON.stringify(walletRequests[0])}`)
     finishOldRead!({
       codes: codes.map((code) => ({ ...code, note: "过期结果" })),
       total: codes.length, unused: 9, redeemed: 1, expired: 1, revoked: 0,
@@ -269,7 +285,37 @@ run.onclick = async () => {
     await settle(() => !!couponRow(unlimitedCode) && !document.querySelector('[role="dialog"]'), "unlimited coupon did not save")
     check(createdRequests.at(-1)?.max_uses === 0, "unlimited choice did not reach the API")
     check(couponRow(unlimitedCode)?.textContent?.includes("可用") && couponRow(unlimitedCode)?.querySelector('svg[aria-label="不限次数"]'), "unlimited coupon was exhausted or did not show infinity")
-    results.textContent = "PASS: wallet and plan ledgers, plan creation, wallet failure/retry, pagination, selection, status, search, detail, deletion; coupon generation, validation, schedule and unlimited use"
+
+    codes = [
+      { id: 501, code_preview: "****5001", wallet_cents: 500, status: "unused", created_at: "2026-10-01T00:00:00Z" },
+      { id: 502, code_preview: "****5002", wallet_cents: 0, plan_key: "max", plan_stores: 100, plan_months: 1, status: "unused", created_at: "2026-10-01T00:00:00Z" },
+    ] as AdminRedeemCodeView[]
+    accountHttp.accountListWorkspaces = async () => ({} as Awaited<ReturnType<typeof accountHttp.accountListWorkspaces>>)
+    window.fetch = async (input, init) => {
+      if (!String(input).endsWith("/api/redeem") || init?.method !== "POST") throw new Error("unexpected network request")
+      const body = JSON.parse(String(init.body)) as { code: string; expected_workspace_uuid: string }
+      check(body.expected_workspace_uuid === "8f0a3f5e-6c1d-4a5f-9a3e-6d2c8b7f4a11", "redemption lost the confirmed workspace")
+      const plan = body.code === "POD-PLAN-5002"
+      check(plan || body.code === "POD-WALLET-5001", "unexpected redemption code")
+      codes = codes.map((code) => code.id === (plan ? 502 : 501) ? { ...code, status: "redeemed" } : code)
+      return new Response(JSON.stringify(plan
+        ? { ok: true, wallet_cents: 0, plan_key: "max", plan_stores: 100, plan_months: 1, starts_at: "2026-11-04T00:00:00Z", ends_at: "2026-12-04T00:00:00Z" }
+        : { ok: true, wallet_cents: 500 }), { headers: { "Content-Type": "application/json" } })
+    }
+    flushSync(() => root.render(<RedemptionHarness />))
+    for (const [code, preview] of [["POD-WALLET-5001", "****5001"], ["POD-PLAN-5002", "****5002"]]) {
+      if (code.startsWith("POD-PLAN")) {
+        button("套餐兑换码")!.click()
+        fixture.querySelector<HTMLButtonElement>("#open-redeem")!.click()
+      }
+      await settle(() => !!fixture.querySelector(`[aria-label="查看 ${preview} 详情"]`) && !!document.querySelector("#workspace-redeem-code"), "redemption fixture did not open")
+      const input = document.querySelector<HTMLInputElement>("#workspace-redeem-code")!
+      setInput(input, code)
+      await frame()
+      input.form!.requestSubmit()
+      await settle(() => !document.querySelector('[role="dialog"]') && !!fixture.querySelector(`[aria-label="查看 ${preview} 详情"]`)?.closest("tr")?.textContent?.includes("已兑换"), `${preview} did not close and refresh as redeemed`)
+    }
+    results.textContent = "PASS: wallet and plan redemption close and refresh their ledgers; wallet and plan ledgers and creation, wallet failure/retry, pagination, selection, status, search, detail, deletion; coupon generation, validation, schedule and unlimited use"
     results.dataset.result = "pass"
   } catch (reason) {
     results.textContent = `FAIL: ${reason instanceof Error ? reason.message : String(reason)} (deletes=${deletes}, codes=${codes.length}, first row=${!!fixture.querySelector('[aria-label="查看 ****0001 详情"]')})`
@@ -282,6 +328,7 @@ run.onclick = async () => {
     adminHttp.adminListSubscriptionCoupons = original.coupons
     adminHttp.adminCreateSubscriptionCoupon = original.createCoupon
     adminHttp.adminSetSubscriptionCouponEnabled = original.toggleCoupon
+    accountHttp.accountListWorkspaces = original.workspaces
     window.fetch = original.fetch
     run.disabled = false
   }

@@ -21,6 +21,9 @@ func (h Host) deleteRow(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "商品行编号无效", "validation")
 		return
 	}
+	if !h.requireRow(w, r, p, id) {
+		return
+	}
 	err := h.mediaTx(r.Context(), p, func(tx pgx.Tx) error {
 		var content, media, submission string
 		err := tx.QueryRow(r.Context(), `SELECT content_state,media_state,submission_state FROM listing_rows WHERE org_id=$1 AND id=$2::uuid FOR UPDATE`, p.OrgID, id).Scan(&content, &media, &submission)

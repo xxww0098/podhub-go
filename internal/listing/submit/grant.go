@@ -57,11 +57,12 @@ type GrantResult struct {
 // HasTask is false when the body omitted taskId. HTTPStatus nil means
 // the browser saw no status code.
 type ReportInput struct {
-	OrgID      int64
-	IntentID   string
-	TaskID     int64
-	HasTask    bool
-	HTTPStatus *int
+	OrgID       int64
+	ActorUserID int64
+	IntentID    string
+	TaskID      int64
+	HasTask     bool
+	HTTPStatus  *int
 }
 
 // ReportResult is the intent after a successful report.
@@ -347,6 +348,30 @@ func Report(ctx context.Context, pool *pgxpool.Pool, in ReportInput) (ReportResu
 	}
 	if err != nil {
 		return ReportResult{}, statusErr(503, "服务暂不可用", "internal")
+	}
+	// A report settles a store's submission. Owners and managers act on every
+	// store; a member only on stores assigned to them. The row lock above keeps
+	// the intent stable while the permission is checked.
+	var allowed bool
+	err = tx.QueryRow(ctx, `
+		SELECT m.role IN ('owner', 'manager')
+		       OR COALESCE(s.assignee_membership_id = m.id, false)
+		  FROM public.submission_intents i
+		  JOIN public.organization_stores s
+		    ON s.org_id = i.org_id AND s.uuid = i.store_id
+		  JOIN public.organization_members m
+		    ON m.org_id = i.org_id AND m.user_id = $3
+		 WHERE i.org_id = $1 AND i.id = $2::uuid
+		   AND m.status = 'active' AND NOT m.manual_disabled AND NOT m.quota_suspended`,
+		in.OrgID, in.IntentID, in.ActorUserID).Scan(&allowed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ReportResult{}, statusErr(403, "无权报回该提交意图", "forbidden")
+	}
+	if err != nil {
+		return ReportResult{}, statusErr(503, "服务暂不可用", "internal")
+	}
+	if !allowed {
+		return ReportResult{}, statusErr(403, "无权报回该提交意图", "forbidden")
 	}
 	sameTask := (task == nil && previousTask == nil) ||
 		(task != nil && previousTask != nil && *task == *previousTask)

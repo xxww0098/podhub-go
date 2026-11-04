@@ -81,7 +81,14 @@ type ObjectPage struct {
 }
 
 func (d Deps) resolve(ctx context.Context, id *string, persistent bool) (domain.CloudAccount, sign.Account, error) {
-	account, err := domain.ResolveAccount(d.Accounts, id)
+	if d.Accounts == nil {
+		return domain.CloudAccount{}, sign.Account{}, fail(503, "UNAVAILABLE", "对象存储未配置")
+	}
+	accounts, err := d.Accounts(ctx)
+	if err != nil {
+		return domain.CloudAccount{}, sign.Account{}, fail(503, "UNAVAILABLE", "对象存储配置暂不可用")
+	}
+	account, err := domain.ResolveAccount(accounts, id)
 	if errors.Is(err, domain.ErrAccount) {
 		return domain.CloudAccount{}, sign.Account{}, fail(400, "VALIDATION", err.Error())
 	}

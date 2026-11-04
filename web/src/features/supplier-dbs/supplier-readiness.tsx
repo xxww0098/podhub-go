@@ -30,7 +30,7 @@ const OZON_CONFIG_DENIAL_LABELS: Partial<
 > = {
   catalog_missing: "目录缺失",
   catalog_expired: "目录已过期",
-  config_needs_reconfiguration: "类目更新后待复核",
+  config_needs_reconfiguration: "Ozon 配置待校验或复核",
   catalog_digest_mismatch: "目录摘要不一致",
 }
 

@@ -78,7 +78,8 @@ export function useProductWrites({
     async (targets: StoreProductRow[], quiet = false) => {
       const target = targets[0]
       if (!target) return
-      const keys = targets.map((row) => `${row.store_id}:${row.offer_id}`)
+      // 行身份是 product_id；同一 offer_id 可能同时存在在售行和历史下架行。
+      const keys = targets.map((row) => rowKey(row))
       setVerifying((prev) => new Set([...prev, ...keys]))
       try {
         let refreshed = 0
@@ -87,11 +88,11 @@ export function useProductWrites({
             target.store_id,
             chunk.map((row) => row.offer_id),
           )
-          const byOffer = new Map(verified.map((item) => [item.offer_id, item]))
+          const byProduct = new Map(verified.map((item) => [rowKey(item), item]))
           refreshed += verified.length
           setRows((prev) =>
             prev.map((item) =>
-              item.store_id === target.store_id ? (byOffer.get(item.offer_id) ?? item) : item,
+              item.store_id === target.store_id ? (byProduct.get(rowKey(item)) ?? item) : item,
             ),
           )
         }

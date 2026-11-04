@@ -10,7 +10,7 @@
  * 类目未选只留提示，schema 或配置读取失败只留重试按钮（错误走
  * notifyCommandError）；409 CAS 冲突不自动拉新基线再写 —— 那会是静默
  * 最后写赢 —— 而是把行锁回「重新读取」，用户确认后重拉再改。
- * 字段问题随配置回读并传给共享编辑器。
+ * 自动保存只保存草稿，用户继续时才展示字段问题。
  */
 import { useEffect, useMemo, useRef, useState } from "react"
 import { RefreshCw, RotateCcw } from "lucide-react"
@@ -20,9 +20,9 @@ import type {
   CategorySchemaView,
   WorkflowCategoryDraft,
   WorkflowDraftValue,
+  WorkflowValidationIssue,
 } from "@/bindings/commands"
 import type { SupplierDbRow } from "@/bindings/http-supplier-dbs"
-import { Button } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
 import { Spinner } from "@/components/ui/spinner"
 import { categorySchemaFlight } from "@/features/category-schema/schema-sync"
@@ -39,7 +39,7 @@ import {
   writeWorkflowValue,
   type WorkflowValueLocation,
 } from "@/features/workflow/workflow-draft"
-import { notifyCommandError, notifyError, notifyInfo, notifySuccess } from "@/lib/notify"
+import { notifyCommandError, notifyError } from "@/lib/notify"
 
 import { OzonConfigSession } from "./supplier-ozon-config-session"
 import {
@@ -61,6 +61,7 @@ type PendingRowDefaults = {
   draft: WorkflowCategoryDraft
   schema: CategorySchemaView
   coordinate: { descriptionCategoryId: number; typeId: number }
+  validate: boolean
 }
 
 export function SupplierRowDefaults({
@@ -75,7 +76,7 @@ export function SupplierRowDefaults({
   row: SupplierDbRow
   configEpoch?: number
   onConfigSaved?: () => void
-  flushRef?: React.RefObject<(() => Promise<boolean>) | null>
+  flushRef?: React.RefObject<((validate?: boolean) => Promise<boolean>) | null>
   /** 测试与宿主注入；生产走 `/api/catalog/schema`。 */
   loadSchema?: (request: CategorySchemaRequest) => Promise<CategorySchemaView>
   /** 测试注入；生产走 GET/PUT `…/ozon-config`。 */
@@ -96,6 +97,7 @@ export function SupplierRowDefaults({
   const [configFetched, setConfigFetched] = useState(false)
   const [draft, setDraft] = useState<WorkflowCategoryDraft | undefined>(undefined)
   const [phase, setPhase] = useState<DurableAutosavePhase>("idle")
+  const [issues, setIssues] = useState<WorkflowValidationIssue[]>([])
   const [validationAttempt, setValidationAttempt] = useState(0)
 
   const savedCallback = useRef(onConfigSaved)
@@ -132,8 +134,10 @@ export function SupplierRowDefaults({
               pending.draft,
               pending.schema,
               pending.coordinate,
+              pending.validate,
             )
           } catch (reason) {
+            if (pending.validate) autosave.rebaseLatest((latest) => ({ ...latest, validate: false }))
             if (session.conflicted && !session.disposed) {
               autosave.reset()
               setLoadFailed(true)
@@ -166,13 +170,46 @@ export function SupplierRowDefaults({
 
   useEffect(() => {
     if (!flushRef) return
-    const flush = async () => {
-      try { await autosave.flush(); return !autosave.hasPendingChanges() && !session.conflicted }
-      catch { return false }
+    const flush = async (validate = false) => {
+      if (validate) {
+        if (!coordinateReady || !schema || !draftRef.current) {
+          notifyError(coordinateReady ? "Ozon 字段尚未加载，请重试" : "请先选择 Ozon 类目")
+          return false
+        }
+        window.clearTimeout(timerRef.current)
+        autosave.markDirty({
+          draft: draftRef.current,
+          schema,
+          coordinate: { descriptionCategoryId: row.descriptionCategoryId!, typeId: row.typeId! },
+          validate: true,
+        })
+      }
+      try {
+        if (!await autosave.flush() || autosave.hasPendingChanges() || session.conflicted || session.disposed) {
+          if (validate) autosave.rebaseLatest((pending) => ({ ...pending, validate: false }))
+          return false
+        }
+        if (validate) {
+          const nextIssues = supplierConfigIssues(session.baseline)
+          setIssues(nextIssues)
+          setValidationAttempt((attempt) => attempt + 1)
+          if (session.baseline?.state !== "valid") {
+            if (!nextIssues.length) notifyError(session.baseline?.issues.some((issue) => issue.issue === "validation_pending")
+              ? "字段已修改，请再次点击保存并继续"
+              : "Ozon 配置校验未通过，请检查类目后重试")
+            return false
+          }
+        }
+        return true
+      }
+      catch {
+        if (validate) autosave.rebaseLatest((pending) => ({ ...pending, validate: false }))
+        return false
+      }
     }
     flushRef.current = flush
     return () => { if (flushRef.current === flush) flushRef.current = null }
-  }, [flushRef, autosave, session])
+  }, [flushRef, autosave, session, schema, coordinateReady, row.descriptionCategoryId, row.typeId])
 
   // StrictMode 会重放 effect；每次接管恢复 UI 回调，cleanup 仍落盘旧挂账。
   useEffect(() => {
@@ -196,6 +233,8 @@ export function SupplierRowDefaults({
     draftRef.current = undefined
     sentJsonRef.current = undefined
     setPhase("idle")
+    setIssues([])
+    setValidationAttempt(0)
     return () => {
       window.clearTimeout(timerRef.current)
       if (autosave.hasPendingChanges()) void autosave.flush()
@@ -278,6 +317,7 @@ export function SupplierRowDefaults({
     if (valuesJson === sentJsonRef.current) return
     if (autosave.hasPendingChanges()) return
     sentJsonRef.current = valuesJson
+    setIssues([])
     const next = seedSupplierRowDefaults(schema, config?.values, {
       description_category_id: row.descriptionCategoryId!,
       type_id: row.typeId!,
@@ -302,6 +342,7 @@ export function SupplierRowDefaults({
         descriptionCategoryId: row.descriptionCategoryId!,
         typeId: row.typeId!,
       },
+      validate: false,
     })
     window.clearTimeout(timerRef.current)
     timerRef.current = window.setTimeout(
@@ -363,39 +404,9 @@ export function SupplierRowDefaults({
       <SupplierRowDefaultsForm
         schema={schema}
         draft={draft}
-        issues={supplierConfigIssues(config)}
+        issues={issues}
         validationAttempt={validationAttempt}
-        action={<>
-        <Button
-          type="button"
-          variant="default"
-          size="sm"
-          title="保存当前修改并校验全部 Ozon 字段"
-          disabled={phase === "saving"}
-          onClick={() => {
-            if (!schema) return
-            window.clearTimeout(timerRef.current)
-            autosave.markDirty({
-              draft,
-              schema,
-              coordinate: {
-                descriptionCategoryId: row.descriptionCategoryId!,
-                typeId: row.typeId!,
-              },
-            })
-            void autosave.flush().then((saved) => {
-              if (!saved || session.disposed) return
-              setValidationAttempt((attempt) => attempt + 1)
-              if (session.baseline?.state === "valid") {
-                notifySuccess("配置校验通过")
-              } else {
-                notifyInfo("配置校验未通过")
-              }
-            })
-          }}
-        >
-          校验配置
-        </Button>
+        action={
         <span
           className="inline-flex items-center"
           role="status"
@@ -414,27 +425,33 @@ export function SupplierRowDefaults({
           ) : phase === "saving" ? (
             <span className="text-meta text-muted-foreground">保存中…</span>
           ) : phase === "saved" ? (
-            <span className="text-meta text-muted-foreground">{config?.state==="valid"?"已保存 · 校验通过":"已保存 · 校验未通过"}</span>
+            <span className="text-meta text-muted-foreground">已保存</span>
           ) : phase === "dirty" ? (
             <span className="text-meta text-muted-foreground">待保存…</span>
-          ) : <span className="text-meta text-muted-foreground">{config?.revision ? config.state === "valid" ? "已保存 · 校验通过" : "已保存 · 校验未通过" : "尚未保存"}</span>}
+          ) : <span className="text-meta text-muted-foreground">{config?.revision ? "已保存" : "尚未保存"}</span>}
         </span>
-        </>}
+        }
         onUpdateValue={(
           fieldKey: string,
           value: WorkflowDraftValue | undefined,
           location: WorkflowValueLocation,
-        ) =>
+        ) => {
+          setIssues((current) => current.filter((issue) => issue.field_key !== fieldKey ||
+            (issue.complex_id ?? undefined) !== location.complexId || (issue.item_index ?? undefined) !== location.itemIndex))
           queueEdit((current) =>
             writeWorkflowValue(current, fieldKey, value, location),
           )
-        }
-        onAddComplexItem={(complexId) => queueEdit((current) => addComplexItem(current, complexId))}
-        onRemoveComplexItem={(complexId, itemIndex) =>
+        }}
+        onAddComplexItem={(complexId) => {
+          setIssues((current) => current.filter((issue) => issue.complex_id !== complexId))
+          queueEdit((current) => addComplexItem(current, complexId))
+        }}
+        onRemoveComplexItem={(complexId, itemIndex) => {
+          setIssues((current) => current.filter((issue) => issue.complex_id !== complexId))
           queueEdit((current) =>
             removeComplexItem(current, complexId, itemIndex),
           )
-        }
+        }}
       />
     </div>
   )

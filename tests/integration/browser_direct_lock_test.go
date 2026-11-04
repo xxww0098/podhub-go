@@ -386,6 +386,11 @@ func TestBrowserDirectTenantAndCapability(t *testing.T) {
 		t.Fatal(state)
 	}
 
+	memberReport := callJSON(memberHandler, http.MethodPost, "/api/listing/browser/report", reportTask(first.IntentID, 9))
+	assertNoKey(t, memberReport, http.StatusForbidden, "forbidden")
+	if state := intentState(t, ctx, pool, first.IntentID); state != "submitting" {
+		t.Fatal(state)
+	}
 	okReport := shop.postReport(t, reportTask(first.IntentID, 9))
 	if okReport.Code != http.StatusOK {
 		t.Fatal(redact(okReport))

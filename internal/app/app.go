@@ -33,7 +33,6 @@ import (
 	media "github.com/xxww0098/podhub-go/internal/media/contract"
 	ozonerrrepo "github.com/xxww0098/podhub-go/internal/ozonerr/repo"
 	ozonerrsvc "github.com/xxww0098/podhub-go/internal/ozonerr/service"
-	"github.com/xxww0098/podhub-go/internal/platform/cloudflare"
 	"github.com/xxww0098/podhub-go/internal/platform/config"
 	"github.com/xxww0098/podhub-go/internal/platform/db"
 	loadtest "github.com/xxww0098/podhub-go/internal/platform/loadmode"
@@ -66,17 +65,18 @@ func handler(pool *pgxpool.Pool, cfg config.Config, fetcher *catalog.Fetcher, sv
 		Pool:                    pool, Engine: sharedEngine(), Identity: svc, Access: svc,
 		SliceStorageKey:    sliceStorageKey(cfg),
 		SliceDeleteAllowed: cfg.MediaDeleteEnabled(),
-		Cloudflare:         cloudflare.New(nil),
-		CloudflareOAuth:    cloudflareOAuth(cfg),
 		Seller:             sellerPoster(seller.New(cfg)),
 		Seals:              sealRing(cfg),
 		CatalogSnapshot:    catalogSnapshot,
 		CatalogFetch:       fetcher,
 		// The grant route reads this captured bool. It does not load again.
-		WritesDisabled:       cfg.OzonWritesDisabled(),
-		PublicURL:            cfg.PublicURL,
-		Ozon:                 recorded,
-		SupplierMediaAccount: func(context.Context) (sign.Account, error) { return configuredR2Account(cfg, media.RoleAssets) },
+		WritesDisabled: cfg.OzonWritesDisabled(),
+		PublicURL:      cfg.PublicURL,
+		Ozon:           recorded,
+		SupplierMediaAccount: func(ctx context.Context) (sign.Account, error) {
+			account, _, err := configuredR2Account(ctx, pool, cfg, media.RoleAssets)
+			return account, err
+		},
 	}
 	ocrRuntime := newOCRRuntime(pool, cfg)
 	srv.RecognitionModels = ocrRuntime.Models

@@ -158,7 +158,7 @@ test("the Workspace directory keeps the snake_case wire through to the screen", 
 })
 
 test("a redeemed code answers the wallet credit it granted", async () => {
-  const stub = recordFetch(() => ({ ok: true, wallet_cents: 1200 }))
+  const stub = recordFetch(() => ({ ok: true, wallet_cents: 1200 }), "json")
   try {
     const result = await accountHttp.accountRedeemCode({
       code: "ABC-123",

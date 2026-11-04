@@ -20,6 +20,7 @@ function fixture() {
   }
   return {
     schema_version: 1, revision: 12, cache_ttl_seconds: 300, ai_default_model: "model-a",
+    system_storage: [],
     ai_runtime: { max_concurrency_global: 20, max_concurrency_user: 3, max_concurrency_account: 4, user_rate_per_minute: 15, lease_ttl_seconds: 120, allow_public_egress: true },
     ai_accounts: [{ ...row, id: "a" }, { ...row, id: "b", model: "model-b", priority: 1 }],
   } satisfies Config
@@ -82,6 +83,12 @@ test("every request body carries each account's purpose and the stored runtime",
     assert.deepEqual(request.ai_runtime, config.ai_runtime)
     assert.deepEqual(request.ai_accounts.map((row) => row.purpose), next.ai_accounts.map((row) => row.purpose))
   }
+})
+
+test("a chat account can be preserved when another integration is edited", () => {
+  const config = fixture()
+  const mixed = { ...config, ai_accounts: [{ ...config.ai_accounts[0], purpose: "chat" as const }] }
+  assert.equal(replaceIntegrationConfigRequest(mixed).ai_accounts[0].purpose, "chat")
 })
 
 test("old and malformed responses remain unknown and cannot produce a replacement", () => {

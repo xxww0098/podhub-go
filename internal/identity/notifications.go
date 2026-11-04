@@ -21,7 +21,7 @@ type notificationCursor struct {
 	ID      int64     `json:"id"`
 }
 
-// Project only public snapshot fields; invitation proofs never leave storage.
+// Project only public snapshot fields for the signed-in account.
 const notificationProjection = `
 SELECT n.id, n.created_at,
  jsonb_build_object('uuid', n.uuid::text,

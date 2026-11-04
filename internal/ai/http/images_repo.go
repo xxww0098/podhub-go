@@ -115,6 +115,11 @@ func dispatchImage(ctx context.Context, deps Deps, org, requestID int64) error {
 }
 
 func readImageSet(ctx context.Context, deps Deps, org int64, id string) (view ImageSetView, err error) {
+	type assetRef struct {
+		index                       int
+		object, key, hash, identity string
+	}
+	var assets []assetRef
 	err = imageTx(ctx, deps, org, func(tx pgx.Tx) error {
 		if e := tx.QueryRow(ctx, `SELECT id::text,model,source_sha256 FROM ai_image_sets WHERE id=$1::uuid AND org_id=$2`, id, org).Scan(&view.ID, &view.Model, &view.SourceSHA256); e != nil {
 			return e
@@ -136,18 +141,8 @@ func readImageSet(ctx context.Context, deps Deps, org int64, id string) (view Im
 				return e
 			}
 			if object != "" {
-				if deps.Images == nil || deps.Images.PublicURL == nil {
-					return errors.New("image storage unavailable")
-				}
-				publicURL, err := deps.Images.PublicURL(identity, key)
-				if err != nil {
-					return err
-				}
-				if publicURL == "" {
-					return errors.New("image public URL unavailable")
-				}
 				item.Status = "ready"
-				item.Asset = &ImageAsset{ObjectID: object, URL: publicURL, SHA256: hash}
+				assets = append(assets, assetRef{len(view.Items), object, key, hash, identity})
 				ready++
 			} else if item.Status == "held" || item.Status == "dispatching" {
 				if time.Since(updated) > imageDeadline+time.Minute {
@@ -183,6 +178,23 @@ func readImageSet(ctx context.Context, deps Deps, org int64, id string) (view Im
 		}
 		return nil
 	})
+	if err != nil {
+		return
+	}
+	for _, asset := range assets {
+		if deps.Images == nil || deps.Images.PublicURL == nil {
+			return view, errors.New("image storage unavailable")
+		}
+		var publicURL string
+		publicURL, err = deps.Images.PublicURL(ctx, asset.identity, asset.key)
+		if err != nil {
+			return
+		}
+		if publicURL == "" {
+			return view, errors.New("image public URL unavailable")
+		}
+		view.Items[asset.index].Asset = &ImageAsset{ObjectID: asset.object, URL: publicURL, SHA256: asset.hash}
+	}
 	return
 }
 

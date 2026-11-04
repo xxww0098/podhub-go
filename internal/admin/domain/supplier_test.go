@@ -89,20 +89,23 @@ func TestDecodeSupplierDb(t *testing.T) {
 }
 
 func TestDecodeFactoryRequiresLoginOnCreation(t *testing.T) {
-	base := `{"name":" 印花厂 ","country":"cn","contact":"","internalNote":"","icon":""}`
+	base := `{"name":" 印花厂 ","country":"cn","contact":"","internal_note":"","icon":""}`
 	if _, err := DecodeFactory([]byte(base), true); err == nil {
 		t.Fatal("factory creation without a login was accepted")
 	}
 	if _, err := DecodeFactory([]byte(base), false); err != nil {
 		t.Fatal(err)
 	}
-	body := `{"name":" 印花厂 ","country":"cn","contact":"","internalNote":"","icon":"","accountEmail":" Factory@Example.invalid "}`
+	body := `{"name":" 印花厂 ","country":"cn","contact":"","internal_note":"","icon":"","account_email":" Factory@Example.invalid "}`
 	got, err := DecodeFactory([]byte(body), true)
 	if err != nil || got.Name != "印花厂" || got.Country != "CN" || got.AccountEmail != "factory@example.invalid" {
 		t.Fatalf("%+v %v", got, err)
 	}
 	if _, err := DecodeFactory([]byte(body), false); err == nil {
 		t.Fatal("factory edit accepted an account rebind")
+	}
+	if _, err := DecodeFactory([]byte(`{"name":"工厂","country":"CN","contact":"","internalNote":"","icon":""}`), false); err == nil {
+		t.Fatal("factory input accepted obsolete camelCase fields")
 	}
 }
 

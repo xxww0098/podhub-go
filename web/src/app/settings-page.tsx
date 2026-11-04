@@ -78,6 +78,9 @@ const PlatformPaymentScreen = lazy(async () => ({
   default: (await import("@/features/platform/payment-config"))
     .PlatformPaymentScreen,
 }))
+const PlatformSystemStorageScreen = lazy(async () => ({
+  default: (await import("@/features/platform/system-storage")).PlatformSystemStorageScreen,
+}))
 const PlatformBannedTagsScreen = lazy(async () => ({
   default: (await import("@/features/platform/banned-tags-screen"))
     .PlatformBannedTagsScreen,
@@ -125,7 +128,7 @@ export function SettingsPage({
 }) {
   const liveOverview = useAccountOverview()
   const overview = liveOverview ?? overviewProp
-  const available = settingsRowsFor(overview?.session.role)
+  const available = settingsRowsFor(overview?.session.role, overview?.active_workspace?.role)
   const [passwordOpen, setPasswordOpen] = useState(false)
   const [busy, setBusy] = useState(false)
 
@@ -225,7 +228,7 @@ export function SettingsPage({
           ) : null}
           {pane === "appearance" ? <AppearanceRows /> : null}
           {pane === "storage" ? <DeviceStoragePanel /> : null}
-          {pane === "workspace-storage" ? <WorkspaceStoragePanel key={overview?.active_workspace?.id} /> : null}
+          {pane === "workspace-storage" ? <WorkspaceStoragePanel key={overview?.active_workspace?.id} role={overview?.active_workspace?.role} /> : null}
           {pane === "changelog" ? <ChangelogPane /> : null}
           {pane === "mcp" ? (
             <Suspense fallback={<PaneLoading label="MCP 授权" />}>
@@ -269,6 +272,11 @@ export function SettingsPage({
           {pane === "payment" ? (
             <Suspense fallback={<PaneLoading label="支付" />}>
               <PlatformPaymentScreen />
+            </Suspense>
+          ) : null}
+          {pane === "system-storage" ? (
+            <Suspense fallback={<PaneLoading label="系统存储桶" />}>
+              <PlatformSystemStorageScreen />
             </Suspense>
           ) : null}
           {pane === "proxy" ? (

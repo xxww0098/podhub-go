@@ -276,7 +276,7 @@ test("ozonConfig 缺项的 hover 文案按配置轴 denial 给管理级短语", 
 
   // 四个配置类 denial 各有专属短语（口径 5：管理员看具体码，不复用卖家文案）。
   assert.deepEqual(missingReadiness(configMissing("config_needs_reconfiguration")), [
-    "类目更新后待复核",
+    "Ozon 配置待校验或复核",
   ])
   assert.deepEqual(missingReadiness(configMissing("catalog_expired")), ["目录已过期"])
   assert.deepEqual(missingReadiness(configMissing("catalog_missing")), ["目录缺失"])
@@ -288,7 +288,7 @@ test("ozonConfig 缺项的 hover 文案按配置轴 denial 给管理级短语", 
     <SupplierReadinessBadge row={configMissing("config_needs_reconfiguration")} />,
   )
   assert.match(badge, /◐ 缺 1 项/)
-  assert.match(badge, /title="缺：类目更新后待复核"/)
+  assert.match(badge, /title="缺：Ozon 配置待校验或复核"/)
 
   // 未发布行的整体 denial 停在销售态臂，配置轴的码仍然可见。
   assert.deepEqual(missingReadiness(configMissing("catalog_missing", "sku_not_published")), [

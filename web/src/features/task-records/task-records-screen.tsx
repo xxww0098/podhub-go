@@ -10,6 +10,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { loadStoreRoster, useStoreRoster } from "@/features/stores/store-roster-cache"
 import { errorMessage } from "@/lib/error-message"
+import { formatDateTimeYearMinute } from "@/lib/format"
 
 const KIND_LABELS = { listing: "商品上架", product_sync: "商品同步", media: "素材准备" } as const
 const STATUS_LABELS = { active: "进行中", attention: "需处理", finished: "已处理", cancelled: "已取消" } as const
@@ -37,7 +38,7 @@ function errorLabel(code: string): string { return ERROR_LABELS[code] ?? (code ?
 function dateLabel(at: string | null): string {
   if (!at) return "—"
   const date = new Date(at)
-  return Number.isFinite(date.getTime()) ? date.toLocaleString("zh-CN", { hour12: false }) : "时间未知"
+  return Number.isFinite(date.getTime()) ? formatDateTimeYearMinute(date) : "时间未知"
 }
 
 export function TaskRecordsTable({ items, onInspect }: { items: readonly TaskRecord[]; onInspect: (item: TaskRecord) => void }) {

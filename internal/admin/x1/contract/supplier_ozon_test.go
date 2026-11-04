@@ -19,7 +19,7 @@ func TestComplexEnvelopeCannotStoreAnUnreadableDraftWithoutCatalog(t *testing.T)
 }
 
 func TestOzonConfigAllowsMissingTagsInDraftOnly(t *testing.T) {
-	const prefix = `{"description_category_id":1,"type_id":2,"language":"ru","values":{},"complex_values":[],"prompt_text":"","ai_output":{"title":true,"description":true,"tags":true},"expected_revision":0,"fixed_tags":`
+	const prefix = `{"description_category_id":1,"type_id":2,"language":"ru","values":{},"complex_values":[],"prompt_text":"","ai_output":{"title":true,"description":true,"tags":true},"expected_revision":0,"validate":false,"fixed_tags":`
 	draft, err := DecodeOzon([]byte(prefix + `[]}`))
 	if err != nil {
 		t.Fatal("incomplete draft rejected", err)
@@ -34,5 +34,26 @@ func TestOzonConfigAllowsMissingTagsInDraftOnly(t *testing.T) {
 	}
 	if _, err := DecodeOzon([]byte(prefix + `["#\u0442\u0435\u0441\u0442"]}`)); err != nil {
 		t.Fatal("valid fixed tags rejected", err)
+	}
+}
+
+func TestOzonValidationMustBeExplicit(t *testing.T) {
+	const body = `{"description_category_id":1,"type_id":2,"language":"ru","values":{},"complex_values":[],"prompt_text":"","ai_output":{"title":true,"description":true,"tags":true},"expected_revision":0,"fixed_tags":[]`
+	for _, tc := range []struct {
+		suffix string
+		want   bool
+	}{
+		{`,"validate":false}`, false},
+		{`,"validate":true}`, true},
+	} {
+		got, err := DecodeOzon([]byte(body + tc.suffix))
+		if err != nil || got.Validate != tc.want {
+			t.Fatalf("%s: validate=%v error=%v", tc.suffix, got.Validate, err)
+		}
+	}
+	for _, suffix := range []string{`}`, `,"validate":null}`, `,"validate":"true"}`} {
+		if _, err := DecodeOzon([]byte(body + suffix)); err == nil {
+			t.Fatalf("accepted invalid validation mode %s", suffix)
+		}
 	}
 }

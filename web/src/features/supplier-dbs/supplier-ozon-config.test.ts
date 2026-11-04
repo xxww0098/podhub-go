@@ -149,6 +149,7 @@ test("io.put: 同一 ozon-config 路由整配置写回并带 expectedRevision CA
     fixed_tags: ["#a"],
     ai_output: { title: true, description: true, tags: true },
     expected_revision: 3,
+    validate: false,
     values: { "fixed:currency_code": [{ kind: "text", value: "RUB" }] },
   }
   try {

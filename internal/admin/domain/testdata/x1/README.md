@@ -11,7 +11,7 @@
 | `product-profile.json` | `fixtures/ocr/product-profile.json` |
 | `requests/post-row-staff-crud.json` | `tests/cloud/supplier_dbs.rs` `row_body` |
 | `requests/price.json` | staff_crud 调价体 |
-| `requests/put-ozon-ready-config.json` | `ready_config_body` 字面形状（标签与 revision 会被测试改写） |
+| `requests/put-ozon-ready-config.json` | `ready_config_body` 字面形状，补充显式 `validate`；标签与 revision 会被测试改写 |
 | `hand/preview-chernovik.json` | preview 全文与两个 sha256 |
 | `hand/post-row-staff-crud.response.json` | POST 行 201 |
 | `hand/post-price.response.json` | 相对创建响应的变更字段 |

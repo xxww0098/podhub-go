@@ -36,7 +36,7 @@ func (h Host) SettleOCR(ctx context.Context, p access.Principal, claim ai.Claim,
 }
 
 func (h Host) applyRecognitionReceipt(ctx context.Context, tx pgx.Tx, p access.Principal, jobID string, binding ai.Binding, completion []byte, requestID, model string, charged int64) (json.RawMessage, error) {
-	row, card, err := mediaRow(ctx, tx, p.OrgID, binding.RowID)
+	row, card, err := mediaRow(ctx, tx, p.OrgID, p.UserID, binding.RowID)
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +192,7 @@ func (h Host) failRecognition(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		if state == "succeeded" {
-			row, _, err := mediaRow(r.Context(), tx, p.OrgID, id)
+			row, _, err := mediaRow(r.Context(), tx, p.OrgID, p.UserID, id)
 			if err == nil {
 				result = ProjectRow(row.row)
 			}
@@ -254,7 +254,7 @@ func (h Host) failRecognition(w http.ResponseWriter, r *http.Request) {
 		if _, err = tx.Exec(r.Context(), `UPDATE listing_rows SET content_state='failed',payload=jsonb_set(payload,'{failureLog}',$3::jsonb),updated_by=$4,updated_at=clock_timestamp() WHERE org_id=$1 AND id=$2::uuid`, p.OrgID, id, string(log), p.UserID); err != nil {
 			return err
 		}
-		row, _, err := mediaRow(r.Context(), tx, p.OrgID, id)
+		row, _, err := mediaRow(r.Context(), tx, p.OrgID, p.UserID, id)
 		if err == nil {
 			result = ProjectRow(row.row)
 		}

@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	tenant "github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
+	sign "github.com/xxww0098/podhub-go/internal/platform/r2/sigv4"
 	"github.com/xxww0098/podhub-go/internal/supplier/contract"
 )
 
@@ -47,7 +48,7 @@ func TestCatalogImageRequiresPublishedReference(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO sc_skus (sku_id, product_id, platform_code, title, published, created_at_ms, updated_at_ms, created_by_account_uuid) VALUES ($1, $2, 'IMAGE-TEST', 'image test', true, 1, 1, 'test')`, sku, product); err != nil {
 		t.Fatal(err)
 	}
-	repo := New(pool, tenant.BeginApp).WithBlobs(nil, &account)
+	repo := New(pool, tenant.BeginApp).WithBlobs(nil, func(context.Context) (sign.Account, error) { return account, nil })
 	got, err := repo.CatalogImage(ctx, source, file, 32)
 	if err != nil || got.ContentType != "image/jpeg" {
 		t.Fatalf("published image: %s %v", got.ContentType, err)

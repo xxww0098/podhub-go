@@ -28,6 +28,7 @@ test("AI account settings read the mounted admin configuration endpoint", async 
     revision: 3,
     cache_ttl_seconds: 300,
     ai_default_model: "qwen3.7-flash",
+    system_storage: [],
     ai_runtime: { max_concurrency_global: 0, max_concurrency_user: 0, max_concurrency_account: 0, user_rate_per_minute: 0, lease_ttl_seconds: 90, allow_public_egress: false },
     ai_accounts: [{
       id: "qa-ai-account",

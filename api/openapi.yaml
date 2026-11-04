@@ -164,16 +164,18 @@ paths:
     get:
       tags: [workspace-slice-storage]
       operationId: getWorkspaceSliceStorage
+      description: Owner only. Returns the current workspace bucket without credentials.
       responses:
         '200':
-          description: Current workspace bucket and owner-only management capability; never returns credentials.
+          description: Current workspace bucket; never returns credentials.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/WorkspaceSliceStorage'}
+        '403': {description: Only the current workspace owner can read storage}
     post:
       tags: [workspace-slice-storage]
-      operationId: provisionWorkspaceSliceStorage
-      description: Owner only. Omit bucket to generate podhub- followed by a random UUID without hyphens, or supply a valid R2 name before creation. The reserved name cannot change during retries or after activation. Custom names are never adopted from an existing bucket; ambiguous creation requires review. Creates through OAuth, configures CORS and public access, obtains a bucket-scoped credential, then verifies actual upload/read/list/delete before activation.
+      operationId: configureWorkspaceSliceStorage
+      description: Owner only. Saves the owner's R2 bucket and API token after the server has proved upload, private and public readback, CORS, listing and exact delete against the supplied bucket. One active configuration per workspace; a configured workspace returns its current state.
       requestBody:
         required: true
         content:
@@ -181,27 +183,28 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [account_id, public_access]
+              required: [endpoint, bucket, public_base_url, access_key_id, secret_access_key]
               properties:
-                account_id: {type: string, pattern: '^[a-f0-9]{32}$'}
-                public_access: {type: boolean, enum: [true]}
+                endpoint: {type: string, format: uri, description: 'R2 S3 API endpoint: https://<32-hex-account-id>.r2.cloudflarestorage.com'}
                 bucket:
                   type: string
                   minLength: 3
                   maxLength: 63
                   pattern: '^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$'
-                  description: Optional custom name; lowercase ASCII letters, digits and hyphens only, with alphanumeric endpoints. Omit to generate a default name.
+                  description: Lowercase ASCII letters, digits and hyphens only, with alphanumeric endpoints.
+                public_base_url: {type: string, format: uri, description: Public HTTPS origin bound to this bucket, without a path or query.}
+                access_key_id: {type: string, minLength: 1, maxLength: 256}
+                secret_access_key: {type: string, minLength: 1, maxLength: 256}
       responses:
         '200':
-          description: Verified workspace storage; creation is idempotent per workspace.
+          description: Verified workspace storage; an already configured workspace is returned unchanged.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/WorkspaceSliceStorage'}
-        '400': {description: Invalid bucket name, invalid selection, or public access consent missing}
-        '403': {description: Only the current workspace owner can provision storage}
-        '409': {description: Bucket name already used or locked, creation in progress, original Cloudflare account required, or a prior unknown creation or credential outcome needs review}
-        '502': {description: External operation or verification failed; no successful activation is claimed}
-        '503': {description: OAuth or storage services are not configured}
+        '400': {description: Invalid endpoint, bucket name, public URL, credential, CORS, public access, or object permissions}
+        '403': {description: Only the current workspace owner can configure storage}
+        '409': {description: Another workspace already uses this physical bucket, or a configuration is in progress}
+        '503': {description: Storage services are not configured}
   /api/workspace/slice-storage/cleanup:
     patch:
       tags: [workspace-slice-storage]
@@ -247,6 +250,7 @@ paths:
     get:
       tags: [workspace-slice-storage]
       operationId: listWorkspaceSliceObjects
+      description: Owner only. Lists the current workspace bucket; members use the shared bucket through upload flows but cannot browse it.
       parameters:
         - {name: prefix, in: query, schema: {type: string, maxLength: 512}}
         - {name: cursor, in: query, schema: {type: string, maxLength: 4096}}
@@ -256,23 +260,27 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/WorkspaceSliceObjects'}
+        '403': {description: Workspace owner required}
         '409': {description: Workspace storage is not ready}
         '502': {description: Listing could not be read}
   /api/workspace/slice-storage/stats:
     get:
       tags: [workspace-slice-storage]
       operationId: workspaceSliceStats
+      description: Owner only. Sums the current workspace bucket's actual listings.
       responses:
         '200':
           description: On-demand sum of actual S3 listings, at most 100000 objects. Incomplete totals are lower bounds, not a complete bucket count or billing quota.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/WorkspaceSliceStats'}
+        '403': {description: Workspace owner required}
         '502': {description: Statistics could not be read}
   /api/workspace/slice-storage/download:
     get:
       tags: [workspace-slice-storage]
       operationId: downloadWorkspaceSliceObject
+      description: Owner only. Signs a five-minute download URL for an object in the current workspace bucket.
       parameters:
         - {name: key, in: query, required: true, schema: {type: string}}
       responses:
@@ -286,6 +294,7 @@ paths:
                 properties:
                   url: {type: string, format: uri}
         '400': {description: Key is not a canonical slice key in this workspace}
+        '403': {description: Workspace owner required}
   /api/workspace/slice-storage/objects/delete:
     post:
       tags: [workspace-slice-storage]
@@ -322,85 +331,6 @@ paths:
         '403': {description: Workspace owner required}
         '409': {description: A selected object or a pending upload in the folder may still have an unexpired upload grant; wait 16 minutes}
         '502': {description: Deletion not confirmed; refresh the list before retrying}
-  /api/workspace/slice-storage/cloudflare:
-    get:
-      tags: [workspace-slice-storage]
-      operationId: getCloudflareConnection
-      responses:
-        '200':
-          description: Current login session's short-lived Cloudflare setup connection. Does not verify R2 usability.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/CloudflareConnection'}
-        '401': {description: Login required}
-        '403': {description: Workspace membership required}
-    delete:
-      tags: [workspace-slice-storage]
-      operationId: disconnectCloudflare
-      responses:
-        '204': {description: Active access token revoked and setup cookies cleared; missing or expired setup connections are already disconnected. Buckets are retained.}
-        '502': {description: Revocation could not be confirmed}
-        '503': {description: OAuth is not configured}
-  /api/workspace/slice-storage/cloudflare/authorize:
-    post:
-      tags: [workspace-slice-storage]
-      operationId: authorizeCloudflare
-      description: Creates a login-session-bound OAuth state cookie and an S256 PKCE authorization URL. The caller navigates to the returned URL.
-      responses:
-        '200':
-          description: Authorization URL. Client secret and PKCE verifier are never returned.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [authorization_url]
-                properties:
-                  authorization_url: {type: string, format: uri}
-        '401': {description: Login required}
-        '403': {description: Workspace membership required or cross-origin write rejected}
-        '503': {description: OAuth is not configured}
-  /api/workspace/slice-storage/cloudflare/callback:
-    get:
-      tags: [workspace-slice-storage]
-      operationId: callbackCloudflare
-      description: Owner only. Exchanges a single-use authorization code with PKCE. Stores the access token in an encrypted HttpOnly cookie for at most 15 minutes, bound to the current workspace and PodHub login session. No refresh token is retained.
-      parameters:
-        - {name: state, in: query, required: true, schema: {type: string}}
-        - {name: code, in: query, schema: {type: string}}
-        - {name: error, in: query, schema: {type: string}}
-      responses:
-        '303':
-          description: Redirects to workspace storage settings after success or an authorization error. A fixed error code in the URL fragment identifies denial, invalid state, or exchange failure. A successful connection does not create a bucket or enable slice storage.
-          headers:
-            Location:
-              schema: {type: string, format: uri}
-        '401': {description: Original login session required}
-        '503': {description: OAuth is not configured}
-  /api/workspace/slice-storage/cloudflare/accounts:
-    get:
-      tags: [workspace-slice-storage]
-      operationId: listCloudflareAccounts
-      responses:
-        '200':
-          description: Accounts visible to the current user's Cloudflare grant
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [accounts]
-                properties:
-                  accounts:
-                    type: array
-                    items:
-                      type: object
-                      required: [id, name]
-                      properties:
-                        id: {type: string, pattern: '^[a-f0-9]{32}$'}
-                        name: {type: string}
-        '403': {description: Cloudflare grant lacks account read permission}
-        '409': {description: Setup connection is missing or expired}
-        '502': {description: Account list could not be read completely}
-        '503': {description: OAuth is not configured}
   "/api/billing/subscription":
     "get":
       "tags": ["billing"]
@@ -1674,7 +1604,12 @@ paths:
         '400': {description: Invalid row id}
         '401': {description: Not signed in}
         '403': {description: Role or workspace refused}
-        '404': {description: No row in this workspace}
+        '404':
+          description: No row in this workspace
+          content:
+            application/json:
+              schema:
+                type: object
         '409': {description: Preparation or publishing is still active}
         '500': {description: Database error}
         '503': {description: Writes unavailable}
@@ -2180,6 +2115,12 @@ paths:
             application/json:
               schema:
                 type: object
+        '400':
+          description: Invalid job ID or request
+          content:
+            application/json:
+              schema:
+                type: object
         '401':
           description: Not signed in
           content:
@@ -2188,6 +2129,12 @@ paths:
                 type: object
         '403':
           description: Role cannot prepare
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          description: No job in this workspace or outside the member's stores
           content:
             application/json:
               schema:
@@ -4985,7 +4932,7 @@ paths:
                     required: [factory]
                     properties:
                       factory: { $ref: '#/components/schemas/Factory' }
-                      initialPassword: { type: string }
+                      initial_password: { type: string }
         '403':
           description: 需要超级管理员
   "/api/admin/factories/{factory_id}":
@@ -9026,7 +8973,7 @@ paths:
       operationId: adminIntegrationsConfigGet
       tags:
       - admin
-      summary: Read the credential-free platform AI configuration
+      summary: Read the credential-free platform AI and system storage configuration
       responses:
         '200':
           description: Credential-free configuration snapshot
@@ -9062,7 +9009,7 @@ paths:
       operationId: adminIntegrationsConfigReplace
       tags:
       - admin
-      summary: Replace platform AI configuration with a revision check
+      summary: Replace platform integration configuration with a revision check
       requestBody:
         required: true
         content:
@@ -16067,12 +16014,6 @@ paths:
         required: true
         schema:
           type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              "$ref": "#/components/schemas/InvitationProofRequest"
-        required: true
       responses:
         '500':
           description: Database or audit write failed; transaction rolled back
@@ -16120,12 +16061,6 @@ paths:
         required: true
         schema:
           type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              "$ref": "#/components/schemas/InvitationProofRequest"
-        required: true
       responses:
         '500':
           description: Database or audit write failed; transaction rolled back
@@ -20134,39 +20069,20 @@ components:
         next_attempt_at: {type: string, format: date-time, nullable: true}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
-    CloudflareConnection:
-      type: object
-      required: [available, connected, expires_at]
-      properties:
-        available: {type: boolean}
-        connected: {type: boolean}
-        expires_at: {type: integer, format: int64, description: Unix timestamp in seconds; zero when not connected}
     WorkspaceSliceStorage:
       type: object
-      required: [configured, can_manage]
+      required: [configured]
       properties:
         configured: {type: boolean}
-        can_manage: {type: boolean}
-        delete_enabled: {type: boolean, description: Current owner and server-side deletion switch both allow deletion.}
+        delete_enabled: {type: boolean, description: Server-side deletion switch is on; the read is already owner-only.}
         key_prefix: {type: string, description: Stable storage namespace used to bind folder deletion to the selected workspace configuration.}
+        endpoint: {type: string, description: R2 S3 API endpoint used by this workspace.}
         bucket: {type: string}
         public_base_url: {type: string}
-        oauth_available: {type: boolean}
-        cloudflare_connected: {type: boolean}
         clear_status: {type: string, enum: [idle, pending, retrying, completed]}
         daily_clear_status: {type: string, enum: [waiting, unconfirmed, running, retrying, completed]}
         cleanup_mode: {type: string, enum: [daily, manual]}
         cleanup_time: {type: string, nullable: true, description: Daily cleanup time in Asia/Shanghai; null in manual mode.}
-        provision:
-          type: object
-          nullable: true
-          required: [id, account_id, bucket, phase, error_code]
-          properties:
-            id: {type: string}
-            account_id: {type: string}
-            bucket: {type: string}
-            phase: {type: string, enum: [creating, bucket_ready, token_creating, verifying, ready, blocked]}
-            error_code: {type: string}
     WorkspaceSliceObjects:
       type: object
       required: [objects, folders, next_cursor]
@@ -25387,13 +25303,11 @@ components:
       type: object
       required:
       - uuid
-      - token
       - email
       - role
       - expires_at_ms
       - pending_used
       - pending_limit
-      - notified
       properties:
         email:
           type: string
@@ -25401,11 +25315,6 @@ components:
           type: integer
           format: int64
           minimum: 0
-        notified:
-          type: boolean
-          description: |-
-            Retained for wire compatibility. Cloud always serializes `false` so
-            the field cannot disclose whether the address already has an account.
         pending_limit:
           type: integer
           format: int64
@@ -25414,17 +25323,13 @@ components:
           format: int64
         role:
           type: string
-        token:
-          type: string
-          description: |-
-            Returned once to the creator for private delivery to the recipient.
-            Never included in notifications or directory projections.
         uuid:
           type: string
-          description: Stable invitation identity; possession alone grants no authority.
+          description: Stable invitation identity; only the invited account may respond.
       additionalProperties: false
     CreateInvitationRequest:
       type: object
+      description: Invite an existing, enabled platform account by its email address.
       required:
       - email
       - role
@@ -26852,6 +26757,7 @@ components:
       - cache_ttl_seconds
       - ai_accounts
       - ai_runtime
+      - system_storage
       properties:
         ai_default_model:
           type: string
@@ -26872,6 +26778,30 @@ components:
             "$ref": "#/components/schemas/AdminIntegrationAiAccountView"
         ai_runtime:
           "$ref": "#/components/schemas/AdminIntegrationAiRuntime"
+        system_storage:
+          type: array
+          items:
+            "$ref": "#/components/schemas/AdminSystemStorageView"
+      additionalProperties: false
+    AdminSystemStorageView:
+      type: object
+      required: [role, endpoint, bucket, public_base_url]
+      properties:
+        role: {type: string, enum: [assets, private]}
+        endpoint: {type: string}
+        bucket: {type: string}
+        public_base_url: {type: string}
+      additionalProperties: false
+    AdminSystemStorageWrite:
+      type: object
+      required: [role, endpoint, bucket, public_base_url, access_key_id, secret_access_key]
+      properties:
+        role: {type: string, enum: [assets, private]}
+        endpoint: {type: string}
+        bucket: {type: string}
+        public_base_url: {type: string, description: Required for assets; empty for private.}
+        access_key_id: {type: string, description: Empty retains the stored credential when the endpoint and bucket are unchanged.}
+        secret_access_key: {type: string, description: Empty retains the stored secret when the endpoint, bucket and access key are unchanged.}
       additionalProperties: false
     AdminIntegrationAiPurpose:
       type: string
@@ -27011,6 +26941,12 @@ components:
           allOf:
           - "$ref": "#/components/schemas/AdminIntegrationAiRuntime"
           description: Omitted retains the stored runtime settings.
+        system_storage:
+          type: array
+          maxItems: 2
+          description: Omitted retains the stored system buckets; an empty array removes them.
+          items:
+            "$ref": "#/components/schemas/AdminSystemStorageWrite"
       additionalProperties: false
     IntegrationConfigErrorCode:
       type: string
@@ -27088,15 +27024,6 @@ components:
           type: boolean
         ok:
           type: boolean
-      additionalProperties: false
-    InvitationProofRequest:
-      type: object
-      required:
-      - token
-      properties:
-        token:
-          type: string
-          description: Private credential received separately from the invitation's creator.
       additionalProperties: false
     InvitationStatus:
       type: string
@@ -27670,6 +27597,38 @@ components:
         next_cursor:
           type: string
           nullable: true
+        review:
+          "$ref": "#/components/schemas/ListingIntentReviewCounts"
+      additionalProperties: false
+    ListingIntentReviewCounts:
+      type: object
+      description: |-
+        Workspace-wide submission review counts for the caller's visible stores.
+        One entry per listing row (its latest intent). `accepted_issue` counts an
+        accepted row whose Ozon import task still reports an error; it is not a
+        send failure.
+      required:
+      - needs_review
+      - unknown
+      - rejected
+      - conflict
+      - accepted_issue
+      properties:
+        needs_review:
+          type: integer
+          format: int64
+        unknown:
+          type: integer
+          format: int64
+        rejected:
+          type: integer
+          format: int64
+        conflict:
+          type: integer
+          format: int64
+        accepted_issue:
+          type: integer
+          format: int64
       additionalProperties: false
     ListingIssue:
       type: object
@@ -30937,6 +30896,8 @@ components:
       description: |-
         PUT body. `expected_revision = 0` creates the first configuration; every
         subsequent save must send the revision returned by GET/PUT.
+        `validate: false` saves a draft as `needs_reconfiguration` with a
+        `validation_pending` issue; `true` validates the fields.
       required:
       - description_category_id
       - type_id
@@ -30947,6 +30908,7 @@ components:
       - prompt_text
       - ai_output
       - expected_revision
+      - validate
       properties:
         description_category_id:
           type: integer
@@ -30977,6 +30939,8 @@ components:
         expected_revision:
           type: integer
           format: int64
+        validate:
+          type: boolean
       additionalProperties: false
     ReconcileEntry:
       type: object
@@ -32329,44 +32293,44 @@ components:
       additionalProperties: false
     FactoryInput:
       type: object
-      required: [name, country, contact, internalNote, icon]
+      required: [name, country, contact, internal_note, icon]
       properties:
         name: { type: string }
         country: { type: string }
         contact: { type: string }
-        internalNote: { type: string }
+        internal_note: { type: string }
         icon: { type: string }
       additionalProperties: false
     FactoryCreateInput:
       type: object
-      required: [name, country, contact, internalNote, icon, accountEmail]
+      required: [name, country, contact, internal_note, icon, account_email]
       properties:
         name: { type: string }
         country: { type: string }
         contact: { type: string }
-        internalNote: { type: string }
+        internal_note: { type: string }
         icon: { type: string }
-        accountEmail: { type: string, format: email }
+        account_email: { type: string, format: email }
       additionalProperties: false
     Factory:
       type: object
-      required: [factoryId, name, country, contact, internalNote, icon, createdAtMs, updatedAtMs, libraries]
+      required: [factory_id, name, country, contact, internal_note, icon, created_at_ms, updated_at_ms, libraries]
       properties:
-        factoryId: { type: string }
+        factory_id: { type: string }
         name: { type: string }
         country: { type: string }
         contact: { type: string }
-        internalNote: { type: string }
+        internal_note: { type: string }
         icon: { type: string }
-        createdAtMs: { type: integer, format: int64 }
-        updatedAtMs: { type: integer, format: int64 }
+        created_at_ms: { type: integer, format: int64 }
+        updated_at_ms: { type: integer, format: int64 }
         libraries:
           type: array
           items:
             type: object
-            required: [sourceId, name, country, icon]
+            required: [source_id, name, country, icon]
             properties:
-              sourceId: { type: string }
+              source_id: { type: string }
               name: { type: string }
               country: { type: string }
               icon: { type: string }
@@ -32523,7 +32487,7 @@ components:
           nullable: true
         path:
           type: string
-          description: Path relative to the server-configured `R2_ASSETS_KEY_PREFIX`.
+          description: Path relative to the platform-configured assets bucket prefix.
         public_url:
           type: string
           nullable: true
@@ -33100,8 +33064,14 @@ components:
       - catalog_digest_mismatch
       - prompt_invalid
     SupplierOzonConfigIssue:
-      description: One validation finding. `issue` selects the variant.
+      description: One validation finding or pending marker. `issue` selects the variant.
       oneOf:
+      - type: object
+        required: [issue]
+        properties:
+          issue:
+            type: string
+            enum: [validation_pending]
       - type: object
         required:
         - issue
@@ -34192,9 +34162,8 @@ components:
     WorkspaceInvitationEntry:
       type: object
       description: |-
-        One pending Workspace Invitation. It is addressed to an email rather than to a
-        person, so it has no display name, and it always carries the uuid the
-        roster revokes it by — never a one-time token.
+        One pending Workspace Invitation, bound to an existing account and shown
+        by email. Its uuid identifies it for revocation.
       required:
       - id
       - uuid

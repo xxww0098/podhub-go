@@ -75,15 +75,11 @@ const (
 
 // Config is the only parsed view of the environment.
 type Config struct {
-	DatabaseURL                 string
-	Bind                        string
-	DNSServer                   string
-	PublicURL                   string
-	SMTP                        SMTPSettings
-	CloudflareOAuthClientID     string
-	CloudflareOAuthClientSecret string
-	CloudflareOAuthScopes       string
-
+	DatabaseURL string
+	Bind        string
+	DNSServer   string
+	PublicURL   string
+	SMTP        SMTPSettings
 	// ozonWritesDisabled is true only when OZON_WRITE_KILL_SWITCH is truthy.
 	ozonWritesDisabled bool
 	// shippingInjectWrites is SHIPPING_INJECT_OZON_WRITES. Unset is false.
@@ -97,7 +93,6 @@ type Config struct {
 	R2Bucket    string
 	R2AccessKey string
 	R2Secret    string
-	R2Storage   []R2StorageAccount
 
 	LoadTestMode string
 
@@ -199,16 +194,12 @@ func Load() Config {
 		DNSServer:                   strings.TrimSpace(os.Getenv(envDNSServer)),
 		PublicURL:                   strings.TrimSpace(os.Getenv("CLOUD_PUBLIC_URL")),
 		SMTP:                        loadSMTP(),
-		CloudflareOAuthClientID:     strings.TrimSpace(os.Getenv("CLOUDFLARE_OAUTH_CLIENT_ID")),
-		CloudflareOAuthClientSecret: os.Getenv("CLOUDFLARE_OAUTH_CLIENT_SECRET"),
-		CloudflareOAuthScopes:       strings.TrimSpace(os.Getenv("CLOUDFLARE_OAUTH_SCOPES")),
 		ozonWritesDisabled:          ozonSet && isTruthy(ozonRaw),
 		mediaDeleteEnabled:          mediaDeleteEnabled(mediaRaw, mediaSet),
 		R2Endpoint:                  strings.TrimSpace(os.Getenv(envR2Endpoint)),
 		R2Bucket:                    strings.TrimSpace(os.Getenv(envR2Bucket)),
 		R2AccessKey:                 strings.TrimSpace(os.Getenv(envR2AccessKeyID)),
 		R2Secret:                    strings.TrimSpace(os.Getenv(envR2Secret)),
-		R2Storage:                   loadR2Storage(),
 		LoadTestMode:                strings.TrimSpace(os.Getenv(envLoadTestMode)),
 		productSyncDisabled:         syncSet && isTruthy(syncRaw),
 		delegateSync:                durationMS(os.Getenv(envDelegateSync), defaultDelegate),

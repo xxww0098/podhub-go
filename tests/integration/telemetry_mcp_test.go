@@ -41,7 +41,8 @@ func TestTelemetryInboxAndClientLogs(t *testing.T) {
 	insertRollup(t, ctx, pool, org, user, "2026-08", "traffic.user_to_s3_bytes", telemetrydomain.S3BytesForStores(1))
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO organization_members (org_id, user_id, role, status, display_name, join_order, created_at, updated_at)
-		VALUES ($1, $2, 'owner', 'active', 'Telemetry', 1, clock_timestamp(), clock_timestamp())`, org, user); err != nil {
+		VALUES ($1, $2, 'owner', 'active', 'Telemetry', 1, clock_timestamp(), clock_timestamp())
+		ON CONFLICT (org_id, user_id) DO NOTHING`, org, user); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
@@ -217,7 +218,8 @@ func TestMCPGrantContextAndReplay(t *testing.T) {
 	user, org := insertWorkspace(t, ctx, pool, "tm-mcp-"+stamp+"@example.com", "MCP Space")
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO organization_members (org_id, user_id, role, status, display_name, join_order, created_at, updated_at)
-		VALUES ($1, $2, 'owner', 'active', 'MCP', 1, clock_timestamp(), clock_timestamp())`, org, user); err != nil {
+		VALUES ($1, $2, 'owner', 'active', 'MCP', 1, clock_timestamp(), clock_timestamp())
+		ON CONFLICT (org_id, user_id) DO NOTHING`, org, user); err != nil {
 		t.Fatal(err)
 	}
 	token := "opa_tm_token_0123456789"

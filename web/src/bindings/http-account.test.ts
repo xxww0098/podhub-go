@@ -92,7 +92,7 @@ test("paid writes post the Workspace the dialog confirmed", async (t) => {
   const restore = stubFetch(async (input, init) => {
     bodies.push(JSON.parse(String(init?.body)))
     if (String(input).endsWith(route("redeem"))) {
-      return jsonResponse({ data: { ok: true, wallet_cents: 500 } })
+      return jsonResponse({ ok: true, wallet_cents: 500 })
     }
     return jsonResponse({ order: rechargeView() })
   })
@@ -111,6 +111,19 @@ test("paid writes post the Workspace the dialog confirmed", async (t) => {
     { code: "ABC-123", expected_workspace_uuid: workspaceUuid },
     { operation_id: "recharge-op", amount_cents: 500, provider: "manual", expected_workspace_uuid: workspaceUuid },
   ])
+})
+
+test("plan redemption preserves the raw grant and effective dates", async (t) => {
+  const grant = {
+    ok: true, wallet_cents: 0, plan_key: "max", plan_stores: 100, plan_months: 1,
+    starts_at: "2026-11-04T00:00:00Z", ends_at: "2026-12-04T00:00:00Z",
+  }
+  const restore = stubFetch(async () => jsonResponse(grant))
+  t.after(restore)
+
+  assert.deepEqual(await accountHttp.accountRedeemCode({
+    code: "POD-PLAN-ABC", expected_workspace_uuid: "8f0a3f5e-6c1d-4a5f-9a3e-6d2c8b7f4a11",
+  }), grant)
 })
 
 test("wallet detail keeps a pending online recharge available for recovery", async (t) => {

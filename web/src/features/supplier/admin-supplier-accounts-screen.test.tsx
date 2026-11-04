@@ -72,7 +72,7 @@ test("only successfully loaded empty lists show the invitation to create a facto
 })
 
 test("factory groups include factories without accounts", () => {
-  const makeFactory = (factoryId: string, name: string): Factory => ({ factoryId, name, country: "CN", icon: "", contact: "", internalNote: "", createdAtMs: 1, updatedAtMs: 1, libraries: [] })
+  const makeFactory = (factory_id: string, name: string): Factory => ({ factory_id, name, country: "CN", icon: "", contact: "", internal_note: "", created_at_ms: 1, updated_at_ms: 1, libraries: [] })
   const factories = [makeFactory("factory-test", "新工厂名"), makeFactory("empty", "尚无成员")]
   const merged = mergeSupplierGroups(factories, groups)
   assert.deepEqual(merged.map((group) => [group.factory.factory_id, group.factory.name, group.members.length]), [

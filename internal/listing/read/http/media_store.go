@@ -162,16 +162,29 @@ func pinFingerprint(pin mediaPin) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func mediaRow(ctx context.Context, tx pgx.Tx, org int64, id string) (storedScan, []byte, error) {
+func mediaRow(ctx context.Context, tx pgx.Tx, org, user int64, id string) (storedScan, []byte, error) {
 	row, err := scanStoredRow(tx.QueryRow(ctx, `SELECT `+rowColumns+` FROM listing_rows WHERE org_id=$1 AND id=$2::uuid FOR UPDATE`, org, id))
 	if err != nil {
 		return row, nil, err
 	}
+	var cardStore *string
 	var card []byte
-	err = tx.QueryRow(ctx, `SELECT payload FROM listing_cards WHERE org_id=$1 AND id=$2::uuid FOR SHARE`, org, row.row.CardID).Scan(&card)
-	if err == nil {
-		card, err = projectSupplierCard(ctx, tx, card, time.Now().UnixMilli())
+	err = tx.QueryRow(ctx, `SELECT store_id::text, payload FROM listing_cards WHERE org_id=$1 AND id=$2::uuid FOR SHARE`, org, row.row.CardID).Scan(&cardStore, &card)
+	if err != nil {
+		return row, nil, err
 	}
+	store := row.row.StoreID
+	if store == nil {
+		store = cardStore
+	}
+	allowed, err := storeAllowedTx(ctx, tx, org, user, store)
+	if err != nil {
+		return row, nil, err
+	}
+	if !allowed {
+		return row, nil, rowRefuse{http.StatusNotFound, "商品行不存在", "not_found"}
+	}
+	card, err = projectSupplierCard(ctx, tx, card, time.Now().UnixMilli())
 	return row, card, err
 }
 

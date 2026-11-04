@@ -33,7 +33,7 @@ import (
 )
 
 // This opt-in test has no provider/storage substitute. scripts/verify-ai-live.py
-// supplies selected credentials through stdin; this process sets the storage environment.
+// supplies selected credentials through stdin; this process seals them into the isolated database.
 func TestAIImageSetsLive(t *testing.T) {
 	mode := os.Getenv("PODHUB_AI_LIVE_MODE")
 	if mode != "preflight" && mode != "generate" {
@@ -48,7 +48,7 @@ func TestAIImageSetsLive(t *testing.T) {
 	}
 	var remote struct {
 		AI     configdoc.StoredAI      `json:"ai"`
-		Assets config.R2StorageAccount `json:"assets"`
+		Assets configdoc.StoredStorage `json:"assets"`
 	}
 	if json.NewDecoder(io.LimitReader(os.Stdin, 1<<20)).Decode(&remote) != nil {
 		t.Fatal("credential stdin unavailable")
@@ -110,8 +110,7 @@ func TestAIImageSetsLive(t *testing.T) {
 	}
 	cookie, org, user := register("live-image@example.invalid", "live-reg-a")
 	otherCookie, _, _ := register("live-other@example.invalid", "live-reg-b")
-	setR2StorageAccount(t, remote.Assets)
-	snapshot, err := json.Marshal(configdoc.Snapshot{SchemaVersion: 1, AIAccounts: []configdoc.StoredAI{remote.AI}})
+	snapshot, err := json.Marshal(configdoc.Snapshot{SchemaVersion: 1, AIAccounts: []configdoc.StoredAI{remote.AI}, SystemStorage: []configdoc.StoredStorage{remote.Assets}})
 	if err != nil {
 		t.Fatal("snapshot encoding failed")
 	}
@@ -152,7 +151,7 @@ func TestAIImageSetsLive(t *testing.T) {
 		t.Fatal("public tote fixture unavailable")
 	}
 	source := liveImageJPEG(t, rawSource)
-	account := registry.Account{ID: remote.Assets.ID, Provider: "cloudflare", Endpoint: remote.Assets.Endpoint, Region: "auto", Bucket: remote.Assets.Bucket, KeyPrefix: prefix, PublicBaseURL: remote.Assets.PublicBaseURL, ForcePathStyle: true, AccessKeyID: remote.Assets.AccessKeyID, SecretAccessKey: remote.Assets.SecretAccessKey, SessionToken: remote.Assets.SessionToken}
+	account := registry.Account{ID: remote.Assets.ID, Provider: "cloudflare", Endpoint: remote.Assets.Endpoint, Region: "auto", Bucket: remote.Assets.Bucket, KeyPrefix: prefix, PublicBaseURL: remote.Assets.PublicBaseURL, ForcePathStyle: true, AccessKeyID: remote.Assets.AccessKeyID, SecretAccessKey: remote.Assets.SecretAccessKey}
 	assets := app.NewRegistryImageAssets(pool, account, nil)
 	start := time.Now().UTC()
 	var phaseMu sync.Mutex

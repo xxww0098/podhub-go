@@ -29,9 +29,9 @@
 | --- | --- |
 | 请求 JSON | 返回 120 秒签名 GET、文件元数据；响应设置 `private, no-store` 与 `Referrer-Policy: no-referrer` |
 | 请求文件 | 返回 `307` 到短期签名 GET；浏览器保留 `Range` / `If-Range`，对象存储直接传输，Go 不读正文 |
-| 存储配置 | 授权后使用与委托上传共用的 `R2_PRIVATE_*` 进程配置；默认 `podhub-private`，测试可明确指定 `podhub-test-delegate`，均不得配置公开域名；不回退到数据库或假桶 |
+| 存储配置 | 授权后使用平台管理中与委托上传共用的私有桶；默认 `podhub-private`，测试可明确指定 `podhub-test-delegate`，均不得配置公开域名；不回退到假桶 |
 
-授权、跳转和错误响应统一设置 `private, no-store`、`no-referrer` 与 `nosniff`。签名覆盖最终对象响应的 `response-cache-control=private, no-store`、可信内容类型和文件名；安全图片预览使用 inline，JSON 下载和其他类型使用 attachment，未知类型降为 `application/octet-stream`。链接有效期为 120 秒，返回过期时间与 SigV4 的秒精度一致；环境配置中的凭据轮换或停用须重启 API 生效，已经签发的链接仍受其到期时间和云端凭据状态约束。
+授权、跳转和错误响应统一设置 `private, no-store`、`no-referrer` 与 `nosniff`。签名覆盖最终对象响应的 `response-cache-control=private, no-store`、可信内容类型和文件名；安全图片预览使用 inline，JSON 下载和其他类型使用 attachment，未知类型降为 `application/octet-stream`。链接有效期为 120 秒，返回过期时间与 SigV4 的秒精度一致；保存凭据轮换或停用后新请求读取最新配置，已经签发的链接仍受其到期时间和云端凭据状态约束。
 
 原图读取已移除 Go 代理的 20 MiB 上限；500 MiB 稀疏文件的跨 64 MiB 边界、尾部和开放范围请求、`If-Range` 版本变化及 `416` 已在本地 HTTP 实测。真实 PostgreSQL、正常登录 cookie 与 `podhub_login_api` 下验证了冻结载荷授权、签名生成、错误响应、停用与轮换，未使用 superuser 执行业务读取。该验证不代表真实 R2 500 MiB 下载或浏览器断点恢复已经通过。
 

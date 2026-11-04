@@ -21,6 +21,26 @@ test("工作台和账户设置不再提供邮箱验证入口", () => {
   assert.doesNotMatch(settings, /needsEmailVerification|ResendVerificationButton|邮箱验证/)
 })
 
+test("AppShell opens a valid settings URL and ignores an unknown section", () => {
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window")
+  const location = { search: "?settings=appearance" }
+  const matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} })
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { location, matchMedia } })
+  try {
+    const render = () => renderToStaticMarkup(
+      <AppShell screen="home" overview={overview} onScreenChange={() => {}} onSignedOut={() => {}} notifications={noNotifications}>
+        <div />
+      </AppShell>,
+    )
+    assert.match(render(), /aria-label="外观"[^>]*aria-current="page"/)
+    location.search = "?settings=unknown"
+    assert.doesNotMatch(render(), /aria-label="返回业务页面"/)
+  } finally {
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow)
+    else Reflect.deleteProperty(globalThis, "window")
+  }
+})
+
 test("AppShell exposes the whole 平台管理 surface only to staff, panes only to super_admin", () => {
   const adminHtml = renderToStaticMarkup(
     <AppShell
@@ -78,7 +98,7 @@ test("AppShell exposes the whole 平台管理 surface only to staff, panes only 
     adminHtml.indexOf('aria-label="商品经营"') < adminHtml.indexOf('aria-label="订单履约"'),
     "business groups precede the staff-only group",
   )
-  assert.match(adminHtml, /aria-label="数据大屏"/)
+  assert.match(adminHtml, /aria-label="经营数据"/)
   assert.doesNotMatch(superHtml, /aria-label="平台分区"/)
   assert.doesNotMatch(superHtml, />对象存储</)
   assert.doesNotMatch(userHtml, /aria-label="平台分区"/)
@@ -102,7 +122,7 @@ test("AppShell exposes the whole 平台管理 surface only to staff, panes only 
     new URL("../src/app/settings-page.tsx", import.meta.url),
     "utf8",
   )
-  assert.match(settingsSource, /settingsRowsFor\(overview\?\.session\.role\)/)
+  assert.match(settingsSource, /settingsRowsFor\(overview\?\.session\.role, overview\?\.active_workspace\?\.role\)/)
   /* 代理 is a 平台管理 section only; 功能 no longer lists a pane that is empty
      for every non-Agent. The table lives in the React-free vocabulary module. */
   const sectionsSource = readFileSync(
@@ -135,7 +155,7 @@ test("AppShell separates the header Workspace from the footer account identity",
     assert.doesNotMatch(topbar, /aria-label="外观：|aria-label="更新日志/)
     assert.match(topbar, /aria-label="展开侧栏"/)
     assert.match(topbar, /aria-label="店铺管理"/)
-    assert.match(topbar, /<time class="shell-date" dateTime="\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}">\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}<\/time>/)
+    assert.match(topbar, /<time class="shell-date" dateTime="\d{4}-\d{2}-\d{2}T\d{2}:\d{2}">\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}<\/time>/)
     assert.match(footer, new RegExp(`aria-label="账户 li@example.invalid，${label}"`))
     assert.match(footer, />李华</)
     assert.match(footer, new RegExp(`>${label}<`))
@@ -311,7 +331,7 @@ test("AppShell keeps Workspace destinations in the Workspace menu, not the accou
   assert.doesNotMatch(html, /<button[^>]*aria-label="用量"/)
 
   // All permitted business groups remain visible, including customer service.
-  assert.match(html, /aria-label="数据大屏"/)
+  assert.match(html, /aria-label="经营数据"/)
   assert.match(html, /aria-label="批量上架"/)
   assert.match(html, /aria-label="平台商品库"/)
   assert.doesNotMatch(html, /aria-label="本地图库"/)
@@ -403,7 +423,7 @@ test("AppShell keeps business destinations visible while an order screen is sele
   assert.match(html, /aria-label="评价口碑"/)
   assert.ok(html.indexOf('aria-label="入仓供货"') < html.indexOf('aria-label="客服消息"'))
   assert.ok(html.indexOf('aria-label="客服消息"') < html.indexOf('aria-label="评价口碑"'))
-  assert.match(html, /aria-label="数据大屏"/)
+  assert.match(html, /aria-label="经营数据"/)
   assert.match(html, /aria-label="批量上架"/)
   assert.match(html, /aria-label="我的商品"/)
 })

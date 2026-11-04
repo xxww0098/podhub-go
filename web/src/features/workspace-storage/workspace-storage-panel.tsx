@@ -13,8 +13,8 @@ import { Spinner } from "@/components/ui/spinner"
 import { copyToClipboard } from "@/lib/clipboard"
 import { errorMessage } from "@/lib/error-message"
 import { notifyCommandError, notifySuccess } from "@/lib/notify"
-import { CloudflareConnection, WorkspaceStorageSetup } from "./workspace-storage-setup"
-import { workspaceStorage, type WorkspaceStorage, type StorageObject, type StorageObjects, type StorageStats } from "./workspace-storage-api"
+import { WorkspaceStorageSetup } from "./workspace-storage-setup"
+import { workspaceStorage, type SliceStorageInput, type WorkspaceStorage, type StorageObject, type StorageObjects, type StorageStats } from "./workspace-storage-api"
 
 export function storageBytes(value: number): string {
   if (value === 0) return "0 B"
@@ -43,28 +43,24 @@ function StorageThumbnail({ src }: { src: string }) {
     : <img src={src} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setFailed(true)} className="size-full object-contain" />
 }
 
-export function cloudflareCallbackError(hash: string): string {
-  switch (new URLSearchParams(hash.replace(/^#/, "")).get("cloudflare_error")) {
-    case "denied": return "Cloudflare 授权未完成，请重新登录并授权。"
-    case "invalid_state": return "授权状态无效或已过期，请重新登录并授权。"
-    case "failed": return "无法完成 Cloudflare 授权，请重新登录并授权。"
-    default: return ""
+export function WorkspaceStoragePanel({ role = "owner" }: { role?: string }) {
+  if (role !== "owner") {
+    return <div role="status" className="flex flex-col gap-2 py-2">
+      <p className="font-semibold">存储桶仅工作空间所有者可查看</p>
+      <p className="text-sm text-muted-foreground">成员无需配置或管理 R2 存储桶。</p>
+    </div>
   }
+  return <WorkspaceStoragePanelOwner />
 }
 
-export function WorkspaceStoragePanel() {
+function WorkspaceStoragePanelOwner() {
   const [storage, setStorage] = useState<WorkspaceStorage | null>(null)
-  const [error, setError] = useState(() => typeof window === "undefined" ? "" : cloudflareCallbackError(window.location.hash))
+  const [error, setError] = useState("")
   const [loadError, setLoadError] = useState("")
   const [version, setVersion] = useState(0)
   const [busy, setBusy] = useState(false)
   const [cleanupMode, setCleanupMode] = useState<"daily" | "manual">("daily")
   const [cleanupTime, setCleanupTime] = useState("04:00")
-  const [accounts, setAccounts] = useState<{ id: string; name: string }[]>([])
-  const [accountsLoaded, setAccountsLoaded] = useState(false)
-  const [account, setAccount] = useState("")
-  const [bucketName, setBucketName] = useState("")
-  const [consent, setConsent] = useState(false)
   const [prefix, setPrefix] = useState("")
   const [search, setSearch] = useState("")
   const [cursors, setCursors] = useState<string[]>([""])
@@ -82,16 +78,8 @@ export function WorkspaceStoragePanel() {
   useEffect(() => () => deleteController.current?.abort(), [])
 
   useEffect(() => {
-    if (!cloudflareCallbackError(window.location.hash)) return
-    const fragment = new URLSearchParams(window.location.hash.slice(1))
-    fragment.delete("cloudflare_error")
-    const remaining = fragment.toString()
-    window.history.replaceState(window.history.state, "", window.location.pathname + window.location.search + (remaining ? `#${remaining}` : ""))
-  }, [])
-
-  useEffect(() => {
     let ignore = false
-    workspaceStorage.get().then((value) => { if (!ignore) { setStorage(value); setLoadError(""); if (value.provision) setAccount(value.provision.account_id) } }, (reason) => { if (!ignore) setLoadError(errorMessage(reason, "无法读取工作空间存储桶")) })
+    workspaceStorage.get().then((value) => { if (!ignore) { setStorage(value); setLoadError("") } }, (reason) => { if (!ignore) setLoadError(errorMessage(reason, "无法读取工作空间存储桶")) })
     return () => { ignore = true }
   }, [version])
 
@@ -100,14 +88,6 @@ export function WorkspaceStoragePanel() {
     setCleanupMode(storage.cleanup_mode ?? "daily")
     setCleanupTime(storage.cleanup_time ?? "04:00")
   }, [storage?.configured, storage?.cleanup_mode, storage?.cleanup_time])
-
-  useEffect(() => {
-    if (storage?.configured || !storage?.cloudflare_connected || !storage.can_manage) return
-    let ignore = false
-    setAccounts([]); setAccountsLoaded(false)
-    workspaceStorage.accounts().then((value) => { if (!ignore) { setAccounts(value.accounts); setAccountsLoaded(true); if (value.accounts.length === 1 && !storage.provision) setAccount(value.accounts[0]!.id) } }, (reason) => { if (!ignore) setError(errorMessage(reason, "无法读取已授权账户，请重新连接 Cloudflare")) })
-    return () => { ignore = true }
-  }, [storage?.configured, storage?.cloudflare_connected, storage?.can_manage, storage?.provision])
 
   const cursor = cursors[cursors.length - 1] ?? ""
   useEffect(() => {
@@ -127,25 +107,9 @@ export function WorkspaceStoragePanel() {
   }, [storage?.configured, version])
 
   function navigate(value: string) { setPrefix(value); setSearch(value); setCursors([""]); setDetail(null) }
-  async function authorize() {
+  async function create(input: SliceStorageInput) {
     setBusy(true); setError("")
-    try { const value = await workspaceStorage.authorize(); window.location.assign(value.authorization_url) } catch (reason) { setError(errorMessage(reason, "无法连接 Cloudflare")); setBusy(false) }
-  }
-  async function disconnect(reconnect: boolean) {
-    setBusy(true); setError("")
-    try {
-      await workspaceStorage.disconnect()
-      setAccounts([]); setAccountsLoaded(false); setAccount(storage?.provision?.account_id ?? ""); setConsent(false)
-      setStorage((value) => value && { ...value, cloudflare_connected: false })
-      if (reconnect) {
-        const value = await workspaceStorage.authorize()
-        window.location.assign(value.authorization_url)
-      }
-    } catch (reason) { setError(errorMessage(reason, reconnect ? "无法重新连接 Cloudflare" : "无法退出 Cloudflare 授权")) } finally { setBusy(false) }
-  }
-  async function create() {
-    setBusy(true); setError("")
-    try { const value = await workspaceStorage.create(account, storage?.provision ? undefined : bucketName); setStorage(value); notifySuccess("工作空间存储桶已创建并验证") } catch (reason) { setError(errorMessage(reason, "存储桶创建或验证未完成")); setVersion((value) => value + 1) } finally { setBusy(false) }
+    try { const value = await workspaceStorage.create(input); setStorage(value); notifySuccess("工作空间存储桶已验证并保存") } catch (reason) { setError(errorMessage(reason, "存储桶验证未通过")); setVersion((value) => value + 1) } finally { setBusy(false) }
   }
   async function saveCleanup() {
     setBusy(true); setError("")
@@ -189,28 +153,27 @@ export function WorkspaceStoragePanel() {
 
   if (!storage) return <div className="flex flex-wrap items-center gap-3 py-4" role={loadError ? "alert" : "status"}>{loadError || <><Spinner aria-hidden />正在读取工作空间存储桶</>}{loadError ? <Button variant="outline" onClick={() => setVersion((value) => value + 1)}>重试</Button> : null}</div>
   const clearing = storage.clear_status === "pending" || storage.clear_status === "retrying"
-  const canDelete = storage.can_manage && storage.delete_enabled
+  const canDelete = storage.delete_enabled
   const cleanupChanged = cleanupMode !== storage.cleanup_mode || (cleanupMode === "daily" && cleanupTime !== storage.cleanup_time)
   const folderDelete = confirm && typeof confirm === "object" ? confirm : null
   const parts = prefix.split("/").filter(Boolean)
   return <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 md:gap-4">
     {error || loadError ? <p role="alert" className="text-sm text-destructive">{error || loadError}</p> : null}
-    {!storage.configured ? <WorkspaceStorageSetup storage={storage} accounts={accounts} accountsLoaded={accountsLoaded} account={account} setAccount={setAccount} bucketName={bucketName} setBucketName={setBucketName} consent={consent} setConsent={setConsent} busy={busy} authorize={() => void authorize()} disconnect={() => void disconnect(false)} reconnect={() => void disconnect(true)} create={() => void create()} /> : <>
+    {!storage.configured ? <WorkspaceStorageSetup busy={busy} create={(input) => void create(input)} /> : <>
       <div className="flex flex-wrap items-center gap-3 border-b border-border pb-4">
         <span className="flex size-11 shrink-0 items-center justify-center rounded-xl border border-border bg-muted/50"><Cloud aria-hidden className="size-6 text-muted-foreground" /></span><div className="min-w-0 flex-1 basis-48"><div className="flex flex-wrap items-center gap-2"><h3 className="break-all text-lg font-semibold">{storage.bucket}</h3><Badge variant="outline">工作空间共享</Badge></div><a href={storage.public_base_url} target="_blank" rel="noreferrer" className="mt-1 inline-flex max-w-full items-center gap-1 break-all text-sm text-brand-ink hover:underline">{storage.public_base_url}<ExternalLink aria-hidden className="size-3.5 shrink-0" /><span className="sr-only">（在新窗口打开）</span></a></div>
         <IconButton icon={RefreshCw} label="刷新存储桶" variant="outline" onClick={() => setVersion((value) => value + 1)} disabled={busy} />
-        {storage.can_manage ? <Button variant="outline" onClick={() => setConfirm("all")} disabled={busy || clearing || !canDelete}><Trash2 aria-hidden />{clearing ? "清理处理中" : "清理切片"}</Button> : <Badge variant="outline">只读管理</Badge>}
+        <Button variant="outline" onClick={() => setConfirm("all")} disabled={busy || clearing || !canDelete}><Trash2 aria-hidden />{clearing ? "清理处理中" : "清理切片"}</Button>
       </div>
-      {storage.can_manage && storage.oauth_available ? <CloudflareConnection storage={storage} busy={busy} authorize={() => void authorize()} disconnect={() => void disconnect(false)} reconnect={() => void disconnect(true)} /> : null}
       <div className="flex flex-wrap gap-x-8 gap-y-2 text-sm"><p className="tabular-nums"><span className="mr-2 text-muted-foreground">已用容量</span>{stats ? `${stats.complete ? "" : "至少 "}${storageBytes(stats.bytes)}` : statsError ? "统计不可用" : "统计中…"}</p><p className="tabular-nums"><span className="mr-2 text-muted-foreground">切片对象</span>{stats ? `${stats.complete ? "" : "至少 "}${stats.objects.toLocaleString()} 项` : "—"}</p></div>
-      {storage.can_manage ? <form onSubmit={(event) => { event.preventDefault(); void saveCleanup() }} className="flex flex-wrap items-end gap-3">
+      <form onSubmit={(event) => { event.preventDefault(); void saveCleanup() }} className="flex flex-wrap items-end gap-3">
         <div className="grid gap-1.5"><Label htmlFor="slice-cleanup-mode">清理方式</Label><Select value={cleanupMode} onValueChange={(value) => { if (value === "daily" || value === "manual") setCleanupMode(value) }}><SelectTrigger id="slice-cleanup-mode" className="min-w-32" disabled={busy}><SelectValue>{(value) => value === "manual" ? "仅手动清理" : "每天自动清理"}</SelectValue></SelectTrigger><SelectContent><SelectItem value="daily">每天自动清理</SelectItem><SelectItem value="manual">仅手动清理</SelectItem></SelectContent></Select></div>
         {cleanupMode === "daily" ? <div className="grid gap-1.5"><Label htmlFor="slice-cleanup-time">清理时间（北京时间）</Label><Input id="slice-cleanup-time" type="time" value={cleanupTime} onChange={(event) => setCleanupTime(event.target.value)} disabled={busy} required className="w-40" /></div> : null}
         <Button type="submit" variant="outline" disabled={busy || !cleanupChanged || (cleanupMode === "daily" && !cleanupTime)}>保存清理方式</Button>
         <p className="basis-full text-sm text-muted-foreground">{cleanupMode === "daily" ? "仅清理平台抓图已确认超过 24 小时、且没有待处理任务引用的切片；新设置从下一个设定时间生效。" : "本应用不会自动清理；如已配置 Cloudflare 生命周期规则，仍会生效。"}</p>
-      </form> : <p className="text-sm text-muted-foreground">{storage.cleanup_mode === "manual" ? "仅手动清理" : `每天北京时间 ${storage.cleanup_time ?? "04:00"} 自动清理`}</p>}
+      </form>
       {statsError ? <p role="status" className="text-sm text-muted-foreground">{statsError}</p> : null}
-      {storage.can_manage && !canDelete ? <p role="status" className="text-sm text-muted-foreground">删除服务尚未启用，当前可浏览和下载。</p> : null}
+      {!canDelete ? <p role="status" className="text-sm text-muted-foreground">删除服务尚未启用，当前可浏览和下载。</p> : null}
       {clearing || (storage.cleanup_mode === "daily" && storage.daily_clear_status === "retrying") ? <p role="status" className="text-sm text-muted-foreground">{clearing ? "清理已排队或正在重试，完成前需等待上传链接过期。" : "本轮自动清理遇到问题，等待重试。"}</p> : storage.cleanup_mode === "daily" && storage.daily_clear_status === "unconfirmed" ? <p role="status" className="text-sm text-muted-foreground">本轮自动清理尚未确认</p> : null}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <nav aria-label="存储桶路径" className="flex min-w-0 flex-wrap items-center gap-1 text-sm">
@@ -221,7 +184,7 @@ export function WorkspaceStoragePanel() {
         <form onSubmit={(event) => { event.preventDefault(); navigate(search) }} className="flex min-w-0 flex-1 basis-64 items-center gap-2 sm:max-w-sm"><Input aria-label="按路径前缀搜索" placeholder="按路径前缀搜索" value={search} maxLength={512} onChange={(event) => setSearch(event.target.value)} className="min-w-0 flex-1" /><IconButton icon={Search} label="搜索路径" type="submit" variant="outline" /></form>
       </div>
       <div className="@container flex min-h-48 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-muted/15" aria-busy={loading}>
-        {storage.can_manage && !!page?.objects.length ? <div className="flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-2">
+        {!!page?.objects.length ? <div className="flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-2">
           <label className="flex min-h-9 items-center gap-3 text-sm text-muted-foreground"><Checkbox aria-label="选择本页全部对象" checked={page.objects.every((object) => selected.has(object.key))} indeterminate={selected.size > 0 && selected.size < page.objects.length} onCheckedChange={(checked) => setSelected(new Set(checked ? page.objects.map((object) => object.key) : []))} disabled={!canDelete || busy || loading} />{selected.size ? `已选 ${selected.size} 项` : "选择本页切片"}</label>
           {selected.size ? <Button type="button" variant="outline" disabled={busy || !canDelete} onClick={() => setConfirm("selected")}><Trash2 aria-hidden />删除已选 {selected.size} 项</Button> : null}
         </div> : null}
@@ -233,10 +196,10 @@ export function WorkspaceStoragePanel() {
                 <span className="flex aspect-[4/3] w-full items-center justify-center"><Folder aria-hidden className="size-16 fill-muted text-muted-foreground @sm:size-20" strokeWidth={1.25} /></span>
                 <span className="line-clamp-2 min-h-10 w-full break-all text-center leading-5">{storageFolderLabel(folder.slice(prefix.length).replace(/\/$/, ""))}</span>
               </Button>
-              {storage.can_manage ? <IconButton icon={Trash2} label={`删除文件夹 ${folder}`} tip="删除文件夹" variant="ghost" className="absolute top-1 right-1 size-11 hover:text-destructive" disabled={busy || !canDelete || !storage.key_prefix} disabledReason={!canDelete ? "删除服务尚未启用" : undefined} onClick={() => setConfirm({ folder, prefix: `${storage.key_prefix}uploads/${folder}` })} /> : null}
+              <IconButton icon={Trash2} label={`删除文件夹 ${folder}`} tip="删除文件夹" variant="ghost" className="absolute top-1 right-1 size-11 hover:text-destructive" disabled={busy || !canDelete || !storage.key_prefix} disabledReason={!canDelete ? "删除服务尚未启用" : undefined} onClick={() => setConfirm({ folder, prefix: `${storage.key_prefix}uploads/${folder}` })} />
             </li>)}
             {page?.objects.map((object) => <li key={object.key} className={`relative min-w-0 rounded-xl border transition-colors focus-within:border-ring ${selected.has(object.key) ? "border-brand bg-brand-soft" : "border-transparent hover:border-border hover:bg-card"}`}>
-              {storage.can_manage ? <label className="absolute top-1 left-1 z-10 flex size-11 cursor-pointer items-center justify-center"><Checkbox aria-label={`选择 ${object.key}`} className="bg-card" disabled={!canDelete || busy} checked={selected.has(object.key)} onCheckedChange={(checked) => setSelected((current) => { const next = new Set(current); if (checked) next.add(object.key); else next.delete(object.key); return next })} /></label> : null}
+              <label className="absolute top-1 left-1 z-10 flex size-11 cursor-pointer items-center justify-center"><Checkbox aria-label={`选择 ${object.key}`} className="bg-card" disabled={!canDelete || busy} checked={selected.has(object.key)} onCheckedChange={(checked) => setSelected((current) => { const next = new Set(current); if (checked) next.add(object.key); else next.delete(object.key); return next })} /></label>
               <Button variant="ghost" aria-label={`查看 ${object.key.split("/").at(-1)}`} className="h-auto w-full min-w-0 flex-col gap-3 rounded-xl p-2 pb-0 text-foreground whitespace-normal hover:bg-transparent active:translate-y-0" title={object.key} onClick={() => { setPreviewFailed(false); setDetail(object) }}>
                 <span className="flex aspect-[4/3] w-full items-center justify-center overflow-hidden rounded-lg border border-border/70 bg-muted/50"><StorageThumbnail src={`${storage.public_base_url}/${object.key.split("/").map(encodeURIComponent).join("/")}`} /></span>
                 <span className="line-clamp-2 min-h-10 w-full break-all px-1 text-left leading-5">{object.key.split("/").at(-1)}</span>

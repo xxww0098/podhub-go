@@ -8,6 +8,37 @@ import { buildDiscountMutation } from "./product-list-model"
 import { ProductPriceDialog } from "./products-price-dialog"
 import { useProductWrites } from "./use-product-writes"
 
+test("verify merges by product id, not by shared offer id", async (t) => {
+  let rows: StoreProductRow[] = [
+    { store_id: "store", store_name: "店铺", product_id: 1, offer_id: "SKU", price: "100.00", old_price: "200.00", gone: false },
+    { store_id: "store", store_name: "店铺", product_id: 2, offer_id: "SKU", price: "50.00", old_price: "100.00", gone: true },
+  ]
+  t.mock.method(globalThis, "fetch", async () => Response.json({
+    rows: [
+      { store_id: "store", store_name: "店铺", product_id: 1, offer_id: "SKU", price: "11.00", old_price: "200.00", gone: false },
+      { store_id: "store", store_name: "店铺", product_id: 2, offer_id: "SKU", price: "22.00", old_price: "100.00", gone: true },
+    ],
+  }))
+  let writes!: ReturnType<typeof useProductWrites>
+  let fired = false
+  function Capture() {
+    writes = useProductWrites({
+      stores: [], syncDisabled: false, scopeKey: "workspace:store",
+      setRows: (next) => { rows = typeof next === "function" ? next(rows) : next },
+      clearSelection: () => {}, reloadOverview: async () => {}, reloadList: async () => {},
+      listStatus: undefined, onArchived: () => {},
+    })
+    if (!fired) {
+      fired = true
+      writes.refreshAfterWrite(rows)
+    }
+    return null
+  }
+  renderToStaticMarkup(<Capture />)
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  assert.deepEqual(rows.map((row) => row.price), ["11.00", "22.00"])
+})
+
 test("a second price change uses the strike price returned by the first write", () => {
   let rows: StoreProductRow[] = [
     { store_id: "store", store_name: "店铺", product_id: 1, offer_id: "SKU", price: "100.00", old_price: "200.00", gone: false },

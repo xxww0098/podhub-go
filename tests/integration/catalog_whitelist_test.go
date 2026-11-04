@@ -176,7 +176,7 @@ func mountCatalog(pool *pgxpool.Pool, sess *adminhttp.Session, bases []string) h
 		Resolve: func(*http.Request) (*adminhttp.Session, *adminhttp.Refusal, error) {
 			return sess, nil, nil
 		},
-		Catalog: adminsvc.NewCatalog(catalogrepo.CatalogRepo{Pool: pool, PublicBases: bases}, adminsvc.CatalogOptions{}),
+		Catalog: adminsvc.NewCatalog(catalogrepo.CatalogRepo{Pool: pool, PublicBases: func(context.Context) ([]string, error) { return append([]string{}, bases...), nil }}, adminsvc.CatalogOptions{}),
 	})
 	return r
 }

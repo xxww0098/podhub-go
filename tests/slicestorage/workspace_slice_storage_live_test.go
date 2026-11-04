@@ -17,13 +17,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/xxww0098/podhub-go/internal/app"
 	"github.com/xxww0098/podhub-go/internal/app/worker"
 	media "github.com/xxww0098/podhub-go/internal/media/contract"
 	mediagen "github.com/xxww0098/podhub-go/internal/media/http/gen"
 	"github.com/xxww0098/podhub-go/internal/media/jobs/slicepurge"
-	mediarepo "github.com/xxww0098/podhub-go/internal/media/repo"
 	"github.com/xxww0098/podhub-go/internal/platform/config"
 	"github.com/xxww0098/podhub-go/internal/platform/db"
 	"github.com/xxww0098/podhub-go/internal/platform/db/tenantx"
@@ -117,18 +115,8 @@ func TestLiveWorkspaceSliceSettingsAndClear(t *testing.T) {
 	if rec := request(http.MethodPost, "/api/media/upload-batches", other, map[string]string{"workspace_uuid": otherWorkspace}); rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("unconfigured user fell back to another bucket: %d", rec.Code)
 	}
-	var orgID int64
-	if err := pool.QueryRow(ctx, `SELECT id FROM organizations WHERE uuid=$1::uuid`, workspace).Scan(&orgID); err != nil {
-		t.Fatal(err)
-	}
-	fixtureAccount := sign.Account{ID: uuid.NewString(), Endpoint: in["endpoint"], Bucket: in["bucket"], PublicBaseURL: in["public_base_url"], AccessKeyID: in["access_key_id"], SecretAccessKey: in["secret_access_key"]}
-	if err := db.InTx(ctx, pool, db.App(orgID), func(tx pgx.Tx) error {
-		if err := mediarepo.StageSliceStorage(ctx, tx, orgID, userID, fixtureAccount, seal.DeriveKEK(strings.Repeat("test-key-", 4))); err != nil {
-			return err
-		}
-		return mediarepo.ActivateSliceStorage(ctx, tx, orgID, userID, fixtureAccount.ID)
-	}); err != nil {
-		t.Fatal(err)
+	if rec := request(http.MethodPost, "/api/workspace/slice-storage", cookie, in); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"configured":true`) {
+		t.Fatalf("configure slice storage %d %s", rec.Code, rec.Body.String())
 	}
 	if rec := request(http.MethodGet, "/api/workspace/slice-storage", other, nil); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"configured":false`) {
 		t.Fatalf("other user status %d", rec.Code)

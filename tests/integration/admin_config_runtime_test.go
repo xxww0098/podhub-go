@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	configdoc "github.com/xxww0098/podhub-go/internal/admin/core/contract"
+	"github.com/xxww0098/podhub-go/internal/platform/seal"
 	"github.com/xxww0098/podhub-go/tests/testkit"
 )
 
@@ -100,6 +102,68 @@ func runAdminConfigRuntimeCases(t *testing.T, f listingMediaTest, actual http.Ha
 		var requests int
 		if err := f.pool.QueryRow(f.ctx, `SELECT count(*) FROM ai_requests`).Scan(&requests); err != nil || requests != 0 {
 			t.Fatal("configuration issued an AI request", requests, err)
+		}
+	})
+	t.Run("system_storage_manual_configuration", func(t *testing.T) {
+		seedMatchingLease(t, f.ctx, f.pool, "admin", "system storage test")
+		defer f.pool.Exec(f.ctx, `DELETE FROM platform_integration_config`)
+		invoke := func(method, cookie, body string) *httptest.ResponseRecorder {
+			req := httptest.NewRequest(method, "/api/admin/integrations/config", strings.NewReader(body))
+			req.Header.Set("Cookie", cookie)
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			actual.ServeHTTP(rec, req)
+			return rec
+		}
+		body := `{"expected_revision":0,"ai_accounts":[],"system_storage":[{"role":"assets","endpoint":"https://account.r2.cloudflarestorage.com","bucket":"podhub-test-supplier","public_base_url":"https://pub-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.r2.dev","access_key_id":"test-access","secret_access_key":"test-storage-secret"}]}`
+		saved := invoke("PUT", f.cookie, body)
+		if saved.Code != 200 || strings.Contains(saved.Body.String(), "test-access") || strings.Contains(saved.Body.String(), "test-storage-secret") || strings.Contains(saved.Body.String(), `"key_prefix"`) || strings.Contains(saved.Body.String(), `"session_token"`) || !strings.Contains(saved.Body.String(), `"bucket":"podhub-test-supplier"`) {
+			t.Fatalf("save exposed or lost credentials: %d %s", saved.Code, saved.Body.String())
+		}
+		if member := invoke("GET", f.other, ""); member.Code != 403 {
+			t.Fatalf("member storage access %d", member.Code)
+		}
+		if stale := invoke("PUT", f.cookie, body); stale.Code != 409 {
+			t.Fatalf("stale storage write %d", stale.Code)
+		}
+		var replacement map[string]any
+		if err := json.Unmarshal([]byte(body), &replacement); err != nil {
+			t.Fatal(err)
+		}
+		replacement["expected_revision"] = 1
+		row := replacement["system_storage"].([]any)[0].(map[string]any)
+		row["access_key_id"], row["secret_access_key"] = "", ""
+		updated, _ := json.Marshal(replacement)
+		if rec := invoke("PUT", f.cookie, string(updated)); rec.Code != 200 {
+			t.Fatalf("blank credential retention %d %s", rec.Code, rec.Body.String())
+		}
+		var nonce, ciphertext []byte
+		if err := f.pool.QueryRow(f.ctx, `SELECT nonce,ciphertext FROM platform_integration_config`).Scan(&nonce, &ciphertext); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(ciphertext), "test-storage-secret") {
+			t.Fatal("storage secret stored in plaintext")
+		}
+		key, err := seal.IntegrationKEK(strings.Repeat("recognition-test-key-", 3))
+		if err != nil {
+			t.Fatal(err)
+		}
+		plain, err := seal.OpenIntegration(key, nonce, ciphertext)
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshot, _, err := configdoc.ParseStored(plain)
+		if err != nil || len(snapshot.SystemStorage) != 1 || snapshot.SystemStorage[0].SecretAccessKey != "test-storage-secret" || snapshot.SystemStorage[0].ID != "s3_assets" {
+			t.Fatal("saved credentials were not retained")
+		}
+		row["endpoint"] = "https://other.r2.cloudflarestorage.com"
+		replacement["expected_revision"] = 2
+		updated, _ = json.Marshal(replacement)
+		if rec := invoke("PUT", f.cookie, string(updated)); rec.Code != 400 {
+			t.Fatalf("endpoint change reused secrets: %d", rec.Code)
+		}
+		if rec := invoke("PUT", f.cookie, `{"expected_revision":2,"ai_accounts":[]}`); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"bucket":"podhub-test-supplier"`) {
+			t.Fatalf("AI-only save lost system storage: %d %s", rec.Code, rec.Body.String())
 		}
 	})
 }

@@ -264,41 +264,29 @@ func jsonBytes(v any) []byte {
 }
 
 type editor struct {
-	exists    bool
-	category  int64
-	typeID    int64
-	language  string
-	values    []byte
-	complex   []byte
-	tags      []byte
-	prompt    string
-	ai        []byte
-	revision  int64
-	state     string
-	digest    *string
-	issues    []byte
-	updated   int64
-	stamp     x1contract.CatalogStamp
-	newCoords bool
+	exists   bool
+	category int64
+	typeID   int64
+	language string
+	values   []byte
+	complex  []byte
+	tags     []byte
+	prompt   string
+	ai       []byte
+	revision int64
+	state    string
+	digest   *string
+	issues   []byte
 }
 
 func loadEditor(ctx context.Context, tx pgx.Tx, productID string) (editor, error) {
 	var e editor
-	var category, typeID *int64
 	err := tx.QueryRow(ctx, `
-		SELECT description_category_id, type_id FROM public.sc_products WHERE product_id = $1`, productID).Scan(&category, &typeID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return editor{}, corerepo.NotFound(corerepo.MissingRow)
-	}
-	if err != nil {
-		return editor{}, corerepo.MapDB(err)
-	}
-	err = tx.QueryRow(ctx, `
 		SELECT description_category_id, type_id, language, values, complex_values, fixed_tags, prompt_text, ai_output,
-		       revision, state, validated_catalog_digest, issues, updated_at_ms
+		       revision, state, validated_catalog_digest, issues
 		  FROM public.supplier_ozon_configs WHERE product_id = $1`, productID).Scan(
 		&e.category, &e.typeID, &e.language, &e.values, &e.complex, &e.tags, &e.prompt, &e.ai,
-		&e.revision, &e.state, &e.digest, &e.issues, &e.updated)
+		&e.revision, &e.state, &e.digest, &e.issues)
 	if errors.Is(err, pgx.ErrNoRows) {
 		e.language = "zh_hans"
 		e.values = []byte(`{}`)
@@ -310,21 +298,6 @@ func loadEditor(ctx context.Context, tx pgx.Tx, productID string) (editor, error
 		return editor{}, corerepo.MapDB(err)
 	} else {
 		e.exists = true
-	}
-	if category != nil && typeID != nil && *category > 0 && *typeID > 0 {
-		lang := e.language
-		if lang == "" {
-			lang = "zh_hans"
-		}
-		e.stamp, err = loadStamp(ctx, tx, *category, *typeID, lang)
-		if err != nil {
-			return editor{}, err
-		}
-	}
-	if category != nil {
-		e.newCoords = !e.exists || e.category != *category || e.typeID != *typeID
-	} else {
-		e.newCoords = true
 	}
 	return e, nil
 }
@@ -356,7 +329,7 @@ func (r X1) writeRowConfig(ctx context.Context, tx pgx.Tx, actor contract.Actor,
 		return corerepo.MapDB(err)
 	}
 	incomingTags := jsonBytes(tags)
-	if ed.exists && ed.category == *category && ed.typeID == *typeID && ed.prompt == content && bytesEqual(ed.tags, incomingTags) && !x1contract.HasLegacyIssue(ed.issues) && digestEqual(ed.digest, ed.stamp) {
+	if ed.exists && ed.category == *category && ed.typeID == *typeID && ed.prompt == content && bytesEqual(ed.tags, incomingTags) {
 		return nil
 	}
 	values := []byte(`{}`)
@@ -373,32 +346,17 @@ func (r X1) writeRowConfig(ctx context.Context, tx pgx.Tx, actor contract.Actor,
 	if ed.exists {
 		expected = ed.revision
 	}
-	judge, err := r.judgeOzon(ctx, tx, *category, *typeID, lang, values, complex, ed.stamp, now)
-	if err != nil {
-		return err
+	judge := x1contract.PendingOzon()
+	if ed.exists && ed.category == *category && ed.typeID == *typeID {
+		var issues []json.RawMessage
+		_ = json.Unmarshal(ed.issues, &issues)
+		judge = x1contract.JudgeResult{State: ed.state, Digest: ed.digest, Issues: ed.issues, Count: len(issues)}
 	}
 	incomingAI := ed.ai
 	if len(incomingAI) == 0 {
 		incomingAI = jsonBytes(x1contract.DefaultAI())
 	}
-	if err := putOzon(ctx, tx, actor, sourceID, productID, *category, *typeID, lang, values, complex, incomingTags, content, incomingAI, judge, expected, publicID, now); err != nil {
-		return err
-	}
-	if !ed.exists || ed.category != *category || ed.typeID != *typeID {
-		_, err := tx.Exec(ctx, `
-			UPDATE public.supplier_ozon_configs
-			SET state = 'needs_reconfiguration', validated_catalog_digest = NULL, issues = $2
-			WHERE product_id = $1`, productID, []byte(x1contract.LegacyIssues()))
-		return corerepo.MapDB(err)
-	}
-	return nil
-}
-
-func digestEqual(stored *string, stamp x1contract.CatalogStamp) bool {
-	if !stamp.Present {
-		return stored == nil || *stored == ""
-	}
-	return stored != nil && *stored == stamp.Digest
+	return putOzon(ctx, tx, actor, sourceID, productID, *category, *typeID, lang, values, complex, incomingTags, content, incomingAI, judge, expected, publicID, now)
 }
 
 func bytesEqual(a, b []byte) bool {

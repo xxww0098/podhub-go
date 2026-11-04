@@ -97,6 +97,24 @@ func TestAdminBillingOps(t *testing.T) {
 	if status != 409 || !strings.Contains(body, "订单已处理") {
 		t.Fatalf("second confirm %d %s", status, body)
 	}
+	t.Run("providerless order cannot be confirmed", func(t *testing.T) {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO payment_orders
+			       (public_id, org_id, plan, months, amount_cents, currency, provider, status,
+			        created_by_user_id, created_at, updated_at, product, topup_microfen)
+			VALUES ('ord-unselected', $1, 'free', 1, 100, 'CNY', 'unselected', 'pending',
+			        $2, clock_timestamp(), clock_timestamp(), 'wallet_topup', 1000000)`, orgID, ownerID); err != nil {
+			t.Fatal(err)
+		}
+		status, body := adminDo(router, http.MethodPut, "/api/admin/orders/ord-unselected/confirm", token, "")
+		if status != 409 || !strings.Contains(body, "未选择支付渠道") {
+			t.Fatalf("providerless confirm %d %s", status, body)
+		}
+		var orderStatus string
+		if err := pool.QueryRow(ctx, `SELECT status FROM payment_orders WHERE public_id='ord-unselected'`).Scan(&orderStatus); err != nil || orderStatus != "pending" {
+			t.Fatalf("providerless order state %s %v", orderStatus, err)
+		}
+	})
 	t.Run("retired seat orders are rejected", func(t *testing.T) {
 		_, err := pool.Exec(ctx, `
 			INSERT INTO payment_orders
@@ -155,12 +173,13 @@ func TestAdminBillingOps(t *testing.T) {
 	if !strings.Contains(body, `"revision":0`) {
 		t.Fatal(body)
 	}
-	t.Run("payment update retires stored R2 credentials", func(t *testing.T) {
+	t.Run("payment update preserves system storage and retires old storage", func(t *testing.T) {
 		key := domain.KeySHA256("integration-test-key-0123456789abcdef")
 		const aad = "platform_integration_config|v1"
 		plain, err := json.Marshal(domain.Snapshot{
 			SchemaVersion: 1,
 			AIAccounts:    []domain.StoredAI{{ID: "ai", APIKey: "ai-kept", Purpose: domain.PurposeOCR}},
+			SystemStorage: []domain.StoredStorage{{ID: "private", Role: "private", SecretAccessKey: "current-secret"}},
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -176,7 +195,7 @@ func TestAdminBillingOps(t *testing.T) {
 			t.Fatal(err)
 		}
 		status, body := adminDo(router, http.MethodPut, "/api/admin/payment/config", token, `{"expectedRevision":1,"providers":[]}`)
-		if status != http.StatusOK || strings.Contains(body, "r2-retired") {
+		if status != http.StatusOK || strings.Contains(body, "r2-retired") || strings.Contains(body, "current-secret") {
 			t.Fatalf("payment update %d %s", status, body)
 		}
 		if err = pool.QueryRow(ctx, `SELECT nonce, ciphertext FROM platform_integration_config WHERE singleton`).Scan(&nonce, &ciphertext); err != nil {
@@ -187,8 +206,8 @@ func TestAdminBillingOps(t *testing.T) {
 			t.Fatal(err)
 		}
 		stored, _, err := domain.ParseStored(plain)
-		if err != nil || strings.Contains(string(plain), "storageBuckets") || strings.Contains(string(plain), "r2-retired") || len(stored.AIAccounts) != 1 || stored.AIAccounts[0].APIKey != "ai-kept" || stored.Payment == nil {
-			t.Fatalf("payment update must remove R2 and retain AI: %v", err)
+		if err != nil || strings.Contains(string(plain), "storageBuckets") || strings.Contains(string(plain), "r2-retired") || len(stored.AIAccounts) != 1 || stored.AIAccounts[0].APIKey != "ai-kept" || len(stored.SystemStorage) != 1 || stored.SystemStorage[0].SecretAccessKey != "current-secret" || stored.Payment == nil {
+			t.Fatalf("payment update must retain AI and current system storage: %v", err)
 		}
 	})
 

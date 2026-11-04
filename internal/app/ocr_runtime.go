@@ -138,14 +138,14 @@ func newOCRRuntime(pool *pgxpool.Pool, cfg config.Config) *ai.OCRRuntime {
 		}}, nil
 	}
 	runtime.Issue = func(ctx context.Context, p access.Principal, c aicontract.Claim, b aicontract.Binding, in aicontract.Image) (any, error) {
-		account, err := configuredR2Account(cfg, media.RolePrivate)
+		account, _, err := configuredR2Account(ctx, pool, cfg, media.RolePrivate)
 		if err != nil {
 			return nil, err
 		}
 		return ocrUploadTarget(account, p, c, b, in, time.Now())
 	}
 	runtime.Read = func(ctx context.Context, p access.Principal, c aicontract.Claim, b aicontract.Binding, ticket string) ([]byte, string, error) {
-		account, err := configuredR2Account(cfg, media.RolePrivate)
+		account, _, err := configuredR2Account(ctx, pool, cfg, media.RolePrivate)
 		if err != nil {
 			return nil, "", err
 		}

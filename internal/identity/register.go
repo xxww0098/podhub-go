@@ -90,15 +90,6 @@ func (s *Service) Register(r *http.Request) Result {
 		if err != nil {
 			return false, err
 		}
-		bound, err := q.BindInvitations(r.Context(), sqlc.BindInvitationsParams{
-			InviteeUserID: pgtype.Int8{Int64: row.ID, Valid: true}, Lower: email,
-		})
-		if err != nil {
-			return false, err
-		}
-		if err := notifyPendingInvitations(r.Context(), tx, row.ID); err != nil {
-			return false, err
-		}
 		if err := q.IssueSession(r.Context(), sqlc.IssueSessionParams{
 			TokenHash: hashToken(token), UserID: row.ID, Column3: time.Now().UTC().Add(sessionTTL(row.Role)).Format(time.RFC3339Nano),
 		}); err != nil {
@@ -111,12 +102,11 @@ func (s *Service) Register(r *http.Request) Result {
 			Summary              string `json:"summary"`
 			Email                string `json:"email"`
 			WorkspaceID          int64  `json:"workspace_id"`
-			PendingInvitations   int64  `json:"pending_invitations"`
 			InvitedByAgentUserID any    `json:"invited_by_agent_user_id"`
 			AgentAttributionBPS  any    `json:"agent_attribution_bps"`
 		}{
-			Summary: fmt.Sprintf("注册账号 %s，开通免费工作空间 %d，回填待处理邀请 %d 条", row.Email, orgID, bound),
-			Email:   row.Email, WorkspaceID: orgID, PendingInvitations: bound,
+			Summary: fmt.Sprintf("注册账号 %s，开通免费工作空间 %d", row.Email, orgID),
+			Email:   row.Email, WorkspaceID: orgID,
 			InvitedByAgentUserID: nil, AgentAttributionBPS: nil,
 		})
 		if err := q.InsertAudit(r.Context(), sqlc.InsertAuditParams{

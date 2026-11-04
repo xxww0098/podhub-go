@@ -62,7 +62,7 @@ func (h Host) insertCopy(w http.ResponseWriter, r *http.Request, user, org int64
 }
 
 func (h Host) copyFrom(w http.ResponseWriter, r *http.Request, user, org int64, title, id string, useBodyTitle bool) {
-	item, err := h.loadCard(r, org, id)
+	item, err := h.loadCard(r, org, user, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeErr(w, http.StatusNotFound, "上架方案不存在", "not_found")
 		return

@@ -26,6 +26,7 @@ import { formatDateTimeShort } from "@/lib/format"
 import { planDisplayName } from "./plan-catalog"
 
 export const SUBSCRIPTION_REDEEMED_EVENT = "podhub:subscription-redeemed"
+export const REDEEM_CODE_REDEEMED_EVENT = "podhub:redeem-code-redeemed"
 
 /**
  * The redeem-code entry is a focused dialog, not a plans-page card: codes are
@@ -101,6 +102,7 @@ export function RedeemCodeForm({
         expected_workspace_uuid: workspaceUuid,
       })
       if (result.plan_key) window.dispatchEvent(new CustomEvent(SUBSCRIPTION_REDEEMED_EVENT, { detail: workspaceUuid }))
+      window.dispatchEvent(new Event(REDEEM_CODE_REDEEMED_EVENT))
       setCode("")
       const notice = redeemSuccessNotice(result)
       notifySuccess(notice.title, { description: notice.description })

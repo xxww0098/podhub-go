@@ -33,10 +33,6 @@ import (
 // domains do not import the flat tenant package. Supplier receives the
 // current private bucket for originals and the assets account for catalog images.
 func mountPR8A(router chi.Router, pool *pgxpool.Pool, sessions access.Resolver, cfg config.Config) {
-	var blobs *sign.Account
-	if account, err := configuredR2Account(cfg, media.RoleAssets); err == nil {
-		blobs = &account
-	}
 	delegateRepo := delegaterepo.New(pool, tenant.BeginApp)
 	sellerAPI := delegatesvc.Seller{
 		DB:   delegateRepo,
@@ -55,9 +51,12 @@ func mountPR8A(router chi.Router, pool *pgxpool.Pool, sessions access.Resolver, 
 	supplierhttp.Mount(router, supplierhttp.Deps{
 		Session: supplierSession{sessions},
 		Actions: suppliersvc.New(supplierrepo.New(pool, tenant.BeginApp).WithBlobs(func(ctx context.Context) (sign.Account, error) {
-			account, _, err := loadDelegateStorage(cfg)
+			account, _, err := loadDelegateStorage(ctx, pool, cfg)
 			return account, err
-		}, blobs).WithMoney(billingrepo.HoldTx, billingrepo.SettleTx).WithProfileValidation(func(raw string) bool {
+		}, func(ctx context.Context) (sign.Account, error) {
+			account, _, err := configuredR2Account(ctx, pool, cfg, media.RoleAssets)
+			return account, err
+		}).WithMoney(billingrepo.HoldTx, billingrepo.SettleTx).WithProfileValidation(func(raw string) bool {
 			_, err := ai.ParseProductProfile(raw)
 			return err == nil
 		})),

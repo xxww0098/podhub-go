@@ -39,12 +39,25 @@ type IntentFilter struct {
 	CursorID     string
 	LatestPerRow bool
 	StableOrder  bool
-	CardID       string
-	RowID        string
-	RowIDs       []string
-	IntentIDs    []string
-	StoreID      string
-	ExactStore   bool
+	// Review asks the list endpoint for workspace-wide review counts. The
+	// counts use the latest intent per row, so paging the list never changes
+	// them.
+	Review bool
+	// NeedsReview keeps only the latest intent of each row when that intent
+	// still needs a person. It implies LatestPerRow: an older failure that a
+	// newer intent already answered must not re-enter the queue.
+	NeedsReview bool
+	// ReviewKind narrows the review queue to one attention group so an entry
+	// on the dashboard opens exactly the records it counted: "unknown",
+	// "failed" (rejected or conflict) or "accepted_issue". It implies
+	// NeedsReview and LatestPerRow.
+	ReviewKind string
+	CardID     string
+	RowID      string
+	RowIDs     []string
+	IntentIDs  []string
+	StoreID    string
+	ExactStore bool
 }
 
 // ParseIntentQuery validates ListingIntentsQuery. A bad cursor is no cursor.
@@ -52,7 +65,7 @@ type IntentFilter struct {
 func ParseIntentQuery(q map[string][]string) (IntentFilter, string, bool) {
 	allowed := map[string]struct{}{
 		"limit": {}, "cursor": {}, "categoryKey": {}, "cardId": {}, "latestPerRow": {},
-		"stableOrder": {}, "rowId": {}, "rowIds": {}, "intentIds": {}, "storeId": {},
+		"stableOrder": {}, "review": {}, "needsReview": {}, "reviewKind": {}, "rowId": {}, "rowIds": {}, "intentIds": {}, "storeId": {},
 	}
 	for key, values := range q {
 		if _, ok := allowed[key]; !ok || len(values) != 1 {
@@ -71,13 +84,33 @@ func ParseIntentQuery(q map[string][]string) (IntentFilter, string, bool) {
 	if !ok {
 		return IntentFilter{}, "请求格式无效", false
 	}
+	review, ok := parseBool(q, "review")
+	if !ok {
+		return IntentFilter{}, "请求格式无效", false
+	}
+	needsReview, ok := parseBool(q, "needsReview")
+	if !ok {
+		return IntentFilter{}, "请求格式无效", false
+	}
+	reviewKind := strings.TrimSpace(one(q, "reviewKind"))
+	switch reviewKind {
+	case "", "unknown", "failed", "accepted_issue":
+	default:
+		return IntentFilter{}, "reviewKind 无效", false
+	}
+	if reviewKind != "" {
+		needsReview = true
+	}
+	if needsReview {
+		latest = true
+	}
 	if has(q, "rowId") && has(q, "rowIds") {
 		return IntentFilter{}, "rowId 与 rowIds 不能同时使用", false
 	}
 	if (has(q, "rowIds") || has(q, "intentIds")) && strings.TrimSpace(one(q, "storeId")) == "" {
 		return IntentFilter{}, "按 rowIds 或 intentIds 查询时 storeId 必填", false
 	}
-	out := IntentFilter{Limit: limit, Fetch: limit + 1, LatestPerRow: latest, StableOrder: stable}
+	out := IntentFilter{Limit: limit, Fetch: limit + 1, LatestPerRow: latest, StableOrder: stable, Review: review, NeedsReview: needsReview, ReviewKind: reviewKind}
 	if out.Fetch > 101 {
 		out.Fetch = 101
 	}

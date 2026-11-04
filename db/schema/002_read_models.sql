@@ -31,7 +31,14 @@ CREATE TABLE public.jobs (
 CREATE TABLE public.listing_rows (
     id uuid PRIMARY KEY,
     org_id bigint NOT NULL,
-    card_id uuid NOT NULL
+    card_id uuid NOT NULL,
+    store_id uuid
+);
+
+CREATE TABLE public.listing_cards (
+    id uuid PRIMARY KEY,
+    org_id bigint NOT NULL,
+    store_id uuid
 );
 
 CREATE TABLE public.ai_requests (

@@ -102,6 +102,7 @@ test("OzonConfigSession: PUT 回带基线的 promptText/fixedTags/aiOutput/langu
     COORD,
   )
   assert.equal(puts[0]?.body.expected_revision, 0)
+  assert.equal(puts[0]?.body.validate, false)
   assert.equal(puts[0]?.body.language, "zh_hans")
   assert.deepEqual(puts[0]?.body.ai_output, {
     title: true,
@@ -126,6 +127,14 @@ test("OzonConfigSession: PUT 回带基线的 promptText/fixedTags/aiOutput/langu
   assert.equal(echo?.prompt_text, "识别红白配色")
   assert.deepEqual(echo?.fixed_tags, ["#a"])
   assert.equal(echo?.language, "ru")
+})
+
+test("OzonConfigSession: 仅明确要求时发送校验请求", async () => {
+  const { io, puts } = recordingIO()
+  const session = new OzonConfigSession("src-1", "p1", io)
+  await session.save({ values: {}, complex_values: [] }, schema(), COORD)
+  await session.save({ values: {}, complex_values: [] }, schema(), COORD, true)
+  assert.deepEqual(puts.map(({ body }) => body.validate), [false, true])
 })
 test("explicit reload clears a deleted config baseline and conflict", async () => {
   const { io, puts } = recordingIO()

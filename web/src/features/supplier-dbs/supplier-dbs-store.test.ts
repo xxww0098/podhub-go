@@ -94,6 +94,7 @@ test("复制行：默认字段随行复制，签新行配置的 revision", async
   assert.deepEqual(puts[0].body.ai_output, { title: false, description: true, tags: true })
   assert.equal(puts[0].body.prompt_text, "PROMPT")
   assert.equal(puts[0].body.expected_revision, 1)
+  assert.equal(puts[0].body.validate, false)
 })
 
 test("复制行：配置复制失败保留新行并带回原因", async () => {
@@ -125,6 +126,7 @@ test("新增规格继承商品 Ozon 字段，不复制旧规格的识图事实�
   assert.equal(calls.createRow[0].grossWeightG, null)
   assert.equal(calls.createRow[0].variantGroup, "p1")
   assert.equal(puts[0].prompt_text, "")
+  assert.equal(puts[0].validate, false)
   assert.deepEqual(puts[0].values, { "fixed:width": [{ kind: "integer", value: 100 }] })
 })
 
@@ -133,9 +135,10 @@ test("同步共享 Ozon 字段保留目标规格的事实、标签与识图开�
   const second = row("p2", "src", { variantGroup: "g", size: "450ml", descriptionCategoryId: 11, typeId: 101, promptContent: "450ml facts", fixedTags: ["#чашка"] })
   const { client } = memoryClient([{ db: db("src", "杯子"), rows: [first, second], propDefs: [] }])
   const puts: PutSupplierOzonConfigBody[] = []
+  let invalid = false
   const store = createSupplierDbsStore(client, {
     get: async (_, id) => config(id === "p1" ? { values: { "fixed:width": [{ kind: "integer", value: 100 }] } } : { prompt_text: "450ml facts", fixed_tags: ["#чашка"], ai_output: { title: false, description: true, tags: false }, revision: 7 }),
-    put: async (_, id, body) => { puts.push(body); return config({ ...body, product_id: id }) },
+    put: async (_, id, body) => { puts.push(body); return config({ ...body, product_id: id, state: body.validate && !invalid ? "valid" : "needs_reconfiguration" }) },
   })
   await store.loadList(); await store.loadDetail("src")
   assert.equal((await store.syncProductOzon("src", "p1")).ok, true)
@@ -144,4 +147,9 @@ test("同步共享 Ozon 字段保留目标规格的事实、标签与识图开�
   assert.deepEqual(puts[0].fixed_tags, ["#чашка"])
   assert.deepEqual(puts[0].ai_output, { title: false, description: true, tags: false })
   assert.equal(puts[0].expected_revision, 7)
+  assert.equal(puts[0].validate, false)
+  assert.equal((await store.syncProductOzon("src", "p1", true)).ok, true)
+  assert.equal(puts[1].validate, true)
+  invalid = true
+  assert.equal((await store.syncProductOzon("src", "p1", true)).ok, false)
 })

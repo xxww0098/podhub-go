@@ -86,7 +86,7 @@ func seedMCPAuthorityGrant(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 	t.Helper()
 	user, org := insertWorkspace(t, ctx, pool, uuid.NewString()+"@example.invalid", "Synthetic MCP authority")
 	if _, err := pool.Exec(ctx, `INSERT INTO organization_members(org_id,user_id,role,status,display_name,join_order,created_at,updated_at)
- VALUES($1,$2,'owner','active','Synthetic MCP',1,clock_timestamp(),clock_timestamp())`, org, user); err != nil {
+ VALUES($1,$2,'owner','active','Synthetic MCP',1,clock_timestamp(),clock_timestamp()) ON CONFLICT (org_id,user_id) DO NOTHING`, org, user); err != nil {
 		t.Fatal(err)
 	}
 	token := "opa_synthetic_" + uuid.NewString()

@@ -22,13 +22,11 @@ import {
 
 const created: WorkspaceInvitationCreatedView = {
   uuid: "8f0a3f5e-6c1d-4a5f-9a3e-6d2c8b7f4a11",
-  token: "a".repeat(42) + "A",
   email: "invitee@example.invalid",
   role: "member",
   expires_at_ms: 1_760_000_000_000,
   pending_used: 1,
   pending_limit: 5,
-  notified: true,
 }
 
 const invitationRow: WorkspaceInvitationView = {

@@ -64,8 +64,8 @@ const GROUPS_PER_PAGE = 3
 export function mergeSupplierGroups(factories: Factory[], groups: SupplierAccountsGroup[]): SupplierAccountsGroup[] {
   const byFactory = new Map(groups.map((group) => [group.factory.factory_id, group]))
   return factories.map((factory) => ({
-    factory: { factory_id: factory.factoryId, name: factory.name, country: factory.country, icon: factory.icon },
-    members: byFactory.get(factory.factoryId)?.members ?? [],
+    factory: { factory_id: factory.factory_id, name: factory.name, country: factory.country, icon: factory.icon },
+    members: byFactory.get(factory.factory_id)?.members ?? [],
   }))
 }
 
@@ -322,8 +322,8 @@ export function SupplierAccountsScreen({
     })
   }
 
-  const editFactory = (factory: Factory) => setEditor({ factoryId: factory.factoryId, draft: {
-    name: factory.name, country: factory.country, contact: factory.contact, internalNote: factory.internalNote, icon: factory.icon,
+  const editFactory = (factory: Factory) => setEditor({ factoryId: factory.factory_id, draft: {
+    name: factory.name, country: factory.country, contact: factory.contact, internal_note: factory.internal_note, icon: factory.icon,
   } })
 
   return (
@@ -365,7 +365,7 @@ export function SupplierAccountsScreen({
         <div className="flex shrink-0 flex-col gap-3">
           {visibleGroups.length === 0 ? <SupplierAccountsEmpty filtered /> : null}
           {pageGroups.map((group) => {
-            const factory = factories.find((item) => item.factoryId === group.factory.factory_id)
+            const factory = factories.find((item) => item.factory_id === group.factory.factory_id)
             return (
             <section
               key={group.factory.factory_id}
@@ -488,7 +488,7 @@ export function SupplierAccountsScreen({
               notifySuccess("工厂资料已保存")
             } else {
               const result = await factoriesHttp.create(editor.draft)
-              if (result.initialPassword) setIssuedPassword({ email: editor.draft.accountEmail?.trim() ?? "", password: result.initialPassword })
+              if (result.initial_password) setIssuedPassword({ email: editor.draft.account_email?.trim() ?? "", password: result.initial_password })
               else notifySuccess("已绑定既有账号为工厂成员")
               setQuery(""); setPage(0)
             }
@@ -501,7 +501,7 @@ export function SupplierAccountsScreen({
         description="已绑定商品库的工厂不能删除。删除后成员将失去此工厂的访问权限。" confirmText="删除工厂" busy={factoryBusy} onConfirm={async () => {
           if (!deletingFactory || factoryBusy) return
           setFactoryBusy(true)
-          try { await factoriesHttp.delete(deletingFactory.factoryId); setDeletingFactory(null); notifySuccess("工厂已删除"); await refresh() }
+          try { await factoriesHttp.delete(deletingFactory.factory_id); setDeletingFactory(null); notifySuccess("工厂已删除"); await refresh() }
           catch (reason) { notifyCommandError(reason, "删除工厂失败") }
           finally { setFactoryBusy(false) }
         }} />

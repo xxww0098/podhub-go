@@ -26,9 +26,14 @@ func (h Host) deadLetters(w http.ResponseWriter, r *http.Request) {
 	}
 	fetch := limit + 1
 	micros, cursorID := ParseCursor(q.Get("cursor"))
+	scope, err := h.storeScope(r.Context(), p.OrgID, p.UserID)
+	if err != nil {
+		writeDB(w, err)
+		return
+	}
 	var items []deadLetterView
 	var next *string
-	err := h.withOrg(r.Context(), p.OrgID, func(tx pgx.Tx) error {
+	err = h.withOrg(r.Context(), p.OrgID, func(tx pgx.Tx) error {
 		sql := `SELECT id::text, kind, aggregate_type, aggregate_id::text, state, attempt, max_attempts,
 		               last_error_code, idempotency_key, executor, updated_at
 		          FROM jobs
@@ -37,6 +42,10 @@ func (h Host) deadLetters(w http.ResponseWriter, r *http.Request) {
 		if cursorID != "" {
 			args = append(args, micros, cursorID)
 			sql += ` AND (updated_at, id) < ((TIMESTAMPTZ 'epoch' + ($2::bigint || ' microseconds')::interval), $3::uuid)`
+		}
+		if !scope.all {
+			args = append(args, p.UserID, scope.stores)
+			sql += scope.jobFilter(len(args)-1, len(args))
 		}
 		args = append(args, fetch)
 		sql += ` ORDER BY updated_at DESC, id DESC LIMIT $` + itoa(len(args))
@@ -98,6 +107,9 @@ func (h Host) requeueDeadLetter(w http.ResponseWriter, r *http.Request) {
 	jobID, ok := CanonicalUUID(chi.URLParam(r, "job_id"))
 	if !ok {
 		writeErr(w, http.StatusBadRequest, "作业编号无效", "validation")
+		return
+	}
+	if !h.requireJob(w, r, p, jobID) {
 		return
 	}
 	var view runView

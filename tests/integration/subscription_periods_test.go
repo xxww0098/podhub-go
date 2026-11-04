@@ -166,7 +166,7 @@ func TestSubscriptionPaidPeriods(t *testing.T) {
 		if _, err := pool.Exec(ctx, `UPDATE organization_stores SET quota_suspended=true WHERE org_id=$1 AND uuid=$2::uuid`, org, stores[0]); err != nil {
 			t.Fatal(err)
 		}
-		reported, err := submit.Report(ctx, pool, submit.ReportInput{OrgID: org, IntentID: intent, TaskID: 123, HasTask: true})
+		reported, err := submit.Report(ctx, pool, submit.ReportInput{OrgID: org, ActorUserID: user, IntentID: intent, TaskID: 123, HasTask: true})
 		if err != nil || reported.State != submit.Accepted {
 			t.Fatalf("receipt after pause: %+v %v", reported, err)
 		}

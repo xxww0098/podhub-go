@@ -62,7 +62,7 @@ func (h Host) getRow(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "商品行编号无效", "validation")
 		return
 	}
-	item, err := h.loadRow(r, p.OrgID, id)
+	item, err := h.loadRow(r, p.OrgID, p.UserID, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeErr(w, http.StatusNotFound, "商品行不存在", "not_found")
 		return
@@ -150,9 +150,15 @@ func (h Host) patchRow(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !fieldSome(fields, "draft") {
+			if !h.requireRow(w, r, p, id) {
+				return
+			}
 			h.fillBlankRow(w, r, p, id, base, fields)
 			return
 		}
+	}
+	if !h.requireRow(w, r, p, id) {
+		return
 	}
 	var revision int64
 	var rowPayload, cardPayload []byte

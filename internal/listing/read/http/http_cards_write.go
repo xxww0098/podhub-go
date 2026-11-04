@@ -106,6 +106,16 @@ func (h Host) patchCard(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "不再支持字段包套用", "validation")
 		return
 	}
+	loaded, err := h.loadCard(r, p.OrgID, p.UserID, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeErr(w, http.StatusNotFound, "上架方案不存在", "not_found")
+			return
+		}
+		status, message, code := dbStatus(err)
+		writeErr(w, status, message, code)
+		return
+	}
 	_, storeSent := fields["storeId"]
 	payload, payloadSent := fields["payload"]
 	needsCore := storeSent || (payloadSent && string(payload) != "null")
@@ -115,17 +125,7 @@ func (h Host) patchCard(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, "请求格式无效", "validation")
 			return
 		}
-		item, err := h.loadCard(r, p.OrgID, id)
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				writeErr(w, http.StatusNotFound, "上架方案不存在", "not_found")
-				return
-			}
-			status, message, code := dbStatus(err)
-			writeErr(w, status, message, code)
-			return
-		}
-		if item.supplier {
+		if loaded.supplier {
 			writeErr(w, http.StatusBadRequest, "供应商商品方案配置由在线平台商品库管理，不能在方案中修改", "validation")
 			return
 		}
@@ -189,7 +189,7 @@ func (h Host) patchCard(w http.ResponseWriter, r *http.Request) {
 var errStop = errors.New("stop")
 
 func (h Host) applyCardWrite(w http.ResponseWriter, r *http.Request, p access.Principal, id string, base int64, title string, fields map[string]json.RawMessage) {
-	item, err := h.loadCard(r, p.OrgID, id)
+	item, err := h.loadCard(r, p.OrgID, p.UserID, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeErr(w, http.StatusNotFound, "上架方案不存在", "not_found")
 		return
@@ -412,6 +412,14 @@ func (h Host) deleteCard(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "cardId 无效", "validation")
 		return
 	}
+	if _, err := h.loadCard(r, p.OrgID, p.UserID, id); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeErr(w, http.StatusNotFound, "上架方案不存在", "not_found")
+			return
+		}
+		writeDB(w, err)
+		return
+	}
 	var deleted int64
 	var found bool
 	err := h.withOrg(r.Context(), p.OrgID, func(tx pgx.Tx) error {
@@ -461,10 +469,23 @@ func (h Host) snapshotCard(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "cardId 无效", "validation")
 		return
 	}
+	if _, err := h.loadCard(r, p.OrgID, p.UserID, id); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeErr(w, http.StatusNotFound, "上架方案不存在", "not_found")
+			return
+		}
+		writeDB(w, err)
+		return
+	}
+	scope, err := h.storeScope(r.Context(), p.OrgID, p.UserID)
+	if err != nil {
+		writeDB(w, err)
+		return
+	}
 	var cursor int64
 	var found bool
 	var views []RowView
-	err := h.withOrg(r.Context(), p.OrgID, func(tx pgx.Tx) error {
+	err = h.withOrg(r.Context(), p.OrgID, func(tx pgx.Tx) error {
 		err := tx.QueryRow(r.Context(), `
 			SELECT COALESCE((SELECT seq FROM listing_card_cursors WHERE org_id = $1 AND card_id = $2::uuid), 0)
 			FROM listing_cards WHERE org_id = $1 AND id = $2::uuid`, p.OrgID, id).Scan(&cursor)
@@ -472,11 +493,17 @@ func (h Host) snapshotCard(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		found = true
-		listed, err := tx.Query(r.Context(), `
-			SELECT `+rowColumns+`
+		sql := `
+			SELECT ` + rowColumns + `
 			FROM listing_rows
-			WHERE org_id = $1 AND card_id = $2::uuid
-			ORDER BY queue_position ASC, created_at ASC, id ASC`, p.OrgID, id)
+			WHERE org_id = $1 AND card_id = $2::uuid`
+		args := []any{p.OrgID, id}
+		if !scope.all {
+			args = append(args, scope.stores)
+			sql += scope.rowFilter(len(args))
+		}
+		sql += ` ORDER BY queue_position ASC, created_at ASC, id ASC`
+		listed, err := tx.Query(r.Context(), sql, args...)
 		if err != nil {
 			return err
 		}

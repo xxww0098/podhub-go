@@ -30,9 +30,10 @@ export interface paths {
     get: operations["listingTaskRecords"];
   };
   "/api/workspace/slice-storage": {
+    /** @description Owner only. Returns the current workspace bucket without credentials. */
     get: operations["getWorkspaceSliceStorage"];
-    /** @description Owner only. Omit bucket to generate podhub- followed by a random UUID without hyphens, or supply a valid R2 name before creation. The reserved name cannot change during retries or after activation. Custom names are never adopted from an existing bucket; ambiguous creation requires review. Creates through OAuth, configures CORS and public access, obtains a bucket-scoped credential, then verifies actual upload/read/list/delete before activation. */
-    post: operations["provisionWorkspaceSliceStorage"];
+    /** @description Owner only. Saves the owner's R2 bucket and API token after the server has proved upload, private and public readback, CORS, listing and exact delete against the supplied bucket. One active configuration per workspace; a configured workspace returns its current state. */
+    post: operations["configureWorkspaceSliceStorage"];
   };
   "/api/workspace/slice-storage/cleanup": {
     /** @description Owner only. Daily schedules use Asia/Shanghai and begin at the next selected time. Manual mode stops starting automatic clears; a running clear must finish before changing the policy. */
@@ -42,31 +43,19 @@ export interface paths {
     post: operations["clearWorkspaceSliceStorage"];
   };
   "/api/workspace/slice-storage/objects": {
+    /** @description Owner only. Lists the current workspace bucket; members use the shared bucket through upload flows but cannot browse it. */
     get: operations["listWorkspaceSliceObjects"];
   };
   "/api/workspace/slice-storage/stats": {
+    /** @description Owner only. Sums the current workspace bucket's actual listings. */
     get: operations["workspaceSliceStats"];
   };
   "/api/workspace/slice-storage/download": {
+    /** @description Owner only. Signs a five-minute download URL for an object in the current workspace bucket. */
     get: operations["downloadWorkspaceSliceObject"];
   };
   "/api/workspace/slice-storage/objects/delete": {
     post: operations["deleteWorkspaceSliceObjects"];
-  };
-  "/api/workspace/slice-storage/cloudflare": {
-    get: operations["getCloudflareConnection"];
-    delete: operations["disconnectCloudflare"];
-  };
-  "/api/workspace/slice-storage/cloudflare/authorize": {
-    /** @description Creates a login-session-bound OAuth state cookie and an S256 PKCE authorization URL. The caller navigates to the returned URL. */
-    post: operations["authorizeCloudflare"];
-  };
-  "/api/workspace/slice-storage/cloudflare/callback": {
-    /** @description Owner only. Exchanges a single-use authorization code with PKCE. Stores the access token in an encrypted HttpOnly cookie for at most 15 minutes, bound to the current workspace and PodHub login session. No refresh token is retained. */
-    get: operations["callbackCloudflare"];
-  };
-  "/api/workspace/slice-storage/cloudflare/accounts": {
-    get: operations["listCloudflareAccounts"];
   };
   "/api/billing/subscription": {
     get: operations["subscriptionGet"];
@@ -927,9 +916,9 @@ export interface paths {
     post: operations["adminIntegrationsAiVerify"];
   };
   "/api/admin/integrations/config": {
-    /** Read the credential-free platform AI configuration */
+    /** Read the credential-free platform AI and system storage configuration */
     get: operations["adminIntegrationsConfigGet"];
-    /** Replace platform AI configuration with a revision check */
+    /** Replace platform integration configuration with a revision check */
     put: operations["adminIntegrationsConfigReplace"];
   };
   "/api/admin/listing/packages/official": {
@@ -1952,26 +1941,16 @@ export interface components {
       /** Format: date-time */
       updated_at: string;
     };
-    CloudflareConnection: {
-      available: boolean;
-      connected: boolean;
-      /**
-       * Format: int64
-       * @description Unix timestamp in seconds; zero when not connected
-       */
-      expires_at: number;
-    };
     WorkspaceSliceStorage: {
       configured: boolean;
-      can_manage: boolean;
-      /** @description Current owner and server-side deletion switch both allow deletion. */
+      /** @description Server-side deletion switch is on; the read is already owner-only. */
       delete_enabled?: boolean;
       /** @description Stable storage namespace used to bind folder deletion to the selected workspace configuration. */
       key_prefix?: string;
+      /** @description R2 S3 API endpoint used by this workspace. */
+      endpoint?: string;
       bucket?: string;
       public_base_url?: string;
-      oauth_available?: boolean;
-      cloudflare_connected?: boolean;
       /** @enum {string} */
       clear_status?: "idle" | "pending" | "retrying" | "completed";
       /** @enum {string} */
@@ -1980,14 +1959,6 @@ export interface components {
       cleanup_mode?: "daily" | "manual";
       /** @description Daily cleanup time in Asia/Shanghai; null in manual mode. */
       cleanup_time?: string | null;
-      provision?: ({
-        id: string;
-        account_id: string;
-        bucket: string;
-        /** @enum {string} */
-        phase: "creating" | "bucket_ready" | "token_creating" | "verifying" | "ready" | "blocked";
-        error_code: string;
-      }) | null;
     };
     WorkspaceSliceObjects: {
       objects: components["schemas"]["WorkspaceSliceObject"][];
@@ -4409,24 +4380,15 @@ export interface components {
       email: string;
       /** Format: int64 */
       expires_at_ms: number;
-      /**
-       * @description Retained for wire compatibility. Cloud always serializes `false` so
-       * the field cannot disclose whether the address already has an account.
-       */
-      notified: boolean;
       /** Format: int64 */
       pending_limit: number;
       /** Format: int64 */
       pending_used: number;
       role: string;
-      /**
-       * @description Returned once to the creator for private delivery to the recipient.
-       * Never included in notifications or directory projections.
-       */
-      token: string;
-      /** @description Stable invitation identity; possession alone grants no authority. */
+      /** @description Stable invitation identity; only the invited account may respond. */
       uuid: string;
     };
+    /** @description Invite an existing, enabled platform account by its email address. */
     CreateInvitationRequest: {
       email: string;
       role: string;
@@ -5055,6 +5017,26 @@ export interface components {
       cache_ttl_seconds: number;
       ai_accounts: components["schemas"]["AdminIntegrationAiAccountView"][];
       ai_runtime: components["schemas"]["AdminIntegrationAiRuntime"];
+      system_storage: components["schemas"]["AdminSystemStorageView"][];
+    };
+    AdminSystemStorageView: {
+      /** @enum {string} */
+      role: "assets" | "private";
+      endpoint: string;
+      bucket: string;
+      public_base_url: string;
+    };
+    AdminSystemStorageWrite: {
+      /** @enum {string} */
+      role: "assets" | "private";
+      endpoint: string;
+      bucket: string;
+      /** @description Required for assets; empty for private. */
+      public_base_url: string;
+      /** @description Empty retains the stored credential when the endpoint and bucket are unchanged. */
+      access_key_id: string;
+      /** @description Empty retains the stored secret when the endpoint */
+      secret_access_key: string;
     };
     /**
      * @description Which pool an AI account belongs to. ocr serves recognition; image serves set generation; chat serves text calls in the account API format.
@@ -5112,6 +5094,8 @@ export interface components {
       ai_accounts: components["schemas"]["AdminIntegrationAiAccountWrite"][];
       /** @description Omitted retains the stored runtime settings. */
       ai_runtime?: components["schemas"]["AdminIntegrationAiRuntime"];
+      /** @description Omitted retains the stored system buckets; an empty array removes them. */
+      system_storage?: components["schemas"]["AdminSystemStorageWrite"][];
     };
     /** @enum {string} */
     IntegrationConfigErrorCode: "AUTH_INVALID" | "FORBIDDEN" | "VALIDATION" | "CONFLICT" | "UNAVAILABLE" | "MEDIA_COMPLETE_MISSING" | "MEDIA_UPLOAD_BATCH_INVALID" | "INTERNAL" | "WRITES_DISABLED";
@@ -5135,10 +5119,6 @@ export interface components {
     InvitationDeclineData: {
       declined: boolean;
       ok: boolean;
-    };
-    InvitationProofRequest: {
-      /** @description Private credential received separately from the invitation's creator. */
-      token: string;
     };
     /**
      * @description Lifecycle of one Workspace Invitation. There is no `invalid` member: a caller
@@ -5361,6 +5341,25 @@ export interface components {
     ListingIntentsPage: {
       items: components["schemas"]["ListingIntentView"][];
       next_cursor?: string | null;
+      review?: components["schemas"]["ListingIntentReviewCounts"];
+    };
+    /**
+     * @description Workspace-wide submission review counts for the caller's visible stores.
+     * One entry per listing row (its latest intent). `accepted_issue` counts an
+     * accepted row whose Ozon import task still reports an error; it is not a
+     * send failure.
+     */
+    ListingIntentReviewCounts: {
+      /** Format: int64 */
+      needs_review: number;
+      /** Format: int64 */
+      unknown: number;
+      /** Format: int64 */
+      rejected: number;
+      /** Format: int64 */
+      conflict: number;
+      /** Format: int64 */
+      accepted_issue: number;
     };
     ListingIssue: {
       allowed_actions: components["schemas"]["ListingIssueAction"][];
@@ -6792,6 +6791,8 @@ export interface components {
     /**
      * @description PUT body. `expected_revision = 0` creates the first configuration; every
      * subsequent save must send the revision returned by GET/PUT.
+     * `validate: false` saves a draft as `needs_reconfiguration` with a
+     * `validation_pending` issue; `true` validates the fields.
      */
     PutSupplierOzonConfigRequest: {
       /** Format: int64 */
@@ -6808,6 +6809,7 @@ export interface components {
       ai_output: components["schemas"]["SupplierOzonAiOutputPolicy"];
       /** Format: int64 */
       expected_revision: number;
+      validate: boolean;
     };
     /**
      * @description One reconciled Seller write.
@@ -7504,31 +7506,31 @@ export interface components {
       name: string;
       country: string;
       contact: string;
-      internalNote: string;
+      internal_note: string;
       icon: string;
     };
     FactoryCreateInput: {
       name: string;
       country: string;
       contact: string;
-      internalNote: string;
+      internal_note: string;
       icon: string;
       /** Format: email */
-      accountEmail: string;
+      account_email: string;
     };
     Factory: {
-      factoryId: string;
+      factory_id: string;
       name: string;
       country: string;
       contact: string;
-      internalNote: string;
+      internal_note: string;
       icon: string;
       /** Format: int64 */
-      createdAtMs: number;
+      created_at_ms: number;
       /** Format: int64 */
-      updatedAtMs: number;
+      updated_at_ms: number;
       libraries: {
-          sourceId: string;
+          source_id: string;
           name: string;
           country: string;
           icon: string;
@@ -7597,7 +7599,7 @@ export interface components {
       bytes: number;
       kind: components["schemas"]["SupplierDbStorageObjectKind"];
       last_modified?: string | null;
-      /** @description Path relative to the server-configured `R2_ASSETS_KEY_PREFIX`. */
+      /** @description Path relative to the platform-configured assets bucket prefix. */
       path: string;
       public_url?: string | null;
     };
@@ -7840,8 +7842,11 @@ export interface components {
     };
     /** @enum {string} */
     SupplierOzonConfigDenial: "source_not_listed" | "product_archived" | "sku_not_published" | "catalog_missing" | "catalog_expired" | "config_needs_reconfiguration" | "catalog_digest_mismatch" | "prompt_invalid";
-    /** @description One validation finding. `issue` selects the variant. */
+    /** @description One validation finding or pending marker. `issue` selects the variant. */
     SupplierOzonConfigIssue: {
+      /** @enum {string} */
+      issue: "validation_pending";
+    } | {
       /** @enum {string} */
       issue: "legacy_configuration_requires_review";
     } | {
@@ -8318,9 +8323,8 @@ export interface components {
       ready_to_publish: boolean;
     };
     /**
-     * @description One pending Workspace Invitation. It is addressed to an email rather than to a
-     * person, so it has no display name, and it always carries the uuid the
-     * roster revokes it by — never a one-time token.
+     * @description One pending Workspace Invitation, bound to an existing account and shown
+     * by email. Its uuid identifies it for revocation.
      */
     WorkspaceInvitationEntry: {
       /** Format: int64 */
@@ -9050,53 +9054,63 @@ export interface operations {
       };
     };
   };
+  /** @description Owner only. Returns the current workspace bucket without credentials. */
   getWorkspaceSliceStorage: {
     responses: {
-      /** @description Current workspace bucket and owner-only management capability; never returns credentials. */
+      /** @description Current workspace bucket; never returns credentials. */
       200: {
         content: {
           "application/json": components["schemas"]["WorkspaceSliceStorage"];
         };
       };
-    };
-  };
-  /** @description Owner only. Omit bucket to generate podhub- followed by a random UUID without hyphens, or supply a valid R2 name before creation. The reserved name cannot change during retries or after activation. Custom names are never adopted from an existing bucket; ambiguous creation requires review. Creates through OAuth, configures CORS and public access, obtains a bucket-scoped credential, then verifies actual upload/read/list/delete before activation. */
-  provisionWorkspaceSliceStorage: {
-    requestBody: {
-      content: {
-        "application/json": {
-          account_id: string;
-          /** @enum {boolean} */
-          public_access: true;
-          /** @description Optional custom name; lowercase ASCII letters, digits and hyphens only, with alphanumeric endpoints. Omit to generate a default name. */
-          bucket?: string;
-        };
-      };
-    };
-    responses: {
-      /** @description Verified workspace storage; creation is idempotent per workspace. */
-      200: {
-        content: {
-          "application/json": components["schemas"]["WorkspaceSliceStorage"];
-        };
-      };
-      /** @description Invalid bucket name */
-      400: {
-        content: never;
-      };
-      /** @description Only the current workspace owner can provision storage */
+      /** @description Only the current workspace owner can read storage */
       403: {
         content: never;
       };
-      /** @description Bucket name already used or locked */
+    };
+  };
+  /** @description Owner only. Saves the owner's R2 bucket and API token after the server has proved upload, private and public readback, CORS, listing and exact delete against the supplied bucket. One active configuration per workspace; a configured workspace returns its current state. */
+  configureWorkspaceSliceStorage: {
+    requestBody: {
+      content: {
+        "application/json": {
+          /**
+           * Format: uri
+           * @description R2 S3 API endpoint: https://<32-hex-account-id>.r2.cloudflarestorage.com
+           */
+          endpoint: string;
+          /** @description Lowercase ASCII letters, digits and hyphens only, with alphanumeric endpoints. */
+          bucket: string;
+          /**
+           * Format: uri
+           * @description Public HTTPS origin bound to this bucket
+           */
+          public_base_url: string;
+          access_key_id: string;
+          secret_access_key: string;
+        };
+      };
+    };
+    responses: {
+      /** @description Verified workspace storage; an already configured workspace is returned unchanged. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["WorkspaceSliceStorage"];
+        };
+      };
+      /** @description Invalid endpoint */
+      400: {
+        content: never;
+      };
+      /** @description Only the current workspace owner can configure storage */
+      403: {
+        content: never;
+      };
+      /** @description Another workspace already uses this physical bucket */
       409: {
         content: never;
       };
-      /** @description External operation or verification failed; no successful activation is claimed */
-      502: {
-        content: never;
-      };
-      /** @description OAuth or storage services are not configured */
+      /** @description Storage services are not configured */
       503: {
         content: never;
       };
@@ -9156,6 +9170,7 @@ export interface operations {
       };
     };
   };
+  /** @description Owner only. Lists the current workspace bucket; members use the shared bucket through upload flows but cannot browse it. */
   listWorkspaceSliceObjects: {
     parameters: {
       query?: {
@@ -9170,6 +9185,10 @@ export interface operations {
           "application/json": components["schemas"]["WorkspaceSliceObjects"];
         };
       };
+      /** @description Workspace owner required */
+      403: {
+        content: never;
+      };
       /** @description Workspace storage is not ready */
       409: {
         content: never;
@@ -9180,6 +9199,7 @@ export interface operations {
       };
     };
   };
+  /** @description Owner only. Sums the current workspace bucket's actual listings. */
   workspaceSliceStats: {
     responses: {
       /** @description On-demand sum of actual S3 listings, at most 100000 objects. Incomplete totals are lower bounds, not a complete bucket count or billing quota. */
@@ -9188,12 +9208,17 @@ export interface operations {
           "application/json": components["schemas"]["WorkspaceSliceStats"];
         };
       };
+      /** @description Workspace owner required */
+      403: {
+        content: never;
+      };
       /** @description Statistics could not be read */
       502: {
         content: never;
       };
     };
   };
+  /** @description Owner only. Signs a five-minute download URL for an object in the current workspace bucket. */
   downloadWorkspaceSliceObject: {
     parameters: {
       query: {
@@ -9212,6 +9237,10 @@ export interface operations {
       };
       /** @description Key is not a canonical slice key in this workspace */
       400: {
+        content: never;
+      };
+      /** @description Workspace owner required */
+      403: {
         content: never;
       };
     };
@@ -9253,124 +9282,6 @@ export interface operations {
       };
       /** @description Deletion not confirmed; refresh the list before retrying */
       502: {
-        content: never;
-      };
-    };
-  };
-  getCloudflareConnection: {
-    responses: {
-      /** @description Current login session's short-lived Cloudflare setup connection. Does not verify R2 usability. */
-      200: {
-        content: {
-          "application/json": components["schemas"]["CloudflareConnection"];
-        };
-      };
-      /** @description Login required */
-      401: {
-        content: never;
-      };
-      /** @description Workspace membership required */
-      403: {
-        content: never;
-      };
-    };
-  };
-  disconnectCloudflare: {
-    responses: {
-      /** @description Active access token revoked and setup cookies cleared; missing or expired setup connections are already disconnected. Buckets are retained. */
-      204: {
-        content: never;
-      };
-      /** @description Revocation could not be confirmed */
-      502: {
-        content: never;
-      };
-      /** @description OAuth is not configured */
-      503: {
-        content: never;
-      };
-    };
-  };
-  /** @description Creates a login-session-bound OAuth state cookie and an S256 PKCE authorization URL. The caller navigates to the returned URL. */
-  authorizeCloudflare: {
-    responses: {
-      /** @description Authorization URL. Client secret and PKCE verifier are never returned. */
-      200: {
-        content: {
-          "application/json": {
-            /** Format: uri */
-            authorization_url: string;
-          };
-        };
-      };
-      /** @description Login required */
-      401: {
-        content: never;
-      };
-      /** @description Workspace membership required or cross-origin write rejected */
-      403: {
-        content: never;
-      };
-      /** @description OAuth is not configured */
-      503: {
-        content: never;
-      };
-    };
-  };
-  /** @description Owner only. Exchanges a single-use authorization code with PKCE. Stores the access token in an encrypted HttpOnly cookie for at most 15 minutes, bound to the current workspace and PodHub login session. No refresh token is retained. */
-  callbackCloudflare: {
-    parameters: {
-      query: {
-        state: string;
-        code?: string;
-        error?: string;
-      };
-    };
-    responses: {
-      /** @description Redirects to workspace storage settings after success or an authorization error. A fixed error code in the URL fragment identifies denial, invalid state, or exchange failure. A successful connection does not create a bucket or enable slice storage. */
-      303: {
-        headers: {
-          Location?: string;
-        };
-        content: never;
-      };
-      /** @description Original login session required */
-      401: {
-        content: never;
-      };
-      /** @description OAuth is not configured */
-      503: {
-        content: never;
-      };
-    };
-  };
-  listCloudflareAccounts: {
-    responses: {
-      /** @description Accounts visible to the current user's Cloudflare grant */
-      200: {
-        content: {
-          "application/json": {
-            accounts: {
-                id: string;
-                name: string;
-              }[];
-          };
-        };
-      };
-      /** @description Cloudflare grant lacks account read permission */
-      403: {
-        content: never;
-      };
-      /** @description Setup connection is missing or expired */
-      409: {
-        content: never;
-      };
-      /** @description Account list could not be read completely */
-      502: {
-        content: never;
-      };
-      /** @description OAuth is not configured */
-      503: {
         content: never;
       };
     };
@@ -10740,7 +10651,9 @@ export interface operations {
       };
       /** @description No row in this workspace */
       404: {
-        content: never;
+        content: {
+          "application/json": Record<string, never>;
+        };
       };
       /** @description Preparation or publishing is still active */
       409: {
@@ -11188,6 +11101,12 @@ export interface operations {
           "application/json": Record<string, never>;
         };
       };
+      /** @description Invalid job ID or request */
+      400: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
       /** @description Not signed in */
       401: {
         content: {
@@ -11196,6 +11115,12 @@ export interface operations {
       };
       /** @description Role cannot prepare */
       403: {
+        content: {
+          "application/json": Record<string, never>;
+        };
+      };
+      /** @description No job in this workspace or outside the member's stores */
+      404: {
         content: {
           "application/json": Record<string, never>;
         };
@@ -13925,7 +13850,7 @@ export interface operations {
           "application/json": {
             data: {
               factory: components["schemas"]["Factory"];
-              initialPassword?: string;
+              initial_password?: string;
             };
           };
         };
@@ -17797,7 +17722,7 @@ export interface operations {
       };
     };
   };
-  /** Read the credential-free platform AI configuration */
+  /** Read the credential-free platform AI and system storage configuration */
   adminIntegrationsConfigGet: {
     responses: {
       /** @description Credential-free configuration snapshot */
@@ -17832,7 +17757,7 @@ export interface operations {
       };
     };
   };
-  /** Replace platform AI configuration with a revision check */
+  /** Replace platform integration configuration with a revision check */
   adminIntegrationsConfigReplace: {
     requestBody: {
       content: {
@@ -24124,11 +24049,6 @@ export interface operations {
         uuid: string;
       };
     };
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["InvitationProofRequest"];
-      };
-    };
     responses: {
       200: {
         content: {
@@ -24167,11 +24087,6 @@ export interface operations {
     parameters: {
       path: {
         uuid: string;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["InvitationProofRequest"];
       };
     };
     responses: {

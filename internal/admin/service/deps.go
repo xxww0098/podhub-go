@@ -29,7 +29,7 @@ type Deps struct {
 	Now        func() time.Time
 	Holder     string
 	Instance   string
-	Accounts   []domain.CloudAccount
+	Accounts   func(context.Context) ([]domain.CloudAccount, error)
 	Engine     core.Engine
 	BannedTags func(ctx context.Context, load func(context.Context) ([]core.Rule, error)) ([]core.Rule, error)
 	Origin     Caller

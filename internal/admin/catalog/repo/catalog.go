@@ -18,7 +18,7 @@ import (
 // CatalogRepo stores platform products and SKUs through staff-scoped transactions.
 type CatalogRepo struct {
 	Pool        *pgxpool.Pool
-	PublicBases []string
+	PublicBases func(context.Context) ([]string, error)
 }
 
 const productCols = `product_id, title, description, media, specs, published, revision, created_at_ms, updated_at_ms`
@@ -74,8 +74,11 @@ func (r CatalogRepo) write(ctx context.Context, fn func(pgx.Tx) error) error {
 }
 
 // Bases is the public URL allow-list injected from server storage configuration.
-func (r CatalogRepo) Bases(context.Context) ([]string, error) {
-	return append([]string{}, r.PublicBases...), nil
+func (r CatalogRepo) Bases(ctx context.Context) ([]string, error) {
+	if r.PublicBases == nil {
+		return []string{}, nil
+	}
+	return r.PublicBases(ctx)
 }
 
 func (r CatalogRepo) List(ctx context.Context) ([]catcontract.Product, []catcontract.SKU, error) {

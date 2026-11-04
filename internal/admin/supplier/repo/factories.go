@@ -24,7 +24,7 @@ func (r Portal) ListFactories(ctx context.Context, actor outcome.Actor) ([]supco
 	var out []supcontract.Factory
 	err := r.withTx(ctx, actor.OrgID, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT `+factoryFields+`, COALESCE((
-			SELECT jsonb_agg(jsonb_build_object('sourceId', s.source_id, 'name', s.name, 'country', s.country, 'icon', s.icon) ORDER BY s.name, s.source_id)
+			SELECT jsonb_agg(jsonb_build_object('source_id', s.source_id, 'name', s.name, 'country', s.country, 'icon', s.icon) ORDER BY s.name, s.source_id)
 			FROM public.sc_sources s WHERE s.factory_id=f.factory_id), '[]'::jsonb)
 			FROM public.sc_factories f ORDER BY name, factory_id`)
 		if err != nil {

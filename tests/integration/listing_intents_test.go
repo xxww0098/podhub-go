@@ -2,8 +2,10 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +14,173 @@ import (
 
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
 )
+
+func TestListingIntentReviewCounts(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	pool := migratedPool(t, ctx)
+	engine := tagsEngine(t)
+
+	owner, org := insertWorkspace(t, ctx, pool, "intent-review@example.com", "Intent Review")
+	insertMember(t, ctx, pool, org, owner, "owner", 1)
+	memberUser := insertUser(t, ctx, pool, "intent-review-member@example.com", "member")
+	memberSeat := insertMember(t, ctx, pool, org, memberUser, "member", 2)
+	const (
+		storeShared  = "31111111-1111-4111-8111-111111111111"
+		storePrivate = "32222222-2222-4222-8222-222222222222"
+		card         = "3ccccccc-cccc-4ccc-8ccc-cccccccccccc"
+		rowUnknown   = "3a111111-1111-4111-8111-111111111111"
+		rowRejected  = "3a222222-2222-4222-8222-222222222222"
+		rowConflict  = "3a333333-3333-4333-8333-333333333333"
+		rowClean     = "3a444444-4444-4444-8444-444444444444"
+		rowFailed    = "3a555555-5555-4555-8555-555555555555"
+		rowErrored   = "3a666666-6666-4666-8666-666666666666"
+		rowMalformed = "3a777777-7777-4777-8777-777777777777"
+		rowCancelled = "3a888888-8888-4888-8888-888888888888"
+		rowStale     = "3a999999-9999-4999-8999-999999999999"
+		rowOther     = "3aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+		idUnknown    = "3d111111-1111-4111-8111-111111111111"
+		idRejected   = "3d222222-2222-4222-8222-222222222222"
+		idConflict   = "3d333333-3333-4333-8333-333333333333"
+		idClean      = "3d444444-4444-4444-8444-444444444444"
+		idFailed     = "3d555555-5555-4555-8555-555555555555"
+		idErrored    = "3d666666-6666-4666-8666-666666666666"
+		idMalformed  = "3d777777-7777-4777-8777-777777777777"
+		idCancelled  = "3d888888-8888-4888-8888-888888888888"
+		idStale      = "3d999999-9999-4999-8999-999999999999"
+		idLatest     = "3daaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+		idOther      = "3dbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO organization_stores (org_id, uuid, create_order, name, assignee_membership_id)
+		VALUES ($1, $2::uuid, 1, 'shared', $3), ($1, $4::uuid, 2, 'private', NULL)`,
+		org, storeShared, memberSeat, storePrivate); err != nil {
+		t.Fatal(err)
+	}
+	insertCard(t, ctx, pool, card, org, "复核", "2026-08-21 17:30:00+00", `{}`)
+	for _, row := range []string{rowUnknown, rowRejected, rowConflict, rowClean, rowFailed, rowErrored, rowMalformed, rowCancelled, rowStale, rowOther} {
+		insertListingRow(t, ctx, pool, row, org, card)
+	}
+	insertIntent(t, ctx, pool, idUnknown, org, storeShared, rowUnknown, "unknown", "op-unknown", strPtr("OZON_RECONCILE_STILL_UNKNOWN"), strPtr("offer-unknown"))
+	insertIntent(t, ctx, pool, idRejected, org, storeShared, rowRejected, "rejected", "op-rejected", strPtr("OZON_ROW_REJECTED"), nil)
+	insertIntent(t, ctx, pool, idConflict, org, storeShared, rowConflict, "conflict", "op-conflict", nil, nil)
+	insertIntent(t, ctx, pool, idClean, org, storeShared, rowClean, "accepted", "op-clean", nil, nil)
+	insertIntent(t, ctx, pool, idFailed, org, storeShared, rowFailed, "accepted", "op-failed", strPtr("OZON_ROW_REJECTED"), nil)
+	insertIntent(t, ctx, pool, idErrored, org, storeShared, rowErrored, "accepted", "op-errored", strPtr("OZON_ROW_REJECTED"), nil)
+	insertIntent(t, ctx, pool, idMalformed, org, storeShared, rowMalformed, "accepted", "op-malformed", strPtr("OZON_ROW_REJECTED"), nil)
+	insertIntent(t, ctx, pool, idCancelled, org, storeShared, rowCancelled, "cancelled", "op-cancelled", nil, nil)
+	insertIntent(t, ctx, pool, idStale, org, storeShared, rowStale, "unknown", "op-stale", strPtr("OZON_RECONCILE_STILL_UNKNOWN"), strPtr("offer-stale"))
+	insertIntent(t, ctx, pool, idLatest, org, storeShared, rowStale, "accepted", "op-latest", nil, nil)
+	insertIntent(t, ctx, pool, idOther, org, storePrivate, rowOther, "unknown", "op-other", strPtr("OZON_RECONCILE_STILL_UNKNOWN"), strPtr("offer-other"))
+	// The accepted revision is newer than the unknown one even though it was
+	// written first; latest-per-row must follow the revision.
+	if _, err := pool.Exec(ctx, `UPDATE submission_intents SET row_revision = 5 WHERE id = $1::uuid`, idLatest); err != nil {
+		t.Fatal(err)
+	}
+	outcomes := map[string]string{
+		idFailed:    `{"importTask":{"status":"failed"}}`,
+		idErrored:   `{"importTask":{"status":"imported","errors":[{"level":"ERROR","code":"SPU_ALREADY_EXISTS"}]}}`,
+		idMalformed: `{"importTask":{"status":"imported","errors":{"level":"error"}}}`,
+	}
+	for id, outcome := range outcomes {
+		if _, err := pool.Exec(ctx, `UPDATE submission_intents SET reconciliation_outcome = $2::jsonb WHERE id = $1::uuid`, id, outcome); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	clock := func() time.Time { return time.UnixMilli(1_787_333_400_000).UTC() }
+	ownerH := surfaceHandler(pool, engine, access.Principal{UserID: owner, OrgID: org, WorkspaceRole: "owner", PlatformRole: "user"}, clock)
+	memberH := surfaceHandler(pool, engine, access.Principal{UserID: memberUser, OrgID: org, WorkspaceRole: "member", PlatformRole: "user"}, clock)
+
+	// Counts do not depend on the page size or the rows the page returns.
+	member := callJSON(memberH, http.MethodGet, "/api/listing/intents?limit=1&latestPerRow=true&review=true", "")
+	if member.Code != http.StatusOK {
+		t.Fatalf("member review %d %s", member.Code, member.Body.String())
+	}
+	if !strings.Contains(member.Body.String(), `"review":{"needs_review":5,"unknown":1,"rejected":1,"conflict":1,"accepted_issue":2}`) {
+		t.Fatalf("member review counts %s", member.Body.String())
+	}
+	ownerPage := callJSON(ownerH, http.MethodGet, "/api/listing/intents?limit=1&latestPerRow=true&review=true", "")
+	if ownerPage.Code != http.StatusOK || !strings.Contains(ownerPage.Body.String(), `"review":{"needs_review":6,"unknown":2,"rejected":1,"conflict":1,"accepted_issue":2}`) {
+		t.Fatalf("owner review counts %d %s", ownerPage.Code, ownerPage.Body.String())
+	}
+	plain := callJSON(ownerH, http.MethodGet, "/api/listing/intents?limit=10", "")
+	if plain.Code != http.StatusOK || strings.Contains(plain.Body.String(), `"review"`) {
+		t.Fatalf("review is opt-in %d %s", plain.Code, plain.Body.String())
+	}
+
+	// needsReview is the queue itself, not a filter over a page of unrelated
+	// intents. It implies latest-per-row, so the older unknown on rowStale does
+	// not reappear beside the accepted intent that answered it.
+	readQueue := func(body []byte) []string {
+		t.Helper()
+		var page struct {
+			Data struct {
+				Items []struct {
+					ID string `json:"id"`
+				} `json:"items"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(body, &page); err != nil {
+			t.Fatal(err)
+		}
+		ids := make([]string, 0, len(page.Data.Items))
+		for _, item := range page.Data.Items {
+			ids = append(ids, item.ID)
+		}
+		sort.Strings(ids)
+		return ids
+	}
+	ownerQueue := callJSON(ownerH, http.MethodGet, "/api/listing/intents?limit=10&needsReview=true&review=true", "")
+	if ownerQueue.Code != http.StatusOK {
+		t.Fatalf("owner queue %d %s", ownerQueue.Code, ownerQueue.Body.String())
+	}
+	wantOwnerQueue := []string{idConflict, idErrored, idFailed, idOther, idRejected, idUnknown}
+	sort.Strings(wantOwnerQueue)
+	if got := readQueue(ownerQueue.Body.Bytes()); strings.Join(got, ",") != strings.Join(wantOwnerQueue, ",") {
+		t.Fatalf("owner queue %v want %v", got, wantOwnerQueue)
+	}
+	if !strings.Contains(ownerQueue.Body.String(), `"review":{"needs_review":6,"unknown":2,"rejected":1,"conflict":1,"accepted_issue":2}`) {
+		t.Fatalf("owner queue counts %s", ownerQueue.Body.String())
+	}
+	memberQueue := callJSON(memberH, http.MethodGet, "/api/listing/intents?limit=10&needsReview=true&review=true", "")
+	wantMemberQueue := []string{idConflict, idErrored, idFailed, idRejected, idUnknown}
+	sort.Strings(wantMemberQueue)
+	if memberQueue.Code != http.StatusOK || strings.Join(readQueue(memberQueue.Body.Bytes()), ",") != strings.Join(wantMemberQueue, ",") {
+		t.Fatalf("member queue %d %v want %v", memberQueue.Code, readQueue(memberQueue.Body.Bytes()), wantMemberQueue)
+	}
+	if !strings.Contains(memberQueue.Body.String(), `"review":{"needs_review":5,"unknown":1,"rejected":1,"conflict":1,"accepted_issue":2}`) {
+		t.Fatalf("member queue counts %s", memberQueue.Body.String())
+	}
+
+	// A dashboard entry narrows the same queue to its own group. The kind
+	// alone implies the review queue, exactly like needsReview.
+	groups := []struct {
+		kind string
+		ids  []string
+	}{
+		{"unknown", []string{idUnknown, idOther}},
+		{"failed", []string{idRejected, idConflict}},
+		{"accepted_issue", []string{idFailed, idErrored}},
+	}
+	for _, group := range groups {
+		got := callJSON(ownerH, http.MethodGet, "/api/listing/intents?limit=10&review=true&reviewKind="+group.kind, "")
+		if got.Code != http.StatusOK || strings.Join(readQueue(got.Body.Bytes()), ",") != strings.Join(group.ids, ",") {
+			t.Fatalf("owner %s queue %d %v want %v", group.kind, got.Code, readQueue(got.Body.Bytes()), group.ids)
+		}
+		// Counts stay workspace-wide and independent of the queue filter.
+		if !strings.Contains(got.Body.String(), `"review":{"needs_review":6,"unknown":2,"rejected":1,"conflict":1,"accepted_issue":2}`) {
+			t.Fatalf("owner %s counts %s", group.kind, got.Body.String())
+		}
+	}
+	memberUnknown := callJSON(memberH, http.MethodGet, "/api/listing/intents?limit=10&reviewKind=unknown", "")
+	if memberUnknown.Code != http.StatusOK || strings.Join(readQueue(memberUnknown.Body.Bytes()), ",") != idUnknown {
+		t.Fatalf("member unknown queue %d %v", memberUnknown.Code, readQueue(memberUnknown.Body.Bytes()))
+	}
+	if strings.Contains(memberUnknown.Body.String(), idOther) {
+		t.Fatalf("member unknown queue leaked another store: %s", memberUnknown.Body.String())
+	}
+}
 
 func TestListingIntentsCatalog(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -213,6 +382,7 @@ func insertMember(t *testing.T, ctx context.Context, pool *pgxpool.Pool, org, us
 	err := pool.QueryRow(ctx, `
 		INSERT INTO organization_members (org_id, user_id, role, display_name, join_order, created_at, updated_at)
 		VALUES ($1, $2, $3, 'n', $4, clock_timestamp(), clock_timestamp())
+		ON CONFLICT (org_id, user_id) DO UPDATE SET role = EXCLUDED.role, join_order = EXCLUDED.join_order
 		RETURNING id`, org, user, role, order).Scan(&id)
 	if err != nil {
 		t.Fatal(err)

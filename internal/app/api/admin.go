@@ -32,7 +32,7 @@ type adminHost struct {
 
 // AdminPorted returns the handlers that replace 501 for listing packages,
 // prompts, videos, and media admin. Keys are "METHOD path".
-func AdminPorted(s *Server, accounts []domain.CloudAccount) map[string]http.HandlerFunc {
+func AdminPorted(s *Server, accounts func(context.Context) ([]domain.CloudAccount, error)) map[string]http.HandlerFunc {
 	if s == nil {
 		return nil
 	}

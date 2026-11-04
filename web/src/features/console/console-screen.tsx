@@ -146,11 +146,11 @@ export const ConsoleScreen = memo(function ConsoleScreen({ workspaceId, onNaviga
     { label: failedProducts != null && products.coverage.read < products.coverage.total ? `审核失败商品（已读 ${products.coverage.read}/${products.coverage.total} 店）` : "审核失败的商品", value: failedProducts, icon: ShieldAlert, tone: "bg-st-bad-soft text-st-bad-ink", target: "products" as const },
     { label: "待介入操作（全部店铺）", value: ledger.needsAction, icon: ShieldAlert, tone: "bg-st-attest-soft text-st-attest-ink", target: null },
     { label: products.totals.zeroStock != null && products.coverage.read < products.coverage.total ? `已知零库存（已读 ${products.coverage.read}/${products.coverage.total} 店）` : "已知零库存商品", value: products.totals.zeroStock, icon: PackageX, tone: "bg-st-attest-soft text-st-attest-ink", target: "products" as const },
-    { label: "商品镜像待同步", value: products.perStore.filter((row) => row.status === "never" || row.status === "expired").length, icon: RefreshCw, tone: "bg-st-flight-soft text-st-flight-ink", target: "products" as const },
+    { label: "待同步店铺", value: products.perStore.filter((row) => row.status === "never" || row.status === "expired").length, icon: RefreshCw, tone: "bg-st-flight-soft text-st-flight-ink", target: "products" as const },
     ...(roster.rows.some((row) => row.status === "read_failed" || row.status === "rate_limited") ? [{ label: "店铺读取异常", value: roster.rows.filter((row) => row.status === "read_failed" || row.status === "rate_limited").length, icon: ShieldAlert, tone: "bg-st-bad-soft text-st-bad-ink", target: "stores" as const }] : []),
   ]
 
-  return <div className="flex min-h-0 w-full flex-1 flex-col gap-4" aria-label="数据大屏">
+  return <div className="flex min-h-0 w-full flex-1 flex-col gap-4" aria-label="经营数据">
     <div className="flex flex-wrap items-center justify-between gap-3">
       <p className="text-xs text-muted-foreground">{error ? `刷新失败：${error}` : `经营指标覆盖 ${roster.coverage.read}/${roster.coverage.total} 家店铺`}</p>
       <div className="flex flex-wrap items-center gap-2">
@@ -169,7 +169,7 @@ export const ConsoleScreen = memo(function ConsoleScreen({ workspaceId, onNaviga
     <dl aria-label="核心指标" className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
       {[
         { label: "30 日出单", value: roster.coverage.read ? formatInteger(roster.totals.orderedUnits) : "—", unit: roster.coverage.read ? "件" : "", detail: ordersFootnote(roster), delta: orderDelta, bars: sales.map((point) => point.orderedUnits) },
-        { label: "在售商品", value: onSaleKnown ? formatInteger(products.totals.onSale) : "—", unit: onSaleKnown ? "件" : "", detail: `商品镜像覆盖 ${products.coverage.read}/${products.coverage.total}`, bars: countedProducts.map((row) => row.onSale ?? 0) },
+        { label: "在售商品", value: onSaleKnown ? formatInteger(products.totals.onSale) : "—", unit: onSaleKnown ? "件" : "", detail: `店铺商品同步 ${products.coverage.read}/${products.coverage.total}`, bars: countedProducts.map((row) => row.onSale ?? 0) },
         { label: "7 日上架提交", value: `${ledgerPartial ? "≥ " : ""}${formatInteger(ledger.createdIn7Days)}`, unit: "次", detail: ledgerPartial ? `最近 ${formatInteger(CONSOLE_LEDGER_ROW_CAP)} 条及全部异常 · 可能不完整` : "全部店铺 · 仅统计上架提交", bars: ledgerPartial ? undefined : ledger.series.slice(-7).map((point) => point.intake) },
         { label: "待介入操作", value: formatInteger(ledger.needsAction), unit: "项", detail: "全部店铺 · 包含上架及其他操作" },
       ].map((metric) => <div key={metric.label} className="flex min-h-35 min-w-0 flex-col justify-between gap-3 rounded-lg border border-border bg-card p-4">

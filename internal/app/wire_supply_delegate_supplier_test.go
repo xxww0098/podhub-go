@@ -1,12 +1,14 @@
 package app
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	configdoc "github.com/xxww0098/podhub-go/internal/admin/core/contract"
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
 	"github.com/xxww0098/podhub-go/internal/platform/config"
 )
@@ -23,15 +25,21 @@ func TestPR8ARoutesRequireASession(t *testing.T) {
 }
 
 func TestCatalogImagesUseConfiguredAssetsStorage(t *testing.T) {
+	ctx, pool := snapshotPool(t)
+	cfg := config.Config{IntegrationConfigKey: snapshotTestKey}
 	for _, role := range []string{"assets", "private"} {
 		t.Run(role, func(t *testing.T) {
-			cfg := config.Config{R2Storage: []config.R2StorageAccount{storageFixture(role)}}
+			raw, err := json.Marshal(configdoc.Snapshot{SchemaVersion: 1, AIRuntime: configdoc.DefaultAIRuntime(), SystemStorage: []configdoc.StoredStorage{storageFixture(role)}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			storeSnapshot(t, ctx, pool, raw)
 			h := chi.NewRouter()
-			mountPR8A(h, nil, catalogImageSession{}, cfg)
+			mountPR8A(h, pool, catalogImageSession{}, cfg)
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/supplier-dbs/catalog/images/src_test/"+strings.Repeat("a", 64)+".jpg", nil))
 			missingStorage := strings.Contains(rec.Body.String(), "STORAGE_NOT_CONFIGURED")
-			wantStatus := http.StatusInternalServerError // The nil database stops configured storage before network I/O.
+			wantStatus := http.StatusNotFound // No product references this image.
 			if role != "assets" {
 				wantStatus = http.StatusServiceUnavailable
 			}

@@ -63,5 +63,6 @@
     "tags": true
   },
   "expected_revision": 0,
+  "validate": true,
   "_note": "tests/cloud/supplier_dbs.rs ready_config_body。PUT 前测试用 GET 的 language 与 revision 覆盖 language 与 expectedRevision。fixedTags 在 publish_gate 里是 sixteen_tags() 十六个标签，不是这一条占位。"
 }

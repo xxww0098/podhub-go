@@ -28,7 +28,7 @@ export function isAiRuntime(value: unknown): value is components["schemas"]["Adm
 
 export function requireAiConfigComplete(config: IntegrationConfig): void {
   if (!isAiRuntime(config.ai_runtime)) throw refuse("integration_ai_invalid", "AI 运行配置未确认，请更新服务并刷新后重试")
-  if (!Array.isArray(config.ai_accounts) || config.ai_accounts.some((row) => row.purpose !== "ocr" && row.purpose !== "image")) {
+  if (!Array.isArray(config.ai_accounts) || config.ai_accounts.some((row) => row.purpose !== "ocr" && row.purpose !== "image" && row.purpose !== "chat")) {
     throw refuse("integration_ai_invalid", "账号用途未确认，请更新服务并刷新后重试")
   }
 }

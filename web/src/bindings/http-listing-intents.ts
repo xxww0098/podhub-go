@@ -6,6 +6,7 @@ import type { components } from "@/api/schema"
 
 export type ListingIntent = components["schemas"]["ListingIntentView"]
 export type IntentPage = components["schemas"]["ListingIntentsPage"]
+export type IntentReviewCounts = components["schemas"]["ListingIntentReviewCounts"]
 export type ReleasedIntents = components["schemas"]["ReleaseUnknownListingIntentsData"]
 
 export function listingContractError(): Error {
@@ -14,6 +15,14 @@ export function listingContractError(): Error {
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
+}
+
+/** Review counts are non-negative safe integers; a missing count is a contract
+ * failure, not a zero. */
+export function isIntentReviewCounts(value: unknown): value is IntentReviewCounts {
+  if (!isRecord(value)) return false
+  const counts = ["needs_review", "unknown", "rejected", "conflict", "accepted_issue"]
+  return counts.every((key) => Number.isSafeInteger(value[key]) && Number(value[key]) >= 0)
 }
 
 /** Open state/error strings are preserved. Consumers grant no actions for unknown values. */

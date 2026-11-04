@@ -1,17 +1,38 @@
 import { request } from "@/api/client"
 import { route } from "@/api/routes"
-import { isListingIntent, isRecord, type ListingIntent } from "@/bindings/http-listing-intents"
+import {
+  isIntentReviewCounts,
+  isListingIntent,
+  isRecord,
+  type IntentReviewCounts,
+  type ListingIntent,
+} from "@/bindings/http-listing-intents"
 import type { ListingRowView } from "@/bindings/listing-projection"
 
-export type RecentSubmission = { intent: ListingIntent; row?: ListingRowView }
+/** One attention group of the review queue; each group is disjoint. */
+export type ReviewKind = "unknown" | "failed" | "accepted_issue"
 
-export async function readRecentSubmissions(signal: AbortSignal): Promise<RecentSubmission[]> {
+export type RecentSubmission = { intent: ListingIntent; row?: ListingRowView }
+export type ReviewRead = { phase: "loading" | "ready" | "error"; counts?: IntentReviewCounts }
+export type RecentSubmissionsRead = { items: RecentSubmission[]; review: IntentReviewCounts; nextCursor?: string }
+export type RecentSubmissionsQuery = {
+  needsReview?: boolean
+  reviewKind?: ReviewKind
+  cursor?: string
+}
+
+export async function readRecentSubmissions(signal: AbortSignal, query: RecentSubmissionsQuery = {}): Promise<RecentSubmissionsRead> {
   const options = { callerSignal: signal, reportOwner: "caller" as const }
-  const page = await request<unknown>("GET", `${route("listingIntents")}?limit=5&latestPerRow=true`, undefined, {}, 15_000, undefined, options)
+  const params = new URLSearchParams({ limit: "5", latestPerRow: "true", review: "true" })
+  if (query.needsReview || query.reviewKind) params.set("needsReview", "true")
+  if (query.reviewKind) params.set("reviewKind", query.reviewKind)
+  if (query.cursor) params.set("cursor", query.cursor)
+  const page = await request<unknown>("GET", `${route("listingIntents")}?${params}`, undefined, {}, 15_000, undefined, options)
   signal.throwIfAborted()
   if (!isRecord(page) || !Array.isArray(page.items) || page.items.length > 5
     || (page.next_cursor != null && typeof page.next_cursor !== "string")
     || page.items.some((item) => !isListingIntent(item))
+    || !isIntentReviewCounts(page.review)
     || new Set(page.items.map((item: ListingIntent) => item.id)).size !== page.items.length) {
     throw new Error("上架提交响应格式无效")
   }
@@ -30,5 +51,9 @@ export async function readRecentSubmissions(signal: AbortSignal): Promise<Recent
     }
   }))
   signal.throwIfAborted()
-  return rows
+  return {
+    items: rows,
+    review: page.review,
+    nextCursor: typeof page.next_cursor === "string" ? page.next_cursor : undefined,
+  }
 }

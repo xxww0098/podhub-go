@@ -14,7 +14,6 @@ import (
 	access "github.com/xxww0098/podhub-go/internal/identity/contract"
 	listing "github.com/xxww0098/podhub-go/internal/listing/read/http"
 	"github.com/xxww0098/podhub-go/internal/listing/submit"
-	"github.com/xxww0098/podhub-go/internal/platform/cloudflare"
 	"github.com/xxww0098/podhub-go/internal/platform/db/sqlc"
 	sign "github.com/xxww0098/podhub-go/internal/platform/r2/sigv4"
 	"github.com/xxww0098/podhub-go/internal/platform/seal"
@@ -50,8 +49,6 @@ type Server struct {
 	SupplierMediaAccount func(context.Context) (sign.Account, error)
 	SliceStorageKey      []byte
 	SliceDeleteAllowed   bool
-	Cloudflare           *cloudflare.Client
-	CloudflareOAuth      cloudflare.OAuth
 	// VerifySlice overrides the real upload/read/delete probe in isolated tests.
 	VerifySlice func(context.Context, sign.Account, string, string) (bool, error)
 	// Workspace overrides the organizations.uuid lookup. Nil reads it inside

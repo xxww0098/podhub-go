@@ -9,7 +9,20 @@ type Snapshot struct {
 	AIAccounts     []StoredAI                `json:"aiAccounts"`
 	AIDefaultModel string                    `json:"aiDefaultModel"`
 	AIRuntime      AIRuntime                 `json:"aiRuntime"`
+	SystemStorage  []StoredStorage           `json:"systemStorage,omitempty"`
 	Payment        *seal.StoredPaymentConfig `json:"payment,omitempty"`
+}
+
+// StoredStorage is a system bucket and its sealed credentials.
+type StoredStorage struct {
+	ID              string `json:"id"`
+	Role            string `json:"role"`
+	Endpoint        string `json:"endpoint"`
+	Bucket          string `json:"bucket"`
+	PublicBaseURL   string `json:"publicBaseUrl"`
+	KeyPrefix       string `json:"keyPrefix"`
+	AccessKeyID     string `json:"accessKeyId"`
+	SecretAccessKey string `json:"secretAccessKey"`
 }
 
 // AI account purposes. OCR serves recognition; image serves set generation;

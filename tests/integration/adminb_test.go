@@ -338,7 +338,7 @@ func mountAdminB(pool *pgxpool.Pool, resolver access.Resolver, eng *core.Engine,
 			return &adminhttp.Session{UserID: p.UserID, OrgID: p.OrgID, WorkspaceRole: p.WorkspaceRole, PlatformRole: p.PlatformRole, Email: p.Email, PublicID: p.PublicID, TokenHash: p.TokenHash}, nil, nil
 		}
 	}
-	adminhttp.Mount(r, adminhttp.Deps{Ported: httpapi.AdminPorted(&httpapi.Server{Pool: pool, Access: resolver, Engine: eng, Now: now}, accounts), Resolve: resolve})
+	adminhttp.Mount(r, adminhttp.Deps{Ported: httpapi.AdminPorted(&httpapi.Server{Pool: pool, Access: resolver, Engine: eng, Now: now}, func(context.Context) ([]admindomain.CloudAccount, error) { return accounts, nil }), Resolve: resolve})
 	return r
 }
 

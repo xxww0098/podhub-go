@@ -112,15 +112,16 @@ export async function copySupplierOzonConfig(
     prompt_text: to?.prompt_text ?? from.prompt_text,
     fixed_tags: to?.fixed_tags ?? from.fixed_tags,
     expected_revision: to?.revision ?? 0,
+    validate: false,
   })
   return true
 }
 
 /** 同款只同步平台字段，目标规格的识图事实、标签及开关保持独立。 */
-export async function copySupplierOzonFields(io: SupplierOzonConfigIO, sourceId: string, fromProductId: string, target: SupplierDbRow): Promise<boolean> {
+export async function copySupplierOzonFields(io: SupplierOzonConfigIO, sourceId: string, fromProductId: string, target: SupplierDbRow, validate = false): Promise<boolean> {
   const [from, to] = await Promise.all([io.get(sourceId, fromProductId), io.get(sourceId, target.productId)])
   if (!from || from.description_category_id !== target.descriptionCategoryId || from.type_id !== target.typeId) return false
-  await io.put(sourceId, target.productId, {
+  const saved = await io.put(sourceId, target.productId, {
     description_category_id: from.description_category_id,
     type_id: from.type_id,
     language: from.language,
@@ -130,8 +131,9 @@ export async function copySupplierOzonFields(io: SupplierOzonConfigIO, sourceId:
     prompt_text: to?.prompt_text ?? target.promptContent,
     fixed_tags: to?.fixed_tags ?? target.fixedTags,
     expected_revision: to?.revision ?? 0,
+    validate,
   })
-  return true
+  return !validate || saved.state === "valid"
 }
 
 // ---------- wire key grammar ----------

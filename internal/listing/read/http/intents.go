@@ -88,6 +88,7 @@ func (h Host) intents(w http.ResponseWriter, r *http.Request) {
 	}
 	var page []domain.IntentView
 	var next *string
+	var review *intentReviewCounts
 	err := h.withOrg(r.Context(), p.OrgID, func(tx pgx.Tx) error {
 		seat, found, err := loadSeat(r.Context(), tx, p.OrgID, p.UserID)
 		if err != nil {
@@ -95,6 +96,13 @@ func (h Host) intents(w http.ResponseWriter, r *http.Request) {
 		}
 		if !found {
 			return halt{http.StatusForbidden, "工作空间成员当前不可用", "forbidden"}
+		}
+		if filter.Review {
+			counts, err := reviewCounts(r.Context(), tx, p.OrgID, seat)
+			if err != nil {
+				return err
+			}
+			review = &counts
 		}
 		if filter.ExactStore {
 			access, err := storeAccess(r.Context(), tx, p.OrgID, p.UserID, filter.StoreID)
@@ -141,11 +149,84 @@ func (h Host) intents(w http.ResponseWriter, r *http.Request) {
 		Data struct {
 			Items      []domain.IntentView `json:"items"`
 			NextCursor *string             `json:"next_cursor,omitempty"`
+			Review     *intentReviewCounts `json:"review,omitempty"`
 		} `json:"data"`
 	}{Data: struct {
 		Items      []domain.IntentView `json:"items"`
 		NextCursor *string             `json:"next_cursor,omitempty"`
-	}{Items: page, NextCursor: next}})
+		Review     *intentReviewCounts `json:"review,omitempty"`
+	}{Items: page, NextCursor: next, Review: review}})
+}
+
+// intentReviewCounts is the workspace-wide submission queue. It deliberately
+// does not use the console operation ledger: that ledger has no
+// current_issue_status and maps cancelled submissions to failed, so it cannot
+// answer whether a submission still needs a person.
+type intentReviewCounts struct {
+	NeedsReview   int64 `json:"needs_review"`
+	Unknown       int64 `json:"unknown"`
+	Rejected      int64 `json:"rejected"`
+	Conflict      int64 `json:"conflict"`
+	AcceptedIssue int64 `json:"accepted_issue"`
+}
+
+// acceptedIssueSQL is the accepted import that still reports an error. It
+// mirrors domain.ProjectIntent's acceptedTaskFailed rule; keep the two in sync.
+const acceptedIssueSQL = `(last_error_code = 'OZON_ROW_REJECTED'
+        AND (
+            reconciliation_outcome #>> '{importTask,status}' = 'failed'
+            OR (
+                reconciliation_outcome #>> '{importTask,status}' IN ('pending', 'imported', 'skipped')
+                AND EXISTS (
+                    SELECT 1
+                      FROM jsonb_array_elements(
+                          CASE WHEN jsonb_typeof(reconciliation_outcome #> '{importTask,errors}') = 'array'
+                               THEN reconciliation_outcome #> '{importTask,errors}'
+                               ELSE '[]'::jsonb END) AS err
+                     WHERE lower(err ->> 'level') = 'error'
+                )
+            )
+        ))`
+
+// needsReviewSQL matches the latest intent of a row that still needs a person.
+// It is shared by the review counts and the review queue so the two cannot
+// drift.
+const needsReviewSQL = `(state IN ('unknown', 'rejected', 'conflict')
+        OR (state = 'accepted' AND ` + acceptedIssueSQL + `))`
+
+// reviewKindSQL narrows the queue to the same groups reviewCounts reports.
+// Each group is disjoint, so a dashboard entry opens exactly its own records.
+var reviewKindSQL = map[string]string{
+	"unknown":        `state = 'unknown'`,
+	"failed":         `state IN ('rejected', 'conflict')`,
+	"accepted_issue": `state = 'accepted' AND ` + acceptedIssueSQL,
+}
+
+// reviewCounts counts the latest intent per visible listing row. It mirrors
+// domain.ProjectIntent's accepted-task failure rule; keep the two in sync.
+func reviewCounts(ctx context.Context, tx pgx.Tx, orgID int64, seat membership) (intentReviewCounts, error) {
+	var out intentReviewCounts
+	err := tx.QueryRow(ctx, `
+WITH visible AS (
+    SELECT DISTINCT ON (listing_row_id)
+           state, last_error_code, reconciliation_outcome
+      FROM submission_intents
+     WHERE org_id = $1
+       AND store_id IN (
+           SELECT s.uuid FROM organization_stores s
+            WHERE s.org_id = $1 AND s.deleted_at_ms IS NULL
+              AND ($2::boolean OR s.assignee_membership_id = $3)
+       )
+     ORDER BY listing_row_id, row_revision DESC, created_at DESC, id DESC
+)
+SELECT
+  count(*) FILTER (WHERE state = 'unknown'),
+  count(*) FILTER (WHERE state = 'rejected'),
+  count(*) FILTER (WHERE state = 'conflict'),
+  count(*) FILTER (WHERE state = 'accepted' AND `+acceptedIssueSQL+`)
+FROM visible`, orgID, seat.manageAll, seat.id).Scan(&out.Unknown, &out.Rejected, &out.Conflict, &out.AcceptedIssue)
+	out.NeedsReview = out.Unknown + out.Rejected + out.Conflict + out.AcceptedIssue
+	return out, err
 }
 
 func (h Host) getIntent(w http.ResponseWriter, r *http.Request) {
@@ -553,6 +634,11 @@ func lockLiveOrg(ctx context.Context, tx pgx.Tx, orgID int64, missing string) er
 }
 
 func queryIntents(ctx context.Context, tx pgx.Tx, orgID int64, seat membership, f domain.IntentFilter) ([]loadedIntent, error) {
+	if f.NeedsReview {
+		// An older failure that a newer intent already answered is history,
+		// not a review item.
+		f.LatestPerRow = true
+	}
 	args := []any{orgID, seat.manageAll, seat.id}
 	var where strings.Builder
 	where.WriteString(`org_id = $1 AND store_id IN (
@@ -600,11 +686,21 @@ func queryIntents(ctx context.Context, tx pgx.Tx, orgID int64, seat membership, 
 			WHERE ` + where.String() + `
 			ORDER BY listing_row_id, row_revision DESC, created_at DESC, id DESC)
 			SELECT ` + intentCols + ` FROM selected`
+		var outer []string
+		if f.NeedsReview {
+			outer = append(outer, needsReviewSQL)
+		}
+		if f.ReviewKind != "" {
+			outer = append(outer, reviewKindSQL[f.ReviewKind])
+		}
 		if f.CursorID != "" {
 			args = append(args, f.CursorMicros, f.CursorID)
 			micros := placeholder(len(args) - 1)
 			id := placeholder(len(args))
-			sql += ` WHERE (` + orderCol + `, id) < ((TIMESTAMPTZ 'epoch' + (` + micros + `::bigint || ' microseconds')::interval), ` + id + `::uuid)`
+			outer = append(outer, `(`+orderCol+`, id) < ((TIMESTAMPTZ 'epoch' + (`+micros+`::bigint || ' microseconds')::interval), `+id+`::uuid)`)
+		}
+		if len(outer) > 0 {
+			sql += ` WHERE ` + strings.Join(outer, " AND ")
 		}
 	} else {
 		sql = `SELECT ` + intentCols + ` FROM submission_intents WHERE ` + where.String()

@@ -25,7 +25,7 @@ func (h Host) AuthorizeOCR(ctx context.Context, tx pgx.Tx, p access.Principal, c
 	if err := tx.QueryRow(ctx, `SELECT aggregate_id::text FROM jobs WHERE org_id=$1 AND id=$2::uuid AND aggregate_type='listing_row' AND kind='ai.recognize'`, p.OrgID, claim.JobID).Scan(&rowID); err != nil {
 		return out, err
 	}
-	row, card, err := mediaRow(ctx, tx, p.OrgID, rowID)
+	row, card, err := mediaRow(ctx, tx, p.OrgID, p.UserID, rowID)
 	if err != nil {
 		return out, err
 	}

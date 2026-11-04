@@ -9,11 +9,10 @@ if (mode === "dark") document.documentElement.classList.add("dark")
 let cleared = mode === "empty"
 let created = false
 let createdBucket = ""
-let connected = ["connected", "pending", "pending-other", "revoke-error", "configured-connected"].includes(mode)
 let folderDeletes = 0
 let cleanupMode: "daily" | "manual" = "daily"
 let cleanupTime: string | null = "04:00"
-const storage = () => ({ configured: created || !["setup", "available", "connected", "member-setup", "pending", "pending-other", "revoke-error"].includes(mode), can_manage: mode !== "member" && mode !== "member-setup", delete_enabled: mode !== "disabled", key_prefix: "podhub-slices/fixture/", bucket: created ? createdBucket : "podhub-test-workspace", public_base_url: location.origin, daily_clear_status: "waiting", cleanup_mode: cleanupMode, cleanup_time: cleanupTime, oauth_available: ["available", "connected", "pending", "pending-other", "revoke-error", "configured-connected"].includes(mode), cloudflare_connected: connected, provision: ["pending", "pending-other"].includes(mode) ? {id:"fixture",account_id:"a".repeat(32),bucket:"saved-workspace-assets",phase:"verifying",error_code:""} : undefined })
+const storage = () => ({ configured: created || !["setup", "member-setup"].includes(mode), delete_enabled: mode !== "disabled", key_prefix: "podhub-slices/fixture/", endpoint: "https://" + "a".repeat(32) + ".r2.cloudflarestorage.com", bucket: created ? createdBucket : "workspace-slices", public_base_url: location.origin, daily_clear_status: "waiting", cleanup_mode: cleanupMode, cleanup_time: cleanupTime })
 const paths = ["site/product-shirt.jpg", "site/product-tote.jpg", "site/product-mug.jpg", "site/preview-unavailable-长文件名与空格 包装正面切片.png"]
 const batchDate = "2026-11-02/"
 const batchPath = `${batchDate}1793601000000-550e8400-e29b-41d4-a716-446655440000/`
@@ -24,7 +23,7 @@ window.fetch = async (input, init) => {
     if (init?.method === "POST") {
       const body = JSON.parse(String(init.body))
       document.body.dataset.bucketRequest = JSON.stringify(body)
-      createdBucket = body.bucket || `podhub-${crypto.randomUUID().replaceAll("-", "")}`
+      createdBucket = body.bucket
       created = true
     }
     return Response.json(storage())
@@ -35,17 +34,6 @@ window.fetch = async (input, init) => {
     cleanupMode = body.cleanup_mode; cleanupTime = body.cleanup_time
     document.body.dataset.cleanupRequest = JSON.stringify(body)
     return Response.json(storage())
-  }
-  if (url.pathname.endsWith("/cloudflare/accounts")) return Response.json({ accounts: [{ id: (mode === "pending-other" ? "b" : "a").repeat(32), name: "PodHub 测试账户" }] })
-  if (url.pathname.endsWith("/cloudflare") && init?.method === "DELETE") {
-    document.body.dataset.cloudflareActions = (document.body.dataset.cloudflareActions ?? "") + "disconnect "
-    if (mode === "revoke-error") return Response.json({ error: "无法确认 Cloudflare 授权已撤销，请重试", code: "CLOUDFLARE_REVOKE_FAILED" }, { status: 502 })
-    connected = false
-    return new Response(null, { status: 204 })
-  }
-  if (url.pathname.endsWith("/cloudflare/authorize") && init?.method === "POST") {
-    document.body.dataset.cloudflareActions = (document.body.dataset.cloudflareActions ?? "") + "authorize "
-    return Response.json({ authorization_url: "#fixture-authorized" })
   }
   if (url.pathname.endsWith("/stats")) return Response.json({ objects: cleared ? 0 : 143, bytes: cleared ? 0 : 83216913, complete: true, observed_at: new Date().toISOString() })
   if (url.pathname.endsWith("/objects")) {
@@ -77,4 +65,4 @@ window.fetch = async (input, init) => {
   if (url.pathname.endsWith("/clear") && init?.method === "POST") return Response.json({ clear_status: "pending" }, { status: 202 })
   throw new Error(`Unexpected fixture request ${url.pathname}`)
 }
-createRoot(document.getElementById("fixture")!).render(<main className="flex h-dvh flex-col overflow-y-auto bg-background p-4 sm:p-6"><WorkspaceStoragePanel /><Toaster /></main>)
+createRoot(document.getElementById("fixture")!).render(<main className="flex h-dvh flex-col overflow-y-auto bg-background p-4 sm:p-6"><WorkspaceStoragePanel role={mode === "member" || mode === "member-setup" ? "member" : "owner"} /><Toaster /></main>)

@@ -90,7 +90,7 @@ export function SupplierRowDefaultsForm({ schema, draft, action, issues = [], va
   }, [focusTarget, filter, deferredQuery])
   const fields = supplierDefaultFields(schema, draft, filter, deferredQuery, editingKey)
   if (filter === "invalid") {
-    fields.visible = fields.visible.filter((field) => issues.some((issue) =>
+    fields.visible = fields.visible.filter((field) => field.key === editingKey || issues.some((issue) =>
       issue.field_key === field.key || issue.complex_id != null && issue.complex_id === field.complex_id,
     ))
   }

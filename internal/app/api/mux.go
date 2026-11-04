@@ -57,12 +57,7 @@ func HandlerFromMux(s *Server, r chi.Router) http.Handler {
 	r.Get("/api/workspace/slice-storage/download", s.downloadWorkspaceSliceObject)
 	r.Post("/api/workspace/slice-storage/objects/delete", s.deleteWorkspaceSliceObjects)
 	r.Post("/api/workspace/slice-storage/clear", s.clearWorkspaceSliceStorage)
-	r.Get("/api/workspace/slice-storage/cloudflare", s.getCloudflareConnection)
-	r.Post("/api/workspace/slice-storage/cloudflare/authorize", s.authorizeCloudflare)
-	r.Get("/api/workspace/slice-storage/cloudflare/callback", s.callbackCloudflare)
-	r.Delete("/api/workspace/slice-storage/cloudflare", s.disconnectCloudflare)
-	r.Get("/api/workspace/slice-storage/cloudflare/accounts", s.listCloudflareAccounts)
-	r.Post("/api/workspace/slice-storage", s.provisionWorkspaceSliceStorage)
+	r.Post("/api/workspace/slice-storage", s.configureWorkspaceSliceStorage)
 	r.Get("/api/billing/usage-stats", s.BillingUsageStats)
 	return r
 }

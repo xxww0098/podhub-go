@@ -64,6 +64,23 @@ func TestSupplierX1RevisionsRLSAndLease(t *testing.T) {
 		src, "X1印花厂", pubA); err != nil {
 		t.Fatal(err)
 	}
+	const categoryDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	if _, err := pool.Exec(ctx, `INSERT INTO ozon_category_current(description_category_id,type_id,language,fields,content_digest,fetched_at_ms)
+		VALUES(17033561,91497,'zh_hans','[]',$1,50)`, categoryDigest); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM ozon_category_current WHERE description_category_id=17033561 AND type_id=91497 AND language='zh_hans'`)
+	})
+	validationCalls := 0
+	invalidFields := false
+	rows.ValidateConfig = func(context.Context, []byte, []byte) ([]byte, error) {
+		validationCalls++
+		if invalidFields {
+			return []byte(`[{"issue":"field_validation","field_key":"width","code":"required","message":"请填写包装宽度"}]`), nil
+		}
+		return []byte(`[]`), nil
+	}
 
 	var aiBefore int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM public.ai_requests`).Scan(&aiBefore); err != nil {
@@ -146,6 +163,59 @@ func TestSupplierX1RevisionsRLSAndLease(t *testing.T) {
 	var count int
 	if err := pool.QueryRow(ctx, `SELECT count(*),min(prompt_text) FROM supplier_ozon_configs WHERE product_id='scp_x1_brief'`).Scan(&count, &current); err != nil || count != 1 || current != patched.PromptContent {
 		t.Fatalf("single config %d %q %v", count, current, err)
+	}
+	if validationCalls != 0 {
+		t.Fatalf("row creation or autosave invoked validator %d times", validationCalls)
+	}
+	baseline, err := rows.LoadOzon(ctx, actorA, src, "scp_x1_brief", 61)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := x1contract.OzonPut{
+		Category: 17033561, TypeID: 91497, Language: "zh_hans",
+		ValuesJSON: []byte(`{"fixed:width":[{"kind":"integer","value":400}]}`), ComplexJSON: json.RawMessage(`[]`),
+		Tags: patch.FixedTags, Prompt: patch.PromptContent, AI: x1contract.DefaultAI(), Expected: baseline.Revision,
+	}
+	draft, err := rows.SaveOzon(ctx, actorA, src, "scp_x1_brief", in, 62)
+	if err != nil || validationCalls != 0 || draft.State != "needs_reconfiguration" || draft.ValidatedCatalogDigest != nil || !contains(string(draft.Issues), `"validation_pending"`) {
+		t.Fatalf("draft save: config=%+v calls=%d error=%v", draft, validationCalls, err)
+	}
+	var width []struct {
+		Value int `json:"value"`
+	}
+	if err := json.Unmarshal(draft.Values["fixed:width"], &width); err != nil || len(width) != 1 || width[0].Value != 400 {
+		t.Fatalf("draft values were not persisted: %s", draft.Values["fixed:width"])
+	}
+	in.Validate, in.Expected = true, draft.Revision
+	validated, err := rows.SaveOzon(ctx, actorA, src, "scp_x1_brief", in, 63)
+	if err != nil || validationCalls != 1 || validated.State != "valid" || validated.ValidatedCatalogDigest == nil || *validated.ValidatedCatalogDigest != categoryDigest {
+		t.Fatalf("explicit validation: config=%+v calls=%d error=%v", validated, validationCalls, err)
+	}
+	var currentRevision int64
+	if err := pool.QueryRow(ctx, `SELECT revision FROM sc_products WHERE product_id='scp_x1_brief'`).Scan(&currentRevision); err != nil {
+		t.Fatal(err)
+	}
+	changed := patch
+	changed.ExpectedRevision = &currentRevision
+	changed.PromptContent = `{"product_type_ru":"Кружка","facts_ru":"керамическая 350 мл"}`
+	if _, err := rows.UpdateRow(ctx, actorA, src, "scp_x1_brief", changed, 64); err != nil {
+		t.Fatal(err)
+	}
+	validated, err = rows.LoadOzon(ctx, actorA, src, "scp_x1_brief", 65)
+	if err != nil || validationCalls != 1 || validated.State != "valid" || validated.ValidatedCatalogDigest == nil {
+		t.Fatalf("row autosave changed validation: config=%+v calls=%d error=%v", validated, validationCalls, err)
+	}
+	in.Validate, in.Expected, in.Prompt = false, validated.Revision, changed.PromptContent
+	in.ValuesJSON = []byte(`{}`)
+	draft, err = rows.SaveOzon(ctx, actorA, src, "scp_x1_brief", in, 66)
+	if err != nil || validationCalls != 1 || draft.State != "needs_reconfiguration" || draft.ValidatedCatalogDigest != nil {
+		t.Fatalf("edited valid config must become unvalidated: config=%+v calls=%d error=%v", draft, validationCalls, err)
+	}
+	invalidFields = true
+	in.Validate, in.Expected = true, draft.Revision
+	validated, err = rows.SaveOzon(ctx, actorA, src, "scp_x1_brief", in, 67)
+	if err != nil || validationCalls != 2 || validated.State != "needs_reconfiguration" || !contains(string(validated.Issues), `"field_validation"`) {
+		t.Fatalf("explicit invalid result: config=%+v calls=%d error=%v", validated, validationCalls, err)
 	}
 	if _, err := rows.UpdateRow(ctx, actorA, src, "scp_x1_brief", patch, 61); err == nil {
 		t.Fatal("stale update must fail")

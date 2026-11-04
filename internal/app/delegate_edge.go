@@ -32,28 +32,35 @@ func delegateEdge(cfg config.Config, pool *pgxpool.Pool) delegatesvc.Edge {
 	eg := seller.New(cfg).WithPool(pool)
 	return delegatesvc.Edge{
 		Storage: func(ctx context.Context) (string, int64, error) {
-			account, revision, err := loadDelegateStorage(cfg)
+			account, revision, err := loadDelegateStorage(ctx, pool, cfg)
 			if err != nil {
 				return "", 0, err
 			}
 			return account.KeyPrefix, revision, nil
 		},
 		Issue: func(ctx context.Context, in delegatesvc.Issue) (contract.UploadTarget, error) {
-			account, _, err := loadDelegateStorage(cfg)
+			account, _, err := loadDelegateStorage(ctx, pool, cfg)
 			if err != nil {
 				return contract.UploadTarget{}, err
 			}
 			return issueDelegate(account, in, time.Now().UTC())
 		},
 		Confirm: func(ctx context.Context, purpose string, actorID, orgID int64, token string) (delegatesvc.Confirmed, error) {
-			account, _, err := loadDelegateStorage(cfg)
+			account, _, err := loadDelegateStorage(ctx, pool, cfg)
 			if err != nil {
 				return delegatesvc.Confirmed{}, err
 			}
-			return confirmDelegate(ctx, account, purpose, actorID, orgID, token, time.Now().UTC())
+			confirmed, err := confirmDelegate(ctx, account, purpose, actorID, orgID, token, time.Now().UTC())
+			if err == nil {
+				confirmed.Reverify = func() error {
+					_, err := confirmDelegate(ctx, account, purpose, actorID, orgID, token, time.Now().UTC())
+					return err
+				}
+			}
+			return confirmed, err
 		},
 		Delete: func(ctx context.Context, key string) error {
-			account, _, err := loadDelegateStorage(cfg)
+			account, _, err := loadDelegateStorage(ctx, pool, cfg)
 			if err != nil {
 				return err
 			}
@@ -81,13 +88,12 @@ func delegateEdge(cfg config.Config, pool *pgxpool.Pool) delegatesvc.Edge {
 	}
 }
 
-func loadDelegateStorage(cfg config.Config) (sign.Account, int64, error) {
-	account, err := configuredR2Account(cfg, mediacontract.RolePrivate)
+func loadDelegateStorage(ctx context.Context, pool *pgxpool.Pool, cfg config.Config) (sign.Account, int64, error) {
+	account, revision, err := configuredR2Account(ctx, pool, cfg, mediacontract.RolePrivate)
 	if err != nil {
 		return sign.Account{}, 0, contract.StorageUnavailable(contract.MsgStorageMissing)
 	}
-	// Environment configuration is immutable for the lifetime of this handler.
-	return account, 1, nil
+	return account, revision, nil
 }
 
 func issueDelegate(account sign.Account, in delegatesvc.Issue, now time.Time) (contract.UploadTarget, error) {

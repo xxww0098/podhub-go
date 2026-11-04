@@ -36,8 +36,8 @@ func TestConfigReplacementDropsStorageAndPreservesPayment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(response, []byte("storage")) {
-		t.Fatal("configuration response still exposes storage settings")
+	if bytes.Contains(response, []byte("storage-secret")) || !bytes.Contains(response, []byte(`"system_storage":[]`)) {
+		t.Fatal("retired storage must not appear in the current configuration")
 	}
 }
 

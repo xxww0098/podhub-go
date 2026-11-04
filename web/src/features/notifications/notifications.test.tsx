@@ -654,7 +654,7 @@ test("the centre is a floating window the shell opens, not a navigation", () => 
   assert.doesNotMatch(shell, /onScreenChange\("notifications"\)/)
 })
 
-test("a joined-but-unsynced account cannot respond without proof; other writes remain open", () => {
+test("a joined-but-unsynced account cannot accept again; other writes remain open", () => {
   const html = renderToStaticMarkup(
     <NotificationsScreen
       notifications={controller({
@@ -672,7 +672,7 @@ test("a joined-but-unsynced account cannot respond without proof; other writes r
     />,
   )
   assert.match(renderedButton(html, "接受"), / disabled=""/)
-  assert.match(renderedButton(html, "拒绝"), / disabled=""/)
+  assert.doesNotMatch(renderedButton(html, "拒绝"), / disabled=""/)
   assert.doesNotMatch(renderedButton(html, "标为已读"), / disabled=""/)
   const markAll = html.match(/<button[^>]*aria-label="全部已读"[^>]*>/)?.[0] ?? ""
   assert.notEqual(markAll, "")

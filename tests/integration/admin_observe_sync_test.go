@@ -68,6 +68,48 @@ func TestAdminObservationReadsStoreSyncStates(t *testing.T) {
 			t.Fatalf("observation SKU lost decimal text: %s", body)
 		}
 	})
+	t.Run("product without image or sku", func(t *testing.T) {
+		if _, err := pool.Exec(ctx, `WITH state AS (
+			INSERT INTO ozon_product_status(is_archived,status,status_name,moderate_status,validation_status,state)
+			VALUES(false,'observe-empty','Observed empty','approved','success','on_sale') RETURNING id
+		) INSERT INTO store_products(org_id,store_pk,product_id,offer_id,sku,status_id,primary_image)
+			SELECT s.org_id,s.id,2,'observed-no-image',0,state.id,NULL
+			FROM organization_stores s CROSS JOIN state WHERE s.uuid=$1::uuid`, storeID); err != nil {
+			t.Fatal(err)
+		}
+		body, err := observe.Products(ctx, actor, observecontract.ProductQuery{Scope: observecontract.Scope{StoreID: storeID}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var response struct {
+			Data struct {
+				Items []struct {
+					Product struct {
+						OfferID  string  `json:"offer_id"`
+						SKU      *string `json:"sku"`
+						ImageURL *string `json:"image_url"`
+					} `json:"product"`
+				} `json:"items"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(body, &response); err != nil {
+			t.Fatal(err)
+		}
+		if len(response.Data.Items) != 2 {
+			t.Fatalf("observation items %d: %s", len(response.Data.Items), body)
+		}
+		for _, item := range response.Data.Items {
+			if item.Product.OfferID != "observed-no-image" {
+				continue
+			}
+			if item.Product.SKU != nil || item.Product.ImageURL != nil {
+				t.Fatalf("null image or sku invented: %+v", item.Product)
+			}
+			return
+		}
+		t.Fatalf("null-image product missing: %s", body)
+	})
+
 	for _, test := range []struct {
 		name string
 		read func(context.Context, corecontract.Actor, observecontract.Scope) ([]byte, error)

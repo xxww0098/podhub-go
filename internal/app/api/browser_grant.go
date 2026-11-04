@@ -84,6 +84,7 @@ func (s *Server) postBrowserReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.OrgID = p.OrgID
+	in.ActorUserID = p.UserID
 	result, err := submit.Report(r.Context(), s.Pool, in)
 	if writeSubmit(w, err) {
 		return

@@ -21,10 +21,11 @@ except Exception: plain=aes.decrypt(bytes.fromhex(row['nonce']),bytes.fromhex(ro
 s=json.loads(plain)
 a=[x for x in s['aiAccounts'] if x.get('active') and x.get('apiKey')]
 assert len(a)==1
-assets={key:env.get('R2_ASSETS_'+suffix,'') for key,suffix in [('id','ID'),('endpoint','ENDPOINT'),('bucket','BUCKET'),('publicBaseUrl','PUBLIC_BASE_URL'),('accessKeyId','ACCESS_KEY_ID'),('secretAccessKey','SECRET_ACCESS_KEY'),('sessionToken','SESSION_TOKEN'),('keyPrefix','KEY_PREFIX')]}
-assets['id']=assets['id'] or 's3_assets'
-assets['bucket']=assets['bucket'] or 'podhub-supplier'
-assets['publicBaseUrl']=assets['publicBaseUrl'] or 'https://podhub-supplier.ozon-pod.com'
+matches=[x for x in s.get('systemStorage',[]) if x.get('role')=='assets']
+assert len(matches)==1
+assets=matches[0]
+assets['bucket']=assets.get('bucket') or 'podhub-supplier'
+assets['publicBaseUrl']=assets.get('publicBaseUrl') or 'https://podhub-supplier.ozon-pod.com'
 assert assets['bucket']=='podhub-supplier' and all(assets[key] for key in ['endpoint','accessKeyId','secretAccessKey'])
 print(json.dumps({'ai':a[0],'assets':assets}))
 '''

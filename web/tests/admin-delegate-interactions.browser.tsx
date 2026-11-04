@@ -44,7 +44,7 @@ document.querySelector<HTMLButtonElement>("#run")!.addEventListener("click", asy
     if (url.pathname === "/api/admin/factories") {
       sourceCalls += 1
       if (sourceCalls === 3) return new Promise<Response>((resolve) => { releaseOldSource = resolve })
-      return sourceCalls === 1 ? Response.json({ code: "INTERNAL", message: "厂家读取失败" }, { status: 500 }) : Response.json({ data: { factories: [{ factoryId: "f1", name: "一厂", country: "CN", contact: "", internalNote: "", icon: "", createdAtMs: 1, updatedAtMs: 1, libraries: [{ sourceId: "s1", name: "一号库", country: "CN", icon: "" }, { sourceId: "s2", name: "二号库", country: "CN", icon: "" }] }] } })
+      return sourceCalls === 1 ? Response.json({ code: "INTERNAL", message: "厂家读取失败" }, { status: 500 }) : Response.json({ data: { factories: [{ factory_id: "f1", name: "一厂", country: "CN", contact: "", internal_note: "", icon: "", created_at_ms: 1, updated_at_ms: 1, libraries: [{ source_id: "s1", name: "一号库", country: "CN", icon: "" }, { source_id: "s2", name: "二号库", country: "CN", icon: "" }] }] } })
     }
     if (url.pathname === "/api/admin/delegate-orders/NEW") return Response.json({ code: "INTERNAL", message: "详情读取失败" }, { status: 500 })
     if (url.pathname !== "/api/admin/delegate-orders") throw new Error(`unexpected request ${url.pathname}`)

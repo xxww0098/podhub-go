@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"image"
 	"image/png"
@@ -12,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"errors"
 	"github.com/jackc/pgx/v5"
 	media "github.com/xxww0098/podhub-go/internal/media/contract"
 	"github.com/xxww0098/podhub-go/internal/media/domain/objectkey"
@@ -28,6 +28,10 @@ func (s *Server) getWorkspaceSliceStorage(w http.ResponseWriter, r *http.Request
 	actor, _, err := s.mediaActor(r, "")
 	if err != nil {
 		writeMediaFailure(w, err)
+		return
+	}
+	if actor.WorkspaceRole != "owner" {
+		writeMediaFailure(w, workspaceStorageOwnerRequired())
 		return
 	}
 	var row *mediarepo.SliceStorage
@@ -77,23 +81,8 @@ func (s *Server) getWorkspaceSliceStorage(w http.ResponseWriter, r *http.Request
 		writeMediaFailure(w, err)
 		return
 	}
-	connected := false
-	if actor.WorkspaceRole == "owner" && s.cloudflareReady() {
-		grant, err := s.readCloudflareGrant(r, actor, cloudflareTokenCookie)
-		connected = err == nil && grant.Token != ""
-	}
 	if row == nil {
-		var provision *mediarepo.SliceProvision
-		err := s.transitTx(r.Context(), actor, false, func(tx pgx.Tx) error {
-			var err error
-			provision, err = mediarepo.ReadSliceProvision(r.Context(), tx, actor.OrgID)
-			return err
-		})
-		if err != nil {
-			writeMediaFailure(w, err)
-			return
-		}
-		jsonwire.Write(w, http.StatusOK, map[string]any{"configured": false, "can_manage": actor.WorkspaceRole == "owner", "oauth_available": s.cloudflareReady(), "cloudflare_connected": connected, "provision": provision})
+		jsonwire.Write(w, http.StatusOK, map[string]any{"configured": false})
 		return
 	}
 	status := "idle"
@@ -111,7 +100,7 @@ func (s *Server) getWorkspaceSliceStorage(w http.ResponseWriter, r *http.Request
 		value := fmt.Sprintf("%02d:%02d", *row.ClearAtMinute/60, *row.ClearAtMinute%60)
 		clearTime = &value
 	}
-	jsonwire.Write(w, http.StatusOK, map[string]any{"configured": true, "can_manage": actor.WorkspaceRole == "owner", "oauth_available": s.cloudflareReady(), "cloudflare_connected": connected, "delete_enabled": actor.WorkspaceRole == "owner" && s.SliceDeleteAllowed, "key_prefix": row.Account.KeyPrefix, "bucket": row.Account.Bucket, "public_base_url": row.Account.PublicBaseURL, "clear_status": status, "daily_clear_status": daily, "cleanup_mode": mode, "cleanup_time": clearTime})
+	jsonwire.Write(w, http.StatusOK, map[string]any{"configured": true, "delete_enabled": s.SliceDeleteAllowed, "key_prefix": row.Account.KeyPrefix, "endpoint": row.Account.Endpoint, "bucket": row.Account.Bucket, "public_base_url": row.Account.PublicBaseURL, "clear_status": status, "daily_clear_status": daily, "cleanup_mode": mode, "cleanup_time": clearTime})
 }
 
 func (s *Server) clearWorkspaceSliceStorage(w http.ResponseWriter, r *http.Request) {

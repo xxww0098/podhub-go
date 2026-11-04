@@ -12,12 +12,10 @@ import (
 	"github.com/xxww0098/podhub-go/internal/app"
 )
 
-type invitationCreatedProof struct {
-	UUID     string `json:"uuid"`
-	Token    string `json:"token"`
-	Email    string `json:"email"`
-	Role     string `json:"role"`
-	Notified bool   `json:"notified"`
+type createdWorkspaceInvitation struct {
+	UUID  string `json:"uuid"`
+	Email string `json:"email"`
+	Role  string `json:"role"`
 }
 
 func invitationLogin(t *testing.T, f identityRuntimeFixture, user int64) string {
@@ -25,47 +23,46 @@ func invitationLogin(t *testing.T, f identityRuntimeFixture, user int64) string 
 	return identityRuntimeToken(t, f.request(http.MethodPost, "/api/auth/login", fmt.Sprintf(`{"email":"a%d@example.invalid","password":"original-password"}`, user), "", fmt.Sprintf("invitation-%d", user)))
 }
 
-func createInvitationProof(t *testing.T, f identityRuntimeFixture, owner, email, role string) invitationCreatedProof {
+func createWorkspaceInvitation(t *testing.T, f identityRuntimeFixture, owner, email, role string) createdWorkspaceInvitation {
 	t.Helper()
 	response := f.request(http.MethodPost, "/api/invitations", fmt.Sprintf(`{"email":%q,"role":%q}`, email, role), owner, "")
-	var invitation invitationCreatedProof
-	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &invitation) != nil || invitation.UUID == "" || len(invitation.Token) != 43 || invitation.Notified {
+	var invitation createdWorkspaceInvitation
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &invitation) != nil || invitation.UUID == "" || strings.Contains(response.Body.String(), `"token"`) {
 		t.Fatalf("create invitation: %d %s", response.Code, response.Body.String())
 	}
 	return invitation
-}
-
-func invitationProofBody(invitation invitationCreatedProof) string {
-	return fmt.Sprintf(`{"token":%q}`, invitation.Token)
 }
 
 func TestWorkspaceInvitationsProductionRole(t *testing.T) {
 	f := newIdentityRuntimeFixture(t)
 	owner := invitationLogin(t, f, 96311)
 	invitee := invitationLogin(t, f, 96312)
-	invitation := createInvitationProof(t, f, owner, "A96312@example.invalid", "member")
+	invitation := createWorkspaceInvitation(t, f, owner, "A96312@example.invalid", "member")
 	var orgID int64
-	var digest, storedNotifications string
-	if err := f.fixture.QueryRow(f.ctx, `SELECT org_id,token_hash,(SELECT payload::text FROM notifications WHERE invitation_id=i.id) FROM org_invitations i WHERE uuid=$1::uuid`, invitation.UUID).Scan(&orgID, &digest, &storedNotifications); err != nil || digest != sha256Hex(invitation.Token) || strings.Contains(storedNotifications, invitation.Token) {
-		t.Fatalf("persisted proof digest=%q notification=%q err=%v", digest, storedNotifications, err)
+	var inviteeID int64
+	if err := f.fixture.QueryRow(f.ctx, `SELECT org_id,invitee_user_id FROM org_invitations WHERE uuid=$1::uuid`, invitation.UUID).Scan(&orgID, &inviteeID); err != nil || inviteeID != 96312 {
+		t.Fatalf("invitation recipient=%d err=%v", inviteeID, err)
 	}
 	for _, route := range []struct{ path, token string }{{"/api/workspaces/members", owner}, {"/api/notifications", invitee}} {
 		response := f.request(http.MethodGet, route.path, "", route.token, "")
-		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), invitation.UUID) || strings.Contains(response.Body.String(), invitation.Token) || strings.Contains(response.Body.String(), digest) {
-			t.Fatalf("safe invitation projection %s: %d %s", route.path, response.Code, response.Body.String())
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), invitation.UUID) || strings.Contains(response.Body.String(), `"token"`) {
+			t.Fatalf("invitation projection %s: %d %s", route.path, response.Code, response.Body.String())
 		}
 	}
 	acceptPath := "/api/invitations/" + invitation.UUID + "/accept"
-	for _, test := range []struct{ token, body string }{{owner, invitationProofBody(invitation)}, {invitee, `{"token":"` + strings.Repeat("x", 43) + `"}`}, {invitee, invitationProofBody(invitation) + ` {}`}, {invitee, `{"token":"` + invitation.Token + `","org_id":99}`}} {
-		if response := f.request(http.MethodPost, acceptPath, test.body, test.token, ""); response.Code != http.StatusBadRequest {
-			t.Fatalf("invalid invitation proof: %d %s", response.Code, response.Body.String())
+	for _, action := range []string{"accept", "decline"} {
+		if response := f.request(http.MethodPost, "/api/invitations/"+invitation.UUID+"/"+action, "", owner, ""); response.Code != http.StatusBadRequest {
+			t.Fatalf("other account responded to invitation: %d %s", response.Code, response.Body.String())
 		}
+	}
+	if response := f.request(http.MethodPost, acceptPath, "", "", ""); response.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous invitation response: %d %s", response.Code, response.Body.String())
 	}
 	if response := f.request(http.MethodPost, "/api/invitations", `{"email":"a96312@example.invalid","role":"member"}`, owner, ""); response.Code != http.StatusBadRequest {
 		t.Fatalf("duplicate invite: %d %s", response.Code, response.Body.String())
 	}
 	for range 2 {
-		if response := f.request(http.MethodPost, acceptPath, invitationProofBody(invitation), invitee, ""); response.Code != http.StatusOK {
+		if response := f.request(http.MethodPost, acceptPath, "", invitee, ""); response.Code != http.StatusOK {
 			t.Fatalf("accept or replay: %d %s", response.Code, response.Body.String())
 		}
 	}
@@ -89,30 +86,54 @@ func TestWorkspaceInvitationsProductionRole(t *testing.T) {
 			t.Fatalf("member invite %s: %d %s", role, response.Code, response.Body.String())
 		}
 	}
+	if response := f.request(http.MethodPost, "/api/workspaces/leave", "", invitee, ""); response.Code != http.StatusOK {
+		t.Fatalf("leave workspace: %d %s", response.Code, response.Body.String())
+	}
+	if response := f.request(http.MethodPost, acceptPath, "", invitee, ""); response.Code != http.StatusBadRequest {
+		t.Fatalf("accept old invitation after leaving: %d %s", response.Code, response.Body.String())
+	}
+	replacement := createWorkspaceInvitation(t, f, owner, "a96312@example.invalid", "member")
+	if response := f.request(http.MethodPost, "/api/invitations/"+replacement.UUID+"/accept", "", invitee, ""); response.Code != http.StatusOK {
+		t.Fatalf("accept new invitation after leaving: %d %s", response.Code, response.Body.String())
+	}
+	var membershipID int64
+	if err := f.fixture.QueryRow(f.ctx, `SELECT id FROM organization_members WHERE org_id=$1 AND user_id=96312`, orgID).Scan(&membershipID); err != nil {
+		t.Fatalf("membership after new invitation: %v", err)
+	}
+	if response := f.request(http.MethodDelete, fmt.Sprintf("/api/workspaces/members/%d", membershipID), "", owner, ""); response.Code != http.StatusOK {
+		t.Fatalf("remove member: %d %s", response.Code, response.Body.String())
+	}
+	if response := f.request(http.MethodPost, "/api/invitations/"+replacement.UUID+"/accept", "", invitee, ""); response.Code != http.StatusBadRequest {
+		t.Fatalf("accept old invitation after removal: %d %s", response.Code, response.Body.String())
+	}
 	f.assertClean(t)
 }
 
-func TestWorkspaceInvitationRegistrationDeclineRevokeAndExpiry(t *testing.T) {
+func TestWorkspaceInvitationDeclineRevokeAndExpiry(t *testing.T) {
 	f := newIdentityRuntimeFixture(t)
 	owner := invitationLogin(t, f, 96311)
 	otherOwner := invitationLogin(t, f, 96312)
-	invitation := createInvitationProof(t, f, owner, "before-registration@example.invalid", "member")
+	response := f.request(http.MethodPost, "/api/invitations", `{"email":"before-registration@example.invalid","role":"member"}`, owner, "")
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "先注册") {
+		t.Fatalf("unregistered recipient: %d %s", response.Code, response.Body.String())
+	}
 	registered := f.request(http.MethodPost, "/api/auth/register", `{"email":"BEFORE-registration@example.invalid","password":"original-password","name":"New member"}`, "", "invitation-registration")
 	newUser := identityRuntimeToken(t, registered)
+	invitation := createWorkspaceInvitation(t, f, owner, "before-registration@example.invalid", "member")
 	notification := f.request(http.MethodGet, "/api/notifications", "", newUser, "")
-	if notification.Code != http.StatusOK || !strings.Contains(notification.Body.String(), invitation.UUID) || strings.Contains(notification.Body.String(), invitation.Token) {
-		t.Fatalf("registration notification: %d %s", notification.Code, notification.Body.String())
+	if notification.Code != http.StatusOK || !strings.Contains(notification.Body.String(), invitation.UUID) {
+		t.Fatalf("recipient notification: %d %s", notification.Code, notification.Body.String())
 	}
 	decline := "/api/invitations/" + invitation.UUID + "/decline"
 	for range 2 {
-		if response := f.request(http.MethodPost, decline, invitationProofBody(invitation), newUser, ""); response.Code != http.StatusOK {
+		if response := f.request(http.MethodPost, decline, "", newUser, ""); response.Code != http.StatusOK {
 			t.Fatalf("decline: %d %s", response.Code, response.Body.String())
 		}
 	}
-	if response := f.request(http.MethodPost, "/api/invitations/"+invitation.UUID+"/accept", invitationProofBody(invitation), newUser, ""); response.Code != http.StatusBadRequest {
+	if response := f.request(http.MethodPost, "/api/invitations/"+invitation.UUID+"/accept", "", newUser, ""); response.Code != http.StatusBadRequest {
 		t.Fatalf("accept declined: %d %s", response.Code, response.Body.String())
 	}
-	invitation = createInvitationProof(t, f, owner, "before-registration@example.invalid", "member")
+	invitation = createWorkspaceInvitation(t, f, owner, "before-registration@example.invalid", "member")
 	if response := f.request(http.MethodDelete, "/api/invitations/"+invitation.UUID, "", otherOwner, ""); response.Code != http.StatusBadRequest {
 		t.Fatalf("cross-org revoke: %d %s", response.Code, response.Body.String())
 	}
@@ -124,25 +145,25 @@ func TestWorkspaceInvitationRegistrationDeclineRevokeAndExpiry(t *testing.T) {
 	if response := f.request(http.MethodGet, "/api/notifications", "", newUser, ""); strings.Contains(response.Body.String(), invitation.UUID) {
 		t.Fatalf("revoked invitation still visible: %s", response.Body.String())
 	}
-	if response := f.request(http.MethodPost, "/api/invitations/"+invitation.UUID+"/accept", invitationProofBody(invitation), newUser, ""); response.Code != http.StatusBadRequest {
+	if response := f.request(http.MethodPost, "/api/invitations/"+invitation.UUID+"/accept", "", newUser, ""); response.Code != http.StatusBadRequest {
 		t.Fatalf("accept revoked: %d %s", response.Code, response.Body.String())
 	}
-	invitation = createInvitationProof(t, f, owner, "before-registration@example.invalid", "member")
+	invitation = createWorkspaceInvitation(t, f, owner, "before-registration@example.invalid", "member")
 	if _, err := f.fixture.Exec(f.ctx, `UPDATE org_invitations SET expires_at=clock_timestamp()-interval '1 minute' WHERE uuid=$1::uuid`, invitation.UUID); err != nil {
 		t.Fatal(err)
 	}
-	if response := f.request(http.MethodPost, "/api/invitations/"+invitation.UUID+"/accept", invitationProofBody(invitation), newUser, ""); response.Code != http.StatusBadRequest {
+	if response := f.request(http.MethodPost, "/api/invitations/"+invitation.UUID+"/accept", "", newUser, ""); response.Code != http.StatusBadRequest {
 		t.Fatalf("accept expired: %d %s", response.Code, response.Body.String())
 	}
-	// Expired rows keep their proof history, while a new invitation gets a fresh proof.
-	replacement := createInvitationProof(t, f, owner, "before-registration@example.invalid", "member")
-	if replacement.UUID == invitation.UUID || replacement.Token == invitation.Token {
-		t.Fatal("expired invitation identity or secret reused")
+	// An expired invitation can be replaced with a new one.
+	replacement := createWorkspaceInvitation(t, f, owner, "before-registration@example.invalid", "member")
+	if replacement.UUID == invitation.UUID {
+		t.Fatal("expired invitation identity reused")
 	}
 	if _, err := f.fixture.Exec(f.ctx, `ALTER TABLE audit_logs ADD CONSTRAINT reject_invitation_accept_audit CHECK (action<>'workspace_invitation_accepted')`); err != nil {
 		t.Fatal(err)
 	}
-	response := f.request(http.MethodPost, "/api/invitations/"+replacement.UUID+"/accept", invitationProofBody(replacement), newUser, "")
+	response = f.request(http.MethodPost, "/api/invitations/"+replacement.UUID+"/accept", "", newUser, "")
 	if response.Code != http.StatusInternalServerError {
 		t.Fatalf("audit rollback: %d %s", response.Code, response.Body.String())
 	}
@@ -155,7 +176,7 @@ func TestWorkspaceInvitationRegistrationDeclineRevokeAndExpiry(t *testing.T) {
 
 func TestWorkspaceInvitationConcurrentSeatsAndRoleBounds(t *testing.T) {
 	f := newIdentityRuntimeFixture(t)
-	for _, id := range []int64{96313, 96314} {
+	for _, id := range []int64{96313, 96314, 96315} {
 		seedAITenant(t, f.ctx, f.fixture, id)
 		if _, err := f.fixture.Exec(f.ctx, `UPDATE account_users SET password_hash=(SELECT password_hash FROM account_users WHERE id=96311),public_id=gen_random_uuid()::text WHERE id=$1`, id); err != nil {
 			t.Fatal(err)
@@ -175,15 +196,15 @@ func TestWorkspaceInvitationConcurrentSeatsAndRoleBounds(t *testing.T) {
 	if _, err := f.fixture.Exec(f.ctx, `UPDATE account_users SET active_org_id=$1 WHERE id=96312`, orgID); err != nil {
 		t.Fatal(err)
 	}
-	if response := f.request(http.MethodPost, "/api/invitations", `{"email":"manager-target@example.invalid","role":"manager"}`, manager, ""); response.Code != http.StatusForbidden {
+	if response := f.request(http.MethodPost, "/api/invitations", `{"email":"a96315@example.invalid","role":"manager"}`, manager, ""); response.Code != http.StatusForbidden {
 		t.Fatalf("manager invited manager: %d %s", response.Code, response.Body.String())
 	}
-	managerInvite := createInvitationProof(t, f, owner, "manager-target@example.invalid", "manager")
+	managerInvite := createWorkspaceInvitation(t, f, owner, "a96315@example.invalid", "manager")
 	if response := f.request(http.MethodDelete, "/api/invitations/"+managerInvite.UUID, "", manager, ""); response.Code != http.StatusForbidden {
 		t.Fatalf("manager revoked manager invite: %d %s", response.Code, response.Body.String())
 	}
-	first := createInvitationProof(t, f, manager, "a96313@example.invalid", "member")
-	second := createInvitationProof(t, f, manager, "a96314@example.invalid", "member")
+	first := createWorkspaceInvitation(t, f, manager, "a96313@example.invalid", "member")
+	second := createWorkspaceInvitation(t, f, manager, "a96314@example.invalid", "member")
 	if _, err := f.fixture.Exec(f.ctx, `UPDATE organizations SET member_seat_limit_override=3 WHERE id=$1`, orgID); err != nil {
 		t.Fatal(err)
 	}
@@ -201,14 +222,14 @@ func TestWorkspaceInvitationConcurrentSeatsAndRoleBounds(t *testing.T) {
 	results := make(chan int, 2)
 	var running sync.WaitGroup
 	for _, test := range []struct {
-		proof invitationCreatedProof
+		proof createdWorkspaceInvitation
 		token string
 	}{{first, a}, {second, b}} {
 		running.Add(1)
 		go func() {
 			defer running.Done()
 			<-start
-			response := parallel.request(http.MethodPost, "/api/invitations/"+test.proof.UUID+"/accept", invitationProofBody(test.proof), test.token, "")
+			response := parallel.request(http.MethodPost, "/api/invitations/"+test.proof.UUID+"/accept", "", test.token, "")
 			results <- response.Code
 		}()
 	}

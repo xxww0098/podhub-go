@@ -97,13 +97,17 @@ func TestFactoryOwnsAccountsAcrossMultipleLibraries(t *testing.T) {
 		t.Fatal(err)
 	}
 	var libraryCount int
+	var libraryIDs = map[string]bool{}
 	for _, entry := range directory {
 		if entry.FactoryID == factory.FactoryID {
 			libraryCount = len(entry.Libraries)
+			for _, library := range entry.Libraries {
+				libraryIDs[library.SourceID] = true
+			}
 		}
 	}
-	if libraryCount != 3 {
-		t.Fatalf("factory directory has %d libraries, want 3", libraryCount)
+	if libraryCount != 3 || !libraryIDs["src_factory_910321_a"] || !libraryIDs["src_factory_910321_b"] || !libraryIDs["src_factory_910321_unbound"] {
+		t.Fatalf("factory directory libraries: %v", libraryIDs)
 	}
 	if err := portal.DeleteFactory(ctx, admin, factory.FactoryID); err == nil {
 		t.Fatal("deleted a factory with bound libraries")

@@ -296,6 +296,12 @@ func (r *Entitlement) ConfirmOrder(ctx context.Context, actor corecontract.Actor
 	if err != nil {
 		return nil, corerepo.MapBill(err, "INTERNAL", true)
 	}
+	// An auto-renewal proposal has no payment channel and no purchase agreement
+	// until the buyer picks one. Confirming it as received would grant paid
+	// entitlement without a payment or an acceptance.
+	if order.provider == "unselected" {
+		return nil, corecontract.Conflict("CONFLICT", "未选择支付渠道的自动续费订单不能直接确认收款")
+	}
 	if err := lockLiveOrg(ctx, tx, order.orgID); err != nil {
 		return nil, corerepo.MapBill(err, "INTERNAL", true)
 	}

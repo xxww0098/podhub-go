@@ -69,13 +69,20 @@ func scanStoredRow(row pgx.Row) (storedScan, error) {
 	return storedScan{row: item, micros: updated.UnixMicro()}, nil
 }
 
-func (h Host) loadRow(r *http.Request, org int64, id string) (storedScan, error) {
+func (h Host) loadRow(r *http.Request, org, user int64, id string) (storedScan, error) {
 	var item storedScan
 	err := h.withOrg(r.Context(), org, func(tx pgx.Tx) error {
 		scanned, err := scanStoredRow(tx.QueryRow(r.Context(), `
 			SELECT `+rowColumns+` FROM listing_rows WHERE org_id = $1 AND id = $2::uuid`, org, id))
 		if err != nil {
 			return err
+		}
+		allowed, err := rowAllowedTx(r.Context(), tx, org, user, id)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return pgx.ErrNoRows
 		}
 		item, err = h.withSnapshot(r.Context(), tx, scanned)
 		return err
@@ -96,6 +103,11 @@ func (h Host) listRows(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	scope, err := h.storeScope(r.Context(), p.OrgID, p.UserID)
+	if err != nil {
+		writeDB(w, err)
+		return
+	}
 	limit, ok := ParseLimit(q.Get("limit"), q.Has("limit"))
 	if !ok {
 		writeErr(w, http.StatusBadRequest, "limit 无效", "validation")
@@ -106,7 +118,7 @@ func (h Host) listRows(w http.ResponseWriter, r *http.Request) {
 		fetch = 101
 	}
 	var items []storedScan
-	err := h.withOrg(r.Context(), p.OrgID, func(tx pgx.Tx) error {
+	err = h.withOrg(r.Context(), p.OrgID, func(tx pgx.Tx) error {
 		var listed pgx.Rows
 		var err error
 		if cardFilter != "" {
@@ -116,12 +128,20 @@ func (h Host) listRows(w http.ResponseWriter, r *http.Request) {
 					seen = n
 				}
 			}
-			listed, err = tx.Query(r.Context(), `
-				SELECT `+rowColumns+`
+			sql := `
+				SELECT ` + rowColumns + `
 				FROM listing_rows
-				WHERE org_id = $1 AND card_id = $2::uuid
-				ORDER BY queue_position ASC, created_at ASC, id ASC
-				LIMIT $3 OFFSET $4`, p.OrgID, cardFilter, fetch, seen)
+				WHERE org_id = $1 AND card_id = $2::uuid`
+			args := []any{p.OrgID, cardFilter}
+			if !scope.all {
+				args = append(args, scope.stores)
+				sql += scope.rowFilter(len(args))
+			}
+			limitArg, offsetArg := len(args)+1, len(args)+2
+			args = append(args, fetch, seen)
+			sql += ` ORDER BY queue_position ASC, created_at ASC, id ASC LIMIT $` +
+				strconv.Itoa(limitArg) + ` OFFSET $` + strconv.Itoa(offsetArg)
+			listed, err = tx.Query(r.Context(), sql, args...)
 		} else {
 			micros, afterID := ParseCursor(q.Get("cursor"))
 			category := strings.TrimSpace(q.Get("categoryKey"))
@@ -134,6 +154,10 @@ func (h Host) listRows(w http.ResponseWriter, r *http.Request) {
 			if category != "" {
 				args = append(args, category)
 				sql += ` AND category_key = $` + strconv.Itoa(len(args))
+			}
+			if !scope.all {
+				args = append(args, scope.stores)
+				sql += scope.rowFilter(len(args))
 			}
 			args = append(args, fetch)
 			sql += ` ORDER BY updated_at DESC, id DESC LIMIT $` + strconv.Itoa(len(args))
@@ -275,6 +299,13 @@ func (h Host) finishCreateRow(w http.ResponseWriter, r *http.Request, p access.P
 		card, err := scanCard(tx.QueryRow(r.Context(), `SELECT `+cardSelect+` FROM listing_cards WHERE org_id = $1 AND id = $2::uuid`, p.OrgID, cardID))
 		if err != nil {
 			return err
+		}
+		allowed, err := storeAllowedTx(r.Context(), tx, p.OrgID, p.UserID, card.view.StoreID)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return rowRefuse{http.StatusNotFound, "上架方案不存在", "not_found"}
 		}
 		card.payload, err = projectSupplierCard(r.Context(), tx, card.payload, h.clock().UnixMilli())
 		if err != nil {

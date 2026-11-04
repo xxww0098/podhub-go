@@ -42,13 +42,13 @@ export function SupplierRowPanel({ store, sourceId, row, rows = [], onSelectRow,
   const [saving, setSaving] = useState(false)
   const panelRef = useRef<HTMLDivElement>(null)
   const invalidInfo = () => panelRef.current?.querySelector<HTMLElement>('[data-supplier-row-info-tab] [aria-invalid="true"]')
-  const platformFlushRef = useRef<(() => Promise<boolean>) | null>(null)
+  const platformFlushRef = useRef<((validate?: boolean) => Promise<boolean>) | null>(null)
   const aiFlushRef = useRef<(() => Promise<boolean>) | null>(null)
   const sharedDirty = useRef(false)
   const group = rows.filter((item) => !item.archived && item.sourceId === row.sourceId && (item.productId === row.productId || Boolean(row.variantGroup?.trim()) && item.variantGroup?.trim() === row.variantGroup?.trim()))
   const sharedRow = group[0] ?? row
   const reportDirty = useCallback((dirty: boolean) => { setPromptDirty(dirty); onDirtyChange?.(dirty) }, [onDirtyChange])
-  const syncShared = async () => {
+  const syncShared = async (validate = false) => {
     if (mode === "variant") {
       // Ozon 配置保存会推进行版本，后续写入先回读。
       await store.loadDetail(sourceId, { force: true })
@@ -57,7 +57,7 @@ export function SupplierRowPanel({ store, sourceId, row, rows = [], onSelectRow,
       return true
     }
     if (!sharedDirty.current) return true
-    const result = await store.syncProductOzon(sourceId, sharedRow.productId)
+    const result = await store.syncProductOzon(sourceId, sharedRow.productId, validate)
     if (!result.ok) { notifyCommandError(commandFailure(result), "Ozon 字段未全部同步，请重试"); return false }
     sharedDirty.current = false
     return true
@@ -106,7 +106,7 @@ export function SupplierRowPanel({ store, sourceId, row, rows = [], onSelectRow,
       onSelectRow={(productId, tab) => void requestAction(() => onSelectRow?.(productId, tab))}
       onAddVariant={onAddVariant ? () => void requestAction(onAddVariant) : undefined}
       propDefs={propDefs} categoryTree={categoryTree} categoryLoading={categoryLoading} onEnsureCategoryTree={onEnsureCategoryTree} onPatch={patchRow}
-      onSharedConfigSaved={() => { sharedDirty.current = true; onDirtyChange?.(true) }} onSyncShared={async () => { const saved = await syncShared(); if (saved) onDirtyChange?.(promptDirty); return saved }}
+      onSharedConfigSaved={() => { sharedDirty.current = true; onDirtyChange?.(true) }} onSyncShared={async (validate) => { const saved = await syncShared(validate); if (saved) onDirtyChange?.(promptDirty); return saved }}
       onPatchShared={async (patch) => {
         for (const item of group.length ? group : [row]) {
           const result = await store.patchCell(sourceId, item.productId, patch)

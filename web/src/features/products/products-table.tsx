@@ -137,7 +137,7 @@ export function ProductsTable({
                 lastFullSyncAt={snapshotAtOf(row.store_id)}
                 selected={selectedKeys.has(key)}
                 onSelect={(checked) => toggle(row, checked)}
-                verifying={verifying.has(`${row.store_id}:${row.offer_id}`)}
+                verifying={verifying.has(`${row.store_id}:${row.product_id}`)}
                 verifyDisabled={verifyDisabled}
                 onAction={onAction}
                 onOpen={onOpen}

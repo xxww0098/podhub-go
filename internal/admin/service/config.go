@@ -38,6 +38,7 @@ type ConfigIn struct {
 	Expected  int64
 	AI        []AIIn
 	Runtime   *domain.AIRuntime
+	Storage   *[]StorageIn
 }
 
 // Bounds of the AI runtime settings; zero turns a ceiling off.
@@ -189,12 +190,13 @@ func (a *API) ReplaceConfig(ctx context.Context, actor domain.Actor, in ConfigIn
 }
 
 type configView struct {
-	AIDefault string      `json:"ai_default_model"`
-	Schema    int         `json:"schema_version"`
-	Revision  int64       `json:"revision"`
-	CacheTTL  int         `json:"cache_ttl_seconds"`
-	AI        []aiView    `json:"ai_accounts"`
-	Runtime   runtimeView `json:"ai_runtime"`
+	AIDefault string        `json:"ai_default_model"`
+	Schema    int           `json:"schema_version"`
+	Revision  int64         `json:"revision"`
+	CacheTTL  int           `json:"cache_ttl_seconds"`
+	AI        []aiView      `json:"ai_accounts"`
+	Runtime   runtimeView   `json:"ai_runtime"`
+	Storage   []storageView `json:"system_storage"`
 }
 
 type runtimeView struct {
@@ -243,6 +245,14 @@ func normalizeConfig(old *domain.Snapshot, in ConfigIn, loopback bool) (domain.S
 	}
 	if old != nil {
 		snap.Payment = old.Payment
+		snap.SystemStorage = old.SystemStorage
+	}
+	if in.Storage != nil {
+		var fault *contract.Fault
+		snap.SystemStorage, fault = mergeSystemStorage(old, *in.Storage)
+		if fault != nil {
+			return domain.Snapshot{}, configView{}, fault
+		}
 	}
 	return snap, viewOf(snap, in.Expected+1), nil
 }
@@ -418,6 +428,6 @@ func viewOf(snap domain.Snapshot, revision int64) configView {
 	}
 	return configView{
 		AIDefault: snap.AIDefaultModel, Schema: 1, Revision: revision, CacheTTL: 300,
-		AI: ai, Runtime: runtimeView(snap.AIRuntime),
+		AI: ai, Runtime: runtimeView(snap.AIRuntime), Storage: storageViews(snap.SystemStorage),
 	}
 }

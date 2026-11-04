@@ -27,13 +27,12 @@ bun run check         # build → test → api:check → deadcode → lint
 
 写入租约：写路径只认 `CLOUD_INSTANCE_ID` 对应、60 秒内有心跳的 `writer_leases` 行，否则返回「店铺名册写入未启用」之类的 503。`scripts/dev-api.sh` 把实例固定为 `dev-local`（可用 `CLOUD_INSTANCE_ID` 覆盖），先接管全部八个域，再由 `scripts/devlease` 每 20 秒续期，随脚本退出而停止。它会撤销本地库里其他实例的租约，只用于开发库；生产由 `lease-keeper` 服务首次发放并每 20 秒续期，也可用 `writer-lease bootstrap <域>` 手动发放。
 
-本地 API 依次加载 `.env` 和 `.env.local`，后者覆盖前者；本地测试 R2、OAuth、数据库及其他开发配置放在被 Git 忽略的 `.env.local`。Vite 不接收这些服务端凭据。修改后重启 `dev.sh` 生效；生产 Compose 默认只加载 `.env`。
+本地 API 依次加载 `.env` 和 `.env.local`，后者覆盖前者；本地测试 R2、数据库及其他开发配置放在被 Git 忽略的 `.env.local`。Vite 不接收这些服务端凭据。修改后重启 `dev.sh` 生效；生产 Compose 默认只加载 `.env`。
 
-本地使用 Compose 时显式加载两个文件。以下命令以 `http://localhost` 访问，并关闭媒体删除和 Cloudflare OAuth；如需 OAuth，须配置与实际访问地址匹配的本地客户端和回调。
+本地使用 Compose 时显式加载两个文件。以下命令以 `http://localhost` 访问，并关闭媒体删除；切片存储桶由工作空间所有者在设置中填写。
 
 ```sh
 CLOUD_PUBLIC_URL=http://localhost CLOUD_MEDIA_GC_DELETE=0 \
-  CLOUDFLARE_OAUTH_CLIENT_ID= CLOUDFLARE_OAUTH_CLIENT_SECRET= CLOUDFLARE_OAUTH_SCOPES= \
   docker compose --env-file .env --env-file .env.local up -d
 ```
 
@@ -86,9 +85,9 @@ DATABASE_URL='postgres://podhub_login_api:podhub@127.0.0.1:55432/podhub?sslmode=
 
 生成器版本统一维护在 [Makefile](Makefile)，`make generate` 会在缺少或版本不符时安装。环境开关的当前语义见 [架构约束](docs/architecture.md#安全开关与外部出口)；[.env.example](.env.example) 只覆盖部分配置，完整解析在 `internal/platform/config`。
 
-切片使用工作空间所有者在「设置 → 工作空间」中配置的 Cloudflare R2，不读取 `R2_TRANSIT_*`，不回退到系统中转桶；每个配置使用独立前缀。所有者可设置每天北京时间指定时间自动清理，或仅手动清理；默认每天 04:00。存储桶需启用公开访问，并允许当前站点通过 CORS 使用 GET、PUT 及 `Content-Type`、`If-None-Match`、`X-Amz-Checksum-Sha256` 请求头。服务端使用 `CLOUD_INTEGRATION_CONFIG_KEY` 加密凭据，并需要启动 `worker-media-gc` 和启用 `CLOUD_MEDIA_GC_DELETE` 才能执行定时和手动清理。用户 PSD 仅保存在本机，不上传云端；平台商品库与委托图片只按 [.env.example](.env.example) 配置 `R2_ASSETS_*`、`R2_PRIVATE_*`，管理后台不提供配置入口或写接口；详见[存储配置](docs/architecture/storage-common.md#服务端配置)。
+切片使用工作空间所有者在「设置 → 工作空间」中填写的 Cloudflare R2 端点、桶名、公开地址和 API 令牌，不读取 `R2_TRANSIT_*`，不回退到系统中转桶；每个配置使用独立前缀，保存前会真实验证上传、读取、列举和删除。所有者可设置每天北京时间指定时间自动清理，或仅手动清理；默认每天 04:00。存储桶需启用公开访问，并允许当前站点通过 CORS 使用 GET、PUT 及 `Content-Type`、`If-None-Match`、`X-Amz-Checksum-Sha256` 请求头。服务端使用 `CLOUD_INTEGRATION_CONFIG_KEY` 加密凭据，并需要启动 `worker-media-gc` 和启用 `CLOUD_MEDIA_GC_DELETE` 才能执行定时和手动清理。用户 PSD 仅保存在本机，不上传云端；平台素材桶和私有数据桶由超级管理员在「平台管理 → 系统存储桶」手动填写，详见[存储配置](docs/architecture/storage-common.md#服务端配置)。
 
-测试环境的系统桶可使用 `podhub-test-supplier` 和 `podhub-test-delegate`；前者须明确填写自己的 `PUBLIC_BASE_URL=https://pub-<32位小写十六进制>.r2.dev`，私有桶留空。切片测试桶在用户设置中填写。填写配置不会自动开放 Cloudflare 公共访问权限；浏览器直传还需按[存储配置](docs/architecture/storage-common.md#服务端配置)设置各桶的 CORS。
+测试环境的系统桶可使用 `podhub-test-supplier` 和 `podhub-test-delegate`；前者须明确填写自己的公开地址 `https://pub-<32位小写十六进制>.r2.dev`，私有桶留空。切片测试桶在用户设置中填写。填写配置不会自动开放 Cloudflare 公共访问权限；浏览器直传还需按[存储配置](docs/architecture/storage-common.md#服务端配置)设置各桶的 CORS。
 
 ## 目录与契约
 

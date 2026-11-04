@@ -20,7 +20,6 @@ DELETE /api/listing/rows/{id}
 DELETE /api/seller/delegate/assets/{asset_id}
 DELETE /api/seller/delegate/bindings/{binding_id}
 DELETE /api/supplier-catalog/sources/{source_id}/rows/{product_id}
-DELETE /api/workspace/slice-storage/cloudflare
 DELETE /api/workspaces/members/{id}
 DELETE /api/workspaces/stores/groups/{uuid}
 DELETE /api/workspaces/stores/tags/{uuid}
@@ -149,9 +148,6 @@ GET /api/supplier/workspaces/{source_id}/dispatches
 GET /api/videos/category/{description_category_id}/{type_id}
 GET /api/view/account-overview
 GET /api/workspace/slice-storage
-GET /api/workspace/slice-storage/cloudflare
-GET /api/workspace/slice-storage/cloudflare/accounts
-GET /api/workspace/slice-storage/cloudflare/callback
 GET /api/workspace/slice-storage/download
 GET /api/workspace/slice-storage/objects
 GET /api/workspace/slice-storage/stats
@@ -356,7 +352,6 @@ POST /api/supplier/dispatches/{dispatch_id}/accept
 POST /api/supplier/dispatches/{dispatch_id}/reject
 POST /api/workspace/slice-storage
 POST /api/workspace/slice-storage/clear
-POST /api/workspace/slice-storage/cloudflare/authorize
 POST /api/workspace/slice-storage/objects/delete
 POST /api/workspaces
 POST /api/workspaces/dissolve

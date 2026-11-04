@@ -1,6 +1,5 @@
 import { INVITATION_SETTLED_COPY, INVITATION_STATUS_LABEL, formatDateTime, invitationRoleLabel, invitationState, isUnread } from "./notification-view"
 import { Check, X } from "lucide-react"
-import { useEffect, useId, useState } from "react"
 
 import type { NotificationView } from "@/bindings/commands"
 import type { AppScreen } from "@/lib/app-screens"
@@ -8,9 +7,6 @@ import { formatCents } from "@/lib/money"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
-import { Input } from "@/components/ui/input"
-import { notifyError } from "@/lib/notify"
-import { parseInvitationCredential, type InvitationCredential } from "@/lib/invitation-link"
 import type { NotificationsController } from "./notifications"
 import { cn } from "@/lib/utils"
 
@@ -150,32 +146,22 @@ export function NotificationActions({
   notification,
   controller,
   onNavigate,
-  credential,
 }: {
   notification: NotificationView
   controller: NotificationsController
   onNavigate?: (screen: AppScreen) => void
-  credential?: InvitationCredential
 }) {
-  const inputId = useId()
-  const [proof, setProof] = useState(credential?.token ?? "")
   const invitation = notification.invitation
   const commission = notification.commission
   const state = invitation ? invitationState(invitation) : undefined
   const pending = state === "pending"
   const unread = isUnread(notification)
   const writing = controller.writing
-  const parsed = invitation ? parseInvitationCredential(proof, invitation.uuid) : null
-  useEffect(() => {
-    setProof(pending ? credential?.token ?? "" : "")
-  }, [credential?.token, invitation?.uuid, pending])
-
   async function respond(accept: boolean) {
-    if (!invitation || !pending || !parsed || writing) return
-    const committed = await (accept
-      ? controller.acceptInvitation(invitation.uuid, parsed.token)
-      : controller.declineInvitation(invitation.uuid, parsed.token))
-    if (committed) setProof("")
+    if (!invitation || !pending || writing) return
+    await (accept
+      ? controller.acceptInvitation(invitation.uuid)
+      : controller.declineInvitation(invitation.uuid))
   }
 
   return (
@@ -191,46 +177,34 @@ export function NotificationActions({
         </Button>
       ) : null}
       {invitation && pending ? (
-        <div className="flex max-w-sm flex-col gap-2">
-          <label htmlFor={inputId} className="text-sm font-medium">私密邀请链接或凭据</label>
-          <Input id={inputId} type="password" autoComplete="off" spellCheck={false}
-            value={proof} disabled={writing} aria-invalid={Boolean(proof && !parsed)}
-            aria-describedby={`${inputId}-hint`}
-            onChange={(event) => setProof(event.target.value)}
-            onBlur={() => { if (proof && !parsed) notifyError("凭据格式无效或不属于这个邀请，请使用创建者提供的私密链接。") }}
-            placeholder="粘贴创建者私下提供的链接或凭据" />
-          <p id={`${inputId}-hint`} className="text-xs text-muted-foreground">
-            请核对上方的工作空间与权限后确认。没有私密凭据的旧邀请，请联系创建者撤销重发。
-          </p>
-          <div className="flex gap-2">
-            <Button
-              type="button"
-              size="sm"
-              disabled={writing || !parsed || controller.overviewSyncFailed}
-              onClick={() => void respond(true)}
-            >
-              {controller.pending === `accept:${invitation.uuid}` ? (
-                <Spinner data-icon="inline-start" />
-              ) : (
-                <Check data-icon="inline-start" />
-              )}
-              接受
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={writing || !parsed}
-              onClick={() => void respond(false)}
-            >
-              {controller.pending === `decline:${invitation.uuid}` ? (
-                <Spinner data-icon="inline-start" />
-              ) : (
-                <X data-icon="inline-start" />
-              )}
-              拒绝
-            </Button>
-          </div>
+        <div className="flex gap-2">
+          <Button
+            type="button"
+            size="sm"
+            disabled={writing || controller.overviewSyncFailed}
+            onClick={() => void respond(true)}
+          >
+            {controller.pending === `accept:${invitation.uuid}` ? (
+              <Spinner data-icon="inline-start" />
+            ) : (
+              <Check data-icon="inline-start" />
+            )}
+            接受
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={writing}
+            onClick={() => void respond(false)}
+          >
+            {controller.pending === `decline:${invitation.uuid}` ? (
+              <Spinner data-icon="inline-start" />
+            ) : (
+              <X data-icon="inline-start" />
+            )}
+            拒绝
+          </Button>
         </div>
       ) : unread ? (
         <Button

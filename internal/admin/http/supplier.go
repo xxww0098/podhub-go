@@ -224,7 +224,7 @@ func (h handler) dispatch(w http.ResponseWriter, r *http.Request, rt Route, p Se
 		}
 		writeData(w, http.StatusCreated, struct {
 			Factory         domain.Factory `json:"factory"`
-			InitialPassword *string        `json:"initialPassword,omitempty"`
+			InitialPassword *string        `json:"initial_password,omitempty"`
 		}{factory, initial})
 		return true
 	case "PUT /api/admin/factories/{factory_id}":

@@ -11,7 +11,6 @@ import { route } from "@/api/routes"
 import type { components } from "@/api/schema"
 import { beginErrorTelemetryContextChange } from "@/lib/error-telemetry"
 import { invalidateAllSessionCaches, onSessionInvalidated } from "@/lib/session-cache"
-import { clearInvitationCredential, invitationToken } from "@/lib/invitation-link"
 import type {
   AccountChangePasswordRequest,
   AccountLoginRequest,
@@ -229,11 +228,11 @@ export const accountHttp = {
   },
   accountChangePassword: (request: AccountChangePasswordRequest) =>
     withAccountContextChange(() => api.post<void>(route("authPassword"), request)),
-  accountRedeemCode: async (request: {
+  accountRedeemCode: async (body: {
     code: string
     expected_workspace_uuid: string
   }) =>
-    api.post<RedeemResultView>(route("redeem"), request),
+    request<RedeemResultView>("POST", route("redeem"), body, {}, undefined, undefined, { responseBody: "json" }),
   accountGetPaymentMethods: () => request<PaymentMethodsData>("GET", route("paymentMethods"), undefined, {}, undefined, undefined, { responseBody: "json" }),
   accountListPaymentOrders: async (filter?: {
     status?: string
@@ -298,7 +297,6 @@ export const accountHttp = {
   },
   accountLogout: async () => {
     await withAccountContextChange(() => api.post<void>(route("authLogout")))
-    clearInvitationCredential()
   },
   accountListWorkspaces: accountOverview,
   accountSwitchWorkspace: async (workspaceId: number) => {
@@ -356,13 +354,11 @@ export const accountHttp = {
     (
       await request<components["schemas"]["AiRechargeOrderData"]>("POST", route("aiRechargeOrdersByPublicIdRecover", { public_id: publicId }), undefined, {}, undefined, undefined, { responseBody: "json" })
     ).order,
-  accountAcceptWorkspaceInvitation: async (uuid: string, token: string) => {
-    await request("POST", route("invitationsByUuidAccept", { uuid }), { token: invitationToken(token) } satisfies components["schemas"]["InvitationProofRequest"], {}, undefined, undefined, { responseBody: "json" })
-    clearInvitationCredential(uuid)
+  accountAcceptWorkspaceInvitation: async (uuid: string) => {
+    await request("POST", route("invitationsByUuidAccept", { uuid }), undefined, {}, undefined, undefined, { responseBody: "json" })
   },
-  accountDeclineWorkspaceInvitation: async (uuid: string, token: string) => {
-    await request("POST", route("invitationsByUuidDecline", { uuid }), { token: invitationToken(token) } satisfies components["schemas"]["InvitationProofRequest"], {}, undefined, undefined, { responseBody: "json" })
-    clearInvitationCredential(uuid)
+  accountDeclineWorkspaceInvitation: async (uuid: string) => {
+    await request("POST", route("invitationsByUuidDecline", { uuid }), undefined, {}, undefined, undefined, { responseBody: "json" })
   },
   accountRevokeWorkspaceInvitation: (uuid: string) =>
     request("DELETE", route("invitationsByUuid", { uuid }), undefined, {}, undefined, undefined, { responseBody: "json" }),

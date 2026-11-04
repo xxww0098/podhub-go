@@ -84,25 +84,17 @@ type AuthErrorResponse struct {
 
 // CreateInvitationData defines model for CreateInvitationData.
 type CreateInvitationData struct {
-	Email       string `json:"email"`
-	ExpiresAtMs int64  `json:"expires_at_ms"`
-
-	// Notified Retained for wire compatibility. Cloud always serializes `false` so
-	// the field cannot disclose whether the address already has an account.
-	Notified     bool   `json:"notified"`
+	Email        string `json:"email"`
+	ExpiresAtMs  int64  `json:"expires_at_ms"`
 	PendingLimit int64  `json:"pending_limit"`
 	PendingUsed  int64  `json:"pending_used"`
 	Role         string `json:"role"`
 
-	// Token Returned once to the creator for private delivery to the recipient.
-	// Never included in notifications or directory projections.
-	Token string `json:"token"`
-
-	// Uuid Stable invitation identity; possession alone grants no authority.
+	// Uuid Stable invitation identity; only the invited account may respond.
 	Uuid string `json:"uuid"`
 }
 
-// CreateInvitationRequest defines model for CreateInvitationRequest.
+// CreateInvitationRequest Invite an existing, enabled platform account by its email address.
 type CreateInvitationRequest struct {
 	Email string `json:"email"`
 	Role  string `json:"role"`
@@ -135,12 +127,6 @@ type InvitationAcceptData struct {
 type InvitationDeclineData struct {
 	Declined bool `json:"declined"`
 	Ok       bool `json:"ok"`
-}
-
-// InvitationProofRequest defines model for InvitationProofRequest.
-type InvitationProofRequest struct {
-	// Token Private credential received separately from the invitation's creator.
-	Token string `json:"token"`
 }
 
 // LeaveWorkspaceRequest Leave one Workspace. An omitted `workspace_id` means the Active Workspace —
@@ -222,12 +208,6 @@ type PostAuthEmailConfirmJSONRequestBody PostAuthEmailConfirmJSONBody
 
 // CreateInviteJSONRequestBody defines body for CreateInvite for application/json ContentType.
 type CreateInviteJSONRequestBody = CreateInvitationRequest
-
-// AcceptInviteJSONRequestBody defines body for AcceptInvite for application/json ContentType.
-type AcceptInviteJSONRequestBody = InvitationProofRequest
-
-// DeclineInviteJSONRequestBody defines body for DeclineInvite for application/json ContentType.
-type DeclineInviteJSONRequestBody = InvitationProofRequest
 
 // CreateWorkspaceJSONRequestBody defines body for CreateWorkspace for application/json ContentType.
 type CreateWorkspaceJSONRequestBody = CreateWorkspaceRequest

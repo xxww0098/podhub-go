@@ -47,6 +47,22 @@ export function formatDateTimeMinute(value: string | number | Date): string {
   return DATE_TIME_MINUTE.format(date)
 }
 
+/** 年月日 时:分（`2026/01/05 18:30`）；顶栏与业务列表共用，秒不产生操作价值。 */
+const DATE_TIME_YEAR_MINUTE = new Intl.DateTimeFormat("zh-CN", {
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+})
+
+export function formatDateTimeYearMinute(value: string | number | Date): string {
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value)
+  return DATE_TIME_YEAR_MINUTE.format(date)
+}
+
 /** 年月日（`2026/01/05`）；期限类日期要写明是哪一年，跨年才不歧义。 */
 const DATE_ONLY = new Intl.DateTimeFormat("zh-CN", {
   year: "numeric",

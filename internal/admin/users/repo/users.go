@@ -314,8 +314,7 @@ ORDER BY u.id ASC`)
 	return dir, nil
 }
 
-// CreateUser inserts the account, bootstraps the owner org, binds invitations,
-// and audits inside the admin writer gate.
+// CreateUser inserts the account, bootstraps the owner org, and audits inside the admin writer gate.
 func (s *Users) CreateUser(ctx context.Context, actor corecontract.Actor, publicID, email, name, role, hash string) (userscontract.Account, int64, *contract.Fault) {
 	var created userscontract.Account
 	var orgID int64
@@ -340,24 +339,18 @@ RETURNING id`, publicID, email, hash, role, name)
 		if err != nil {
 			return err
 		}
-		bound, err := s.bindInvites(ctx, tx, id, email)
-		if err != nil {
-			return err
-		}
 		created, err = s.LoadByID(ctx, tx, id)
 		if err != nil {
 			return err
 		}
 		msg := corerepo.JSONText(struct {
-			Summary            string `json:"summary"`
-			TargetUUID         string `json:"target_uuid"`
-			WorkspaceID        int64  `json:"workspace_id"`
-			PendingInvitations int64  `json:"pending_invitations"`
+			Summary     string `json:"summary"`
+			TargetUUID  string `json:"target_uuid"`
+			WorkspaceID int64  `json:"workspace_id"`
 		}{
-			Summary:            fmt.Sprintf("创建账号 %s，工作空间 %d，回填待处理邀请 %d 条", email, orgID, bound),
-			TargetUUID:         created.PublicID,
-			WorkspaceID:        orgID,
-			PendingInvitations: bound,
+			Summary:     fmt.Sprintf("创建账号 %s，工作空间 %d", email, orgID),
+			TargetUUID:  created.PublicID,
+			WorkspaceID: orgID,
 		})
 		return corerepo.WriteAudit(ctx, tx, corerepo.AuditRow{
 			OrgID: orgID, UserID: actor.ID, Module: "admin", EntityType: "account",
@@ -416,63 +409,6 @@ ON CONFLICT (org_id, user_id) DO NOTHING`, orgID, userID, order, display); err !
 		return 0, err
 	}
 	return orgID, nil
-}
-
-func (s *Users) bindInvites(ctx context.Context, tx pgx.Tx, userID int64, email string) (int64, error) {
-	rows, err := tx.Query(ctx, `
-UPDATE org_invitations i
-   SET invitee_user_id = $1, updated_at = clock_timestamp()
-  FROM organizations o
- WHERE o.id = i.org_id
-   AND lower(i.email) = $2
-   AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.declined_at IS NULL
-   AND i.expires_at > clock_timestamp()
-RETURNING i.id, i.role, (EXTRACT(EPOCH FROM i.expires_at) * 1000)::bigint,
-          COALESCE(i.invited_by_email, ''), o.name, lower(o.uuid::text)`, userID, email)
-	if err != nil {
-		return 0, err
-	}
-	defer rows.Close()
-	var n int64
-	type inv struct {
-		id                   int64
-		role, by, name, uuid string
-		expires              int64
-	}
-	var found []inv
-	for rows.Next() {
-		var row inv
-		if err := rows.Scan(&row.id, &row.role, &row.expires, &row.by, &row.name, &row.uuid); err != nil {
-			return 0, err
-		}
-		found = append(found, row)
-		n++
-	}
-	if err := rows.Err(); err != nil {
-		return 0, err
-	}
-	rows.Close()
-	for _, row := range found {
-		payload := corerepo.JSONText(struct {
-			TeamName       string `json:"teamName"`
-			TeamUUID       string `json:"teamUuid"`
-			Role           string `json:"role"`
-			InvitedByEmail string `json:"invitedByEmail"`
-			ExpiresAtMs    int64  `json:"expiresAtMs"`
-		}{row.name, row.uuid, row.role, row.by, row.expires})
-		if _, err := tx.Exec(ctx, `
-INSERT INTO notifications
-       (uuid, user_id, kind, payload, invitation_id, created_at)
-VALUES (gen_random_uuid(), $1, 'team_invitation', $2::jsonb, $3, clock_timestamp())
-ON CONFLICT (user_id, invitation_id) WHERE invitation_id IS NOT NULL
-DO UPDATE SET payload = EXCLUDED.payload,
-              created_at = EXCLUDED.created_at,
-              read_at = NULL,
-              dismissed_at = NULL`, userID, payload, row.id); err != nil {
-			return 0, err
-		}
-	}
-	return n, nil
 }
 
 func (s *Users) ownedCount(ctx context.Context, tx pgx.Tx, userID int64) (int64, error) {

@@ -48,6 +48,7 @@ import { formatDateTimeShort } from "@/lib/format"
 import { MAX_TOPUP_CENTS, MIN_TOPUP_CENTS, formatYuan, topupCentsFromYuan } from "@/lib/money"
 import { clearLive, notifyCommandError, notifyLive, notifySuccess } from "@/lib/notify"
 import { planDisplayName } from "@/features/plans/plan-catalog"
+import { REDEEM_CODE_REDEEMED_EVENT } from "@/features/plans/redeem-code-dialog"
 import { SubscriptionCoupons } from "./subscription-coupons"
 
 const REDEEM_CODES_LIVE = "redeem-codes-load"
@@ -149,8 +150,14 @@ function RedeemCodeLedger({ kind }: { kind: "wallet" | "plan" }) {
   }
 
   useEffect(() => {
+    const refresh = () => { if (active) void load(true) }
     if (active) void load()
-    return () => { loadVersion.current += 1; clearLive(REDEEM_CODES_LIVE) }
+    window.addEventListener(REDEEM_CODE_REDEEMED_EVENT, refresh)
+    return () => {
+      window.removeEventListener(REDEEM_CODE_REDEEMED_EVENT, refresh)
+      loadVersion.current += 1
+      clearLive(REDEEM_CODES_LIVE)
+    }
   }, [active])
 
   const codes = useMemo(() => (overview?.codes ?? []).filter((code) => Boolean(code.plan_key) === (kind === "plan")), [overview, kind])

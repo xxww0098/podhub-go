@@ -56,6 +56,15 @@ func TestSupplierOzonConfigUsesDocumentedWireFields(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	cat.cfg.State = "needs_reconfiguration"
+	cat.cfg.Issues = json.RawMessage(`[{"issue":"validation_pending"}]`)
+	rec := jsonCall(handler, http.MethodGet, path, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET pending: %d %s", rec.Code, rec.Body.String())
+	}
+	if err := spec.CheckResponse(http.MethodGet, "/api/admin/supplier-dbs/{source_id}/rows/{product_id}/ozon-config", rec.Code, rec.Header(), rec.Body.Bytes()); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestSupplierX1SuccessBytes(t *testing.T) {

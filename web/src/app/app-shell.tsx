@@ -14,6 +14,7 @@ import { ArrowLeft } from "lucide-react"
 import { StoreIcon } from "@/components/store-icon"
 import type { AccountOverview, WorkspaceStandingView } from "@/bindings/commands"
 import { productVersionLabel } from "@/lib/product-version"
+import { formatDateTimeYearMinute } from "@/lib/format"
 import { NotificationBell } from "@/features/notifications/notification-bell"
 import {
   ACCOUNT_OVERVIEW_POLL_MS,
@@ -173,14 +174,15 @@ export function AppShell({
   const [trail, setTrail] = useState<TrailEntry>()
   const publishTrail = useCallback((entry?: TrailEntry) => setTrail(entry), [])
   const [localSettingsSection, setLocalSettingsSection] = useState<SettingsSection | null>(() => {
-    const requested = new URLSearchParams(window.location.search).get("settings")
+    const search = typeof window === "undefined" ? "" : window.location?.search
+    const requested = new URLSearchParams(search).get("settings")
     return requested && isSettingsSection(requested) ? requested : null
   })
   const settingsSection = adminSurface ? settingsRequest : localSettingsSection
   const settingsOpen = settingsSection !== null
   const currentSettings = useRef(settingsSection)
   useLayoutEffect(() => { currentSettings.current = settingsSection }, [settingsSection])
-  const settingsRows = settingsRowsFor(overview?.session.role)
+  const settingsRows = settingsRowsFor(overview?.session.role, overview?.active_workspace?.role)
   const settingsResolution = resolveSettingsPane({ requested: settingsSection ?? "account", available: settingsRows, adminSurface })
   const settingsPane = settingsResolution.kind === "pane" ? settingsResolution.section : ""
   const settingsBreadcrumb = settingsPane === "account"
@@ -376,15 +378,14 @@ export function AppShell({
 function ShellDate() {
   const [now, setNow] = useState(() => new Date())
   useEffect(() => {
-    const timer = window.setTimeout(() => setNow(new Date()), 1000 - Date.now() % 1000)
+    const timer = window.setTimeout(() => setNow(new Date()), 60_000 - Date.now() % 60_000)
     return () => window.clearTimeout(timer)
   }, [now])
   const twoDigits = (value: number) => String(value).padStart(2, "0")
-  const date = `${now.getFullYear()}-${twoDigits(now.getMonth() + 1)}-${twoDigits(now.getDate())}`
-  const time = `${twoDigits(now.getHours())}:${twoDigits(now.getMinutes())}:${twoDigits(now.getSeconds())}`
+  const iso = `${now.getFullYear()}-${twoDigits(now.getMonth() + 1)}-${twoDigits(now.getDate())}T${twoDigits(now.getHours())}:${twoDigits(now.getMinutes())}`
   return (
-    <time className="shell-date" dateTime={`${date}T${time}`}>
-      {date} {time}
+    <time className="shell-date" dateTime={iso}>
+      {formatDateTimeYearMinute(now)}
     </time>
   )
 }

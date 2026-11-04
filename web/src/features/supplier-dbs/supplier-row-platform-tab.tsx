@@ -21,7 +21,7 @@ export function SupplierRowPlatformTab({
   onNavigateMedia: () => void
   configEpoch: number
   onConfigSaved: () => void
-  flushRef?: React.RefObject<(() => Promise<boolean>) | null>
+  flushRef?: React.RefObject<((validate?: boolean) => Promise<boolean>) | null>
 }) {
   const [pendingCategory, setPendingCategory] = useState<CategoryCoord | null>(null)
   const [savingCategory, setSavingCategory] = useState(false)

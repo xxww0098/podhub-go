@@ -156,6 +156,7 @@ type Snapshot struct {
 	AIAccounts     json.RawMessage      `json:"aiAccounts"`
 	AIDefaultModel string               `json:"aiDefaultModel"`
 	AIRuntime      json.RawMessage      `json:"aiRuntime,omitempty"`
+	SystemStorage  json.RawMessage      `json:"systemStorage,omitempty"`
 	Payment        *StoredPaymentConfig `json:"payment,omitempty"`
 }
 

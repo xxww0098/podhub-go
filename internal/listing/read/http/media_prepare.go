@@ -88,7 +88,7 @@ func (h Host) prepareMedia(w http.ResponseWriter, r *http.Request) {
 				return err
 			}
 		}
-		row, card, err := mediaRow(r.Context(), tx, p.OrgID, id)
+		row, card, err := mediaRow(r.Context(), tx, p.OrgID, p.UserID, id)
 		if err != nil {
 			return err
 		}
@@ -214,7 +214,7 @@ func (h Host) cancelMedia(w http.ResponseWriter, r *http.Request) {
 	}
 	runs := []mediaRun{}
 	err := h.mediaTx(r.Context(), p, func(tx pgx.Tx) error {
-		row, card, err := mediaRow(r.Context(), tx, p.OrgID, id)
+		row, card, err := mediaRow(r.Context(), tx, p.OrgID, p.UserID, id)
 		if err != nil {
 			return err
 		}

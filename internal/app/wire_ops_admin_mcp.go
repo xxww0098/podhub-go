@@ -13,6 +13,7 @@ import (
 	adminbillingrepo "github.com/xxww0098/podhub-go/internal/admin/billing/repo"
 	catalogrepo "github.com/xxww0098/podhub-go/internal/admin/catalog/repo"
 	admindelegaterepo "github.com/xxww0098/podhub-go/internal/admin/delegate/repo"
+	admindomain "github.com/xxww0098/podhub-go/internal/admin/domain"
 	adminhttp "github.com/xxww0098/podhub-go/internal/admin/http"
 	observerepo "github.com/xxww0098/podhub-go/internal/admin/observe/repo"
 	adminrepo "github.com/xxww0098/podhub-go/internal/admin/repo"
@@ -100,8 +101,10 @@ func mountPR8B(r chi.Router, s *httpapi.Server) {
 		Now:     s.Now,
 	})
 	deps := adminDeps(s, cfg)
-	accounts, _ := configuredStorage(cfg)
-	deps.Ported = httpapi.AdminPorted(s, accounts)
+	deps.Ported = httpapi.AdminPorted(s, func(ctx context.Context) ([]admindomain.CloudAccount, error) {
+		accounts, _, err := configuredStorage(ctx, s.Pool, cfg)
+		return accounts, err
+	})
 	if s.Pool != nil {
 		deps.DelegateWrites = delegatePort{inner: delegatesvc.Admin{Store: delegaterepo.New(s.Pool, tenant.BeginApp)}}
 		deps.ShippingWrites = shippingPort{inner: shippingsvc.Admin{
@@ -214,8 +217,8 @@ func adminDeps(s *httpapi.Server, cfg config.Config) adminhttp.Deps {
 	supplier := adminsvc.New(supplierStore{Repo: store, Portal: portal, X1: rows})
 	supplier.CatalogAccess = managercatalogrepo.Repo{Pool: s.Pool}
 	supplier.Origin = adminhttp.R2Origin{}
-	supplier.Accounts = func(context.Context) (sign.Account, bool, error) {
-		account, err := configuredR2Account(cfg, media.RoleAssets)
+	supplier.Accounts = func(ctx context.Context) (sign.Account, bool, error) {
+		account, _, err := configuredR2Account(ctx, s.Pool, cfg, media.RoleAssets)
 		if errors.Is(err, errR2NotConfigured) {
 			return sign.Account{}, false, nil
 		}
@@ -238,14 +241,19 @@ func adminDeps(s *httpapi.Server, cfg config.Config) adminhttp.Deps {
 		Fetch:          adminhttp.NewCatalogue(cfg.AIEgressAllowLoopback),
 	}
 	pool := s.Pool
-	accounts, _ := configuredStorage(cfg)
-	bases := make([]string, 0, len(accounts))
-	for _, account := range accounts {
-		if account.PublicBaseURL != "" {
-			bases = append(bases, account.PublicBaseURL)
+	deps.Catalog = adminsvc.NewCatalog(catalogrepo.CatalogRepo{Pool: pool, PublicBases: func(ctx context.Context) ([]string, error) {
+		accounts, _, err := configuredStorage(ctx, pool, cfg)
+		if err != nil {
+			return nil, err
 		}
-	}
-	deps.Catalog = adminsvc.NewCatalog(catalogrepo.CatalogRepo{Pool: pool, PublicBases: bases}, adminsvc.CatalogOptions{Blobs: adminhttp.LoopbackBlob{}})
+		bases := make([]string, 0, len(accounts))
+		for _, account := range accounts {
+			if account.PublicBaseURL != "" {
+				bases = append(bases, account.PublicBaseURL)
+			}
+		}
+		return bases, nil
+	}}, adminsvc.CatalogOptions{Blobs: adminhttp.LoopbackBlob{}})
 	deps.Procure = adminsvc.NewProcure(adminrepo.ProcureRepo{Pool: pool}, adminsvc.ProcureOptions{})
 	deps.Agents = adminsvc.NewAgents(adminrepo.AgentsRepo{Pool: pool}, adminsvc.AgentsOptions{})
 	deps.Shipping = adminsvc.NewShipping(adminshippingrepo.ShippingRepo{Pool: pool}, adminsvc.ShippingOptions{
