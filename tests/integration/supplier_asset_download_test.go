@@ -166,7 +166,7 @@ func TestSupplierAssetDownloadNormalRole(t *testing.T) {
 				raw = reply.Data.URL
 			}
 			u, err := url.Parse(raw)
-			if err != nil || u.Scheme != "https" || u.Host != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.r2.cloudflarestorage.com" || !strings.HasPrefix(u.Path, "/podhub-private/test-prefix/") {
+			if err != nil || u.Scheme != "https" || u.Host != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.r2.cloudflarestorage.com" || !strings.HasPrefix(u.Path, "/podhub-go-private/test-prefix/") {
 				t.Fatal("grant did not use the configured private bucket")
 			}
 			q := u.Query()

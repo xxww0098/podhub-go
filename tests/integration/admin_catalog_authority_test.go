@@ -62,7 +62,7 @@ func TestAdminCatalogRuntimeRole(t *testing.T) {
 			AccessKeyID: "CATALOGTEST", SecretAccessKey: "catalog-fixture-secret",
 		})
 		h := catalogAuthorityHandler(t, ctx, fixture, login)
-		product := catalogAuthorityPost(ctx, h, "/api/admin/platform-catalog/products", `{"title":"Runtime catalog","media":["https://podhub-supplier.ozon-pod.com/a.jpg"]}`)
+		product := catalogAuthorityPost(ctx, h, "/api/admin/platform-catalog/products", `{"title":"Runtime catalog","media":["https://podhub-go-supplier.ozon-pod.com/a.jpg"]}`)
 		if product.Code != http.StatusCreated {
 			t.Fatalf("create product: %d %s", product.Code, product.Body.String())
 		}
@@ -70,7 +70,7 @@ func TestAdminCatalogRuntimeRole(t *testing.T) {
 		if err := json.Unmarshal(product.Body.Bytes(), &result); err != nil {
 			t.Fatal(err)
 		}
-		sku := catalogAuthorityPost(ctx, h, "/api/admin/platform-catalog/skus", fmt.Sprintf(`{"productId":%q,"platformCode":"runtime-catalog","title":"Runtime SKU","media":["https://podhub-supplier.ozon-pod.com/a.jpg"]}`, result.Data.Product.ProductID))
+		sku := catalogAuthorityPost(ctx, h, "/api/admin/platform-catalog/skus", fmt.Sprintf(`{"productId":%q,"platformCode":"runtime-catalog","title":"Runtime SKU","media":["https://podhub-go-supplier.ozon-pod.com/a.jpg"]}`, result.Data.Product.ProductID))
 		if sku.Code != http.StatusCreated {
 			t.Fatalf("create SKU: %d %s", sku.Code, sku.Body.String())
 		}

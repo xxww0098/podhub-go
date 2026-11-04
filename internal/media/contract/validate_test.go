@@ -11,6 +11,21 @@ func testBucket(role Role) Config {
 		AccessKeyID: "test-access", SecretAccessKey: "test-secret"}
 }
 
+func TestProductionSystemBuckets(t *testing.T) {
+	for _, tc := range []struct {
+		role         Role
+		bucket, host string
+	}{
+		{RoleAssets, "podhub-go-supplier", "https://podhub-go-supplier.ozon-pod.com"},
+		{RolePrivate, "podhub-go-private", ""},
+	} {
+		bucket := testBucket(tc.role)
+		if bucket.Bucket != tc.bucket || bucket.PublicBaseURL != tc.host || bucket.Validate() != nil {
+			t.Fatalf("unexpected production bucket for %s", tc.role)
+		}
+	}
+}
+
 func TestValidateDevelopmentBucketNames(t *testing.T) {
 	for _, name := range []string{"abc", "123", "podhub-test-delegate", strings.Repeat("a", 63)} {
 		bucket := testBucket(RolePrivate)

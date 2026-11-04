@@ -12,9 +12,9 @@ REMOTE = r'''
 import subprocess,json,hashlib,shlex
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 run=lambda args: subprocess.check_output(args,stderr=subprocess.DEVNULL)
-env=dict(x.split('=',1) for x in json.loads(run(['docker','inspect','podhub-cloud-1']))[0]['Config']['Env'] if '=' in x)
+env=dict(x.split('=',1) for x in json.loads(run(['docker','inspect','podhubsi-api-1']))[0]['Config']['Env'] if '=' in x)
 sql="SELECT json_build_object('nonce',encode(nonce,'hex'),'ciphertext',encode(ciphertext,'hex')) FROM platform_integration_config WHERE singleton=true"
-row=json.loads(run(['docker','exec','-e','PGOPTIONS=-c default_transaction_read_only=on','podhub-postgres-1','sh','-c','psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c '+shlex.quote(sql)]))
+row=json.loads(run(['docker','exec','-e','PGOPTIONS=-c default_transaction_read_only=on','podhubsi-postgres-1','sh','-c','psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c '+shlex.quote(sql)]))
 aes=AESGCM(hashlib.sha256(env['CLOUD_INTEGRATION_CONFIG_KEY'].strip().encode()).digest())
 try: plain=aes.decrypt(bytes.fromhex(row['nonce']),bytes.fromhex(row['ciphertext']),b'platform_integration_config|v1')
 except Exception: plain=aes.decrypt(bytes.fromhex(row['nonce']),bytes.fromhex(row['ciphertext']),None)
@@ -24,9 +24,9 @@ assert len(a)==1
 matches=[x for x in s.get('systemStorage',[]) if x.get('role')=='assets']
 assert len(matches)==1
 assets=matches[0]
-assets['bucket']=assets.get('bucket') or 'podhub-supplier'
-assets['publicBaseUrl']=assets.get('publicBaseUrl') or 'https://podhub-supplier.ozon-pod.com'
-assert assets['bucket']=='podhub-supplier' and all(assets[key] for key in ['endpoint','accessKeyId','secretAccessKey'])
+assets['bucket']=assets.get('bucket') or 'podhub-go-supplier'
+assets['publicBaseUrl']=assets.get('publicBaseUrl') or 'https://podhub-go-supplier.ozon-pod.com'
+assert assets['bucket']=='podhub-go-supplier' and all(assets[key] for key in ['endpoint','accessKeyId','secretAccessKey'])
 print(json.dumps({'ai':a[0],'assets':assets}))
 '''
 

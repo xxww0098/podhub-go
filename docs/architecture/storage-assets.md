@@ -6,8 +6,8 @@
 
 | 项 | 值 |
 | --- | --- |
-| 物理桶 | `podhub-supplier` |
-| 公开域名 | `https://podhub-supplier.ozon-pod.com` |
+| 物理桶 | `podhub-go-supplier` |
+| 公开域名 | `https://podhub-go-supplier.ozon-pod.com` |
 | 角色 | `assets` |
 | 保留目标 | 长期；业务仍引用的对象不得回收 |
 
@@ -68,4 +68,4 @@
 
 2026-10-24 的代码与文档复核未执行上述接口的真实桶上传、下载、迁移或回收验收。
 
-2026-10-25 已在真实供应商商品库页面完成 75MB PSD 五分片上传、完整 SHA256/长度/MIME/文件头确认、商品保存与刷新、公开浏览器完整回读。该路径仍使用 `supplier-dbs/{source_id}/{sha256}.psd` 和确认 sidecar；条件完成拒绝覆盖，已有对象只有完整匹配本次授权才允许恢复确认，取消仅清理自身 upload ID。通用注册表迁移及自动回收仍须单独验证，范围与证据见[技术验证清单](../precision-listing-verification.md)。
+2026-10-25 已在旧素材桶的真实供应商商品库页面完成 75MB PSD 五分片上传、完整 SHA256/长度/MIME/文件头确认、商品保存与刷新、公开浏览器完整回读。该证据不证明新的 `podhub-go-supplier` 业务链路已通过。该路径仍使用 `supplier-dbs/{source_id}/{sha256}.psd` 和确认 sidecar；条件完成拒绝覆盖，已有对象只有完整匹配本次授权才允许恢复确认，取消仅清理自身 upload ID。通用注册表迁移及自动回收仍须单独验证，范围与证据见[技术验证清单](../precision-listing-verification.md)。

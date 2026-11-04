@@ -15,7 +15,7 @@ func TestSystemStorageCredentialsAndSnapshot(t *testing.T) {
 	if fault != nil {
 		t.Fatal(fault)
 	}
-	if len(snapshot.SystemStorage) != 1 || snapshot.SystemStorage[0].ID != "s3_assets" || snapshot.SystemStorage[0].Bucket != "podhub-supplier" || snapshot.SystemStorage[0].PublicBaseURL != "https://podhub-supplier.ozon-pod.com" || snapshot.SystemStorage[0].SecretAccessKey != "private-secret" {
+	if len(snapshot.SystemStorage) != 1 || snapshot.SystemStorage[0].ID != "s3_assets" || snapshot.SystemStorage[0].Bucket != "podhub-go-supplier" || snapshot.SystemStorage[0].PublicBaseURL != "https://podhub-go-supplier.ozon-pod.com" || snapshot.SystemStorage[0].SecretAccessKey != "private-secret" {
 		t.Fatalf("storage was not retained: %+v", snapshot.SystemStorage)
 	}
 	public, _ := json.Marshal(view)

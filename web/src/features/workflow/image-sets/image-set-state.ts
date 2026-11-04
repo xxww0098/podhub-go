@@ -70,7 +70,7 @@ export function readyImageSetURLs(view: ImageSet): string[] {
     if (item.status !== "ready" || !item.asset || !/^[a-f0-9]{64}$/.test(item.asset.sha256)) return []
     try {
       const url = new URL(item.asset.url)
-      return url.origin === "https://podhub-supplier.ozon-pod.com" && !url.search && !url.hash && url.pathname.endsWith(`/images/${item.asset.sha256}.jpg`) ? [url.href] : []
+      return url.origin === "https://podhub-go-supplier.ozon-pod.com" && !url.search && !url.hash && url.pathname.endsWith(`/images/${item.asset.sha256}.jpg`) ? [url.href] : []
     } catch { return [] }
   })
 }

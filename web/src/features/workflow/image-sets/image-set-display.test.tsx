@@ -14,7 +14,7 @@ test("only the current source's GET/create candidates become AI media previews; 
   try {
     Object.defineProperty(globalThis, "localStorage", { configurable: true, value: storage })
   const intent: ImageSetIntent = { owner: "display-owner:workspace", cardId: "card", rowId: "row", draftId: "draft", sourceHandle: "local-source", rawSHA256: "a".repeat(64), key: "image-set-00000000-0000-4000-8000-000000000003", setId: "00000000-0000-4000-8000-000000000004" }
-  const view: ImageSet = { id: intent.setId!, requested_model: "qwen-image-2.1-pro", source_sha256: "b".repeat(64), status: "ready", items: [0, 1, 2].map((ordinal) => ({ ordinal, status: "ready", request_id: String(ordinal), charged_microfen: 25_000_000, asset: { object_id: String(ordinal), sha256: String(ordinal).repeat(64), url: `https://podhub-supplier.ozon-pod.com/display/orgs/1/images/${String(ordinal).repeat(64)}.jpg` } })) }
+  const view: ImageSet = { id: intent.setId!, requested_model: "qwen-image-2.1-pro", source_sha256: "b".repeat(64), status: "ready", items: [0, 1, 2].map((ordinal) => ({ ordinal, status: "ready", request_id: String(ordinal), charged_microfen: 25_000_000, asset: { object_id: String(ordinal), sha256: String(ordinal).repeat(64), url: `https://podhub-go-supplier.ozon-pod.com/display/orgs/1/images/${String(ordinal).repeat(64)}.jpg` } })) }
   saveImageSetIntent(intent)
   rememberImageSet(intent, view)
   const urls = rememberedImageSetURLs(intent)

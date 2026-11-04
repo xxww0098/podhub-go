@@ -25,12 +25,12 @@
 | 桶 | 角色 | 保留策略 | 公开域名 | 访问方式 |
 | --- | --- | --- | --- | --- |
 | 工作空间独立 R2 | 切片 | 所有者选择每天指定时间自动清理，或仅手动清理；默认北京时间 04:00 | 系统启用的 r2.dev 地址 | 公开 URL |
-| `podhub-supplier` | 素材库 | 长期 | `https://podhub-supplier.ozon-pod.com` | 公开 URL |
-| `podhub-private` | 委托图片与识图暂存 | 长期 | 无 | 签名 URL 或应用代理 |
+| `podhub-go-supplier` | 素材库 | 长期 | `https://podhub-go-supplier.ozon-pod.com` | 公开 URL |
+| `podhub-go-private` | 委托图片与识图暂存 | 长期 | 无 | 签名 URL 或应用代理 |
 
 - **一个主机名只映射一个桶**；不用 `podhub.si` 根域承载桶。
 - 两个系统角色不得共用同一 endpoint 下的物理桶；工作空间切片按配置 UUID 使用独立前缀。
-- 系统生产桶名固定绑定角色与公开域名：`podhub-supplier` 使用 `assets` 与 `https://podhub-supplier.ozon-pod.com`，`podhub-private` 使用 `private` 且公开域名为空。
+- 系统生产桶名固定绑定角色与公开域名：`podhub-go-supplier` 使用 `assets` 与 `https://podhub-go-supplier.ozon-pod.com`，`podhub-go-private` 使用 `private` 且公开域名为空。
 - 系统生产桶关闭 `r2.dev`；系统公开桶只保留一个自定义主机名。非默认系统测试桶的公开角色只允许显式的 `https://pub-<32位小写十六进制>.r2.dev`，私有角色仍无公开域名。工作空间切片桶由系统启用 r2.dev；生产自有域名须另行验收。
 - 公开桶只存 `jpg`、`png`、`webp`、`psd`、`mp4`、`mov`；服务端写 `Content-Type` 与 `nosniff`，不存 `svg`、`html` 等可执行内容。
 - 长期桶身份为 endpoint + bucket + prefix；工作空间切片按配置 UUID 隔离前缀，退休配置保留供清理。
@@ -44,8 +44,8 @@
 
 | 角色 | 内部账号 ID | 默认桶 |
 | --- | --- | --- |
-| `assets` | `s3_assets` | `podhub-supplier` |
-| `private` | `s3_private` | `podhub-private` |
+| `assets` | `s3_assets` | `podhub-go-supplier` |
+| `private` | `s3_private` | `podhub-go-private` |
 
 每组填写端点、桶名、Access Key ID、Secret Access Key；素材桶另填公开地址。桶名留空时保存为角色默认桶，默认桶的公开地址留空时保存为默认公开域名。账号 ID 与对象路径前缀由服务端维护，不作为界面或接口输入，也不在读取接口回显；已有配置在保存时沿用原账号 ID 和前缀。Session Token 不再保存。指定非默认桶后，公开角色必须明确填写该桶的公开地址，不能回退到生产域名。桶名限 3–63 个小写字母、数字及连字符，首尾必须是字母或数字；公开 URL 不允许端口、用户信息、路径、查询或片段。provider 为 `cloudflare`、region 为 `auto`，使用路径式访问。两个角色不得指向同一物理桶，不完整或不符合桶规则的配置拒绝保存。
 
@@ -155,7 +155,7 @@ SELECT EXISTS (SELECT 1 FROM public.storage_object_refs WHERE object_id = $1);
 ## URL 与读取约束
 
 - 统一模型要求业务表存 `object_id`，输出时从已注册对象派生 URL。AI 已接入；用户 PSD 不进入云端存储；目录仍存 URL，委托仍存 key，不能在迁移前删除这些字段。
-- 素材桶 URL 形如 `https://podhub-supplier.ozon-pod.com/{key}`；key 已含配置前缀。
+- 素材桶 URL 形如 `https://podhub-go-supplier.ozon-pod.com/{key}`；key 已含配置前缀。
 - 私有读取采用短时 GET（60–300 秒）或受限代理；代理应设置可信 `Content-Type`、`Content-Disposition`、`nosniff`、`private, no-store`，不透传源站 Cookie，并支持 Range。供应商原图现以 120 秒签名 GET 返回 JSON 或 `307` 跳转，由对象存储直接传输；Go 不再缓冲整包。该路径仍按冻结载荷取 key，尚未接入通用注册表下载，外部验证范围见 [私有桶现状](storage-private.md)。
 - 私有桶不接公共 CDN；若必须经过边缘，只用私有主机、绕过缓存，并禁止忽略 query 的缓存规则。
 - 嵌入签名 URL 的页面设置 `Referrer-Policy: no-referrer`；日志对 `X-Amz-Signature`、`X-Amz-Credential` 脱敏。

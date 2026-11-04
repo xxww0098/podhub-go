@@ -53,7 +53,7 @@ func TestAIImageSetsLive(t *testing.T) {
 	if json.NewDecoder(io.LimitReader(os.Stdin, 1<<20)).Decode(&remote) != nil {
 		t.Fatal("credential stdin unavailable")
 	}
-	if remote.AI.APIKey == "" || remote.Assets.Bucket != "podhub-supplier" || remote.Assets.PublicBaseURL != "https://podhub-supplier.ozon-pod.com" {
+	if remote.AI.APIKey == "" || remote.Assets.Bucket != "podhub-go-supplier" || remote.Assets.PublicBaseURL != "https://podhub-go-supplier.ozon-pod.com" {
 		t.Fatal("unexpected live configuration")
 	}
 	runID := uuid.NewString()
@@ -303,7 +303,7 @@ func livePublicImage(t *testing.T, ctx context.Context, url, digest string) map[
 	if err != nil {
 		t.Fatal("public URL invalid")
 	}
-	client := ai.NewImageClient("podhub-supplier.ozon-pod.com")
+	client := ai.NewImageClient("podhub-go-supplier.ozon-pod.com")
 	defer client.CloseIdleConnections()
 	resp, err := client.Do(req)
 	if err != nil {

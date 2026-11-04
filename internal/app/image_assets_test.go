@@ -27,7 +27,7 @@ func TestImagePublicClientUsesConfiguredHost(t *testing.T) {
 		t.Fatal("public image client must bypass ambient proxies")
 	}
 	// Host refusal happens before DNS or a network request.
-	if connection, err := transport.DialContext(context.Background(), "tcp", "podhub-supplier.ozon-pod.com:443"); err == nil {
+	if connection, err := transport.DialContext(context.Background(), "tcp", "podhub-go-supplier.ozon-pod.com:443"); err == nil {
 		connection.Close()
 		t.Fatal("test bucket public client accepted the production host")
 	}

@@ -222,7 +222,7 @@ func TestListingPublishLive(t *testing.T) {
 	var images []string
 	var imageProof []map[string]any
 	for _, image := range candidate.Images[:2] {
-		if !strings.HasPrefix(image.URL, "https://podhub-supplier.ozon-pod.com/supplier-dbs/") {
+		if !strings.HasPrefix(image.URL, "https://podhub-go-supplier.ozon-pod.com/supplier-dbs/") {
 			t.Fatal("source image outside exact published supplier origin")
 		}
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, image.URL, nil)

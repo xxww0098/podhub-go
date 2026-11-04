@@ -52,14 +52,14 @@ var (
 // Production bucket names. Development buckets are configured explicitly.
 const (
 	BucketTransit = "podhub-transit"
-	BucketAssets  = "podhub-supplier"
-	BucketPrivate = "podhub-private"
+	BucketAssets  = "podhub-go-supplier"
+	BucketPrivate = "podhub-go-private"
 )
 
 // Public hostnames. These are exact values, not patterns.
 const (
 	PublicHostTransit = "https://transit.podhub.si"
-	PublicHostAssets  = "https://podhub-supplier.ozon-pod.com"
+	PublicHostAssets  = "https://podhub-go-supplier.ozon-pod.com"
 )
 
 // r2APIHostSuffix is the only production egress target.

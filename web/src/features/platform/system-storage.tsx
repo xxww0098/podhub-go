@@ -21,8 +21,8 @@ type Role = Storage["role"]
 type Editor = { role: Role; values: R2BucketValues }
 
 const roles: { role: Role; label: string; defaultBucket: string }[] = [
-  { role: "assets", label: "素材桶（公开）", defaultBucket: "podhub-supplier" },
-  { role: "private", label: "私有数据桶", defaultBucket: "podhub-private" },
+  { role: "assets", label: "素材桶（公开）", defaultBucket: "podhub-go-supplier" },
+  { role: "private", label: "私有数据桶", defaultBucket: "podhub-go-private" },
 ]
 
 const emptyValues: R2BucketValues = { endpoint: "", bucket: "", public_base_url: "", access_key_id: "", secret_access_key: "" }

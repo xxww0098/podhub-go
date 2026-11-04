@@ -761,7 +761,7 @@ func TestAIImageSetsNormalAPI(t *testing.T) {
 		for index, item := range ready.Items {
 			parsed, _ := url.Parse(item.Asset.URL)
 			bucket.mu.Lock()
-			raw := append([]byte(nil), bucket.bodies["/podhub-supplier"+parsed.Path]...)
+			raw := append([]byte(nil), bucket.bodies["/podhub-go-supplier"+parsed.Path]...)
 			bucket.mu.Unlock()
 			name := fmt.Sprintf("saved-set-%d.jpg", index+1)
 			if err := os.WriteFile(filepath.Join(dir, name), raw, 0600); err != nil {

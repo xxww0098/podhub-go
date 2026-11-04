@@ -6,7 +6,7 @@ import { row, instance, slice } from "../workbench/workbench-test-fixtures"
 import { imageSetEditOpen, imageSetMediaDraft, imageSetUnknown, readImageSetIntent, readyImageSetURLs, reserveImageSetIntent, retryableImageSet, saveImageSetIntent, updateImageSetIntent, type ImageSetIntent } from "./image-set-state"
 
 const intent: ImageSetIntent = { owner: "owner:workspace", cardId: "card", rowId: "image-1", draftId: "draft-1", sourceHandle: "source", rawSHA256: "a".repeat(64), key: "image-set-00000000-0000-4000-8000-000000000001", setId: "00000000-0000-4000-8000-000000000002" }
-const view: ImageSet = { id: intent.setId!, requested_model: "qwen-image-2.1-pro", source_sha256: "b".repeat(64), status: "ready", items: [0, 1, 2].map((ordinal) => ({ ordinal, status: "ready", request_id: String(ordinal), charged_microfen: 25_000_000, asset: { object_id: String(ordinal), sha256: String(ordinal).repeat(64), url: `https://podhub-supplier.ozon-pod.com/test/orgs/1/images/${String(ordinal).repeat(64)}.jpg` } })) }
+const view: ImageSet = { id: intent.setId!, requested_model: "qwen-image-2.1-pro", source_sha256: "b".repeat(64), status: "ready", items: [0, 1, 2].map((ordinal) => ({ ordinal, status: "ready", request_id: String(ordinal), charged_microfen: 25_000_000, asset: { object_id: String(ordinal), sha256: String(ordinal).repeat(64), url: `https://podhub-go-supplier.ozon-pod.com/test/orgs/1/images/${String(ordinal).repeat(64)}.jpg` } })) }
 const urls = readyImageSetURLs(view)
 function runtime() {
   const source = row(1, { id: intent.rowId, draftId: intent.draftId, source: { handle: intent.sourceHandle, file_name: "source.jpg" } as never })

@@ -6,7 +6,7 @@
 
 | 项 | 值 |
 | --- | --- |
-| 物理桶 | `podhub-private` |
+| 物理桶 | `podhub-go-private` |
 | 公开域名 | 无；部署要求关闭 `r2.dev` |
 | 角色 | `private` |
 | 委托图片 | 仅 jpg/png/webp，单文件 500 MiB；PSD 不接受，见 `internal/delegate/domain/seller.go` |
@@ -29,13 +29,13 @@
 | --- | --- |
 | 请求 JSON | 返回 120 秒签名 GET、文件元数据；响应设置 `private, no-store` 与 `Referrer-Policy: no-referrer` |
 | 请求文件 | 返回 `307` 到短期签名 GET；浏览器保留 `Range` / `If-Range`，对象存储直接传输，Go 不读正文 |
-| 存储配置 | 授权后使用平台管理中与委托上传共用的私有桶；默认 `podhub-private`，测试可明确指定 `podhub-test-delegate`，均不得配置公开域名；不回退到假桶 |
+| 存储配置 | 授权后使用平台管理中与委托上传共用的私有桶；默认 `podhub-go-private`，测试可明确指定 `podhub-test-delegate`，均不得配置公开域名；不回退到假桶 |
 
 授权、跳转和错误响应统一设置 `private, no-store`、`no-referrer` 与 `nosniff`。签名覆盖最终对象响应的 `response-cache-control=private, no-store`、可信内容类型和文件名；安全图片预览使用 inline，JSON 下载和其他类型使用 attachment，未知类型降为 `application/octet-stream`。链接有效期为 120 秒，返回过期时间与 SigV4 的秒精度一致；保存凭据轮换或停用后新请求读取最新配置，已经签发的链接仍受其到期时间和云端凭据状态约束。
 
 原图读取已移除 Go 代理的 20 MiB 上限；500 MiB 稀疏文件的跨 64 MiB 边界、尾部和开放范围请求、`If-Range` 版本变化及 `416` 已在本地 HTTP 实测。真实 PostgreSQL、正常登录 cookie 与 `podhub_login_api` 下验证了冻结载荷授权、签名生成、错误响应、停用与轮换，未使用 superuser 执行业务读取。该验证不代表真实 R2 500 MiB 下载或浏览器断点恢复已经通过。
 
-2026-10-25 只读检查发现，旧生产快照仍使用旧字段，委托桶为停用的 `podhub-delegate`，不能作为当前 `podhub-private` 能力的外部证据。本次没有更改生产配置、桶策略或部署；外部下载与撤权行为仍须使用有效配置和真实对象验收。
+2026-10-25 只读检查发现，旧生产快照仍使用旧字段，委托桶为停用的 `podhub-delegate`，不能作为新私有桶能力的外部证据。当前 `podhub-go-private` 已通过基础 R2 对象操作验证；应用内下载与撤权行为仍须使用真实对象验收。
 
 ## 当前删除
 
@@ -58,7 +58,7 @@
 下面的路径由 `internal/media/contract/key.go` 定义。私有用途拒绝 PSD；当前委托上传、冻结载荷和供应商下载尚未切换到注册表：
 
 ```text
-podhub-private
+podhub-go-private
 └── {prefix}
     ├── orgs/{org_id}/originals/{binding_id}/{sha256}.{ext}
     └── orgs/{org_id}/files/{sha256}.{ext}
