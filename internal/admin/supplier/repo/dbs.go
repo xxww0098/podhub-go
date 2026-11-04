@@ -55,11 +55,11 @@ func (r Portal) CreateDb(ctx context.Context, actor outcome.Actor, in supcontrac
 		}
 		_, err = tx.Exec(ctx, `
 			INSERT INTO public.sc_sources
-			       (source_id, name, country, contact, internal_note, listed, icon,
+			       (source_id, name, country, contact, internal_note, icon,
 			        accepts_delegate, view_prefs, created_at_ms, updated_at_ms,
 			        created_by_account_uuid, factory_id)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$11,$12)`,
-			sourceID, in.Name, in.Country, in.Contact, in.InternalNote, in.Listed, in.Icon,
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$10,$11)`,
+			sourceID, in.Name, in.Country, in.Contact, in.InternalNote, in.Icon,
 			in.AcceptsDelegate, prefs, nowMs, publicID, factoryID)
 		if c := corerepo.Constraint(err); c != "" {
 			return corerepo.Conflict("库名称已存在")
@@ -73,9 +73,8 @@ func (r Portal) CreateDb(ctx context.Context, actor outcome.Actor, in supcontrac
 			}
 		}
 		if err := corerepo.Audit(ctx, tx, actor, "supplier_dbs", "supplier_db", sourceID, "POST", "/api/admin/supplier-dbs", "sc_source_created", corecontract.JSONText(struct {
-			Name   string `json:"name"`
-			Listed bool   `json:"listed"`
-		}{in.Name, in.Listed})); err != nil {
+			Name string `json:"name"`
+		}{in.Name})); err != nil {
 			return err
 		}
 		rows, err := listDbs(ctx, tx, owner, sourceID)
@@ -145,11 +144,11 @@ func (r Portal) UpdateDb(ctx context.Context, actor outcome.Actor, sourceID stri
 		tag, err := tx.Exec(ctx, `
 			UPDATE public.sc_sources
 			   SET name = $2, country = $3, contact = $4, internal_note = $5,
-			       listed = $6, icon = $7, accepts_delegate = $8,
-			       view_prefs = COALESCE($9, view_prefs), updated_at_ms = $10,
+			       icon = $6, accepts_delegate = $7,
+			       view_prefs = COALESCE($8, view_prefs), updated_at_ms = $9,
 			       revision = revision + 1
 			 WHERE source_id = $1`,
-			sourceID, in.Name, in.Country, in.Contact, in.InternalNote, in.Listed, in.Icon, in.AcceptsDelegate, prefs, nowMs)
+			sourceID, in.Name, in.Country, in.Contact, in.InternalNote, in.Icon, in.AcceptsDelegate, prefs, nowMs)
 		if c := corerepo.Constraint(err); c != "" {
 			return corerepo.Conflict("库名称已存在")
 		}
@@ -160,9 +159,8 @@ func (r Portal) UpdateDb(ctx context.Context, actor outcome.Actor, sourceID stri
 			return corerepo.NotFound(missingRow)
 		}
 		if err := corerepo.Audit(ctx, tx, actor, "supplier_dbs", "supplier_db", sourceID, "PUT", "/api/admin/supplier-dbs/{source_id}", "sc_source_updated", corecontract.JSONText(struct {
-			Name   string `json:"name"`
-			Listed bool   `json:"listed"`
-		}{in.Name, in.Listed})); err != nil {
+			Name string `json:"name"`
+		}{in.Name})); err != nil {
 			return err
 		}
 		rows, err := listDbs(ctx, tx, owner, sourceID)

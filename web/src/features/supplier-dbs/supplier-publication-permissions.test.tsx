@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { SupplierDbsScreen } from "./supplier-dbs-screen"
 import { SupplierDbBulkBar, type useSupplierDbActions } from "./supplier-db-actions"
+import { SupplierLibraryManagement } from "./supplier-library-management"
 import { db, row, readyStore } from "./supplier-dbs-screen-fixtures"
 
 test("publication status is read-only for ordinary platform administrators", async () => {
@@ -22,4 +23,11 @@ test("bulk publication actions require the super administrator flag", () => {
     assert.equal(bulk.includes('发布所选</button>'), canPublish)
     assert.equal(bulk.includes('aria-label="停用所选"'), canPublish)
   }
+})
+
+test("库管理保留委托开关，不再要求单独设置卖家可见", async () => {
+  const { store } = await readyStore([{ db: db("src", "Factory", { listed: false }), propDefs: [], rows: [] }])
+  const html = renderToStaticMarkup(<TooltipProvider><SupplierLibraryManagement store={store} superAdmin onBack={() => {}} /></TooltipProvider>)
+  assert.doesNotMatch(html, /卖家可见/)
+  assert.match(html, /接受委托/)
 })

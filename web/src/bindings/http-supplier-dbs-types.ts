@@ -189,7 +189,6 @@ export type UpsertSupplierDbRequest = {
   country: string
   contact: string
   internalNote: string
-  listed: boolean
   icon: string
   /** 接受委托生产 (ADR-0100)；缺省关。 */
   acceptsDelegate?: boolean

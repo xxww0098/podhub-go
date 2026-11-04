@@ -111,6 +111,7 @@ export function createSupplierDbsStore(
       const archivedDelta = (row.archived ? 1 : 0) - (previous?.archived ? 1 : 0)
       const db = {
         ...detail.db,
+        listed: detail.db.listed || row.published,
         rowCount: Math.max(
           0,
           detail.db.rowCount + (created ? 1 : 0) - archivedDelta,
@@ -199,7 +200,6 @@ export function createSupplierDbsStore(
     country: draft.country.trim().toUpperCase(),
     contact: draft.contact.trim(),
     internalNote: draft.internalNote.trim(),
-    listed: draft.listed,
     icon: draft.icon.trim(),
     template: draft.template ?? null,
     ...(draft.acceptsDelegate === undefined

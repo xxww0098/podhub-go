@@ -18,10 +18,10 @@ type NormalizedDb = supcontract.NormalizedDb
 func DecodeSupplierDb(body []byte) (NormalizedDb, error) {
 	raw, err := strictObject(body)
 	if err != nil || !hasOnly(raw, []string{
-		"name", "country", "contact", "internalNote", "listed", "icon",
+		"name", "country", "contact", "internalNote", "icon",
 		"acceptsDelegate", "template", "viewPrefs", "factoryId",
 	}) || !requireKeys(raw, []string{
-		"name", "country", "contact", "internalNote", "listed", "icon", "template", "viewPrefs",
+		"name", "country", "contact", "internalNote", "icon", "template", "viewPrefs",
 	}) {
 		return NormalizedDb{}, invalid()
 	}
@@ -29,7 +29,7 @@ func DecodeSupplierDb(body []byte) (NormalizedDb, error) {
 	var name, country, contact, note, icon string
 	if !unmarshal(raw["name"], &name) || !unmarshal(raw["country"], &country) ||
 		!unmarshal(raw["contact"], &contact) || !unmarshal(raw["internalNote"], &note) ||
-		!unmarshal(raw["icon"], &icon) || !unmarshal(raw["listed"], &out.Listed) {
+		!unmarshal(raw["icon"], &icon) {
 		return NormalizedDb{}, invalid()
 	}
 	if raw["acceptsDelegate"] != nil {

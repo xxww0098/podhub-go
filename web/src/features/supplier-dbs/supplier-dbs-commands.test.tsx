@@ -12,7 +12,6 @@ test("建库 through the store reaches the client and lands in the list", async 
     country: "de",
     contact: "ops@factory.invalid",
     internalNote: "旺季产能足",
-    listed: true,
     icon: "🏭",
     template: "factory",
     factoryId: " fac-1 ",
@@ -26,7 +25,7 @@ test("建库 through the store reaches the client and lands in the list", async 
   assert.equal(store.getState().dbs.length, 1)
   assert.equal(store.getState().dbs[0].name, "德国厂")
 
-  const refused = await store.createDb({ name: " ", country: "", contact: "", internalNote: "", listed: true, icon: "" })
+  const refused = await store.createDb({ name: " ", country: "", contact: "", internalNote: "", icon: "" })
   assert.equal(refused.ok, false)
   assert.equal(calls.createDb.length, 1, "validation happens before the wire")
 
@@ -45,11 +44,23 @@ test("建库 through the store reaches the client and lands in the list", async 
 
 test("建库必须选择已有工厂", async () => {
   const { store, calls } = await readyStore()
-  const draft = { name: "商品库", country: "", contact: "", internalNote: "", listed: false, icon: "" }
+  const draft = { name: "商品库", country: "", contact: "", internalNote: "", icon: "" }
   assert.equal((await store.createDb(draft)).ok, false)
   assert.equal((await store.createDb({ ...draft, factoryId: "fac-1" })).ok, true)
   assert.equal(calls.createDb[0].factoryId, "fac-1")
   assert.equal(calls.createDb.length, 1)
+})
+
+test("发布规格后同步商品库状态，编辑库资料不会覆盖可见性", async () => {
+  const { store, calls } = await readyStore([
+    { db: db("src-1", "工厂", { listed: false, rowCount: 1 }), propDefs: [], rows: [row("p1", "src-1")] },
+  ])
+  await store.loadDetail("src-1")
+  assert.equal((await store.publishRow("src-1", "p1")).ok, true)
+  assert.equal(store.getState().dbs[0].listed, true)
+  assert.equal(store.getState().details["src-1"].detail?.db.listed, true)
+  assert.equal((await store.updateDb("src-1", { contact: "联系人" })).ok, true)
+  assert.equal("listed" in calls.updateDb[0], false)
 })
 
 test("删库: 库内有商品也可以删除", async () => {

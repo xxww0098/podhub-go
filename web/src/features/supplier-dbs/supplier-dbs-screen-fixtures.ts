@@ -176,7 +176,7 @@ export function memoryClient(
         country: body.country,
         contact: body.contact,
         internalNote: body.internalNote,
-        listed: body.listed,
+        listed: false,
         icon: body.icon,
         factoryId: body.factoryId,
       })
@@ -194,7 +194,6 @@ export function memoryClient(
         country: body.country,
         contact: body.contact,
         internalNote: body.internalNote,
-        listed: body.listed,
         icon: body.icon,
         viewPrefs: body.viewPrefs,
         ...(body.factoryId ? { factoryId: body.factoryId } : {}),
@@ -366,7 +365,7 @@ export function memoryClient(
       detail.rows = detail.rows.map((item) =>
         item.productId === productId ? next : item,
       )
-      bump(sourceId, { publishedCount: detail.rows.filter((i) => i.published).length })
+      bump(sourceId, { listed: true, publishedCount: detail.rows.filter((i) => i.published).length })
       return { row: next }
     },
     supplierDbRowUnpublish: async (sourceId, productId) => {

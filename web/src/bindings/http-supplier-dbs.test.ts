@@ -10,7 +10,7 @@ test("supplier source and property upserts include the server's required nullabl
     return Response.json({ data: {} })
   }) as typeof fetch
   try {
-    const source = { name: "QA source", country: "", contact: "", internalNote: "", listed: false, icon: "" }
+    const source = { name: "QA source", country: "", contact: "", internalNote: "", icon: "" }
     await supplierDbsHttp.supplierDbCreate(source)
     await supplierDbsHttp.supplierDbUpdate("source", source)
     const prop = { name: "QA property", type: "text" as const, options: [], sellerVisible: false }

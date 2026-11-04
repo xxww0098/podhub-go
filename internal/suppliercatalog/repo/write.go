@@ -186,6 +186,12 @@ func (r Repo) SetPublished(ctx context.Context, userID int64, sourceID, productI
 		if err := requireSuperAdmin(ctx, tx, userID); err != nil {
 			return err
 		}
+		// Match the staff publication path's source-before-product lock order.
+		var lockedSource string
+		if err := tx.QueryRow(ctx, `SELECT source_id FROM public.sc_sources
+			WHERE source_id = $1 FOR UPDATE`, sourceID).Scan(&lockedSource); err != nil {
+			return constraint(err)
+		}
 		// Serialize readiness checks with row edits and archival, then read the
 		// current state after any preceding mutation has committed.
 		var lockedProduct string
@@ -222,6 +228,24 @@ func (r Repo) SetPublished(ctx context.Context, userID int64, sourceID, productI
 			UPDATE public.sc_skus SET published = $2, revision = revision + 1, updated_at_ms = $3
 			 WHERE sku_id = $1`, skuID, on, now); err != nil {
 			return constraint(err)
+		}
+		if on {
+			// Only the verified super administrator may change source visibility.
+			var priorStaff string
+			if err := tx.QueryRow(ctx, `SELECT COALESCE(current_setting('app.staff_access', true), '')`).Scan(&priorStaff); err != nil {
+				return constraint(err)
+			}
+			if _, err := tx.Exec(ctx, `SELECT set_config('app.staff_access', '1', true)`); err != nil {
+				return constraint(err)
+			}
+			if _, err := tx.Exec(ctx, `
+				UPDATE public.sc_sources SET listed = true, revision = revision + 1, updated_at_ms = $2
+				WHERE source_id = $1 AND NOT listed`, sourceID, now); err != nil {
+				return constraint(err)
+			}
+			if _, err := tx.Exec(ctx, `SELECT set_config('app.staff_access', $1, true)`, priorStaff); err != nil {
+				return constraint(err)
+			}
 		}
 		row, err := loadRow(ctx, tx, sourceID, productID)
 		if err != nil {

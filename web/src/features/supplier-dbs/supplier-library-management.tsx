@@ -57,10 +57,6 @@ export function SupplierLibraryManagement({ store, superAdmin, onBack }: { store
       {state.dbs.map((listDb) => { const db = state.details[listDb.sourceId]?.detail?.db ?? listDb; return <div key={db.sourceId} className="flex flex-wrap items-center gap-3 rounded-lg border p-3">
         <div className="min-w-0 flex-1"><p className="font-medium">{db.name}</p><p className="text-meta text-muted-foreground">{factories?.find((factory) => factory.factory_id === db.factoryId)?.name ?? (db.factoryId ? "工厂资料不可用" : "未绑定工厂")} · {db.rowCount} 个规格 · 履约：{db.fulfillerEmail || "待绑定"}</p></div>
         {!db.factoryId && db.sourceId !== "src_unassigned" ? <Button size="sm" variant="outline" onClick={() => openBinding(db)}><Link2 />绑定工厂</Button> : null}
-        <label className="flex items-center gap-2 text-sm">卖家可见<Switch checked={db.listed} disabled={busy} aria-label={`${db.name} 卖家可见`} onCheckedChange={async (value) => {
-          setBusy(true); const result = await store.updateDb(db.sourceId, { listed: value === true }); setBusy(false)
-          if (!result.ok) notifyCommandError(commandFailure(result), "保存商品库状态失败")
-        }} /></label>
         <label className="flex items-center gap-2 text-sm">接受委托<Switch checked={db.acceptsDelegate ?? false} disabled={busy} aria-label={`${db.name} 接受委托`} onCheckedChange={async (value) => {
           setBusy(true); const result = await store.updateDb(db.sourceId, { acceptsDelegate: value === true }); setBusy(false)
           if (!result.ok) notifyCommandError(commandFailure(result), "保存委托状态失败")
@@ -82,7 +78,7 @@ export function SupplierLibraryManagement({ store, superAdmin, onBack }: { store
         if (!dialog || !factoryId || busy || (dialog === "new" && !name.trim())) return
         setBusy(true)
         const result = dialog === "new"
-          ? await store.createDb({ ...EMPTY_DB_DRAFT, listed: false, factoryId, name: name.trim() })
+          ? await store.createDb({ ...EMPTY_DB_DRAFT, factoryId, name: name.trim() })
           : await store.updateDb(dialog.sourceId, { factoryId })
         setBusy(false)
         if (!result.ok) { notifyCommandError(commandFailure(result), "绑定工厂失败"); return }

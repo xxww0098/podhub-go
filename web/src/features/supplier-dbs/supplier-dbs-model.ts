@@ -69,7 +69,6 @@ export type SupplierDbDraft = {
   country: string
   contact: string
   internalNote: string
-  listed: boolean
   icon: string
   /** 接受委托生产 (ADR-0100)：编辑表单开关；缺省不写入。 */
   acceptsDelegate?: boolean
@@ -82,7 +81,6 @@ export const EMPTY_DB_DRAFT: SupplierDbDraft = {
   country: "",
   contact: "",
   internalNote: "",
-  listed: true,
   icon: "",
 }
 
@@ -175,7 +173,6 @@ export function dbToUpsert(db: SupplierDb): UpsertSupplierDbRequest {
     country: db.country,
     contact: db.contact,
     internalNote: db.internalNote,
-    listed: db.listed,
     icon: db.icon,
     acceptsDelegate: db.acceptsDelegate ?? false,
     viewPrefs: db.viewPrefs,

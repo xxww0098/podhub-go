@@ -51,7 +51,6 @@ func TestDecodeSupplierDb(t *testing.T) {
 	  "country": "cn",
 	  "contact": "ops@factory.invalid",
 	  "internalNote": "旺季产能足",
-	  "listed": true,
 	  "icon": "🏭",
 	  "template": null,
 	  "viewPrefs": { "kanban": "status" }
@@ -65,12 +64,13 @@ func TestDecodeSupplierDb(t *testing.T) {
 		msg  string
 	}{
 		{`{}`, "请求格式无效"},
-		{`{"name":"","country":"","contact":"","internalNote":"","listed":false,"icon":"","template":null,"viewPrefs":{}}`, "名称需为 1–80 个字符"},
-		{`{"name":"A","country":"CHN","contact":"","internalNote":"","listed":false,"icon":"","template":null,"viewPrefs":{}}`, "国家/地区需为空或两位字母代码"},
-		{`{"name":"A","country":"","contact":"","internalNote":"","listed":false,"icon":"","template":"nope","viewPrefs":{}}`, "未知的建库模板"},
-		{`{"name":"A","country":"","contact":"","internalNote":"","listed":false,"icon":"","template":null,"viewPrefs":{},"factoryId":""}`, "请选择工厂"},
-		{`{"name":"A","country":"","contact":"","internalNote":"","listed":false,"icon":"","template":null,"viewPrefs":{},"accountEmail":"a@b.c"}`, "请求格式无效"},
-		{`{"name":"A","country":"","contact":"","internalNote":"","listed":false,"icon":"","template":null,"viewPrefs":{},"extra":1}`, "请求格式无效"},
+		{`{"name":"A","country":"","contact":"","internalNote":"","listed":false,"icon":"","template":null,"viewPrefs":{}}`, "请求格式无效"},
+		{`{"name":"","country":"","contact":"","internalNote":"","icon":"","template":null,"viewPrefs":{}}`, "名称需为 1–80 个字符"},
+		{`{"name":"A","country":"CHN","contact":"","internalNote":"","icon":"","template":null,"viewPrefs":{}}`, "国家/地区需为空或两位字母代码"},
+		{`{"name":"A","country":"","contact":"","internalNote":"","icon":"","template":"nope","viewPrefs":{}}`, "未知的建库模板"},
+		{`{"name":"A","country":"","contact":"","internalNote":"","icon":"","template":null,"viewPrefs":{},"factoryId":""}`, "请选择工厂"},
+		{`{"name":"A","country":"","contact":"","internalNote":"","icon":"","template":null,"viewPrefs":{},"accountEmail":"a@b.c"}`, "请求格式无效"},
+		{`{"name":"A","country":"","contact":"","internalNote":"","icon":"","template":null,"viewPrefs":{},"extra":1}`, "请求格式无效"},
 	}
 	for _, tc := range cases {
 		_, err := DecodeSupplierDb([]byte(tc.body))
@@ -80,7 +80,7 @@ func TestDecodeSupplierDb(t *testing.T) {
 		}
 	}
 	long := strings.Repeat("名", 81)
-	body := `{"name":"` + long + `","country":"","contact":"","internalNote":"","listed":false,"icon":"","template":"factory","viewPrefs":null}`
+	body := `{"name":"` + long + `","country":"","contact":"","internalNote":"","icon":"","template":"factory","viewPrefs":null}`
 	_, err = DecodeSupplierDb([]byte(body))
 	f, _ := contract.AsFail(err)
 	if f == nil || f.Message != "名称需为 1–80 个字符" {

@@ -16,7 +16,6 @@ type NormalizedDb struct {
 	Contact         string
 	InternalNote    string
 	Icon            string
-	Listed          bool
 	AcceptsDelegate bool
 	ViewPrefs       json.RawMessage
 	KeepViewPrefs   bool

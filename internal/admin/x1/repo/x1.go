@@ -306,6 +306,13 @@ func (r X1) SetPublished(ctx context.Context, actor contract.Actor, sourceID, pr
 			WHERE sku_id = $1`, sku, on, now); err != nil {
 			return corerepo.MapDB(err)
 		}
+		if on {
+			if _, err := tx.Exec(ctx, `
+				UPDATE public.sc_sources SET listed = true, revision = revision + 1, updated_at_ms = $2
+				WHERE source_id = $1 AND NOT listed`, sourceID, now); err != nil {
+				return corerepo.MapDB(err)
+			}
+		}
 		action, path := "sc_source_row_unpublished", pathUnpublish
 		if on {
 			action, path = "sc_source_row_published", pathPublish

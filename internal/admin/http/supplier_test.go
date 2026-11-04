@@ -79,7 +79,7 @@ func TestSupplierValidationAndAuthBytes(t *testing.T) {
 	user := chi.NewRouter()
 	Mount(user, Deps{Resolve: fixed(access.FixedResolver{Principal: &access.Principal{UserID: 1, PlatformRole: "user"}}), Supplier: &svc})
 
-	rec := call(staff, http.MethodPost, "/api/admin/supplier-dbs", `{"name":"A","country":"","contact":"","internalNote":"","listed":false,"icon":"","template":"nope","viewPrefs":{}}`)
+	rec := call(staff, http.MethodPost, "/api/admin/supplier-dbs", `{"name":"A","country":"","contact":"","internalNote":"","icon":"","template":"nope","viewPrefs":{}}`)
 	if rec.Code != http.StatusBadRequest || rec.Body.String() != `{"error":"未知的建库模板","code":"VALIDATION"}` {
 		t.Fatalf("template %d %s", rec.Code, rec.Body.String())
 	}
