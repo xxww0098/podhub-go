@@ -118,8 +118,16 @@ func listProps(ctx context.Context, tx pgx.Tx, sourceID string) ([]x1contract.Pr
 	return out, corerepo.MapDB(rows.Err())
 }
 
+func querySupplierRows(ctx context.Context, tx pgx.Tx, filter string, args ...any) (pgx.Rows, error) {
+	// RLS expands this query so JIT compilation overwhelms small product reads.
+	if _, err := tx.Exec(ctx, `SET LOCAL jit = off`); err != nil {
+		return nil, err
+	}
+	return tx.Query(ctx, rowSelect+filter, args...)
+}
+
 func loadRows(ctx context.Context, tx pgx.Tx, sourceID string, now int64) ([]x1contract.RowData, error) {
-	rows, err := tx.Query(ctx, rowSelect+`
+	rows, err := querySupplierRows(ctx, tx, `
 		WHERE p.source_id = $1 AND NOT p.archived
 		  AND (SELECT COUNT(*) FROM public.sc_skus k WHERE k.product_id = p.product_id) = 1
 		ORDER BY p.created_at_ms, p.product_id`, sourceID)
@@ -139,7 +147,7 @@ func loadRows(ctx context.Context, tx pgx.Tx, sourceID string, now int64) ([]x1c
 }
 
 func loadRow(ctx context.Context, tx pgx.Tx, sourceID, productID string, now int64) (x1contract.RowData, error) {
-	rows, err := tx.Query(ctx, rowSelect+`
+	rows, err := querySupplierRows(ctx, tx, `
 		WHERE p.source_id = $1 AND p.product_id = $2
 		  AND (SELECT COUNT(*) FROM public.sc_skus k WHERE k.product_id = p.product_id) = 1`, sourceID, productID)
 	if err != nil {
